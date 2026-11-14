@@ -41,8 +41,11 @@ LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
 
 INLINE_QUOTATION = "q"
 CODE_ELEMENT = "code"
-BARE_PREFORMATTED = "//pre[not(.//code)]"
-CODE_IN_TEXT = "//code[not(ancestor::pre)]"
+# Preformatted text that holds an image is left alone, so that the image stays a figure.
+BARE_PREFORMATTED = "//pre[not(.//code) and not(.//img)]"
+CODE_IN_TEXT = "//code[not(ancestor::pre) and not(.//pre)]"
+# The characters HTML collapses; a no-break space is not one of them.
+HTML_SPACE = re.compile(r"[ \t\n\f\r]+")
 
 
 class Tag(StrEnum):
@@ -137,8 +140,13 @@ def prepared_page(content: bytes, url: str) -> html.HtmlElement:
         preformatted.append(code)
     for code in page.xpath(CODE_IN_TEXT):
         for piece in code.iter():
-            piece.text = WHITESPACE.sub(" ", piece.text or "")
-            piece.tail = piece.tail if piece is code else WHITESPACE.sub(" ", piece.tail or "")
+            # The extractor reads an element with empty text differently from one with none,
+            # and drops the first together with the words after it, so text that is absent
+            # is left absent.
+            if piece.text is not None:
+                piece.text = HTML_SPACE.sub(" ", piece.text)
+            if piece is not code and piece.tail is not None:
+                piece.tail = HTML_SPACE.sub(" ", piece.tail)
     return page
 
 
@@ -203,13 +211,25 @@ def verbatim_text(element: etree._Element) -> str:
     return "".join(pieces)
 
 
+# Words directly before or after an element show that it sits in a sentence.
+def is_in_sentence(element: etree._Element) -> bool:
+    parent = element.getparent()
+    earlier = element.getprevious()
+    parent_text = parent.text if parent is not None else None
+    before = earlier.tail if earlier is not None else parent_text
+    return bool((before or "").strip() or (element.tail or "").strip())
+
+
 def is_inline(element: etree._Element) -> bool:
     match element.tag:
         case Tag.CODE:
             parent = element.getparent()
-            stands_alone = parent is not None and parent.tag == Tag.BODY
+            # Preformatted text arrives as code that wraps code, whatever its length.
+            preformatted = element.find(Tag.CODE) is not None
             several_lines = LINE_BREAK in verbatim_text(element).strip()
-            return not (stands_alone or several_lines)
+            under_body = parent is not None and parent.tag == Tag.BODY
+            stands_alone = under_body and not is_in_sentence(element)
+            return not (preformatted or several_lines or stands_alone)
         case Tag.GRAPHIC:
             return False
         case tag:
