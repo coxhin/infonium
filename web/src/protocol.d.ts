@@ -29,8 +29,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read Item */
-        get: operations["read_item_api_items__item_id__get"];
+        /** Item Reading */
+        get: operations["item_reading_api_items__item_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -63,15 +63,24 @@ export interface components {
     schemas: {
         /** Anchor */
         Anchor: {
-            /** Block */
-            block: number;
+            /**
+             * Block Number
+             * @description The position of a block in its document, counted from 0.
+             */
+            block_number: number;
             /** Document Id */
             document_id: string;
-            /** End */
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             end: number;
             /** Quote */
             quote: string;
-            /** Start */
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             start: number;
         };
         /** Code */
@@ -84,10 +93,8 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** Digest */
-        Digest: {
-            /** Document Id */
-            document_id: string;
+        /** DigestView */
+        DigestView: {
             /** Input Tokens */
             input_tokens: number;
             /** Model */
@@ -96,22 +103,13 @@ export interface components {
             output_tokens: number;
             /** Sections */
             sections: components["schemas"]["Section"][];
-            /**
-             * Written
-             * Format: date-time
-             */
-            written: string;
         };
-        /** Document */
-        Document: {
+        /** DocumentView */
+        DocumentView: {
             /** Blocks */
-            blocks: (components["schemas"]["Heading"] | components["schemas"]["Paragraph"] | components["schemas"]["ListItem"] | components["schemas"]["Quote"] | components["schemas"]["Code"] | components["schemas"]["Table"] | components["schemas"]["Figure"])[];
-            /** Extractor */
-            extractor: string;
+            blocks: (components["schemas"]["Heading"] | components["schemas"]["Paragraph"] | components["schemas"]["ListItem"] | components["schemas"]["Quotation"] | components["schemas"]["Code"] | components["schemas"]["Table"] | components["schemas"]["Figure"])[];
             /** Id */
             id: string;
-            /** Item Id */
-            item_id: string;
         };
         /** Failure */
         Failure: {
@@ -151,11 +149,6 @@ export interface components {
         };
         /** ItemEntry */
         ItemEntry: {
-            /**
-             * Added
-             * Format: date-time
-             */
-            added: string;
             /** Id */
             id: string;
             /** Title */
@@ -165,26 +158,37 @@ export interface components {
         };
         /** ItemReading */
         ItemReading: {
-            document: components["schemas"]["Document"];
+            document: components["schemas"]["DocumentView"];
             entry: components["schemas"]["ItemEntry"];
         };
         /** LinkMark */
         LinkMark: {
-            /** End */
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             end: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "link";
-            /** Start */
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             start: number;
             /** Target */
             target: string;
         };
         /** ListItem */
         ListItem: {
-            /** Depth */
+            /** Continues */
+            continues: boolean;
+            /**
+             * Depth
+             * @description How many lists a list item is nested in.
+             */
             depth: number;
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -195,6 +199,8 @@ export interface components {
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
             /** Ordered */
             ordered: boolean;
+            /** Position */
+            position: number;
             /** Text */
             text: string;
         };
@@ -218,13 +224,13 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** Quote */
-        Quote: {
+        /** Quotation */
+        Quotation: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "quote";
+            kind: "quotation";
             /** Marks */
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
             /** Text */
@@ -251,14 +257,20 @@ export interface components {
         Style: "strong" | "emphasis" | "underline" | "code" | "subscript" | "superscript";
         /** StyleMark */
         StyleMark: {
-            /** End */
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             end: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "style";
-            /** Start */
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
             start: number;
             style: components["schemas"]["Style"];
         };
@@ -368,7 +380,7 @@ export interface operations {
             };
         };
     };
-    read_item_api_items__item_id__get: {
+    item_reading_api_items__item_id__get: {
         parameters: {
             query?: never;
             header?: never;
@@ -425,7 +437,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Digest"];
+                    "application/json": components["schemas"]["DigestView"];
                 };
             };
             /** @description Not Found */
@@ -474,7 +486,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Digest"];
+                    "application/json": components["schemas"]["DigestView"];
                 };
             };
             /** @description Not Found */

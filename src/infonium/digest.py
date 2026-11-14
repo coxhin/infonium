@@ -2,14 +2,14 @@ from pydantic import AwareDatetime, BaseModel
 
 from infonium.anchor import Anchor, Citation, anchors_of
 from infonium.document import BlockKind, Document
-from infonium.llm import LanguageModel
 
+HEADING_LABEL = "heading"
 INSTRUCTIONS = """\
 You digest a document for a reader who wants to grasp it quickly and check every claim \
 against the source.
 
-The document arrives as numbered blocks. Each block starts with its number in square brackets. \
-A block that starts with # after its number is a heading.
+The document arrives as numbered blocks. Each block starts with its number in square \
+brackets. A block whose brackets also say "{heading_label}" is a heading.
 
 Write the digest in {language}.
 
@@ -22,9 +22,19 @@ Do not translate it, correct it, or shorten it with an ellipsis.
 - Keep a quote to one sentence or a part of one, within a single block. Choose the passage \
 where the document makes the point most directly.
 
-{recipe}
+Write two sections.
+
+The first section is titled with the word for "Summary" in the output language. It holds \
+three to five statements, one sentence each, that together tell what the document is about, \
+what it argues or reports, and what it concludes.
+
+The second section is titled with the word for "Takeaways" in the output language. It holds \
+five to ten statements that a careful reader would want to keep: the key claims, findings, \
+numbers, definitions, recommendations and caveats. Each statement stands on its own and is \
+specific; keep the names and numbers the document gives.
+
+When the document is too short to support these counts, write fewer statements.
 """
-HEADING_SIGN = "# "
 
 
 class Statement(BaseModel):
@@ -46,36 +56,34 @@ class Digest(BaseModel):
     sections: list[Section]
 
 
-class CitedStatement(BaseModel):
+class DraftStatement(BaseModel):
     text: str
     citations: list[Citation]
 
 
-class CitedSection(BaseModel):
+class DraftSection(BaseModel):
     title: str
-    statements: list[CitedStatement]
+    statements: list[DraftStatement]
 
 
-class CitedDigest(BaseModel):
-    sections: list[CitedSection]
+class DraftDigest(BaseModel):
+    sections: list[DraftSection]
 
 
-class DigestBrief(BaseModel):
-    title: str
-    recipe: str
-    language: str
-    written: AwareDatetime
+def digest_instructions(language: str) -> str:
+    return INSTRUCTIONS.format(heading_label=HEADING_LABEL, language=language)
 
 
-def numbered_blocks(document: Document) -> str:
-    return "\n\n".join(
-        f"[{number}] {HEADING_SIGN if block.kind == BlockKind.HEADING else ''}{block.text}"
+def digest_prompt(title: str, document: Document) -> str:
+    numbered = [
+        f"[{number}{f' {HEADING_LABEL}' if block.kind == BlockKind.HEADING else ''}] {block.text}"
         for number, block in enumerate(document.blocks)
         if block.text
-    )
+    ]
+    return "\n\n".join([f"Title: {title}", *numbered])
 
 
-def grounded_sections(document: Document, cited: CitedDigest) -> list[Section]:
+def grounded_sections(document: Document, draft: DraftDigest) -> list[Section]:
     return [
         Section(
             title=section.title,
@@ -84,21 +92,5 @@ def grounded_sections(document: Document, cited: CitedDigest) -> list[Section]:
                 for statement in section.statements
             ],
         )
-        for section in cited.sections
+        for section in draft.sections
     ]
-
-
-def write_digest(document: Document, brief: DigestBrief, language_model: LanguageModel) -> Digest:
-    completion = language_model.structured(
-        instructions=INSTRUCTIONS.format(language=brief.language, recipe=brief.recipe),
-        prompt=f"Title: {brief.title}\n\n{numbered_blocks(document)}",
-        output=CitedDigest,
-    )
-    return Digest(
-        document_id=document.id,
-        model=language_model.name,
-        written=brief.written,
-        input_tokens=completion.input_tokens,
-        output_tokens=completion.output_tokens,
-        sections=grounded_sections(document, completion.output),
-    )

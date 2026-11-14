@@ -1,75 +1,111 @@
+import re
+import unicodedata
+from typing import Final
+
 from pydantic import BaseModel
-from rapidfuzz import fuzz
-from rapidfuzz.distance import ScoreAlignment
 
-from infonium.document import Document, Offset
+from infonium.document import BlockNumber, Document, Offset
 
-QUOTE_SCORE_FLOOR = 90.0
-QUOTE_LENGTH_FLOOR = 8
+RELOCATED_QUOTE_FLOOR = 12
+QUOTE_EDGE = (
+    " .,;:!?\"'"
+    "\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH COMMA}\N{FULLWIDTH SEMICOLON}"
+    "\N{FULLWIDTH COLON}\N{FULLWIDTH EXCLAMATION MARK}\N{FULLWIDTH QUESTION MARK}"
+)
+REFERENCE_MARK = re.compile(r"\[\d+\]")
+FORMAT_CHARACTER = "Cf"
+COMPATIBILITY_FORM: Final = "NFKC"
+PLAIN_PUNCTUATION = str.maketrans(
+    {
+        "\N{LEFT DOUBLE QUOTATION MARK}": '"',
+        "\N{RIGHT DOUBLE QUOTATION MARK}": '"',
+        "\N{DOUBLE LOW-9 QUOTATION MARK}": '"',
+        "\N{LEFT-POINTING DOUBLE ANGLE QUOTATION MARK}": '"',
+        "\N{RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK}": '"',
+        "\N{LEFT SINGLE QUOTATION MARK}": "'",
+        "\N{RIGHT SINGLE QUOTATION MARK}": "'",
+        "\N{SINGLE LOW-9 QUOTATION MARK}": "'",
+        "\N{HYPHEN}": "-",
+        "\N{NON-BREAKING HYPHEN}": "-",
+        "\N{FIGURE DASH}": "-",
+        "\N{EN DASH}": "-",
+        "\N{EM DASH}": "-",
+        "\N{HORIZONTAL BAR}": "-",
+    }
+)
 
 
 class Citation(BaseModel):
-    block: int
+    block_number: int
     quote: str
 
 
 class Anchor(BaseModel):
     document_id: str
-    block: Offset
+    block_number: BlockNumber
     start: Offset
     end: Offset
     quote: str
 
 
-class QuoteMatch(BaseModel):
-    block: Offset
-    start: Offset
-    end: Offset
-    score: float
+class Comparable(BaseModel):
+    text: str
+    origins: list[int]
 
 
-def quote_alignment(quote: str, text: str) -> ScoreAlignment:
-    alignment = fuzz.partial_ratio_alignment(quote, text)
-    if alignment is None:
-        raise TypeError("an alignment without a score cutoff always exists")
-    return alignment
+# A quote counts as found only when the source holds the same words. What may differ is how
+# they are typeset: letter case, spacing, the shape of quotation marks and dashes, invisible
+# format characters and footnote marks. The comparable form drops exactly those differences
+# and remembers, for each character it keeps, where in the text that character came from.
+def comparable(text: str) -> Comparable:
+    footnotes = {offset for mark in REFERENCE_MARK.finditer(text) for offset in range(*mark.span())}
+    kept: list[str] = []
+    origins: list[int] = []
+    for offset, character in enumerate(text):
+        if offset in footnotes or unicodedata.category(character) == FORMAT_CHARACTER:
+            continue
+        if character.isspace():
+            plain = "" if kept[-1:] in ([], [" "]) else " "
+        else:
+            compatible = unicodedata.normalize(COMPATIBILITY_FORM, character)
+            plain = compatible.translate(PLAIN_PUNCTUATION).casefold()
+        kept.extend(plain)
+        origins.extend([offset] * len(plain))
+    return Comparable(text="".join(kept), origins=origins)
 
 
-def quote_match(block: int, quote: str, text: str) -> QuoteMatch:
-    alignment = quote_alignment(quote, text)
-    found = text[alignment.dest_start : alignment.dest_end]
-    # A block shorter than the quote aligns with only part of it; that is not the quote.
-    whole_quote = alignment.src_end - alignment.src_start == len(quote)
-    return QuoteMatch(
-        block=block,
-        start=alignment.dest_start + len(found) - len(found.lstrip()),
-        end=alignment.dest_end - len(found) + len(found.rstrip()),
-        score=alignment.score if whole_quote else 0.0,
+# The block a quote is anchored in: the cited one when it holds the quote, otherwise the
+# nearest block that does. A short quote is not moved, since it could turn up anywhere.
+def quote_holders(comparables: list[Comparable], needle: str, cited_number: int) -> list[int]:
+    movable = len(needle) >= RELOCATED_QUOTE_FLOOR
+    holders = [
+        number
+        for number, candidate in enumerate(comparables)
+        if needle in candidate.text and (movable or number == cited_number)
+    ]
+    return sorted(holders, key=lambda number: abs(number - cited_number))[:1]
+
+
+def anchor_in(document: Document, block_number: int, held: Comparable, needle: str) -> Anchor:
+    found = held.text.index(needle)
+    start = held.origins[found]
+    end = held.origins[found + len(needle) - 1] + 1
+    return Anchor(
+        document_id=document.id,
+        block_number=block_number,
+        start=start,
+        end=end,
+        quote=document.blocks[block_number].text[start:end],
     )
 
 
-def best_match(document: Document, citation: Citation) -> QuoteMatch:
-    matches = [
-        quote_match(block=number, quote=citation.quote, text=block.text)
-        for number, block in enumerate(document.blocks)
-    ]
-    return max(matches, key=lambda match: (match.score, match.block == citation.block))
-
-
 def anchors_of(document: Document, citations: list[Citation]) -> list[Anchor]:
-    matches = [
-        best_match(document, citation)
-        for citation in citations
-        if len(citation.quote) >= QUOTE_LENGTH_FLOOR
-    ]
-    return [
-        Anchor(
-            document_id=document.id,
-            block=match.block,
-            start=match.start,
-            end=match.end,
-            quote=document.blocks[match.block].text[match.start : match.end],
+    comparables = [comparable(block.text) for block in document.blocks]
+    anchors: list[Anchor] = []
+    for citation in citations:
+        needle = comparable(citation.quote).text.strip(QUOTE_EDGE)
+        holders = quote_holders(comparables, needle, citation.block_number) if needle else []
+        anchors.extend(
+            anchor_in(document, number, comparables[number], needle) for number in holders
         )
-        for match in matches
-        if match.score >= QUOTE_SCORE_FLOOR
-    ]
+    return anchors

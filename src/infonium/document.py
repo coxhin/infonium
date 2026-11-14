@@ -4,7 +4,14 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-Offset = Annotated[int, Field(ge=0)]
+Offset = Annotated[
+    int,
+    Field(ge=0, description="A position in a block's text, counted in Unicode code points."),
+]
+BlockNumber = Annotated[
+    int, Field(ge=0, description="The position of a block in its document, counted from 0.")
+]
+Depth = Annotated[int, Field(ge=0, description="How many lists a list item is nested in.")]
 
 RowSeparator = Literal["\n"]
 CellSeparator = Literal["\t"]
@@ -53,7 +60,7 @@ class BlockKind(StrEnum):
     HEADING = "heading"
     PARAGRAPH = "paragraph"
     LIST_ITEM = "list_item"
-    QUOTE = "quote"
+    QUOTATION = "quotation"
     CODE = "code"
     TABLE = "table"
     FIGURE = "figure"
@@ -73,15 +80,19 @@ class Paragraph(Tagged):
 
 
 class ListItem(Tagged):
+    # One list item may be several blocks, when a code block or a nested list interrupts its
+    # text. The first carries the item's place in its list; the later ones continue it.
     kind: Literal[BlockKind.LIST_ITEM] = BlockKind.LIST_ITEM
     ordered: bool
-    depth: Offset
+    depth: Depth
+    position: Annotated[int, Field(ge=1)]
+    continues: bool
     text: str
     marks: list[Mark]
 
 
-class Quote(Tagged):
-    kind: Literal[BlockKind.QUOTE] = BlockKind.QUOTE
+class Quotation(Tagged):
+    kind: Literal[BlockKind.QUOTATION] = BlockKind.QUOTATION
     text: str
     marks: list[Mark]
 
@@ -108,7 +119,7 @@ class Figure(Tagged):
 
 
 Block = Annotated[
-    Heading | Paragraph | ListItem | Quote | Code | Table | Figure,
+    Heading | Paragraph | ListItem | Quotation | Code | Table | Figure,
     Field(discriminator="kind"),
 ]
 
@@ -119,11 +130,16 @@ class Document(BaseModel):
     id: str
     item_id: str
     extractor: str
+    snapshot: str
     blocks: Annotated[list[Block], Field(min_length=1)]
 
 
-def document_of(item_id: str, extractor: str, blocks: list[Block]) -> Document:
+def document_of(item_id: str, extractor: str, snapshot: str, blocks: list[Block]) -> Document:
     content = b"\n".join([item_id.encode(), extractor.encode(), BLOCKS.dump_json(blocks)])
     return Document(
-        id=sha256(content).hexdigest(), item_id=item_id, extractor=extractor, blocks=blocks
+        id=sha256(content).hexdigest(),
+        item_id=item_id,
+        extractor=extractor,
+        snapshot=snapshot,
+        blocks=blocks,
     )

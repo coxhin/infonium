@@ -1,4 +1,5 @@
 import re
+import string
 from enum import StrEnum
 
 import httpx
@@ -18,7 +19,7 @@ from infonium.document import (
     ListItem,
     Mark,
     Paragraph,
-    Quote,
+    Quotation,
     Style,
     StyleMark,
     Table,
@@ -32,6 +33,10 @@ USER_AGENT = (
 FETCH_TIMEOUT_SECONDS = 20.0
 WEB_SCHEMES = ("http://", "https://")
 WHITESPACE = re.compile(r"\s+")
+LINE_BREAK = "\n"
+OPENING_QUOTATION_MARK = "\N{LEFT DOUBLE QUOTATION MARK}"
+CLOSING_QUOTATION_MARK = "\N{RIGHT DOUBLE QUOTATION MARK}"
+LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
 
 
 class Tag(StrEnum):
@@ -49,6 +54,7 @@ class Tag(StrEnum):
     BREAK = "lb"
     HIGHLIGHT = "hi"
     REFERENCE = "ref"
+    DELETION = "del"
 
 
 RENDITION = "rend"
@@ -71,7 +77,8 @@ STYLES = {
 FLOW_TAGS = frozenset(
     {Tag.PARAGRAPH, Tag.HEAD, Tag.QUOTE, Tag.LIST, Tag.ITEM, Tag.TABLE, Tag.ROW, Tag.CELL}
 )
-SETTING_TAGS = frozenset({Tag.HEAD, Tag.ITEM, Tag.QUOTE})
+WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.ITEM, Tag.QUOTE})
+INLINE_HOST_TAGS = frozenset({Tag.PARAGRAPH, Tag.HEAD, Tag.HIGHLIGHT, Tag.REFERENCE})
 
 
 class UnreadablePage(Exception):
@@ -91,27 +98,37 @@ class WebPage(BaseModel):
 class Run:
     def __init__(self) -> None:
         self.text = ""
-        self.marks: list[Mark] = []
+        self.spans: list[tuple[etree._Element, int, int]] = []
 
     def write(self, piece: str | None) -> None:
         collapsed = WHITESPACE.sub(" ", piece or "")
-        at_line_start = self.text[-1:] in ("", " ", "\n")
+        at_line_start = self.text[-1:] in ("", " ", LINE_BREAK)
         self.text += collapsed.lstrip(" ") if at_line_start else collapsed
 
     def break_line(self) -> None:
         if self.text:
-            self.text = self.text.rstrip(" ") + "\n"
+            self.text = self.text.rstrip(" ") + LINE_BREAK
+
+    def write_content(self, element: etree._Element) -> None:
+        start = len(self.text)
+        self.write(element.text)
+        for child in element:
+            self.write_inline(child)
+            self.write(child.tail)
+        self.spans.append((element, start, len(self.text)))
 
     def write_inline(self, element: etree._Element) -> None:
         if element.tag == Tag.BREAK:
             self.break_line()
-        else:
-            start = len(self.text)
-            self.write(element.text)
-            for child in element:
-                self.write_inline(child)
-                self.write(child.tail)
-            self.marks.extend(marks_of(element, start=start, end=len(self.text)))
+        elif element.tag == Tag.QUOTE:
+            # The page's quotation marks around a short inline quotation come from its style
+            # sheet, so the text does not hold them.
+            self.write(OPENING_QUOTATION_MARK)
+            self.write_content(element)
+            self.write(CLOSING_QUOTATION_MARK)
+        elif element.tag != Tag.DELETION:
+            # Text the author struck out is left out: it no longer says what the page says.
+            self.write_content(element)
 
     def trimmed_text(self) -> str:
         return self.text.rstrip()
@@ -119,9 +136,10 @@ class Run:
     def trimmed_marks(self) -> list[Mark]:
         length = len(self.trimmed_text())
         return [
-            mark.model_copy(update={"end": min(mark.end, length)})
-            for mark in self.marks
-            if mark.start < min(mark.end, length)
+            mark
+            for element, start, end in self.spans
+            if start < min(end, length)
+            for mark in marks_of(element, start=start, end=min(end, length))
         ]
 
 
@@ -139,20 +157,36 @@ def marks_of(element: etree._Element, start: int, end: int) -> list[Mark]:
             return []
 
 
-def is_code_block(code: etree._Element) -> bool:
-    parent = code.getparent()
-    stands_alone = parent is not None and parent.tag == Tag.BODY
-    return stands_alone or "\n" in "".join(code.itertext()).strip()
+def verbatim_text(element: etree._Element) -> str:
+    pieces = [element.text or ""]
+    for child in element:
+        pieces.append(LINE_BREAK if child.tag == Tag.BREAK else verbatim_text(child))
+        pieces.append(child.tail or "")
+    return "".join(pieces)
 
 
 def is_inline(element: etree._Element) -> bool:
+    parent = element.getparent()
+    in_text = parent is not None and parent.tag in INLINE_HOST_TAGS
+    stands_alone = parent is not None and parent.tag == Tag.BODY
     match element.tag:
         case Tag.CODE:
-            return not is_code_block(element)
+            several_lines = LINE_BREAK in verbatim_text(element).strip()
+            return in_text or not (stands_alone or several_lines)
+        case Tag.QUOTE:
+            return in_text
         case Tag.GRAPHIC:
             return False
         case tag:
             return tag not in FLOW_TAGS
+
+
+# Preformatted text reaches us as a quotation; one that holds nothing but code is a listing
+# with one piece of code per line.
+def is_code_listing(quote: etree._Element) -> bool:
+    lines = list(quote)
+    loose_text = (quote.text or "") + "".join(line.tail or "" for line in lines)
+    return bool(lines) and all(line.tag == Tag.CODE for line in lines) and not loose_text.strip()
 
 
 def is_data_table(table: etree._Element) -> bool:
@@ -174,34 +208,41 @@ def table_text(table: etree._Element) -> str:
     return ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in rows if any(cells))
 
 
-def run_block(container: etree._Element, text: str, marks: list[Mark]) -> Block:
-    setting = next(
+def item_depth(item: etree._Element) -> int:
+    return len(list(item.iterancestors(Tag.LIST))) - 1
+
+
+def block_of_run(container: etree._Element, text: str, marks: list[Mark]) -> Block:
+    wrapper = next(
         (
             ancestor
             for ancestor in (container, *container.iterancestors())
-            if ancestor.tag in SETTING_TAGS
+            if ancestor.tag in WRAPPER_TAGS
         ),
         container,
     )
-    match setting.tag:
+    match wrapper.tag:
         case Tag.HEAD:
-            level = HEADING_LEVELS.get(setting.get(RENDITION, ""), DEFAULT_HEADING_LEVEL)
+            level = HEADING_LEVELS.get(wrapper.get(RENDITION, ""), DEFAULT_HEADING_LEVEL)
             return Heading(level=level, text=text, marks=marks)
         case Tag.ITEM:
-            lists = list(setting.iterancestors(Tag.LIST))
-            ordered = lists[0].get(RENDITION) == ORDERED_LIST
-            return ListItem(ordered=ordered, depth=len(lists) - 1, text=text, marks=marks)
+            return ListItem(
+                ordered=next(wrapper.iterancestors(Tag.LIST)).get(RENDITION) == ORDERED_LIST,
+                depth=item_depth(wrapper),
+                position=len(list(wrapper.itersiblings(Tag.ITEM, preceding=True))) + 1,
+                continues=False,
+                text=text,
+                marks=marks,
+            )
         case Tag.QUOTE:
-            return Quote(text=text, marks=marks)
+            return Quotation(text=text, marks=marks)
         case _:
             return Paragraph(text=text, marks=marks)
 
 
-def run_blocks(container: etree._Element, run: Run) -> list[Block]:
+def blocks_of_run(container: etree._Element, run: Run) -> list[Block]:
     text = run.trimmed_text()
-    # A run without a letter or digit is leftover punctuation, such as a stripped link's brackets.
-    has_content = any(character.isalnum() for character in text)
-    return [run_block(container, text=text, marks=run.trimmed_marks())] if has_content else []
+    return [block_of_run(container, text=text, marks=run.trimmed_marks())] if text else []
 
 
 def flowed_blocks(container: etree._Element) -> list[Block]:
@@ -212,11 +253,34 @@ def flowed_blocks(container: etree._Element) -> list[Block]:
         if is_inline(child):
             run.write_inline(child)
         else:
-            blocks.extend(run_blocks(container, run))
+            blocks.extend(blocks_of_run(container, run))
             blocks.extend(blocks_of(child))
             run = Run()
         run.write(child.tail)
-    blocks.extend(run_blocks(container, run))
+    blocks.extend(blocks_of_run(container, run))
+    return blocks
+
+
+# Every block of an item's own text after the first continues that item.
+def item_blocks(item: etree._Element) -> list[Block]:
+    depth = item_depth(item)
+    blocks: list[Block] = []
+    started = False
+    for block in flowed_blocks(item):
+        if isinstance(block, ListItem) and block.depth == depth:
+            blocks.append(
+                ListItem(
+                    ordered=block.ordered,
+                    depth=block.depth,
+                    position=block.position,
+                    continues=started,
+                    text=block.text,
+                    marks=block.marks,
+                )
+            )
+            started = True
+        else:
+            blocks.append(block)
     return blocks
 
 
@@ -231,9 +295,22 @@ def blocks_of(element: etree._Element) -> list[Block]:
             is_web_image = source.startswith(WEB_SCHEMES)
             return [Figure(source=source, text=description)] if is_web_image else []
         case Tag.CODE:
-            return [Code(text="".join(element.itertext()).strip("\n"))]
+            code = verbatim_text(element).strip(LINE_BREAK)
+            return [Code(text=code)] if code.strip() else []
+        case Tag.QUOTE if is_code_listing(element):
+            return [Code(text=LINE_BREAK.join(verbatim_text(line) for line in element))]
+        case Tag.ITEM:
+            return item_blocks(element)
         case _:
             return flowed_blocks(element)
+
+
+# A block of nothing but punctuation is what is left of something stripped from the page,
+# such as the brackets around a removed link.
+def is_leftover(block: Block) -> bool:
+    return isinstance(block, Heading | Paragraph | ListItem | Quotation) and all(
+        character in LEFTOVER_CHARACTERS for character in block.text
+    )
 
 
 def fetch_page(url: str) -> FetchedPage:
@@ -247,7 +324,7 @@ def fetch_page(url: str) -> FetchedPage:
     return FetchedPage(url=str(response.url.copy_with(fragment=None)), content=response.content)
 
 
-def read_page(content: bytes, url: str) -> WebPage:
+def extract_page(content: bytes, url: str) -> WebPage:
     extraction = trafilatura.bare_extraction(
         content,
         url=url,
@@ -258,8 +335,8 @@ def read_page(content: bytes, url: str) -> WebPage:
         with_metadata=True,
     )
     if not isinstance(extraction, Extraction):
-        raise UnreadablePage(url)
-    blocks = flowed_blocks(extraction.body)
+        raise UnreadablePage(f"no readable text at {url}")
+    blocks = [block for block in flowed_blocks(extraction.body) if not is_leftover(block)]
     if not blocks:
-        raise UnreadablePage(url)
+        raise UnreadablePage(f"no readable text at {url}")
     return WebPage(title=extraction.title or url, blocks=blocks)

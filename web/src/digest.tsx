@@ -1,19 +1,30 @@
 import { useEffect, useState } from "react";
-import { ensuredDigest, rewrittenDigest, type Anchor, type Digest } from "./client";
-import { hideAnchor, showAnchor } from "./highlight";
-import { useLoaded } from "./loading";
+import { ensureDigest, rewriteDigest, type Anchor, type Digest } from "./client";
+import { reasonOf, useLoaded } from "./loading";
+import { hideAnchor, showAnchor } from "./reader";
+
+type Pointing =
+  | { state: "nowhere" }
+  | { state: "shown"; anchor: Anchor }
+  | { state: "lost"; reason: string };
 
 function DigestBody({ digest }: { digest: Digest }) {
-  const [shown, setShown] = useState<Anchor>();
+  const [pointing, setPointing] = useState<Pointing>({ state: "nowhere" });
   useEffect(() => hideAnchor, []);
 
-  function show(anchor: Anchor) {
-    showAnchor(anchor);
-    setShown(anchor);
+  function point(anchor: Anchor) {
+    try {
+      showAnchor(anchor);
+      setPointing({ state: "shown", anchor });
+    } catch (error) {
+      hideAnchor();
+      setPointing({ state: "lost", reason: reasonOf(error) });
+    }
   }
 
   return (
     <>
+      {pointing.state === "lost" && <p className="status failed">{pointing.reason}</p>}
       {digest.sections.map((section, sectionIndex) => (
         <section key={sectionIndex}>
           <h2>{section.title}</h2>
@@ -26,8 +37,8 @@ function DigestBody({ digest }: { digest: Digest }) {
                     key={anchorIndex}
                     className="citation"
                     title={anchor.quote}
-                    aria-pressed={anchor === shown}
-                    onClick={() => show(anchor)}
+                    aria-pressed={pointing.state === "shown" && pointing.anchor === anchor}
+                    onClick={() => point(anchor)}
                   >
                     {anchorIndex + 1}
                   </button>
@@ -53,7 +64,7 @@ function DigestBody({ digest }: { digest: Digest }) {
 export function DigestPanel({ itemId }: { itemId: string }) {
   const [round, setRound] = useState(0);
   const digest = useLoaded(
-    () => (round === 0 ? ensuredDigest(itemId) : rewrittenDigest(itemId)),
+    () => (round === 0 ? ensureDigest(itemId) : rewriteDigest(itemId)),
     `${itemId}:${round}`,
   );
   return (

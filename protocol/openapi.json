@@ -3,9 +3,10 @@
     "schemas": {
       "Anchor": {
         "properties": {
-          "block": {
+          "block_number": {
+            "description": "The position of a block in its document, counted from 0.",
             "minimum": 0.0,
-            "title": "Block",
+            "title": "Block Number",
             "type": "integer"
           },
           "document_id": {
@@ -13,6 +14,7 @@
             "type": "string"
           },
           "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "End",
             "type": "integer"
@@ -22,6 +24,7 @@
             "type": "string"
           },
           "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "Start",
             "type": "integer"
@@ -29,7 +32,7 @@
         },
         "required": [
           "document_id",
-          "block",
+          "block_number",
           "start",
           "end",
           "quote"
@@ -57,12 +60,8 @@
         "title": "Code",
         "type": "object"
       },
-      "Digest": {
+      "DigestView": {
         "properties": {
-          "document_id": {
-            "title": "Document Id",
-            "type": "string"
-          },
           "input_tokens": {
             "title": "Input Tokens",
             "type": "integer"
@@ -81,25 +80,18 @@
             },
             "title": "Sections",
             "type": "array"
-          },
-          "written": {
-            "format": "date-time",
-            "title": "Written",
-            "type": "string"
           }
         },
         "required": [
-          "document_id",
           "model",
-          "written",
           "input_tokens",
           "output_tokens",
           "sections"
         ],
-        "title": "Digest",
+        "title": "DigestView",
         "type": "object"
       },
-      "Document": {
+      "DocumentView": {
         "properties": {
           "blocks": {
             "items": {
@@ -110,7 +102,7 @@
                   "heading": "#/components/schemas/Heading",
                   "list_item": "#/components/schemas/ListItem",
                   "paragraph": "#/components/schemas/Paragraph",
-                  "quote": "#/components/schemas/Quote",
+                  "quotation": "#/components/schemas/Quotation",
                   "table": "#/components/schemas/Table"
                 },
                 "propertyName": "kind"
@@ -126,7 +118,7 @@
                   "$ref": "#/components/schemas/ListItem"
                 },
                 {
-                  "$ref": "#/components/schemas/Quote"
+                  "$ref": "#/components/schemas/Quotation"
                 },
                 {
                   "$ref": "#/components/schemas/Code"
@@ -139,30 +131,19 @@
                 }
               ]
             },
-            "minItems": 1,
             "title": "Blocks",
             "type": "array"
           },
-          "extractor": {
-            "title": "Extractor",
-            "type": "string"
-          },
           "id": {
             "title": "Id",
-            "type": "string"
-          },
-          "item_id": {
-            "title": "Item Id",
             "type": "string"
           }
         },
         "required": [
           "id",
-          "item_id",
-          "extractor",
           "blocks"
         ],
-        "title": "Document",
+        "title": "DocumentView",
         "type": "object"
       },
       "Failure": {
@@ -267,11 +248,6 @@
       },
       "ItemEntry": {
         "properties": {
-          "added": {
-            "format": "date-time",
-            "title": "Added",
-            "type": "string"
-          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -288,8 +264,7 @@
         "required": [
           "id",
           "url",
-          "title",
-          "added"
+          "title"
         ],
         "title": "ItemEntry",
         "type": "object"
@@ -297,7 +272,7 @@
       "ItemReading": {
         "properties": {
           "document": {
-            "$ref": "#/components/schemas/Document"
+            "$ref": "#/components/schemas/DocumentView"
           },
           "entry": {
             "$ref": "#/components/schemas/ItemEntry"
@@ -313,6 +288,7 @@
       "LinkMark": {
         "properties": {
           "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "End",
             "type": "integer"
@@ -324,6 +300,7 @@
             "type": "string"
           },
           "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "Start",
             "type": "integer"
@@ -344,7 +321,12 @@
       },
       "ListItem": {
         "properties": {
+          "continues": {
+            "title": "Continues",
+            "type": "boolean"
+          },
           "depth": {
+            "description": "How many lists a list item is nested in.",
             "minimum": 0.0,
             "title": "Depth",
             "type": "integer"
@@ -380,6 +362,11 @@
             "title": "Ordered",
             "type": "boolean"
           },
+          "position": {
+            "minimum": 1.0,
+            "title": "Position",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -389,6 +376,8 @@
           "kind",
           "ordered",
           "depth",
+          "position",
+          "continues",
           "text",
           "marks"
         ],
@@ -453,11 +442,11 @@
         "title": "Paragraph",
         "type": "object"
       },
-      "Quote": {
+      "Quotation": {
         "properties": {
           "kind": {
-            "const": "quote",
-            "default": "quote",
+            "const": "quotation",
+            "default": "quotation",
             "title": "Kind",
             "type": "string"
           },
@@ -492,7 +481,7 @@
           "text",
           "marks"
         ],
-        "title": "Quote",
+        "title": "Quotation",
         "type": "object"
       },
       "Section": {
@@ -552,6 +541,7 @@
       "StyleMark": {
         "properties": {
           "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "End",
             "type": "integer"
@@ -563,6 +553,7 @@
             "type": "string"
           },
           "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
             "minimum": 0.0,
             "title": "Start",
             "type": "integer"
@@ -732,7 +723,7 @@
     },
     "/api/items/{item_id}": {
       "get": {
-        "operationId": "read_item_api_items__item_id__get",
+        "operationId": "item_reading_api_items__item_id__get",
         "parameters": [
           {
             "in": "path",
@@ -776,7 +767,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Read Item"
+        "summary": "Item Reading"
       }
     },
     "/api/items/{item_id}/digest": {
@@ -798,7 +789,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Digest"
+                  "$ref": "#/components/schemas/DigestView"
                 }
               }
             },
@@ -855,7 +846,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Digest"
+                  "$ref": "#/components/schemas/DigestView"
                 }
               }
             },

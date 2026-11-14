@@ -1,12 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { importedPage, type ItemEntry } from "./client";
+import { importPage, type ItemEntry } from "./client";
+import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
 
 type Importing = { state: "idle" } | { state: "running" } | { state: "failed"; reason: string };
-
-export function itemLink(itemId: string): string {
-  return `#/items/${itemId}`;
-}
 
 export function Library({
   entries,
@@ -24,7 +21,7 @@ export function Library({
     event.preventDefault();
     setImporting({ state: "running" });
     try {
-      const entry = await importedPage(url);
+      const entry = await importPage(url);
       setUrl("");
       setImporting({ state: "idle" });
       onImported(entry);

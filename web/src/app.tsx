@@ -1,11 +1,10 @@
 import { useState, useSyncExternalStore } from "react";
-import { itemReading, listedItems, type ItemEntry } from "./client";
+import { listItems, readItem, type ItemEntry } from "./client";
 import { DigestPanel } from "./digest";
-import { itemLink, Library } from "./library";
+import { Library } from "./library";
+import { itemLink, linkedItem } from "./links";
 import { useLoaded } from "./loading";
 import { Reader } from "./reader";
-
-const ITEM_LINK = /^#\/items\/([0-9a-f]+)$/;
 
 function onLinkChange(notify: () => void): () => void {
   addEventListener("hashchange", notify);
@@ -13,11 +12,11 @@ function onLinkChange(notify: () => void): () => void {
 }
 
 function selectedItem(): string | undefined {
-  return ITEM_LINK.exec(location.hash)?.[1];
+  return linkedItem(location.hash);
 }
 
 function ItemPane({ itemId }: { itemId: string }) {
-  const reading = useLoaded(() => itemReading(itemId), itemId);
+  const reading = useLoaded(() => readItem(itemId), itemId);
   return (
     <>
       <main>
@@ -33,7 +32,7 @@ function ItemPane({ itemId }: { itemId: string }) {
 export function App() {
   const selected = useSyncExternalStore(onLinkChange, selectedItem);
   const [imports, setImports] = useState(0);
-  const entries = useLoaded(listedItems, String(imports));
+  const entries = useLoaded(listItems, String(imports));
 
   function openImported(entry: ItemEntry) {
     setImports(imports + 1);
@@ -48,7 +47,9 @@ export function App() {
           <p className="status">粘贴一个网址导入文章，或从左侧打开一篇。</p>
         </main>
       ) : (
-        <ItemPane key={selected} itemId={selected} />
+        // An import may have replaced the open item's document, so the pane is rebuilt after
+        // every import and reads the item again.
+        <ItemPane key={`${selected}:${imports}`} itemId={selected} />
       )}
     </div>
   );

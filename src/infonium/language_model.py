@@ -1,8 +1,15 @@
 from openai import OpenAI
 from pydantic import BaseModel
 
+MODEL_TIMEOUT_SECONDS = 180.0
+MODEL_RETRIES = 1
+
 
 class UnstructuredCompletion(Exception):
+    pass
+
+
+class UnmeteredCompletion(Exception):
     pass
 
 
@@ -29,11 +36,18 @@ class LanguageModel:
             response_format=output,
         )
         message = completion.choices[0].message
-        usage = completion.usage
-        if message.parsed is None or usage is None:
+        if message.parsed is None:
             raise UnstructuredCompletion(message.refusal or "the model returned no parsed output")
+        if completion.usage is None:
+            raise UnmeteredCompletion("the endpoint reported no token usage")
         return StructuredCompletion(
             output=message.parsed,
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
+            input_tokens=completion.usage.prompt_tokens,
+            output_tokens=completion.usage.completion_tokens,
         )
+
+
+def openai_model(name: str) -> LanguageModel:
+    return LanguageModel(
+        client=OpenAI(timeout=MODEL_TIMEOUT_SECONDS, max_retries=MODEL_RETRIES), name=name
+    )
