@@ -1,0 +1,47 @@
+[project]
+name = "infonium"
+version = "0.1.0"
+description = "Digest web pages, PDFs, podcasts and videos into cited summaries that link back to the source."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "fastapi>=0.163.0",
+    "httpx>=0.28.1",
+    "openai>=3.51.0",
+    "pydantic-settings>=2.16.3",
+    "rapidfuzz>=3.14.6",
+    "sqlalchemy>=2.1.8",
+    "trafilatura>=2.3.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+infonium-protocol = "infonium.protocol:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "TID", "RUF"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "ruff>=0.17.5",
+    "types-lxml>=2026.2.16",
+]

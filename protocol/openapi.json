@@ -1,0 +1,899 @@
+{
+  "components": {
+    "schemas": {
+      "Anchor": {
+        "properties": {
+          "block": {
+            "minimum": 0.0,
+            "title": "Block",
+            "type": "integer"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "end": {
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "block",
+          "start",
+          "end",
+          "quote"
+        ],
+        "title": "Anchor",
+        "type": "object"
+      },
+      "Code": {
+        "properties": {
+          "kind": {
+            "const": "code",
+            "default": "code",
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "title": "Code",
+        "type": "object"
+      },
+      "Digest": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/Section"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "written": {
+            "format": "date-time",
+            "title": "Written",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "model",
+          "written",
+          "input_tokens",
+          "output_tokens",
+          "sections"
+        ],
+        "title": "Digest",
+        "type": "object"
+      },
+      "Document": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "code": "#/components/schemas/Code",
+                  "figure": "#/components/schemas/Figure",
+                  "heading": "#/components/schemas/Heading",
+                  "list_item": "#/components/schemas/ListItem",
+                  "paragraph": "#/components/schemas/Paragraph",
+                  "quote": "#/components/schemas/Quote",
+                  "table": "#/components/schemas/Table"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Heading"
+                },
+                {
+                  "$ref": "#/components/schemas/Paragraph"
+                },
+                {
+                  "$ref": "#/components/schemas/ListItem"
+                },
+                {
+                  "$ref": "#/components/schemas/Quote"
+                },
+                {
+                  "$ref": "#/components/schemas/Code"
+                },
+                {
+                  "$ref": "#/components/schemas/Table"
+                },
+                {
+                  "$ref": "#/components/schemas/Figure"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Blocks",
+            "type": "array"
+          },
+          "extractor": {
+            "title": "Extractor",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "extractor",
+          "blocks"
+        ],
+        "title": "Document",
+        "type": "object"
+      },
+      "Failure": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "Failure",
+        "type": "object"
+      },
+      "Figure": {
+        "properties": {
+          "kind": {
+            "const": "figure",
+            "default": "figure",
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "text"
+        ],
+        "title": "Figure",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Heading": {
+        "properties": {
+          "kind": {
+            "const": "heading",
+            "default": "heading",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "marks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "link": "#/components/schemas/LinkMark",
+                  "style": "#/components/schemas/StyleMark"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StyleMark"
+                },
+                {
+                  "$ref": "#/components/schemas/LinkMark"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "level",
+          "text",
+          "marks"
+        ],
+        "title": "Heading",
+        "type": "object"
+      },
+      "ItemEntry": {
+        "properties": {
+          "added": {
+            "format": "date-time",
+            "title": "Added",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "title",
+          "added"
+        ],
+        "title": "ItemEntry",
+        "type": "object"
+      },
+      "ItemReading": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/Document"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/ItemEntry"
+          }
+        },
+        "required": [
+          "entry",
+          "document"
+        ],
+        "title": "ItemReading",
+        "type": "object"
+      },
+      "LinkMark": {
+        "properties": {
+          "end": {
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "link",
+            "default": "link",
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "target",
+          "start",
+          "end"
+        ],
+        "title": "LinkMark",
+        "type": "object"
+      },
+      "ListItem": {
+        "properties": {
+          "depth": {
+            "minimum": 0.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "list_item",
+            "default": "list_item",
+            "title": "Kind",
+            "type": "string"
+          },
+          "marks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "link": "#/components/schemas/LinkMark",
+                  "style": "#/components/schemas/StyleMark"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StyleMark"
+                },
+                {
+                  "$ref": "#/components/schemas/LinkMark"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "array"
+          },
+          "ordered": {
+            "title": "Ordered",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ordered",
+          "depth",
+          "text",
+          "marks"
+        ],
+        "title": "ListItem",
+        "type": "object"
+      },
+      "PageImport": {
+        "properties": {
+          "url": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "PageImport",
+        "type": "object"
+      },
+      "Paragraph": {
+        "properties": {
+          "kind": {
+            "const": "paragraph",
+            "default": "paragraph",
+            "title": "Kind",
+            "type": "string"
+          },
+          "marks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "link": "#/components/schemas/LinkMark",
+                  "style": "#/components/schemas/StyleMark"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StyleMark"
+                },
+                {
+                  "$ref": "#/components/schemas/LinkMark"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "marks"
+        ],
+        "title": "Paragraph",
+        "type": "object"
+      },
+      "Quote": {
+        "properties": {
+          "kind": {
+            "const": "quote",
+            "default": "quote",
+            "title": "Kind",
+            "type": "string"
+          },
+          "marks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "link": "#/components/schemas/LinkMark",
+                  "style": "#/components/schemas/StyleMark"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StyleMark"
+                },
+                {
+                  "$ref": "#/components/schemas/LinkMark"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "marks"
+        ],
+        "title": "Quote",
+        "type": "object"
+      },
+      "Section": {
+        "properties": {
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "statements"
+        ],
+        "title": "Section",
+        "type": "object"
+      },
+      "Statement": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/Anchor"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "anchors"
+        ],
+        "title": "Statement",
+        "type": "object"
+      },
+      "Style": {
+        "enum": [
+          "strong",
+          "emphasis",
+          "underline",
+          "code",
+          "subscript",
+          "superscript"
+        ],
+        "title": "Style",
+        "type": "string"
+      },
+      "StyleMark": {
+        "properties": {
+          "end": {
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "style",
+            "default": "style",
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          }
+        },
+        "required": [
+          "kind",
+          "style",
+          "start",
+          "end"
+        ],
+        "title": "StyleMark",
+        "type": "object"
+      },
+      "Table": {
+        "properties": {
+          "cell_separator": {
+            "const": "\t",
+            "default": "\t",
+            "title": "Cell Separator",
+            "type": "string"
+          },
+          "kind": {
+            "const": "table",
+            "default": "table",
+            "title": "Kind",
+            "type": "string"
+          },
+          "row_separator": {
+            "const": "\n",
+            "default": "\n",
+            "title": "Row Separator",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "row_separator",
+          "cell_separator"
+        ],
+        "title": "Table",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "infonium",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/items": {
+      "get": {
+        "operationId": "list_items_api_items_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ItemEntry"
+                  },
+                  "title": "Response List Items Api Items Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Items"
+      },
+      "post": {
+        "operationId": "import_page_api_items_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Import Page"
+      }
+    },
+    "/api/items/{item_id}": {
+      "get": {
+        "operationId": "read_item_api_items__item_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemReading"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Item"
+      }
+    },
+    "/api/items/{item_id}/digest": {
+      "post": {
+        "operationId": "rewrite_digest_api_items__item_id__digest_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Digest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Rewrite Digest"
+      },
+      "put": {
+        "operationId": "ensure_digest_api_items__item_id__digest_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Digest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Ensure Digest"
+      }
+    }
+  }
+}
