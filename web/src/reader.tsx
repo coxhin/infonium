@@ -188,29 +188,34 @@ function rangeIn(blockElement: Element, start: number, end: number): Range {
   throw new Error(`characters ${start}–${end} lie outside the block's text`);
 }
 
-function scrollerOf(node: Node): Element {
-  for (let ancestor = node.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
-    const overflow = getComputedStyle(ancestor).overflowY;
-    if (overflow === "auto" || overflow === "scroll") {
-      return ancestor;
-    }
-  }
-  return document.scrollingElement ?? document.documentElement;
+function scrolls(overflow: string): boolean {
+  return overflow === "auto" || overflow === "scroll";
 }
 
-// Puts the passage in the middle of whatever scrolls it, or at the top when it is taller than
-// the view. The jump is instant: an animated scroll aims at where the passage was when it
-// started, and misses once images on the way load and push the passage down.
+// Puts the passage in the middle of everything around it that has room to scroll, innermost
+// first: a table that scrolls sideways, then the column that holds the reader. A passage
+// larger than the view is put at its start. The jump is instant: an animated scroll aims at
+// where the passage was when it started, and misses once images on the way load and push the
+// passage down.
 function bringIntoView(passage: Range): void {
-  const scroller = scrollerOf(passage.startContainer);
-  const view =
-    scroller === document.scrollingElement
-      ? new DOMRect(0, 0, innerWidth, innerHeight)
-      : scroller.getBoundingClientRect();
-  const place = passage.getBoundingClientRect();
-  scroller.scrollBy({
-    top: place.top - view.top - Math.max(0, (view.height - place.height) / 2),
-  });
+  for (
+    let ancestor = passage.startContainer.parentElement;
+    ancestor !== null;
+    ancestor = ancestor.parentElement
+  ) {
+    const isPage = ancestor === document.scrollingElement;
+    const style = getComputedStyle(ancestor);
+    const view = isPage ? new DOMRect(0, 0, 0, 0) : ancestor.getBoundingClientRect();
+    const place = passage.getBoundingClientRect();
+    if ((isPage || scrolls(style.overflowY)) && ancestor.scrollHeight > ancestor.clientHeight) {
+      const margin = Math.max(0, (ancestor.clientHeight - place.height) / 2);
+      ancestor.scrollBy({ top: place.top - view.top - margin });
+    }
+    if ((isPage || scrolls(style.overflowX)) && ancestor.scrollWidth > ancestor.clientWidth) {
+      const margin = Math.max(0, (ancestor.clientWidth - place.width) / 2);
+      ancestor.scrollBy({ left: place.left - view.left - margin });
+    }
+  }
 }
 
 // Highlights an anchor's passage, and refuses when the page does not show the document the

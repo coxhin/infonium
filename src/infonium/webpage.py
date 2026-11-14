@@ -1,10 +1,11 @@
 import re
 import string
 from enum import StrEnum
+from itertools import takewhile
 
 import httpx
 import trafilatura
-from lxml import etree
+from lxml import etree, html
 from pydantic import BaseModel
 from trafilatura.settings import Document as Extraction
 
@@ -38,9 +39,16 @@ OPENING_QUOTATION_MARK = "\N{LEFT DOUBLE QUOTATION MARK}"
 CLOSING_QUOTATION_MARK = "\N{RIGHT DOUBLE QUOTATION MARK}"
 LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
 
+INLINE_QUOTATION = "q"
+CODE_ELEMENT = "code"
+BARE_PREFORMATTED = "//pre[not(.//code)]"
+CODE_IN_TEXT = "//code[not(ancestor::pre)]"
+
 
 class Tag(StrEnum):
     BODY = "body"
+    DIVISION = "div"
+    ANONYMOUS_BLOCK = "ab"
     PARAGRAPH = "p"
     HEAD = "head"
     QUOTE = "quote"
@@ -62,6 +70,7 @@ TARGET = "target"
 SOURCE = "src"
 DESCRIPTION = "alt"
 ORDERED_LIST = "ol"
+DEFINITION_LIST = "dl"
 HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 DEFAULT_HEADING_LEVEL = 2
 CROWDED_CELL_BLOCKS = 5
@@ -75,10 +84,20 @@ STYLES = {
     "#sup": Style.SUPERSCRIPT,
 }
 FLOW_TAGS = frozenset(
-    {Tag.PARAGRAPH, Tag.HEAD, Tag.QUOTE, Tag.LIST, Tag.ITEM, Tag.TABLE, Tag.ROW, Tag.CELL}
+    {
+        Tag.DIVISION,
+        Tag.ANONYMOUS_BLOCK,
+        Tag.PARAGRAPH,
+        Tag.HEAD,
+        Tag.QUOTE,
+        Tag.LIST,
+        Tag.ITEM,
+        Tag.TABLE,
+        Tag.ROW,
+        Tag.CELL,
+    }
 )
-WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.ITEM, Tag.QUOTE})
-INLINE_HOST_TAGS = frozenset({Tag.PARAGRAPH, Tag.HEAD, Tag.HIGHLIGHT, Tag.REFERENCE})
+WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 
 
 class UnreadablePage(Exception):
@@ -95,6 +114,34 @@ class WebPage(BaseModel):
     blocks: list[Block]
 
 
+# The extractor turns a short inline quotation and a block quotation into the same element,
+# and so with preformatted text and code, and with code in a sentence and code on lines of
+# its own. The page is rewritten first so that each pair stays apart: an inline quotation
+# becomes its words inside quotation marks, preformatted text is wrapped as code, and code
+# in a sentence loses its line breaks.
+def prepared_page(content: bytes, url: str) -> html.HtmlElement:
+    page = trafilatura.load_html(content)
+    if page is None:
+        raise UnreadablePage(f"no readable text at {url}")
+    for quotation in list(page.iter(INLINE_QUOTATION)):
+        quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
+        if len(quotation):
+            quotation[-1].tail = (quotation[-1].tail or "") + CLOSING_QUOTATION_MARK
+        else:
+            quotation.text += CLOSING_QUOTATION_MARK
+        quotation.drop_tag()
+    for preformatted in page.xpath(BARE_PREFORMATTED):
+        code = html.Element(CODE_ELEMENT)
+        code.text, preformatted.text = preformatted.text, None
+        code.extend(list(preformatted))
+        preformatted.append(code)
+    for code in page.xpath(CODE_IN_TEXT):
+        for piece in code.iter():
+            piece.text = WHITESPACE.sub(" ", piece.text or "")
+            piece.tail = piece.tail if piece is code else WHITESPACE.sub(" ", piece.tail or "")
+    return page
+
+
 class Run:
     def __init__(self) -> None:
         self.text = ""
@@ -109,26 +156,17 @@ class Run:
         if self.text:
             self.text = self.text.rstrip(" ") + LINE_BREAK
 
-    def write_content(self, element: etree._Element) -> None:
-        start = len(self.text)
-        self.write(element.text)
-        for child in element:
-            self.write_inline(child)
-            self.write(child.tail)
-        self.spans.append((element, start, len(self.text)))
-
     def write_inline(self, element: etree._Element) -> None:
         if element.tag == Tag.BREAK:
             self.break_line()
-        elif element.tag == Tag.QUOTE:
-            # The page's quotation marks around a short inline quotation come from its style
-            # sheet, so the text does not hold them.
-            self.write(OPENING_QUOTATION_MARK)
-            self.write_content(element)
-            self.write(CLOSING_QUOTATION_MARK)
         elif element.tag != Tag.DELETION:
             # Text the author struck out is left out: it no longer says what the page says.
-            self.write_content(element)
+            start = len(self.text)
+            self.write(element.text)
+            for child in element:
+                self.write_inline(child)
+                self.write(child.tail)
+            self.spans.append((element, start, len(self.text)))
 
     def trimmed_text(self) -> str:
         return self.text.rstrip()
@@ -166,23 +204,19 @@ def verbatim_text(element: etree._Element) -> str:
 
 
 def is_inline(element: etree._Element) -> bool:
-    parent = element.getparent()
-    in_text = parent is not None and parent.tag in INLINE_HOST_TAGS
-    stands_alone = parent is not None and parent.tag == Tag.BODY
     match element.tag:
         case Tag.CODE:
+            parent = element.getparent()
+            stands_alone = parent is not None and parent.tag == Tag.BODY
             several_lines = LINE_BREAK in verbatim_text(element).strip()
-            return in_text or not (stands_alone or several_lines)
-        case Tag.QUOTE:
-            return in_text
+            return not (stands_alone or several_lines)
         case Tag.GRAPHIC:
             return False
         case tag:
             return tag not in FLOW_TAGS
 
 
-# Preformatted text reaches us as a quotation; one that holds nothing but code is a listing
-# with one piece of code per line.
+# A quotation that holds nothing but code is a listing with one piece of code per line.
 def is_code_listing(quote: etree._Element) -> bool:
     lines = list(quote)
     loose_text = (quote.text or "") + "".join(line.tail or "" for line in lines)
@@ -208,32 +242,17 @@ def table_text(table: etree._Element) -> str:
     return ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in rows if any(cells))
 
 
-def item_depth(item: etree._Element) -> int:
-    return len(list(item.iterancestors(Tag.LIST))) - 1
-
-
+# A run takes its kind from the nearest heading or quotation around it. The search stops at
+# a list item, whose runs are told apart from the rest of its content by item_blocks.
 def block_of_run(container: etree._Element, text: str, marks: list[Mark]) -> Block:
-    wrapper = next(
-        (
-            ancestor
-            for ancestor in (container, *container.iterancestors())
-            if ancestor.tag in WRAPPER_TAGS
-        ),
-        container,
+    within_item = takewhile(
+        lambda element: element.tag != Tag.ITEM, (container, *container.iterancestors())
     )
+    wrapper = next((element for element in within_item if element.tag in WRAPPER_TAGS), container)
     match wrapper.tag:
         case Tag.HEAD:
             level = HEADING_LEVELS.get(wrapper.get(RENDITION, ""), DEFAULT_HEADING_LEVEL)
             return Heading(level=level, text=text, marks=marks)
-        case Tag.ITEM:
-            return ListItem(
-                ordered=next(wrapper.iterancestors(Tag.LIST)).get(RENDITION) == ORDERED_LIST,
-                depth=item_depth(wrapper),
-                position=len(list(wrapper.itersiblings(Tag.ITEM, preceding=True))) + 1,
-                continues=False,
-                text=text,
-                marks=marks,
-            )
         case Tag.QUOTE:
             return Quotation(text=text, marks=marks)
         case _:
@@ -250,7 +269,9 @@ def flowed_blocks(container: etree._Element) -> list[Block]:
     run = Run()
     run.write(container.text)
     for child in container:
-        if is_inline(child):
+        # Two line breaks in a row are how pages without paragraph elements part paragraphs.
+        parts_paragraphs = child.tag == Tag.BREAK and run.text.endswith(LINE_BREAK)
+        if is_inline(child) and not parts_paragraphs:
             run.write_inline(child)
         else:
             blocks.extend(blocks_of_run(container, run))
@@ -261,24 +282,35 @@ def flowed_blocks(container: etree._Element) -> list[Block]:
     return blocks
 
 
-# Every block of an item's own text after the first continues that item.
+# The terms and descriptions of a definition list read as paragraphs, not as list items.
+def is_definition(item: etree._Element) -> bool:
+    return next(item.iterancestors(Tag.LIST)).get(RENDITION) == DEFINITION_LIST
+
+
+# The paragraphs of an item's own text become its list items: the first carries the item's
+# place in the list, and each later one continues it.
 def item_blocks(item: etree._Element) -> list[Block]:
-    depth = item_depth(item)
+    enclosing = list(item.iterancestors(Tag.LIST))
+    ordered = enclosing[0].get(RENDITION) == ORDERED_LIST
+    depth = len(enclosing) - 1
+    position = len(list(item.itersiblings(Tag.ITEM, preceding=True))) + 1
     blocks: list[Block] = []
-    started = False
     for block in flowed_blocks(item):
-        if isinstance(block, ListItem) and block.depth == depth:
+        if isinstance(block, Paragraph):
+            # Items of lists nested in this one are deeper, so only its own count here.
+            continues = any(
+                isinstance(earlier, ListItem) and earlier.depth == depth for earlier in blocks
+            )
             blocks.append(
                 ListItem(
-                    ordered=block.ordered,
-                    depth=block.depth,
-                    position=block.position,
-                    continues=started,
+                    ordered=ordered,
+                    depth=depth,
+                    position=position,
+                    continues=continues,
                     text=block.text,
                     marks=block.marks,
                 )
             )
-            started = True
         else:
             blocks.append(block)
     return blocks
@@ -298,9 +330,13 @@ def blocks_of(element: etree._Element) -> list[Block]:
             code = verbatim_text(element).strip(LINE_BREAK)
             return [Code(text=code)] if code.strip() else []
         case Tag.QUOTE if is_code_listing(element):
-            return [Code(text=LINE_BREAK.join(verbatim_text(line) for line in element))]
-        case Tag.ITEM:
+            lines = [verbatim_text(line).strip(LINE_BREAK) for line in element]
+            code = LINE_BREAK.join(lines)
+            return [Code(text=code)] if code.strip() else []
+        case Tag.ITEM if not is_definition(element):
             return item_blocks(element)
+        case Tag.BREAK:
+            return []
         case _:
             return flowed_blocks(element)
 
@@ -326,7 +362,7 @@ def fetch_page(url: str) -> FetchedPage:
 
 def extract_page(content: bytes, url: str) -> WebPage:
     extraction = trafilatura.bare_extraction(
-        content,
+        prepared_page(content, url),
         url=url,
         include_comments=False,
         include_formatting=True,

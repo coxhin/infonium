@@ -25,5 +25,5 @@ check:
 	uv run ruff format --check
 	uv run mypy
 	pnpm --dir web exec tsc --noEmit
-	$(MAKE) protocol
-	git diff --exit-code -- protocol/openapi.json web/src/protocol.d.ts
+	uv run infonium-protocol | diff - protocol/openapi.json
+	pnpm --dir web exec openapi-typescript ../protocol/openapi.json | diff - web/src/protocol.d.ts

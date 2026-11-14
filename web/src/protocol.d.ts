@@ -187,7 +187,7 @@ export interface components {
             continues: boolean;
             /**
              * Depth
-             * @description How many lists a list item is nested in.
+             * @description How many lists enclose the list an item belongs to; 0 for none.
              */
             depth: number;
             /**

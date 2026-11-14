@@ -326,7 +326,7 @@
             "type": "boolean"
           },
           "depth": {
-            "description": "How many lists a list item is nested in.",
+            "description": "How many lists enclose the list an item belongs to; 0 for none.",
             "minimum": 0.0,
             "title": "Depth",
             "type": "integer"

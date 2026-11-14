@@ -11,7 +11,10 @@ Offset = Annotated[
 BlockNumber = Annotated[
     int, Field(ge=0, description="The position of a block in its document, counted from 0.")
 ]
-Depth = Annotated[int, Field(ge=0, description="How many lists a list item is nested in.")]
+Depth = Annotated[
+    int,
+    Field(ge=0, description="How many lists enclose the list an item belongs to; 0 for none."),
+]
 
 RowSeparator = Literal["\n"]
 CellSeparator = Literal["\t"]
