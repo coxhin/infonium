@@ -1,17 +1,18 @@
 import subprocess
 import sys
 import wave
-from collections.abc import Iterator
+from collections.abc import Generator, Iterable, Iterator
+from contextlib import closing
 from io import BytesIO
 from math import exp, sumprod
 from pathlib import Path
 from tempfile import TemporaryFile
-from typing import Final
+from typing import Annotated, Final, Self
 
 from openai import OpenAI
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
-from infonium.document import Seconds, UnreadableSource
+from infonium.document import Seconds, UnreadableSource, has_words
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
@@ -32,19 +33,15 @@ ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
 # network, as a playlist can, does not send it there.
 LOCAL_FILE = "file"
 
-# How loud the sound is, is measured over frames a tenth of a second long.
-FRAMES_PER_SECOND = 10
-FRAME_BYTES = BYTES_PER_SECOND // FRAMES_PER_SECOND
+# How loud the sound is, is measured over slivers a tenth of a second long.
+SLIVERS_PER_SECOND = 10
+SLIVER_BYTES = BYTES_PER_SECOND // SLIVERS_PER_SECOND
 # A recogniser hears half a minute at a time. Given more, it stitches what it hears together
 # itself, and there it repeats itself, drops speech and gives times past the end. So a
 # recording is cut here into pieces the length of an utterance, and each piece is one
 # request: no piece is longer than 16 seconds, and where a recogniser returns a piece as
 # one segment, that is how long an utterance gets.
-PIECE_FRAMES = 16 * FRAMES_PER_SECOND
-# A piece ends in the middle of the quietest 0.4 seconds of the later half of what it may
-# hold. Speech pauses that long between sentences and not inside a word, so where there is
-# such a pause the cut falls between two words.
-PAUSE_FRAMES = 4
+PIECE_SLIVERS = 16 * SLIVERS_PER_SECOND
 
 PIECE_NAME = "piece.wav"
 WAVE_MEDIA_TYPE = "audio/wav"
@@ -53,6 +50,9 @@ SEGMENT_TIMES: Final = "segment"
 # The longest a recogniser may take over one piece, which covers loading its model first.
 RECOGNISER_TIMEOUT_SECONDS = 120.0
 RECOGNISER_RETRIES = 1
+
+Probability = Annotated[float, Field(ge=0, le=1)]
+LogProbability = Annotated[float, Field(le=0, allow_inf_nan=False)]
 
 
 class Recogniser(BaseModel):
@@ -73,37 +73,46 @@ class Piece(BaseModel):
 class Segment(BaseModel):
     # What a recogniser says of one stretch of a piece: the words, when in the piece they
     # are spoken, and its own doubt about them, as the probability that nothing is spoken
-    # there and the mean log probability of the words it wrote.
+    # there and the mean log probability of the words it wrote. A reply whose times or
+    # doubts are not such numbers is refused here, where it comes in.
     text: str
-    start: float
-    end: float
-    no_speech_prob: float
-    avg_logprob: float
+    start: Seconds
+    end: Seconds
+    no_speech_prob: Probability
+    avg_logprob: LogProbability
+
+    @model_validator(mode="after")
+    def ends_after_it_starts(self) -> Self:
+        if self.end < self.start:
+            raise ValueError("a segment ends no earlier than it starts")
+        return self
 
 
 class Recognition(BaseModel):
     segments: list[Segment]
 
 
-def cut_frame(loudness: list[float]) -> int:
-    # The frame before which a piece that has reached its limit ends.
+def cut_sliver(loudness: list[float]) -> int:
+    # The sliver before which a piece that has reached its limit ends: the quietest of the
+    # later half of what the piece may hold. Speech falls that quiet between words even where
+    # it is too fast to pause, and a longer stretch weighed as one can be the quietest with a
+    # short word between two gaps in its middle.
     first = len(loudness) // 2
-    stretches = [
-        sum(loudness[start : start + PAUSE_FRAMES])
-        for start in range(first, len(loudness) - PAUSE_FRAMES + 1)
-    ]
-    return first + stretches.index(min(stretches)) + PAUSE_FRAMES // 2
+    later = loudness[first:]
+    return first + later.index(min(later))
 
 
-def piece_after(frames_before: int, sound: bytes) -> Piece:
+def piece_after(slivers_before: int, sound: bytes) -> Piece:
     return Piece(
-        moment=frames_before / FRAMES_PER_SECOND,
+        moment=slivers_before / SLIVERS_PER_SECOND,
         duration=len(sound) / BYTES_PER_SECOND,
         sound=sound,
     )
 
 
-def pieces(recording: Path) -> Iterator[Piece]:
+def decoded(recording: Path) -> Generator[bytes]:
+    # The sound of a recording as the decoder gives it, a sliver at a time; the last may be a
+    # short one.
     command = [
         DECODER,
         "-nostdin",
@@ -132,27 +141,41 @@ def pieces(recording: Path) -> Iterator[Piece]:
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
-        sound = bytearray()
-        loudness: list[float] = []
-        frames_before = 0
-        while frame := decoder.stdout.read(FRAME_BYTES):
-            samples = memoryview(frame).cast(SAMPLE_TYPE_CODE)
-            sound += frame
-            loudness.append(sumprod(samples, samples))
-            if len(loudness) == PIECE_FRAMES:
-                cut = cut_frame(loudness)
-                yield piece_after(frames_before, bytes(sound[: cut * FRAME_BYTES]))
-                frames_before += cut
-                del sound[: cut * FRAME_BYTES]
-                del loudness[:cut]
-        if decoder.wait() != 0:
+        sliver = decoder.stdout.read(SLIVER_BYTES)
+        while len(sliver) == SLIVER_BYTES:
+            yield sliver
+            sliver = decoder.stdout.read(SLIVER_BYTES)
+        # What is left when the sound ends is given only once the decoder is known to have
+        # ended well: one that was stopped may leave half a sample.
+        status = decoder.wait()
+        if status != 0:
             complaints.seek(0)
             first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
-            raise UnreadableSource(
-                f"no sound could be read from {recording.name}: {first_complaint}"
-            )
-        if sound:
-            yield piece_after(frames_before, bytes(sound))
+            # A decoder that is stopped from outside complains of nothing; how it ended is
+            # then the reason, in the words Python has for it.
+            ending = subprocess.CalledProcessError(status, DECODER)
+            raise UnreadableSource(f"no sound could be read: {first_complaint or ending}")
+        if sliver:
+            yield sliver
+
+
+def pieces(slivers: Iterable[bytes]) -> Iterator[Piece]:
+    # Sound that arrives a sliver at a time, cut into pieces.
+    sound = bytearray()
+    loudness: list[float] = []
+    slivers_before = 0
+    for sliver in slivers:
+        samples = memoryview(sliver).cast(SAMPLE_TYPE_CODE)
+        sound += sliver
+        loudness.append(sumprod(samples, samples))
+        if len(loudness) == PIECE_SLIVERS:
+            cut = cut_sliver(loudness)
+            yield piece_after(slivers_before, bytes(sound[: cut * SLIVER_BYTES]))
+            slivers_before += cut
+            del sound[: cut * SLIVER_BYTES]
+            del loudness[:cut]
+    if sound:
+        yield piece_after(slivers_before, bytes(sound))
 
 
 def wave_file(sound: bytes) -> bytes:
@@ -179,7 +202,7 @@ def utterances_of(recognition: Recognition, piece: Piece) -> list[Utterance]:
             duration=min(segment.end, piece.duration) - segment.start,
         )
         for segment in recognition.segments
-        if segment.text.strip()
+        if has_words(segment.text)
         and segment.start < piece.duration
         and segment.no_speech_prob < exp(segment.avg_logprob)
     ]
@@ -189,19 +212,24 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
     # What is spoken in a recording, as a recogniser behind OpenAI's transcription API hears
     # it. The recogniser detects the language, piece by piece. A recording without speech
     # has no utterances.
-    endpoint = OpenAI(
-        base_url=recogniser.base_url,
-        api_key=recogniser.api_key.get_secret_value(),
-        timeout=RECOGNISER_TIMEOUT_SECONDS,
-        max_retries=RECOGNISER_RETRIES,
-    )
     utterances: list[Utterance] = []
-    for piece in pieces(recording):
-        reply = endpoint.audio.transcriptions.with_raw_response.create(
-            file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
-            model=recogniser.model,
-            response_format=TIMED_REPLY,
-            timestamp_granularities=[SEGMENT_TIMES],
-        )
-        utterances.extend(utterances_of(Recognition.model_validate_json(reply.text), piece))
+    # The connection to the recogniser and the decoder are ended with the reading, however
+    # the reading ends.
+    with (
+        OpenAI(
+            base_url=recogniser.base_url,
+            api_key=recogniser.api_key.get_secret_value(),
+            timeout=RECOGNISER_TIMEOUT_SECONDS,
+            max_retries=RECOGNISER_RETRIES,
+        ) as endpoint,
+        closing(decoded(recording)) as slivers,
+    ):
+        for piece in pieces(slivers):
+            reply = endpoint.audio.transcriptions.with_raw_response.create(
+                file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
+                model=recogniser.model,
+                response_format=TIMED_REPLY,
+                timestamp_granularities=[SEGMENT_TIMES],
+            )
+            utterances.extend(utterances_of(Recognition.model_validate_json(reply.text), piece))
     return Transcript(utterances=utterances)
