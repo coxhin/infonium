@@ -8,6 +8,7 @@ from pypdfium2 import PdfDocument
 
 from infonium.document import (
     CELL_SEPARATOR,
+    LINE_BREAK,
     ROW_SEPARATOR,
     SOFT_HYPHEN,
     WORD_GAP,
@@ -45,7 +46,6 @@ from infonium.mineru import (
     picture_pages,
     word_lines,
 )
-from infonium.webpage import LINE_BREAK
 
 EXTRACTOR = "pdf/1"
 

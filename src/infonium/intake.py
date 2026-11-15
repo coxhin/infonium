@@ -98,9 +98,10 @@ def declared_media_type(declared: str) -> str:
 
 
 def media_type_of(file: Path, declared: str) -> str:
-    # What the bytes themselves say wins over what was declared. A web page cannot be told
-    # by its bytes: a file is one when it is declared one, or when nothing is declared and
-    # it opens like one.
+    # Only the bytes themselves tell what a file is: a name or a server may call anything a
+    # recording, and a program that plays one would then follow whatever the file says. A
+    # web page is the one kind bytes cannot tell: a file is one when it is declared one, or
+    # when nothing is declared and it opens like one.
     recognised = filetype.guess(file)
     if recognised is not None:
         return str(recognised.mime)
@@ -110,7 +111,7 @@ def media_type_of(file: Path, declared: str) -> str:
     is_page = named in PAGE_MEDIA_TYPES or (
         named == UNKNOWN_MEDIA_TYPE and opening.startswith(PAGE_OPENINGS)
     )
-    return HTML_MEDIA_TYPE if is_page else named
+    return HTML_MEDIA_TYPE if is_page else UNKNOWN_MEDIA_TYPE
 
 
 def fetched(url: str, directory: Path) -> Source:
@@ -200,7 +201,7 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
             file=source.file,
             media_type=source.media_type,
         )
-    raise UnreadableSource(f"infonium cannot read {source.media_type}: {source.reference}")
+    raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
 
 
 def failure_reason(error: BaseException) -> str:

@@ -52,6 +52,7 @@ ROW_SEPARATOR: RowSeparator = "\n"
 CELL_SEPARATOR: CellSeparator = "\t"
 
 WORD_GAP = " "
+LINE_BREAK = "\n"
 SOFT_HYPHEN = "\N{SOFT HYPHEN}"
 # Chinese characters, kana, and the punctuation and full-width forms written with them. Text
 # in these takes no space between words.
@@ -310,7 +311,7 @@ def appended(text: str, words: str) -> str:
     return f"{whole}{WORD_GAP if apart else ''}{words}"
 
 
-def flowed(part: str) -> str:
+def on_one_line(part: str) -> str:
     # One part of a text as it would be written on one line: runs of spaces become one space,
     # and a line break inside the part joins its lines as parts are joined. A part may end in
     # a soft hyphen, for a word that goes on in the next part.
@@ -318,9 +319,18 @@ def flowed(part: str) -> str:
     for line in part.splitlines():
         words = WORD_GAP.join(line.split())
         text = appended(text, words) if words else text
-    if not text.removesuffix(SOFT_HYPHEN):
-        raise ValueError(NO_WORDS)
     return text
+
+
+def has_words(part: str) -> bool:
+    return bool(on_one_line(part).removesuffix(SOFT_HYPHEN))
+
+
+def flowed(part: str) -> str:
+    # A part of a text on one line; a part with no words is refused.
+    if not has_words(part):
+        raise ValueError(NO_WORDS)
+    return on_one_line(part)
 
 
 def joined(parts: list[str]) -> Joined:

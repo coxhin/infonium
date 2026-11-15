@@ -14,9 +14,8 @@ from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
 from yt_dlp.webvtt import CueBlock, parse_fragment
 
-from infonium.document import SOFT_HYPHEN, MediaType, Seconds, Tagged, UnreadableSource
+from infonium.document import LINE_BREAK, SOFT_HYPHEN, MediaType, Seconds, Tagged, UnreadableSource
 from infonium.transcript import CLOSING_MARKS, SENTENCE_ENDS, Transcript, Utterance
-from infonium.webpage import LINE_BREAK
 
 # yt-dlp also reads recordings out of news sites and blogs, whose pages are articles first,
 # so its whole list of sites cannot tell a media page from an article. These are its

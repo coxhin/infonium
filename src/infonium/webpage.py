@@ -9,6 +9,7 @@ from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
     CELL_SEPARATOR,
+    LINE_BREAK,
     ROW_SEPARATOR,
     Block,
     Code,
@@ -29,7 +30,6 @@ from infonium.document import (
 EXTRACTOR = "webpage/1"
 WEB_SCHEMES = ("http://", "https://")
 WHITESPACE = re.compile(r"\s+")
-LINE_BREAK = "\n"
 OPENING_QUOTATION_MARK = "\N{LEFT DOUBLE QUOTATION MARK}"
 CLOSING_QUOTATION_MARK = "\N{RIGHT DOUBLE QUOTATION MARK}"
 LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
