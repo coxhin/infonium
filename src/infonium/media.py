@@ -21,7 +21,7 @@ from infonium.captions import (
     segmented_parts,
     vtt_parts,
 )
-from infonium.document import MediaType, Seconds, Tagged, UnreadableSource
+from infonium.document import WORD_GAP, MediaType, Seconds, Tagged, UnreadableSource
 from infonium.transcript import Transcript
 
 # yt-dlp also reads recordings out of news sites and blogs, whose pages are articles first,
@@ -88,6 +88,7 @@ FFPROBE = [
 SOUND_ENTRIES = "stream=codec_name:packet=size"
 TIMELINE_ENTRIES = "stream=start_pts,duration_ts,nb_frames:packet=duration"
 LENGTH_ENTRIES = "format=duration"
+TITLE_ENTRIES = "format_tags=title"
 # ffmpeg reading the first sound of the recording on its standard input; what it is to make
 # of that sound follows.
 FFMPEG = [
@@ -227,6 +228,15 @@ class LengthProbe(BaseModel):
     format: FileLength
 
 
+class FileTags(BaseModel):
+    # The tags of a file that were asked for, each under the name its kind of file gives it.
+    tags: dict[str, str] = {}
+
+
+class TagProbe(BaseModel):
+    format: FileTags
+
+
 class Fetch(BaseModel):
     # The media page a fetch is for, and the moment on the clock by which it must be done.
     url: str
@@ -364,6 +374,12 @@ def run_on(file: Path, command: list[str], limit: float) -> bytes:
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
     told = run_on(file, [*FFPROBE, entries, STANDARD_INPUT], PROBE_LIMIT_SECONDS)
     return report.model_validate_json(told)
+
+
+# The title a recording carries in the tags of its file, and no words where it carries none.
+def own_title(file: Path) -> str:
+    tags = probed(file, TITLE_ENTRIES, TagProbe).format.tags
+    return WORD_GAP.join("".join(tags.values()).split())
 
 
 # Whether a copy starts at zero and runs as long as its packets last.
