@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,7 +12,7 @@ from pydantic import AwareDatetime, BaseModel, TypeAdapter
 from sqlalchemy.dialects import sqlite
 
 from infonium.digest import Digest
-from infonium.document import Document
+from infonium.document import HTML_MEDIA_TYPE, Document
 
 # The one user of a self-hosted library. Item ids hash the owner, so a deployment that adds
 # accounts keeps this id for that first user.
@@ -19,7 +20,10 @@ LOCAL_OWNER = "local"
 LIBRARY_FILE = "library.sqlite"
 SNAPSHOT_DIRECTORY = "snapshots"
 # Stored with every body, so that a later change to the models can tell which form a row has.
-BODY_FORMAT = 1
+# Form 1 held web pages only: its documents do not name a media type, and its blocks have no
+# places.
+BODY_FORMAT = 2
+MEDIA_TYPE_FIELD = "media_type"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 TIMESTAMP = TypeAdapter(AwareDatetime)
@@ -83,6 +87,11 @@ class Holding(BaseModel):
 
 def item_identity(owner: str, url: str) -> str:
     return sha256(f"{owner}\n{url}".encode()).hexdigest()
+
+
+def kept_document(body: str) -> Document:
+    # A body that names no media type is of form 1, and so a web page.
+    return Document.model_validate({MEDIA_TYPE_FIELD: HTML_MEDIA_TYPE, **json.loads(body)})
 
 
 def timestamp_text(moment: datetime) -> str:
@@ -177,7 +186,7 @@ class Library:
             raise NotInLibrary(f"item {item_id} is not in the library")
         return Holding(
             item=Item.model_validate_json(bodies[0]),
-            document=Document.model_validate_json(bodies[1]),
+            document=kept_document(bodies[1]),
         )
 
     def kept_digests(self, document_id: str) -> list[Digest]:

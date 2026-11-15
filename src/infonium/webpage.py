@@ -14,6 +14,7 @@ from infonium.document import (
     ROW_SEPARATOR,
     Block,
     Code,
+    Extracted,
     Figure,
     Heading,
     LinkMark,
@@ -24,6 +25,7 @@ from infonium.document import (
     Style,
     StyleMark,
     Table,
+    UnreadableSource,
 )
 
 EXTRACTOR = "webpage/1"
@@ -103,18 +105,9 @@ FLOW_TAGS = frozenset(
 WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 
 
-class UnreadablePage(Exception):
-    pass
-
-
 class FetchedPage(BaseModel):
     url: str
     content: bytes
-
-
-class WebPage(BaseModel):
-    title: str
-    blocks: list[Block]
 
 
 # The extractor turns a short inline quotation and a block quotation into the same element,
@@ -125,7 +118,7 @@ class WebPage(BaseModel):
 def prepared_page(content: bytes, url: str) -> html.HtmlElement:
     page = trafilatura.load_html(content)
     if page is None:
-        raise UnreadablePage(f"no readable text at {url}")
+        raise UnreadableSource(f"no readable text at {url}")
     for quotation in list(page.iter(INLINE_QUOTATION)):
         quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
         if len(quotation):
@@ -380,7 +373,7 @@ def fetch_page(url: str) -> FetchedPage:
     return FetchedPage(url=str(response.url.copy_with(fragment=None)), content=response.content)
 
 
-def extract_page(content: bytes, url: str) -> WebPage:
+def extract_page(content: bytes, url: str) -> Extracted:
     extraction = trafilatura.bare_extraction(
         prepared_page(content, url),
         url=url,
@@ -391,8 +384,8 @@ def extract_page(content: bytes, url: str) -> WebPage:
         with_metadata=True,
     )
     if not isinstance(extraction, Extraction):
-        raise UnreadablePage(f"no readable text at {url}")
+        raise UnreadableSource(f"no readable text at {url}")
     blocks = [block for block in flowed_blocks(extraction.body) if not is_leftover(block)]
     if not blocks:
-        raise UnreadablePage(f"no readable text at {url}")
-    return WebPage(title=extraction.title or url, blocks=blocks)
+        raise UnreadableSource(f"no readable text at {url}")
+    return Extracted(title=extraction.title or url, blocks=blocks)

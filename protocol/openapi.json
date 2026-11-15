@@ -48,6 +48,28 @@
             "title": "Kind",
             "type": "string"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -55,7 +77,8 @@
         },
         "required": [
           "kind",
-          "text"
+          "text",
+          "places"
         ],
         "title": "Code",
         "type": "object"
@@ -167,6 +190,28 @@
             "title": "Kind",
             "type": "string"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -179,7 +224,8 @@
         "required": [
           "kind",
           "source",
-          "text"
+          "text",
+          "places"
         ],
         "title": "Figure",
         "type": "object"
@@ -232,6 +278,28 @@
             "title": "Marks",
             "type": "array"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -241,7 +309,8 @@
           "kind",
           "level",
           "text",
-          "marks"
+          "marks",
+          "places"
         ],
         "title": "Heading",
         "type": "object"
@@ -362,6 +431,28 @@
             "title": "Ordered",
             "type": "boolean"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "position": {
             "minimum": 1.0,
             "title": "Position",
@@ -379,7 +470,8 @@
           "position",
           "continues",
           "text",
-          "marks"
+          "marks",
+          "places"
         ],
         "title": "ListItem",
         "type": "object"
@@ -398,6 +490,74 @@
           "url"
         ],
         "title": "PageImport",
+        "type": "object"
+      },
+      "PagePlace": {
+        "properties": {
+          "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "height": {
+            "description": "A distance across or down a page, as a part of its size.",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "kind": {
+            "const": "page",
+            "default": "page",
+            "title": "Kind",
+            "type": "string"
+          },
+          "left": {
+            "description": "A distance across or down a page, as a part of its size.",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Left",
+            "type": "number"
+          },
+          "page": {
+            "description": "The position of a page in its file, counted from 0.",
+            "minimum": 0.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "top": {
+            "description": "A distance across or down a page, as a part of its size.",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Top",
+            "type": "number"
+          },
+          "width": {
+            "description": "A distance across or down a page, as a part of its size.",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "end",
+          "page",
+          "left",
+          "top",
+          "width",
+          "height"
+        ],
+        "title": "PagePlace",
         "type": "object"
       },
       "Paragraph": {
@@ -429,6 +589,28 @@
             "title": "Marks",
             "type": "array"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -437,7 +619,8 @@
         "required": [
           "kind",
           "text",
-          "marks"
+          "marks",
+          "places"
         ],
         "title": "Paragraph",
         "type": "object"
@@ -471,6 +654,28 @@
             "title": "Marks",
             "type": "array"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -479,7 +684,8 @@
         "required": [
           "kind",
           "text",
-          "marks"
+          "marks",
+          "places"
         ],
         "title": "Quotation",
         "type": "object"
@@ -585,6 +791,28 @@
             "title": "Kind",
             "type": "string"
           },
+          "places": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "page": "#/components/schemas/PagePlace",
+                  "time": "#/components/schemas/TimePlace"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PagePlace"
+                },
+                {
+                  "$ref": "#/components/schemas/TimePlace"
+                }
+              ]
+            },
+            "title": "Places",
+            "type": "array"
+          },
           "row_separator": {
             "const": "\n",
             "default": "\n",
@@ -600,9 +828,53 @@
           "kind",
           "text",
           "row_separator",
-          "cell_separator"
+          "cell_separator",
+          "places"
         ],
         "title": "Table",
+        "type": "object"
+      },
+      "TimePlace": {
+        "properties": {
+          "duration": {
+            "description": "A length of time. A moment is the time from the start of its recording.",
+            "minimum": 0.0,
+            "title": "Duration",
+            "type": "number"
+          },
+          "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "time",
+            "default": "time",
+            "title": "Kind",
+            "type": "string"
+          },
+          "moment": {
+            "description": "A length of time. A moment is the time from the start of its recording.",
+            "minimum": 0.0,
+            "title": "Moment",
+            "type": "number"
+          },
+          "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "end",
+          "moment",
+          "duration"
+        ],
+        "title": "TimePlace",
         "type": "object"
       },
       "ValidationError": {

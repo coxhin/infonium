@@ -17,7 +17,7 @@ from infonium.digest import (
     digest_prompt,
     grounded_sections,
 )
-from infonium.document import Block, document_of
+from infonium.document import HTML_MEDIA_TYPE, Block, UnreadableSource, document_of
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -33,7 +33,7 @@ from infonium.library import (
     item_identity,
 )
 from infonium.settings import Settings
-from infonium.webpage import EXTRACTOR, UnreadablePage, extract_page, fetch_page
+from infonium.webpage import EXTRACTOR, extract_page, fetch_page
 
 JSON = "application/json"
 
@@ -81,7 +81,7 @@ def explained(status: HTTPStatus) -> Callable[[Request, Exception], Response]:
 
 
 app.add_exception_handler(NotInLibrary, explained(HTTPStatus.NOT_FOUND))
-app.add_exception_handler(UnreadablePage, explained(HTTPStatus.BAD_GATEWAY))
+app.add_exception_handler(UnreadableSource, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(httpx.HTTPError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
@@ -164,6 +164,7 @@ def import_page(page: PageImport, owner: Owner) -> ItemEntry:
                 item_id=item.id,
                 extractor=EXTRACTOR,
                 snapshot=library.keep_snapshot(fetched.content),
+                media_type=HTML_MEDIA_TYPE,
                 blocks=extracted.blocks,
             ),
         )

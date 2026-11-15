@@ -90,6 +90,11 @@ export interface components {
              * @enum {string}
              */
             kind: "code";
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Text */
             text: string;
         };
@@ -123,6 +128,11 @@ export interface components {
              * @enum {string}
              */
             kind: "figure";
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Source */
             source: string;
             /** Text */
@@ -144,6 +154,11 @@ export interface components {
             level: number;
             /** Marks */
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Text */
             text: string;
         };
@@ -199,6 +214,11 @@ export interface components {
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
             /** Ordered */
             ordered: boolean;
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Position */
             position: number;
             /** Text */
@@ -212,6 +232,49 @@ export interface components {
              */
             url: string;
         };
+        /** PagePlace */
+        PagePlace: {
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            end: number;
+            /**
+             * Height
+             * @description A distance across or down a page, as a part of its size.
+             */
+            height: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "page";
+            /**
+             * Left
+             * @description A distance across or down a page, as a part of its size.
+             */
+            left: number;
+            /**
+             * Page
+             * @description The position of a page in its file, counted from 0.
+             */
+            page: number;
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            start: number;
+            /**
+             * Top
+             * @description A distance across or down a page, as a part of its size.
+             */
+            top: number;
+            /**
+             * Width
+             * @description A distance across or down a page, as a part of its size.
+             */
+            width: number;
+        };
         /** Paragraph */
         Paragraph: {
             /**
@@ -221,6 +284,11 @@ export interface components {
             kind: "paragraph";
             /** Marks */
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Text */
             text: string;
         };
@@ -233,6 +301,11 @@ export interface components {
             kind: "quotation";
             /** Marks */
             marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Text */
             text: string;
         };
@@ -288,6 +361,11 @@ export interface components {
              */
             kind: "table";
             /**
+             * Places
+             * @default []
+             */
+            places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
+            /**
              * Row Separator
              * @default
              * @constant
@@ -295,6 +373,34 @@ export interface components {
             row_separator: "\n";
             /** Text */
             text: string;
+        };
+        /** TimePlace */
+        TimePlace: {
+            /**
+             * Duration
+             * @description A length of time. A moment is the time from the start of its recording.
+             */
+            duration: number;
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            end: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "time";
+            /**
+             * Moment
+             * @description A length of time. A moment is the time from the start of its recording.
+             */
+            moment: number;
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            start: number;
         };
         /** ValidationError */
         ValidationError: {
