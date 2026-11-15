@@ -42,10 +42,6 @@ SLIVER_BYTES = BYTES_PER_SECOND // SLIVERS_PER_SECOND
 # request: no piece is longer than 16 seconds, and where a recogniser returns a piece as
 # one segment, that is how long an utterance gets.
 PIECE_SLIVERS = 16 * SLIVERS_PER_SECOND
-# A piece ends in the middle of the quietest 0.4 seconds of the later half of what it may
-# hold. Speech pauses that long between sentences and not inside a word, so where there is
-# such a pause the cut falls between two words.
-PAUSE_SLIVERS = 4
 
 PIECE_NAME = "piece.wav"
 WAVE_MEDIA_TYPE = "audio/wav"
@@ -97,13 +93,13 @@ class Recognition(BaseModel):
 
 
 def cut_sliver(loudness: list[float]) -> int:
-    # The sliver before which a piece that has reached its limit ends.
+    # The sliver before which a piece that has reached its limit ends: the quietest of the
+    # later half of what the piece may hold. Speech falls that quiet between words even where
+    # it is too fast to pause, and a longer stretch weighed as one can be the quietest with a
+    # short word between two gaps in its middle.
     first = len(loudness) // 2
-    stretches = [
-        sum(loudness[start : start + PAUSE_SLIVERS])
-        for start in range(first, len(loudness) - PAUSE_SLIVERS + 1)
-    ]
-    return first + stretches.index(min(stretches)) + PAUSE_SLIVERS // 2
+    later = loudness[first:]
+    return first + later.index(min(later))
 
 
 def piece_after(slivers_before: int, sound: bytes) -> Piece:
