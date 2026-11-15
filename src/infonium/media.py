@@ -158,7 +158,9 @@ UNCOLOURED: Final = "never"
 # yt-dlp marks with this the automatic captions of the words as they were spoken; the other
 # automatic tracks are translations of them by machine.
 ORIGINAL_CAPTIONS = "-orig"
-LANGUAGE_SUBTAGS = re.compile(r"[-_]")
+# A language is named by its primary language and then, after one of these marks, by what
+# narrows it down: a script or a region.
+LANGUAGE_NARROWING = re.compile(r"[-_]")
 # The caption channels of a broadcast (CC1, DTVCC1 and the like) were typed while it was on
 # air, and run seconds behind the words.
 BROADCAST_CHANNEL = re.compile(r"\b(?:DTV)?CC\d+$")
@@ -289,7 +291,7 @@ def is_media_page(url: str) -> bool:
 # The tracks in one language, the one named exactly as it first.
 def tracks_in(tracks: dict[str, list[CaptionFile]], language: str) -> list[list[CaptionFile]]:
     in_language = re.compile(
-        rf"{re.escape(LANGUAGE_SUBTAGS.split(language)[0])}(?:{LANGUAGE_SUBTAGS.pattern}.*)?",
+        rf"{re.escape(LANGUAGE_NARROWING.split(language)[0])}(?:{LANGUAGE_NARROWING.pattern}.*)?",
         re.IGNORECASE,
     )
     named = [name for name in tracks if in_language.fullmatch(name)]

@@ -84,7 +84,8 @@ class VttCue(BaseModel):
     end: int
 
 
-class Json3Segment(BaseModel):
+class Json3Words(BaseModel):
+    # Words of a caption event, and how long after the event begins they are shown.
     utf8: str
     tOffsetMs: int = 0
 
@@ -92,7 +93,7 @@ class Json3Segment(BaseModel):
 class Json3Event(BaseModel):
     tStartMs: int
     dDurationMs: int = 0
-    segs: list[Json3Segment] = []
+    segs: list[Json3Words] = []
 
 
 class Json3Captions(BaseModel):
@@ -102,13 +103,13 @@ class Json3Captions(BaseModel):
 def json3_parts(content: bytes) -> list[CaptionPart]:
     return [
         CaptionPart(
-            text=segment.utf8,
-            start=(event.tStartMs + segment.tOffsetMs) / MILLISECONDS_PER_SECOND,
+            text=words.utf8,
+            start=(event.tStartMs + words.tOffsetMs) / MILLISECONDS_PER_SECOND,
             end=(event.tStartMs + event.dDurationMs) / MILLISECONDS_PER_SECOND,
             ends_line=number == len(event.segs),
         )
         for event in Json3Captions.model_validate_json(content).events
-        for number, segment in enumerate(event.segs, start=1)
+        for number, words in enumerate(event.segs, start=1)
     ]
 
 
