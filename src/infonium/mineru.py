@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field
 
 from infonium.document import PageNumber
+from infonium.pdfium import StoredFile
 
 # MinerU 3.4.2 parses a PDF, run as a program of its own. Its hybrid backend reads tables,
 # formulas and listings best, and gives a box for every line as long as it takes the words
@@ -288,9 +289,18 @@ def picture_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
 
 
 def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
-    # The engine may still judge the text layer unfit, a scan's hidden one for example.
+    # The pages the engine read from their text layer: none, when it judged the layer unfit,
+    # as it judges a scan's hidden one, and read the pages as pictures of its own accord.
     results = engine_results(to_parse, Backend.HYBRID, Method.AUTO, pages)
     hybrid = HybridParsedFile.model_validate_json(results)
-    if hybrid.read_as_pictures:
-        return picture_pages(to_parse, pages)
-    return hybrid.pdf_info
+    return [] if hybrid.read_as_pictures else hybrid.pdf_info
+
+
+def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> list[ParsedPage]:
+    # How the engine reads a file: from its text layer when the file has one and the engine
+    # finds it fit, and as pictures otherwise.
+    numbers = range(len(stored.pages))
+    lettered = any(page.lettered for page in stored.pages)
+    return (lettered_pages(to_parse, numbers) if lettered else []) or picture_pages(
+        to_parse, numbers
+    )

@@ -42,8 +42,7 @@ from infonium.mineru import (
     Text,
     TextSpan,
     Title,
-    lettered_pages,
-    picture_pages,
+    parsed_pages,
     word_lines,
 )
 from infonium.pdfium import stored_file
@@ -437,12 +436,9 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
     stored = stored_file(file)
-    numbers = range(len(stored.pages))
-    # A file without one character in its text layer can only be read as pictures.
-    read = lettered_pages if any(page.lettered for page in stored.pages) else picture_pages
     blocks = pdf_blocks(
-        read(FileToParse(file=file, engine=engine, folder=folder), numbers),
-        frozenset(number for number in numbers if stored.pages[number].turned),
+        parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored),
+        frozenset(number for number, page in enumerate(stored.pages) if page.turned),
     )
     if not blocks:
         raise UnreadableSource(f"no readable text in {name}")
