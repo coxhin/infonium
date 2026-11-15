@@ -1,25 +1,32 @@
-import html
 import re
 import subprocess
+import time
+from collections.abc import Mapping
 from enum import StrEnum
-from itertools import takewhile
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Final, Literal
-from urllib.parse import urljoin
+from typing import Annotated, Any, Final, Literal
 
-import m3u8
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
-from yt_dlp.webvtt import CueBlock, parse_fragment
 
-from infonium.document import LINE_BREAK, SOFT_HYPHEN, MediaType, Seconds, Tagged, UnreadableSource
-from infonium.transcript import CLOSING_MARKS, SENTENCE_ENDS, Transcript, Utterance
+from infonium.captions import (
+    CaptionFormat,
+    CaptionPart,
+    caption_segments,
+    caption_utterances,
+    json3_parts,
+    segmented_parts,
+    vtt_parts,
+)
+from infonium.document import MediaType, Seconds, Tagged, UnreadableSource
+from infonium.transcript import Transcript
 
 # yt-dlp also reads recordings out of news sites and blogs, whose pages are articles first,
 # so its whole list of sites cannot tell a media page from an article. These are its
-# extractors for sites whose pages are recordings, or lists of recordings.
+# extractors for sites whose pages are recordings, or lists of recordings; an address is a
+# media page when one of them claims it, and only they are let read one.
 MEDIA_SITES = (
     "Youtube",
     "YoutubeYtBe",
@@ -43,30 +50,57 @@ MEDIA_SITES = (
 # AAC in an MP4 file: Chrome, Firefox and Safari play it in an audio element, its index of
 # samples leads a seek to the exact frame, and ffmpeg decodes it for a speech recogniser.
 # Most sites already serve this coding, so their sound is kept as it is.
-EXTRACTOR = "captions/1"
 AUDIO_MEDIA_TYPE = "audio/mp4"
 AUDIO_FILE = "sound.m4a"
 AAC = "aac"
-# ffmpeg's word for sound that is moved as it is, not coded anew.
-KEPT = "copy"
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
-FFPROBE = ["ffprobe", "-v", "error", "-of", "default=noprint_wrappers=1:nokey=1"]
-CODEC_OF_SOUND = ["-select_streams", FIRST_SOUND, "-show_entries", "stream=codec_name"]
-LENGTH_OF_FILE = ["-show_entries", "format=duration"]
+FFPROBE = ["ffprobe", "-v", "error", "-of", "json", "-select_streams", FIRST_SOUND, "-show_entries"]
+SOUND_ENTRIES = "stream=codec_name,start_time:format=start_time"
+LENGTH_ENTRIES = "format=duration"
 FFMPEG = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i"]
-# The index of samples goes before the sound, so that a player need not read to the end of
-# the file before it can play or seek.
-SOUND_ALONE = ["-map", f"0:{FIRST_SOUND}", "-movflags", "+faststart", "-c:a"]
+# The sound is written alone: without the chapters of its file, which would be a stream of
+# their own, and with the index of samples before the sound, so that a player need not read
+# to the end of the file before it can play or seek.
+SOUND_ALONE = ["-map", f"0:{FIRST_SOUND}", "-map_chapters", "-1", "-movflags", "+faststart"]
+COPIED = ["-c:a", "copy"]
+# Sound that is coded anew begins when its presentation does: silence stands before a sound
+# that starts late, and in any hole in it.
+CODED_ANEW = ["-c:a", AAC, "-af", "aresample=async=1:first_pts=0"]
+# Sound that starts this long after its presentation cannot be copied: with nothing before
+# it, it would play that much early.
+LATE_START_SECONDS = 0.1
+# The longest ffprobe may take over a file, and ffmpeg over writing its sound.
+PROBE_LIMIT_SECONDS = 60.0
+CONVERSION_LIMIT_SECONDS = 1800.0
 
-# A format without a picture, in the coding that is kept, before any other: only the sound
-# is kept.
+# The bounds of the fetch of a media page. A recording may run this long, which lets a
+# podcast of three hours through with room to spare.
+SECONDS_PER_HOUR = 3600
+LONGEST_RECORDING_SECONDS = 4.0 * SECONDS_PER_HOUR
+# The longest silence a site is allowed, how often a request that broke off is made again,
+# the longest the fetch may take in all, and the most the recording and one caption file may
+# hold. The slowest site seen sent 120 KiB a second, at which three hours of sound take
+# twenty-four minutes.
+SILENCE_LIMIT_SECONDS = 20
+REQUEST_RETRIES = 3
+MEDIA_FETCH_LIMIT_SECONDS = 3600.0
+RECORDING_LIMIT_BYTES = 2 * 1024**3
+CAPTION_LIMIT_BYTES = 16 * 1024**2
+DOWNLOADED_BYTES = "downloaded_bytes"
+
+# A format without a picture before any with one, of those with a picture the smallest, and
+# sound in the coding that is kept before other sound: only the sound is kept.
 SOUND_FORMATS = "bestaudio/best"
-FORMAT_ORDER = [f"acodec:{AAC}"]
+FORMAT_ORDER = ["+res", f"acodec:{AAC}"]
 DOWNLOAD_NAME = "download.%(ext)s"
+CACHE_FOLDER = "cache"
 # The recordings of a list are named, not fetched, and one of them is enough to know a list.
 LISTED_NOT_FOLLOWED: Final = "in_playlist"
+ENTRIES_READ = 1
 ENTRIES = "entries"
+# What yt-dlp reports is shown to the reader, so it carries no codes that colour a terminal.
+UNCOLOURED: Final = "never"
 
 # yt-dlp marks with this the automatic captions of the words as they were spoken; the other
 # automatic tracks are translations of them by machine.
@@ -77,34 +111,6 @@ LANGUAGE_SUBTAGS = re.compile(r"[-_]")
 BROADCAST_CHANNEL = re.compile(r"\b(?:DTV)?CC\d+$")
 # A caption track cut into the segments of a stream.
 SEGMENTED = "m3u8_native"
-MILLISECONDS_PER_SECOND = 1000
-# yt-dlp gives the times of a cue in ticks of the clock of MPEG streams.
-TICKS_PER_SECOND = 90_000
-
-MARKUP = re.compile(r"<[^>]*>")
-# What captions put in square brackets apart from a word, and without a number, is a sound
-# or a speaker, not words spoken.
-ANNOTATION = re.compile(r"(?<!\w)\[[^\]\d\n]*\]")
-# What a line of captions begins with to say who speaks: chevrons or a dash where the
-# speaker changes, and a name in capitals before a colon and words in lower case.
-SPEAKER_TAG = re.compile(
-    r"^(?:[ \t]*(?:>{2,}|-(?=\s)|[A-Z][A-Z0-9\s.'-]*(?:\([^()]*\))?:(?=\s+[^\n]*[a-z])))+",
-    re.MULTILINE,
-)
-# Marks that end a clause inside a sentence.
-CLAUSE_ENDS = SENTENCE_ENDS | frozenset(
-    ",;:\N{FULLWIDTH COMMA}\N{FULLWIDTH SEMICOLON}\N{FULLWIDTH COLON}\N{IDEOGRAPHIC COMMA}"
-)
-# An utterance runs to the end of its clause when the captions mark one this soon after it
-# begins; otherwise it ends with its caption line.
-UTTERANCE_LIMIT_SECONDS = 10.0
-
-
-class CaptionFormat(StrEnum):
-    # The forms of captions that are read, the most exact first: YouTube's own, which times
-    # each word and holds a rolling line once, and then WebVTT.
-    JSON3 = "json3"
-    VTT = "vtt"
 
 
 class CaptionFile(BaseModel):
@@ -115,10 +121,11 @@ class CaptionFile(BaseModel):
     protocol: str | None = None
 
 
-class Listing(BaseModel):
-    # What yt-dlp reports of the recording on a page, under yt-dlp's names.
+class MediaPage(BaseModel):
+    # What yt-dlp reports of the recording on a media page, under yt-dlp's names.
     title: str
     language: str | None = None
+    duration: float | None = None
     is_live: bool | None = None
     subtitles: dict[str, list[CaptionFile]] = {}
     automatic_captions: dict[str, list[CaptionFile]] = {}
@@ -132,52 +139,34 @@ class Download(BaseModel):
     requested_downloads: list[DownloadedFile]
 
 
-class PlaylistSegment(BaseModel):
-    uri: str
+class SoundStream(BaseModel):
+    # A file that does not say when a stream or its presentation starts is taken to start
+    # both together.
+    codec_name: str
+    start_time: float = 0.0
+
+
+class Presentation(BaseModel):
+    start_time: float = 0.0
+
+
+class SoundProbe(BaseModel):
+    streams: list[SoundStream]
+    format: Presentation
+
+
+class FileLength(BaseModel):
     duration: Seconds
-    discontinuity: bool
 
 
-class MediaPlaylist(BaseModel):
-    segments: list[PlaylistSegment]
+class LengthProbe(BaseModel):
+    format: FileLength
 
 
-class CaptionSegment(BaseModel):
-    # One segment of a caption track and the moment of the recording its times count from.
+class Fetch(BaseModel):
+    # The media page a fetch is for, and the moment on the clock by which it must be done.
     url: str
-    origin: Seconds
-
-
-class VttCue(BaseModel):
-    text: str
-    start: int
-    end: int
-
-
-class Json3Segment(BaseModel):
-    utf8: str
-    tOffsetMs: int = 0
-
-
-class Json3Event(BaseModel):
-    tStartMs: int
-    dDurationMs: int = 0
-    segs: list[Json3Segment] = []
-
-
-class Json3Captions(BaseModel):
-    events: list[Json3Event]
-
-
-class CaptionPart(BaseModel):
-    # Words of a caption, the stretch of the recording they belong to, and whether they end
-    # a line of the captions. A part is a cue, or one of the timed words of a cue.
-    model_config = ConfigDict(frozen=True)
-
-    text: str
-    start: Seconds
-    end: Seconds
-    ends_line: bool
+    deadline: float
 
 
 class AudioTrack(BaseModel):
@@ -210,15 +199,16 @@ def is_media_page(url: str) -> bool:
     return any(get_info_extractor(site).suitable(url) for site in MEDIA_SITES)
 
 
-def primary_language(tag: str) -> str:
-    return LANGUAGE_SUBTAGS.split(tag)[0].casefold()
-
-
-# The tracks in one language, the one tagged exactly as it first.
+# The tracks in one language, the one named exactly as it first.
 def tracks_in(tracks: dict[str, list[CaptionFile]], language: str) -> list[list[CaptionFile]]:
-    spoken = [tag for tag in tracks if primary_language(tag) == primary_language(language)]
+    in_language = re.compile(
+        rf"{re.escape(LANGUAGE_SUBTAGS.split(language)[0])}(?:{LANGUAGE_SUBTAGS.pattern}.*)?",
+        re.IGNORECASE,
+    )
+    named = [name for name in tracks if in_language.fullmatch(name)]
     return [
-        tracks[tag] for tag in sorted(spoken, key=lambda tag: tag.casefold() != language.casefold())
+        tracks[name]
+        for name in sorted(named, key=lambda name: name.casefold() != language.casefold())
     ]
 
 
@@ -226,18 +216,15 @@ def tracks_in(tracks: dict[str, list[CaptionFile]], language: str) -> list[list[
 # before the automatic ones, and each track in the form that is read most exactly. A page
 # that does not say which language is spoken has none, since any of its tracks may be a
 # translation.
-def usable_captions(listing: Listing) -> list[CaptionFile]:
-    if listing.language is None:
+def usable_captions(page: MediaPage) -> list[CaptionFile]:
+    if page.language is None:
         return []
     originals = {
-        tag.removesuffix(ORIGINAL_CAPTIONS): files
-        for tag, files in listing.automatic_captions.items()
-        if tag.endswith(ORIGINAL_CAPTIONS)
+        name.removesuffix(ORIGINAL_CAPTIONS): files
+        for name, files in page.automatic_captions.items()
+        if name.endswith(ORIGINAL_CAPTIONS)
     }
-    tracks = [
-        *tracks_in(listing.subtitles, listing.language),
-        *tracks_in(originals, listing.language),
-    ]
+    tracks = [*tracks_in(page.subtitles, page.language), *tracks_in(originals, page.language)]
     return [
         file
         for track in tracks
@@ -247,174 +234,115 @@ def usable_captions(listing: Listing) -> list[CaptionFile]:
     ]
 
 
-def has_words(text: str) -> bool:
-    return bool(text.replace(SOFT_HYPHEN, "").split())
+def within_bounds(fetch: Fetch, brought: int, limit: int) -> None:
+    if brought > limit:
+        raise UnreadableSource(f"{fetch.url} holds more than infonium fetches")
+    if time.monotonic() > fetch.deadline:
+        raise UnreadableSource(f"{fetch.url} takes longer than infonium waits")
 
 
-def untagged(text: str) -> str:
-    return SPEAKER_TAG.sub("", ANNOTATION.sub("", text))
+def downloader_for(fetch: Fetch, downloads: Path) -> YoutubeDL:
+    # yt-dlp reports how a download goes as it goes, and a report that raises ends it.
+    def held_to_bounds(progress: Mapping[str, Any]) -> None:
+        within_bounds(fetch, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
+
+    return YoutubeDL(
+        {
+            "allowed_extractors": [
+                re.escape(get_info_extractor(site).IE_NAME) for site in MEDIA_SITES
+            ],
+            "format": SOUND_FORMATS,
+            "format_sort": FORMAT_ORDER,
+            "outtmpl": str(downloads / DOWNLOAD_NAME),
+            "cachedir": str(downloads / CACHE_FOLDER),
+            "noplaylist": True,
+            "extract_flat": LISTED_NOT_FOLLOWED,
+            "playlistend": ENTRIES_READ,
+            "socket_timeout": SILENCE_LIMIT_SECONDS,
+            "retries": REQUEST_RETRIES,
+            "fragment_retries": REQUEST_RETRIES,
+            # A recording with a part missing is not the recording.
+            "skip_unavailable_fragments": False,
+            "progress_hooks": [held_to_bounds],
+            "color": {"stderr": UNCOLOURED, "stdout": UNCOLOURED},
+            "quiet": True,
+            "noprogress": True,
+        }
+    )
 
 
-def json3_parts(content: bytes) -> list[CaptionPart]:
-    events = [event for event in Json3Captions.model_validate_json(content).events if event.segs]
-    shown_until = [event.tStartMs + event.dDurationMs for event in events]
-    # A line of rolling captions stays shown while the next is spoken.
-    line_ends = [
-        *(
-            min(shown, later.tStartMs)
-            for shown, later in zip(shown_until, events[1:], strict=False)
-        ),
-        *shown_until[-1:],
-    ]
-    parts: list[CaptionPart] = []
-    for event, line_end in zip(events, line_ends, strict=True):
-        starts = [event.tStartMs + segment.tOffsetMs for segment in event.segs]
-        ends = [*starts[1:], max(starts[-1], line_end)]
-        last = [*[False] * (len(event.segs) - 1), True]
-        parts.extend(
-            CaptionPart(
-                text=untagged(segment.utf8),
-                start=start / MILLISECONDS_PER_SECOND,
-                end=end / MILLISECONDS_PER_SECOND,
-                ends_line=ends_line,
-            )
-            for segment, start, end, ends_line in zip(event.segs, starts, ends, last, strict=True)
-        )
-    return parts
+def caption_content(downloader: YoutubeDL, fetch: Fetch, url: str) -> bytes:
+    content = downloader.urlopen(url).read(CAPTION_LIMIT_BYTES + 1)
+    within_bounds(fetch, len(content), CAPTION_LIMIT_BYTES)
+    return content
 
 
-def vtt_parts(content: bytes, origin: float) -> list[CaptionPart]:
-    cues = [
-        VttCue.model_validate(block.as_json)
-        for block in parse_fragment(content)
-        if isinstance(block, CueBlock)
-    ]
-    # A cue is trimmed so that it reads the same wherever in a file it stands.
-    return [
-        CaptionPart(
-            text=untagged(html.unescape(MARKUP.sub("", cue.text))).strip(),
-            start=origin + cue.start / TICKS_PER_SECOND,
-            end=origin + cue.end / TICKS_PER_SECOND,
-            ends_line=True,
-        )
-        for cue in cues
-    ]
-
-
-# The cues of a segment count their times from the start of the stretch of the stream the
-# segment lies in: a stream spliced from several recordings, such as an introduction before
-# a talk, starts counting anew at each splice.
-def caption_segments(playlist: str, url: str) -> list[CaptionSegment]:
-    segments: list[CaptionSegment] = []
-    elapsed = 0.0
-    origin = 0.0
-    for segment in MediaPlaylist.model_validate(m3u8.loads(playlist).data).segments:
-        origin = elapsed if segment.discontinuity else origin
-        segments.append(CaptionSegment(url=urljoin(url, segment.uri), origin=origin))
-        elapsed += segment.duration
-    return segments
-
-
-def ends_clause(text: str) -> bool:
-    return text.rstrip().rstrip(CLOSING_MARKS)[-1:] in CLAUSE_ENDS
-
-
-def clause_ends_by(parts: list[CaptionPart], moment: float) -> bool:
-    return any(ends_clause(part.text) for part in takewhile(lambda part: part.end <= moment, parts))
-
-
-# An utterance is a clause where the captions mark one, and a line of the captions where
-# they do not, so that it begins where a listener would begin. Captions may run on past the
-# end of a recording that was cut after they were written; those words are not in it.
-def caption_utterances(parts: list[CaptionPart], length: float) -> list[Utterance]:
-    heard = sorted((part for part in parts if part.start < length), key=lambda part: part.start)
-    passages: list[list[CaptionPart]] = [[]]
-    for number, part in enumerate(heard):
-        passage = passages[-1]
-        if not passage and not has_words(part.text):
-            continue
-        passage.append(part)
-        limit = passage[0].start + UTTERANCE_LIMIT_SECONDS
-        if ends_clause(part.text) or (
-            part.ends_line and not clause_ends_by(heard[number + 1 :], limit)
-        ):
-            passages.append([])
-    return [
-        Utterance(
-            text="".join(part.text + (LINE_BREAK if part.ends_line else "") for part in passage),
-            moment=passage[0].start,
-            duration=min(passage[-1].end, length) - passage[0].start,
-        )
-        for passage in passages
-        if passage
-    ]
-
-
-def fetch_caption_parts(downloader: YoutubeDL, file: CaptionFile) -> list[CaptionPart]:
-    content = downloader.urlopen(file.url).read()
+def fetched_parts(downloader: YoutubeDL, fetch: Fetch, file: CaptionFile) -> list[CaptionPart]:
+    content = caption_content(downloader, fetch, file.url)
     if file.protocol == SEGMENTED:
-        cut = [
-            part
-            for segment in caption_segments(content.decode(), file.url)
-            for part in vtt_parts(downloader.urlopen(segment.url).read(), segment.origin)
-        ]
-        # A cue shown across the cut between two segments is in both of them.
-        return list(dict.fromkeys(cut))
+        segments = caption_segments(content.decode(), file.url)
+        contents = [caption_content(downloader, fetch, segment.url) for segment in segments]
+        return segmented_parts(segments, contents)
     if file.ext == CaptionFormat.JSON3:
         return json3_parts(content)
-    return vtt_parts(content, origin=0.0)
+    return vtt_parts(content, counts_from=0.0)
 
 
-# What ffprobe reports of the first sound of a file. It reports nothing of a file without
-# sound, and of one it cannot read, for which it gives its reason.
-def probed(file: Path, entries: list[str]) -> list[str]:
-    report = subprocess.run([*FFPROBE, *entries, str(file)], capture_output=True, text=True)
-    if not report.stdout.split():
-        raise UnreadableSource(report.stderr.strip() or f"no sound in {file.name}")
-    return report.stdout.split()
+def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
+    told = subprocess.run(
+        [*FFPROBE, entries, str(file)],
+        check=True,
+        capture_output=True,
+        timeout=PROBE_LIMIT_SECONDS,
+    )
+    return report.model_validate_json(told.stdout)
 
 
 def audio_track(file: Path, directory: Path) -> AudioTrack:
-    coding = KEPT if probed(file, CODEC_OF_SOUND)[0] == AAC else AAC
+    probe = probed(file, SOUND_ENTRIES, SoundProbe)
+    if not probe.streams:
+        raise UnreadableSource(f"no sound in {file.name}")
+    first = probe.streams[0]
+    on_time = first.start_time - probe.format.start_time < LATE_START_SECONDS
+    coding = COPIED if first.codec_name == AAC and on_time else CODED_ANEW
     sound = directory / AUDIO_FILE
     subprocess.run(
-        [*FFMPEG, str(file), *SOUND_ALONE, coding, str(sound)], check=True, capture_output=True
+        [*FFMPEG, str(file), *SOUND_ALONE, *coding, str(sound)],
+        check=True,
+        capture_output=True,
+        timeout=CONVERSION_LIMIT_SECONDS,
     )
     return AudioTrack(file=sound, media_type=AUDIO_MEDIA_TYPE)
 
 
 def fetch_media(url: str, directory: Path) -> FetchedMedia:
+    fetch = Fetch(url=url, deadline=time.monotonic() + MEDIA_FETCH_LIMIT_SECONDS)
     with (
         TemporaryDirectory(dir=directory) as downloads,
-        YoutubeDL(
-            {
-                "format": SOUND_FORMATS,
-                "format_sort": FORMAT_ORDER,
-                "outtmpl": str(Path(downloads) / DOWNLOAD_NAME),
-                "noplaylist": True,
-                "extract_flat": LISTED_NOT_FOLLOWED,
-                "playlistend": 1,
-                "quiet": True,
-                "noprogress": True,
-            }
-        ) as downloader,
+        downloader_for(fetch, Path(downloads)) as downloader,
     ):
         found = downloader.extract_info(url, download=False)
         if ENTRIES in found:
             raise UnreadableSource(f"{url} lists recordings; give the address of one of them")
-        listing = Listing.model_validate(found)
-        if listing.is_live:
+        page = MediaPage.model_validate(found)
+        if page.is_live:
             raise UnreadableSource(f"{url} is still being broadcast and has no recording yet")
+        if page.duration is not None and page.duration > LONGEST_RECORDING_SECONDS:
+            raise UnreadableSource(
+                f"{url} runs {page.duration / SECONDS_PER_HOUR:.1f} hours, and infonium fetches "
+                f"recordings of up to {LONGEST_RECORDING_SECONDS / SECONDS_PER_HOUR:g} hours"
+            )
         parts = [
             part
-            for file in usable_captions(listing)[:1]
-            for part in fetch_caption_parts(downloader, file)
+            for file in usable_captions(page)[:1]
+            for part in fetched_parts(downloader, fetch, file)
         ]
         download = Download.model_validate(downloader.process_ie_result(found, download=True))
         audio = audio_track(download.requested_downloads[0].filepath, directory)
-    utterances = caption_utterances(parts, length=float(probed(audio.file, LENGTH_OF_FILE)[0]))
+    length = probed(audio.file, LENGTH_ENTRIES, LengthProbe).format.duration
+    utterances = caption_utterances(parts, length)
     if utterances:
         return CaptionedMedia(
-            title=listing.title, audio=audio, transcript=Transcript(utterances=utterances)
+            title=page.title, audio=audio, transcript=Transcript(utterances=utterances)
         )
-    return UncaptionedMedia(title=listing.title, audio=audio)
+    return UncaptionedMedia(title=page.title, audio=audio)

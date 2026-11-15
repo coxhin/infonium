@@ -17,7 +17,7 @@ import filetype
 import httpx
 from pydantic import BaseModel
 
-from infonium import media, pdf, webpage
+from infonium import captions, media, pdf, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -161,7 +161,7 @@ def spoken_readout(
 def media_page_readout(url: str, directory: Path) -> Readout:
     match media.fetch_media(url, directory):
         case media.CaptionedMedia(title=title, audio=audio, transcript=transcript):
-            return spoken_readout(media.EXTRACTOR, title, audio, transcript)
+            return spoken_readout(captions.EXTRACTOR, title, audio, transcript)
         case media.UncaptionedMedia(title=title):
             raise UnreadableSource(
                 f"{title} has no captions, and infonium cannot recognise speech yet"
