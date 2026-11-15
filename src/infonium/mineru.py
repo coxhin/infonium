@@ -1,3 +1,4 @@
+import os
 import subprocess
 import unicodedata
 from enum import StrEnum
@@ -16,7 +17,23 @@ ENGINE_INPUT = "-p"
 ENGINE_OUTPUT = "-o"
 ENGINE_BACKEND = "-b"
 ENGINE_METHOD = "-m"
+ENGINE_FIRST_PAGE = "-s"
+ENGINE_LAST_PAGE = "-e"
 ENGINE_RESULTS = "*_middle.json"
+ENGINE_LOG = "{backend}.log"
+# The variable from which the engine takes how long it waits for its own results. When that
+# time has passed it gives up, stops its server and leaves, whoever started it.
+ENGINE_PATIENCE = "MINERU_TASK_RESULT_TIMEOUT_SECONDS"
+# The variable from which a program takes where to keep its temporary files. The engine is
+# given the folder, so that whatever it leaves behind is cleared with the folder.
+TEMPORARY_FILES = "TMPDIR"
+# Measured with one engine on an RTX 5090: a run takes 10 to 15 seconds to start and stop its
+# server, and between 0.4 and 8.5 seconds a page. For its work the engine is given a minute
+# and more than twice the slowest of those a page, and the call a minute more around that, in
+# which the engine starts, and stops itself once it has given up.
+PAGE_SECONDS = 20
+SPARE_SECONDS = 60
+SILENT_ENGINE = "the PDF engine left with status {status} and wrote nothing"
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
@@ -224,25 +241,56 @@ def word_lines(region: Region | Member | Margin) -> list[Line]:
             return []
 
 
-def engine_results(
-    file: Path, engine: Path, folder: Path, backend: Backend, method: Method
-) -> bytes:
-    where: list[str | Path] = [ENGINE_INPUT, file, ENGINE_OUTPUT, folder]
+class FileToParse(BaseModel):
+    # A PDF, the engine that parses it, and the folder in which the engine may write.
+    file: Path
+    engine: Path
+    folder: Path
+
+
+class UnparsedFile(Exception):
+    # The engine ended without results. The message is the last line it wrote.
+    pass
+
+
+def engine_results(to_parse: FileToParse, backend: Backend, method: Method, pages: range) -> bytes:
+    # One run of the engine over some pages of the file. What the engine writes goes to a
+    # file in the folder and not to the caller, so an engine whose caller has died can still
+    # write: it finishes its work and leaves by itself.
+    patience = SPARE_SECONDS + PAGE_SECONDS * len(pages)
+    found = to_parse.folder / backend
+    where: list[str | Path] = [ENGINE_INPUT, to_parse.file, ENGINE_OUTPUT, found]
     how: list[str | Path] = [ENGINE_BACKEND, backend, ENGINE_METHOD, method]
-    subprocess.run([engine, *where, *how], check=True, capture_output=True)
-    [results] = folder.rglob(ENGINE_RESULTS)
-    return results.read_bytes()
+    which = [ENGINE_FIRST_PAGE, str(pages.start), ENGINE_LAST_PAGE, str(pages.stop - 1)]
+    told = {ENGINE_PATIENCE: str(patience), TEMPORARY_FILES: str(to_parse.folder)}
+    log = to_parse.folder / ENGINE_LOG.format(backend=backend)
+    with log.open("wb") as written:
+        ended = subprocess.run(
+            [to_parse.engine, *where, *how, *which],
+            check=False,
+            stdout=written,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, **told},
+            timeout=patience + SPARE_SECONDS,
+        )
+    results = [*found.rglob(ENGINE_RESULTS)]
+    if ended.returncode or not results:
+        said = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
+        worded = [line for line in said if line]
+        raise UnparsedFile(worded[-1] if worded else SILENT_ENGINE.format(status=ended.returncode))
+    [kept] = results
+    return kept.read_bytes()
 
 
-def picture_pages(file: Path, engine: Path, folder: Path) -> list[ParsedPage]:
-    results = engine_results(file, engine, folder / Backend.PIPELINE, Backend.PIPELINE, Method.OCR)
+def picture_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
+    results = engine_results(to_parse, Backend.PIPELINE, Method.OCR, pages)
     return ParsedFile.model_validate_json(results).pdf_info
 
 
-def lettered_pages(file: Path, engine: Path, folder: Path) -> list[ParsedPage]:
+def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
     # The engine may still judge the text layer unfit, a scan's hidden one for example.
-    results = engine_results(file, engine, folder / Backend.HYBRID, Backend.HYBRID, Method.AUTO)
+    results = engine_results(to_parse, Backend.HYBRID, Method.AUTO, pages)
     hybrid = HybridParsedFile.model_validate_json(results)
     if hybrid.read_as_pictures:
-        return picture_pages(file, engine, folder)
+        return picture_pages(to_parse, pages)
     return hybrid.pdf_info

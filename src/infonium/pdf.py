@@ -1,11 +1,9 @@
 import re
-import threading
 from itertools import pairwise
 from pathlib import Path
 
 from lxml import html
 from pydantic import BaseModel
-from pypdfium2 import PdfDocument
 
 from infonium.document import (
     LINE_BREAK,
@@ -33,6 +31,7 @@ from infonium.document import (
 from infonium.mineru import (
     Box,
     CodeBody,
+    FileToParse,
     FormulaSpan,
     Group,
     Line,
@@ -47,14 +46,10 @@ from infonium.mineru import (
     picture_pages,
     word_lines,
 )
+from infonium.pdfium import stored_file
 
 EXTRACTOR = "pdf/1"
 
-# PDFium may be used by one thread at a time, whatever the file. Nothing else in infonium
-# calls it, so a thread that holds this turn for as long as it has a file open in PDFium is
-# alone in it.
-PDFIUM_TURN = threading.Lock()
-TITLE_ENTRY = "Title"
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
 HYPHEN = "-"
@@ -441,14 +436,14 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
-    with PDFIUM_TURN, PdfDocument(file) as document:
-        own_title = WORD_GAP.join(str(document.get_metadata_value(TITLE_ENTRY)).split())
-        numbers = range(len(document))
-        turned_pages = frozenset(number for number in numbers if document[number].get_rotation())
-        # A file without one character in its text layer can only be read as pictures.
-        lettered = any(document[number].get_textpage().count_chars() for number in numbers)
-    read = lettered_pages if lettered else picture_pages
-    blocks = pdf_blocks(read(file, engine, folder), turned_pages)
+    stored = stored_file(file)
+    numbers = range(len(stored.pages))
+    # A file without one character in its text layer can only be read as pictures.
+    read = lettered_pages if any(page.lettered for page in stored.pages) else picture_pages
+    blocks = pdf_blocks(
+        read(FileToParse(file=file, engine=engine, folder=folder), numbers),
+        frozenset(number for number in numbers if stored.pages[number].turned),
+    )
     if not blocks:
         raise UnreadableSource(f"no readable text in {name}")
-    return Extracted(title=document_title(own_title, blocks, name), blocks=blocks)
+    return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)
