@@ -57,11 +57,11 @@ AAC = "aac"
 
 # A file that is taken for a recording may be anything, and ffmpeg and ffprobe do what a
 # file tells them. So they are pointed at one in a single way. The file stands on their
-# standard input: nothing they say of it, and nothing said of their failing, then names a
-# file, and no name can be read as an option or an address. They open nothing but files of
-# this machine. And they read only the containers of a recording, each by the name of
-# ffmpeg's reader for it: the kinds of audio and video that a file's bytes can be told to
-# be. A file of another kind may be a script that sends its reader to other files.
+# standard input, so no name of it reaches them to be read as an option or an address. They
+# open nothing but files of this machine. And they read only the containers of a recording,
+# each by the name of ffmpeg's reader for it: the kinds of audio and video that a file's
+# bytes can be told to be. A file of another kind may be a script that sends its reader to
+# other files.
 STANDARD_INPUT = "/dev/stdin"
 LOCAL_FILE = "file"
 RECORDING_FORMATS = "aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,ogg,wav"
@@ -72,11 +72,15 @@ FIRST_SOUND = "a:0"
 # first sixteen packets: enough to tell how long a packet usually lasts, whatever the first
 # one does.
 FIRST_PACKETS = "%+#16"
+# ffprobe ends with this status when it cannot read a file. Its report then says why without
+# the name the file stands under, which the line it writes of the file begins with.
+UNREADABLE_STATUS = 1
 FFPROBE = [
     "ffprobe",
     "-v",
     "error",
     *HELD_TO_RECORDINGS,
+    "-show_error",
     "-of",
     "json",
     "-select_streams",
@@ -186,6 +190,15 @@ class DownloadedFile(BaseModel):
 
 class Download(BaseModel):
     requested_downloads: list[DownloadedFile]
+
+
+class ProbeError(BaseModel):
+    string: str
+
+
+class FailedProbe(BaseModel):
+    # What ffprobe reports of a file it cannot read.
+    error: ProbeError
 
 
 class SoundStream(BaseModel):
@@ -362,18 +375,21 @@ def fetched_parts(downloader: YoutubeDL, fetch: Fetch, file: CaptionFile) -> lis
     return vtt_parts(content, counts_from=0.0)
 
 
-# What one of the programs writes when it is run on a recording, within a time.
-def run_on(file: Path, command: list[str], limit: float) -> bytes:
+# What one of the programs does when it is run on a recording, within a time.
+def run_on(file: Path, command: list[str], limit: float) -> subprocess.CompletedProcess[bytes]:
     with file.open("rb") as recording:
-        done = subprocess.run(
-            command, stdin=recording, check=True, capture_output=True, timeout=limit
-        )
-    return done.stdout
+        return subprocess.run(command, stdin=recording, capture_output=True, timeout=limit)
 
 
+# A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
+# without an answer for any other reason fails as a program.
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
-    told = run_on(file, [*FFPROBE, entries, STANDARD_INPUT], PROBE_LIMIT_SECONDS)
-    return report.model_validate_json(told)
+    done = run_on(file, [*FFPROBE, entries, STANDARD_INPUT], PROBE_LIMIT_SECONDS)
+    if done.returncode == UNREADABLE_STATUS:
+        failure = FailedProbe.model_validate_json(done.stdout).error.string
+        raise UnreadableSource(f"infonium cannot read the recording: {failure}")
+    done.check_returncode()
+    return report.model_validate_json(done.stdout)
 
 
 # The title a recording carries in the tags of its file, and no words where it carries none.
@@ -398,10 +414,10 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     # Named as a file, the place the sound is written to cannot be read as anything else.
     sound = f"{LOCAL_FILE}:{audio.file}"
     if probe.streams[0].codec_name == AAC:
-        run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS)
+        run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
         if has_plain_timeline(probed(audio.file, TIMELINE_ENTRIES, CopyProbe)):
             return audio
-    run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS)
+    run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
 
 
