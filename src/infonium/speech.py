@@ -204,15 +204,18 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
     # What is spoken in a recording, as a recogniser behind OpenAI's transcription API hears
     # it. The recogniser detects the language, piece by piece. A recording without speech
     # has no utterances.
-    endpoint = OpenAI(
-        base_url=recogniser.base_url,
-        api_key=recogniser.api_key.get_secret_value(),
-        timeout=RECOGNISER_TIMEOUT_SECONDS,
-        max_retries=RECOGNISER_RETRIES,
-    )
     utterances: list[Utterance] = []
-    # The decoder is ended with the reading, however the reading ends.
-    with closing(decoded(recording)) as slivers:
+    # The connection to the recogniser and the decoder are ended with the reading, however
+    # the reading ends.
+    with (
+        OpenAI(
+            base_url=recogniser.base_url,
+            api_key=recogniser.api_key.get_secret_value(),
+            timeout=RECOGNISER_TIMEOUT_SECONDS,
+            max_retries=RECOGNISER_RETRIES,
+        ) as endpoint,
+        closing(decoded(recording)) as slivers,
+    ):
         for piece in pieces(slivers):
             reply = endpoint.audio.transcriptions.with_raw_response.create(
                 file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
