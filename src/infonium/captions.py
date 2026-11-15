@@ -26,9 +26,10 @@ ANNOTATION = re.compile(r"(?<!\w)\[[^\[\]\d\n]*\]")
 SPEAKER_CHANGE = re.compile(r"^[ \t\xa0]*(?:(?:>{2,}|-(?=[ \t\xa0]))[ \t\xa0]*)+", re.MULTILINE)
 # A short run of words before a colon at the start of a line, with what may follow it in
 # brackets, on that line or the next: where captions name a speaker, and where words that
-# are spoken stand too.
+# are spoken stand too. The blanks a line begins with are taken whole and never given back
+# to the words, which would make every line of blanks cost forty tries for each blank.
 LABEL = re.compile(
-    r"^[ \t\xa0]*([^\n:()]{1,40}?)(?:\s{0,3}\([^():]{0,40}\))?[ \t\xa0]*:(?=\s|$)", re.MULTILINE
+    r"^[ \t\xa0]*+([^\n:()]{1,40}?)(?:\s{0,3}\([^():]{0,40}\))?[ \t\xa0]*:(?=\s|$)", re.MULTILINE
 )
 LABEL_NAME = 1
 # A name in capitals that labels this many lines of one track is a speaker's. In 197 tracks
