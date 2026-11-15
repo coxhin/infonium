@@ -31,6 +31,9 @@ Settings are environment variables, read from `.env` by `make dev`.
 | `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and page snapshots are stored |
 | `INFONIUM_PDF_ENGINE` | `mineru` | [MinerU](https://github.com/opendatalab/MinerU) command that parses PDFs |
+| `INFONIUM_SPEECH_BASE_URL` | `http://127.0.0.1:8750/v1` | Endpoint of the recogniser that turns speech into text; the default is the local one of [`engines/speech`](engines/speech) |
+| `INFONIUM_SPEECH_API_KEY` | `unused` | Key for that endpoint; the local recogniser asks for none |
+| `INFONIUM_SPEECH_MODEL` | `Systran/faster-whisper-large-v3` | Model the recogniser transcribes with |
 
 ## How it works
 
