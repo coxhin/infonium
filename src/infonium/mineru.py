@@ -283,9 +283,18 @@ def engine_results(to_parse: FileToParse, backend: Backend, method: Method, page
     return kept.read_bytes()
 
 
+def numbered_in_file(parsed: list[ParsedPage], pages: range) -> list[ParsedPage]:
+    # The engine counts the pages of a run from the first page of its range.
+    return [page.model_copy(update={"page_idx": pages.start + page.page_idx}) for page in parsed]
+
+
+def covering(numbers: list[PageNumber]) -> range:
+    return range(min(numbers), max(numbers) + 1)
+
+
 def picture_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
     results = engine_results(to_parse, Backend.PIPELINE, Method.OCR, pages)
-    return ParsedFile.model_validate_json(results).pdf_info
+    return numbered_in_file(ParsedFile.model_validate_json(results).pdf_info, pages)
 
 
 def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
@@ -293,14 +302,27 @@ def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
     # as it judges a scan's hidden one, and read the pages as pictures of its own accord.
     results = engine_results(to_parse, Backend.HYBRID, Method.AUTO, pages)
     hybrid = HybridParsedFile.model_validate_json(results)
-    return [] if hybrid.read_as_pictures else hybrid.pdf_info
+    return [] if hybrid.read_as_pictures else numbered_in_file(hybrid.pdf_info, pages)
 
 
 def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> list[ParsedPage]:
-    # How the engine reads a file: from its text layer when the file has one and the engine
-    # finds it fit, and as pictures otherwise.
+    # How the engine reads each page of a file. It reads a page from the file's text layer
+    # when the file has one, but misreads the layer of a page stored turned, so such a page is
+    # read as a picture, as is every page of a file without a text layer or whose layer the
+    # engine judges unfit. The engine runs once for each way of reading, over the pages from
+    # the first to the last that are read that way.
     numbers = range(len(stored.pages))
-    lettered = any(page.lettered for page in stored.pages)
-    return (lettered_pages(to_parse, numbers) if lettered else []) or picture_pages(
-        to_parse, numbers
+    upright = [number for number in numbers if not stored.pages[number].turned]
+    from_layer = (
+        [page for page in lettered_pages(to_parse, covering(upright)) if page.page_idx in upright]
+        if upright and any(page.lettered for page in stored.pages)
+        else []
     )
+    taken = {page.page_idx for page in from_layer}
+    rest = [number for number in numbers if number not in taken]
+    from_pictures = (
+        [page for page in picture_pages(to_parse, covering(rest)) if page.page_idx in rest]
+        if rest
+        else []
+    )
+    return sorted([*from_layer, *from_pictures], key=lambda page: page.page_idx)

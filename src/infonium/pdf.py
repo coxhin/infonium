@@ -108,9 +108,8 @@ class Flow(BaseModel):
 
 class Evidence(BaseModel):
     # What the whole file tells about the reading of any one line of it: the words it shows
-    # whole, and the pages it stores turned.
+    # whole.
     whole_words: frozenset[str]
-    turned_pages: frozenset[PageNumber]
 
 
 def words_of(text: str) -> list[str]:
@@ -237,14 +236,9 @@ def flow(lines: list[ShownLine], evidence: Evidence) -> Flow:
     read = 0
     for line in lines:
         first = read
-        # The engine misjudges what is set above or below the line on a page that is stored
-        # turned, so there its word for it is not taken.
-        believed = line.area.page not in evidence.turned_pages
         for piece in line.pieces:
             start, end = said.ranges[read].start, said.ranges[read + len(piece.words) - 1].end
-            marks.extend(
-                StyleMark(style=style, start=start, end=end) for style in piece.styles if believed
-            )
+            marks.extend(StyleMark(style=style, start=start, end=end) for style in piece.styles)
             read += len(piece.words)
         places.append(placed(line.area, said.ranges[first].start, said.ranges[read - 1].end))
     return Flow(text=said.text, marks=marks, places=places)
@@ -374,7 +368,7 @@ def text_chains(pages: list[ParsedPage]) -> dict[tuple[int, int], list[ShownLine
     return chains
 
 
-def pdf_blocks(pages: list[ParsedPage], turned_pages: frozenset[int]) -> list[Block]:
+def pdf_blocks(pages: list[ParsedPage]) -> list[Block]:
     chains = text_chains(pages)
     evidence = Evidence(
         whole_words=whole_words(
@@ -385,7 +379,6 @@ def pdf_blocks(pages: list[ParsedPage], turned_pages: frozenset[int]) -> list[Bl
                 for line in word_lines(region)
             ]
         ),
-        turned_pages=turned_pages,
     )
     blocks: list[Block] = []
     for page in pages:
@@ -436,10 +429,7 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
     stored = stored_file(file)
-    blocks = pdf_blocks(
-        parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored),
-        frozenset(number for number, page in enumerate(stored.pages) if page.turned),
-    )
+    blocks = pdf_blocks(parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored))
     if not blocks:
         raise UnreadableSource(f"no readable text in {name}")
     return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)
