@@ -1,0 +1,33 @@
+# The recogniser that turns speech into text for infonium: speaches, which serves Whisper
+# models behind OpenAI's transcription API and leaves out what is not speech before the
+# model hears it. infonium reaches it at http://127.0.0.1:8750/v1.
+name: infonium-speech
+services:
+  recogniser:
+    # Release 0.8.3 built on CUDA 12.9, whose libraries know the RTX 50 cards. Pinned by
+    # digest, so that the same build is run everywhere.
+    image: ghcr.io/speaches-ai/speaches@sha256:9abc6968a883e77ead9286c38a6ccf3139dcad518b783deeebb7be2ced50e972
+    restart: unless-stopped
+    ports:
+      # This machine only: the endpoint has no authentication.
+      - "127.0.0.1:${SPEECH_PORT:-8750}:8000"
+    environment:
+      WHISPER__COMPUTE_TYPE: float16
+      # Each stretch of speech is recognised by itself. The other mode carries the words of
+      # one stretch into the next, and with them repeats and losses.
+      WHISPER__USE_BATCHED_MODE: "true"
+      ENABLE_UI: "false"
+      LOG_LEVEL: info
+    volumes:
+      # The weights are fetched once and kept here.
+      - models:/home/ubuntu/.cache/huggingface/hub
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SPEECH_GPU:-0}"]
+              capabilities: [gpu]
+
+volumes:
+  models:
