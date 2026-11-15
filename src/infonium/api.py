@@ -38,6 +38,7 @@ from infonium.library import (
     Reading,
 )
 from infonium.settings import Settings
+from infonium.speech import Recogniser
 
 JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for
@@ -64,7 +65,14 @@ def library_store() -> LibraryStore:
 
 @cache
 def intake() -> Intake:
-    engines = Engines(pdf=settings.pdf_engine)
+    engines = Engines(
+        pdf=settings.pdf_engine,
+        recogniser=Recogniser(
+            base_url=settings.speech_base_url,
+            api_key=settings.speech_api_key,
+            model=settings.speech_model,
+        ),
+    )
     return Intake(store=library_store(), readers=READERS, engines=engines)
 
 

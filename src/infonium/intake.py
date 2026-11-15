@@ -15,9 +15,10 @@ from urllib.parse import urlsplit
 
 import filetype
 import httpx
+import openai
 from pydantic import BaseModel
 
-from infonium import media, pdf, webpage
+from infonium import media, pdf, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -61,6 +62,8 @@ UNDECLARED = ""
 UNKNOWN_MEDIA_TYPE = "application/octet-stream"
 PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
 PAGE_OPENINGS = (b"<!doctype html", b"<html")
+# The kinds of file that hold a recording: sound alone, or sound with a picture.
+RECORDING_MEDIA_TYPES = ("audio/", "video/")
 OPENING_BYTES = 1024
 
 logger = logging.getLogger(__name__)
@@ -75,8 +78,9 @@ class Source(BaseModel):
 
 
 class Engines(BaseModel):
-    # Where the programs that read sources other than web pages are found.
+    # Where the programs and services that read sources other than web pages are found.
     pdf: Path
+    recogniser: speech.Recogniser
 
 
 class Readout(BaseModel):
@@ -158,23 +162,30 @@ def spoken_readout(
     )
 
 
-def media_page_readout(url: str, directory: Path) -> Readout:
+def recognised_readout(
+    title: str, audio: media.AudioTrack, recogniser: speech.Recogniser
+) -> Readout:
+    # The words are recognised in the sound that is kept, so that their times are times of
+    # the recording a reader plays.
+    transcript = speech.transcribe(audio.file, recogniser)
+    return spoken_readout(speech.EXTRACTOR, title, audio, transcript)
+
+
+def media_page_readout(url: str, directory: Path, engines: Engines) -> Readout:
     match media.fetch_media(url, directory):
         case media.CaptionedMedia(title=title, audio=audio, transcript=transcript):
             return spoken_readout(media.EXTRACTOR, title, audio, transcript)
-        case media.UncaptionedMedia(title=title):
-            raise UnreadableSource(
-                f"{title} has no captions, and infonium cannot recognise speech yet"
-            )
+        case media.UncaptionedMedia(title=title, audio=audio):
+            return recognised_readout(title, audio, engines.recogniser)
 
 
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
-        return media_page_readout(url, directory)
+        return media_page_readout(url, directory, engines)
     source = fetched(url, directory)
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
-        return media_page_readout(source.reference, directory)
+        return media_page_readout(source.reference, directory, engines)
     return readout_of(source, directory, engines)
 
 
@@ -201,15 +212,28 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
             file=source.file,
             media_type=source.media_type,
         )
+    if source.media_type.startswith(RECORDING_MEDIA_TYPES):
+        return recognised_readout(
+            title_of(source.reference),
+            media.audio_track(source.file, directory),
+            engines.recogniser,
+        )
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
 
 
 def failure_reason(error: BaseException) -> str:
+    # An error's own text is the reason, but for three kinds that leave the reason out of it.
     # A program that fails says why in what it writes, not in the error that reports how it
-    # exited, so its last written line is the reason.
+    # exited, so its last written line is the reason. A request that a service refused does
+    # not carry what the service answered, and one that no service answered does not say
+    # which service that was, so the reason gives the address and the answer.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr:
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         return written.strip().splitlines()[-1]
+    if isinstance(error, openai.APIStatusError):
+        return f"{error.request.url} answered {error.status_code}: {error.response.text.strip()}"
+    if isinstance(error, openai.APIConnectionError):
+        return f"{error.request.url} did not answer: {error}"
     return str(error) or type(error).__name__
 
 

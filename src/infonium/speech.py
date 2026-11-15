@@ -9,7 +9,7 @@ from tempfile import TemporaryFile
 from typing import Final
 
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from infonium.document import Seconds, UnreadableSource
 from infonium.transcript import Transcript, Utterance
@@ -53,6 +53,13 @@ SEGMENT_TIMES: Final = "segment"
 # The longest a recogniser may take over one piece, which covers loading its model first.
 RECOGNISER_TIMEOUT_SECONDS = 120.0
 RECOGNISER_RETRIES = 1
+
+
+class Recogniser(BaseModel):
+    # Where a recogniser is reached, the key it asks for, and the model it transcribes with.
+    base_url: str
+    api_key: SecretStr
+    model: str
 
 
 class Piece(BaseModel):
@@ -178,21 +185,21 @@ def utterances_of(recognition: Recognition, piece: Piece) -> list[Utterance]:
     ]
 
 
-def transcribe(recording: Path, base_url: str, api_key: str, model: str) -> Transcript:
+def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
     # What is spoken in a recording, as a recogniser behind OpenAI's transcription API hears
     # it. The recogniser detects the language, piece by piece. A recording without speech
     # has no utterances.
-    recogniser = OpenAI(
-        base_url=base_url,
-        api_key=api_key,
+    endpoint = OpenAI(
+        base_url=recogniser.base_url,
+        api_key=recogniser.api_key.get_secret_value(),
         timeout=RECOGNISER_TIMEOUT_SECONDS,
         max_retries=RECOGNISER_RETRIES,
     )
     utterances: list[Utterance] = []
     for piece in pieces(recording):
-        reply = recogniser.audio.transcriptions.with_raw_response.create(
+        reply = endpoint.audio.transcriptions.with_raw_response.create(
             file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
-            model=model,
+            model=recogniser.model,
             response_format=TIMED_REPLY,
             timestamp_granularities=[SEGMENT_TIMES],
         )
