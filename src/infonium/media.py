@@ -133,9 +133,9 @@ CONVERSION_LIMIT_SECONDS = 1800.0
 SECONDS_PER_HOUR = 3600
 LONGEST_RECORDING_SECONDS = 4.0 * SECONDS_PER_HOUR
 # The longest silence a site is allowed, how often a request that broke off is made again,
-# the longest the fetch may take in all, and the most the recording and one caption file may
-# hold. The slowest site seen sent 120 KiB a second, at which three hours of sound take
-# twenty-four minutes.
+# the longest the fetch may take in all, and the most the recording and its caption track,
+# in one file or in the segments of a stream, may hold. The slowest site seen sent 120 KiB a
+# second, at which three hours of sound take twenty-four minutes.
 SILENCE_LIMIT_SECONDS = 20
 REQUEST_RETRIES = 3
 MEDIA_FETCH_LIMIT_SECONDS = 3600.0
@@ -379,7 +379,10 @@ def fetched_parts(downloader: YoutubeDL, fetch: Fetch, file: CaptionFile) -> lis
     content = caption_content(downloader, fetch, file.url)
     if file.protocol == SEGMENTED:
         segments = caption_segments(content.decode(), file.url)
-        contents = [caption_content(downloader, fetch, segment.url) for segment in segments]
+        contents: list[bytes] = []
+        for segment in segments:
+            contents.append(caption_content(downloader, fetch, segment.url))
+            within_bounds(fetch, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
         return segmented_parts(segments, contents)
     if file.ext == CaptionFormat.JSON3:
         return json3_parts(content)
