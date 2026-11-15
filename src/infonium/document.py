@@ -1,6 +1,6 @@
 from enum import StrEnum
 from hashlib import sha256
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -10,6 +10,7 @@ from pydantic import (
     StringConstraints,
     TypeAdapter,
     ValidationInfo,
+    model_validator,
 )
 
 Offset = Annotated[
@@ -58,8 +59,9 @@ UNSPACED_CODE_POINTS = (
     range(0xFF00, 0xFFF0),
     range(0x20000, 0x40000),
 )
-TEXT = "text"
-PLACES = "places"
+TEXT_FIELD = "text"
+PLACES_FIELD = "places"
+NO_WORDS = "a part of a text holds at least one word"
 
 
 class Style(StrEnum):
@@ -106,8 +108,10 @@ class PlaceKind(StrEnum):
 
 class PagePlace(Tagged):
     # The box on a page that shows one part of a block's text, as a rule one line of it. The
-    # page is the page as a viewer shows it, turned the way its file says; the box is cut to
-    # the page and measured from its top left corner.
+    # page is the page as a viewer shows it, turned the way its file says, and the box is
+    # measured from its top left corner. A box lies on its page: one that reaches past an edge
+    # is cut by cutting its far edges as fractions of the page and taking its size from them,
+    # which unlike cutting in the file's own units never leaves it a hair past the edge.
     kind: Literal[PlaceKind.PAGE] = PlaceKind.PAGE
     start: Offset
     end: Offset
@@ -117,9 +121,16 @@ class PagePlace(Tagged):
     width: PageFraction
     height: PageFraction
 
+    @model_validator(mode="after")
+    def on_its_page(self) -> Self:
+        if self.left + self.width > 1 or self.top + self.height > 1:
+            raise ValueError("a box lies on its page")
+        return self
+
 
 class TimePlace(Tagged):
-    # The stretch of a recording in which one part of a block's text is spoken.
+    # The stretch in which one part of a block's text is spoken, in the recording that is
+    # kept as the document's snapshot.
     kind: Literal[PlaceKind.TIME] = PlaceKind.TIME
     start: Offset
     end: Offset
@@ -136,8 +147,10 @@ Place = Annotated[PagePlace | TimePlace, Field(discriminator="kind")]
 
 
 def places_in_text(places: list[Place], validation: ValidationInfo) -> list[Place]:
-    # A text that failed its own validation is absent here, and its error is the one to report.
-    length = len(validation.data.get(TEXT, ""))
+    # A text that failed its own validation is absent here; its error is the one to report.
+    if TEXT_FIELD not in validation.data:
+        return places
+    length = len(validation.data[TEXT_FIELD])
     for place in places:
         if not place.start <= place.end <= length:
             raise ValueError(f"a place covers {place.start} to {place.end} of {length} characters")
@@ -258,7 +271,7 @@ def document_of(
 ) -> Document:
     # A block without places is hashed as blocks were before they had any, so a source that
     # was kept then is the same document when it is read again.
-    unplaced = {number: {PLACES} for number, block in enumerate(blocks) if not block.places}
+    unplaced = {number: {PLACES_FIELD} for number, block in enumerate(blocks) if not block.places}
     hashed = BLOCKS.dump_json(blocks, exclude=unplaced)
     return Document(
         id=sha256(b"\n".join([item_id.encode(), extractor.encode(), hashed])).hexdigest(),
@@ -284,22 +297,37 @@ def is_unspaced(character: str) -> bool:
     return any(ord(character) in code_points for code_points in UNSPACED_CODE_POINTS)
 
 
+def appended(text: str, words: str) -> str:
+    # Words that arrive apart from the text they go on are put after it the way the text
+    # would be written: after one space, after none where either side is written without
+    # spaces, and after none where the text ends in a soft hyphen, which marks a word that
+    # goes on in the words that follow and is dropped.
+    whole = text.removesuffix(SOFT_HYPHEN)
+    apart = whole == text and whole and not is_unspaced(whole[-1]) and not is_unspaced(words[0])
+    return f"{whole}{WORD_GAP if apart else ''}{words}"
+
+
+def flowed(part: str) -> str:
+    # One part of a text as it would be written on one line: runs of spaces become one space,
+    # and a line break inside the part joins its lines as parts are joined. A part may end in
+    # a soft hyphen, for a word that goes on in the next part.
+    text = ""
+    for line in part.splitlines():
+        words = WORD_GAP.join(line.split())
+        text = appended(text, words) if words else text
+    if not text.removesuffix(SOFT_HYPHEN):
+        raise ValueError(NO_WORDS)
+    return text
+
+
 def joined(parts: list[str]) -> Joined:
     # Parts of one text that arrive apart, such as the lines of a paragraph or the utterances
-    # of a speaker, are put together the way the text would be written: one space between
-    # words, none where either side is written without spaces, and none after a part that
-    # ends in a soft hyphen, which marks a word that goes on in the next part and is dropped.
-    # Each part gets the range of the text that holds its words.
+    # of a speaker, put together; each part gets the range of the text that holds its words.
     text = ""
     ranges: list[TextRange] = []
     for part in parts:
-        words = WORD_GAP.join(part.split())
-        if not words:
-            raise ValueError("a part of a text holds at least one word")
-        mid_word = text.endswith(SOFT_HYPHEN)
-        text = text.removesuffix(SOFT_HYPHEN)
-        apart = text and not mid_word and not is_unspaced(text[-1]) and not is_unspaced(words[0])
-        start = len(text) + (len(WORD_GAP) if apart else 0)
-        ranges.append(TextRange(start=start, end=start + len(words.removesuffix(SOFT_HYPHEN))))
-        text = f"{text}{WORD_GAP if apart else ''}{words}"
+        words = flowed(part)
+        text = appended(text, words)
+        end = len(text.removesuffix(SOFT_HYPHEN))
+        ranges.append(TextRange(start=end - len(words.removesuffix(SOFT_HYPHEN)), end=end))
     return Joined(text=text.removesuffix(SOFT_HYPHEN), ranges=ranges)

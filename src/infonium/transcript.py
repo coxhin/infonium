@@ -1,9 +1,9 @@
 from itertools import pairwise
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, StringConstraints
+from pydantic import AfterValidator, BaseModel
 
-from infonium.document import Block, Paragraph, Place, Seconds, TimePlace, joined
+from infonium.document import Block, Paragraph, Place, Seconds, TimePlace, flowed, joined
 
 # A silence this long between two utterances starts a new paragraph.
 PARAGRAPH_PAUSE_SECONDS = 2.0
@@ -23,12 +23,11 @@ CLOSING_MARKS = (
     "\N{RIGHT CORNER BRACKET}\N{RIGHT WHITE CORNER BRACKET}\N{FULLWIDTH RIGHT PARENTHESIS}"
 )
 
-SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
 
 class Utterance(BaseModel):
     # A stretch of speech and the words spoken in it, as a recogniser or a caption gives them.
-    text: SpokenText
+    # The words are kept as one line, and there is at least one.
+    text: Annotated[str, AfterValidator(flowed)]
     moment: Seconds
     duration: Seconds
 
