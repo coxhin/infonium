@@ -23,6 +23,7 @@ from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
     PDF_MEDIA_TYPE,
+    WORD_GAP,
     Extracted,
     MediaType,
     UnreadableSource,
@@ -65,6 +66,9 @@ PAGE_OPENINGS = (b"<!doctype html", b"<html")
 # The kinds of file that hold a recording: sound alone, or sound with a picture.
 RECORDING_MEDIA_TYPES = ("audio/", "video/")
 OPENING_BYTES = 1024
+# The most that is kept of the reason a reading failed, and what stands for the rest.
+REASON_LIMIT_CHARACTERS = 500
+CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
 
 logger = logging.getLogger(__name__)
 
@@ -221,20 +225,30 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
 
 
+def asked_address(error: openai.APIError) -> str:
+    # Where a request went, without the parts of an address that may hold a secret.
+    return str(error.request.url.copy_with(userinfo=b"", query=None))
+
+
 def failure_reason(error: BaseException) -> str:
     # An error's own text is the reason, but for three kinds that leave the reason out of it.
     # A program that fails says why in what it writes, not in the error that reports how it
     # exited, so its last written line is the reason. A request that a service refused does
     # not carry what the service answered, and one that no service answered does not say
-    # which service that was, so the reason gives the address and the answer.
+    # which service that was, so the reason gives the address and the answer. A reason is
+    # kept as one line of a length a person reads: a service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
-        return written.strip().splitlines()[-1]
-    if isinstance(error, openai.APIStatusError):
-        return f"{error.request.url} answered {error.status_code}: {error.response.text.strip()}"
-    if isinstance(error, openai.APIConnectionError):
-        return f"{error.request.url} did not answer: {error}"
-    return str(error) or type(error).__name__
+        said = written.strip().splitlines()[-1]
+    elif isinstance(error, openai.APIStatusError):
+        said = f"{asked_address(error)} answered {error.status_code}: {error.response.text}"
+    elif isinstance(error, openai.APIConnectionError):
+        said = f"{asked_address(error)} did not answer: {error}"
+    else:
+        said = str(error) or type(error).__name__
+    line = WORD_GAP.join(said.split())
+    cut = len(line) > REASON_LIMIT_CHARACTERS
+    return f"{line[:REASON_LIMIT_CHARACTERS]}{CUT_SHORT}" if cut else line
 
 
 class Intake:
