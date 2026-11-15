@@ -31,6 +31,7 @@ PageFraction = Annotated[
     float,
     Field(ge=0, le=1, description="A distance across or down a page, as a part of its size."),
 ]
+HeadingLevel = Annotated[int, Field(ge=1, le=6)]
 Seconds = Annotated[
     float,
     Field(
@@ -344,3 +345,9 @@ def joined(parts: list[str]) -> Joined:
         end = len(text.removesuffix(SOFT_HYPHEN))
         ranges.append(TextRange(start=end - len(words.removesuffix(SOFT_HYPHEN)), end=end))
     return Joined(text=text.removesuffix(SOFT_HYPHEN), ranges=ranges)
+
+
+def tabled(rows: list[list[str]]) -> str:
+    # The text of a table whose rows hold these cells. A row in which no cell says anything
+    # is left out.
+    return ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in rows if any(cells))
