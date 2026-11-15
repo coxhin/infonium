@@ -4,6 +4,7 @@ import time
 from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
+from statistics import median_low
 from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Final, Literal
 
@@ -53,23 +54,70 @@ MEDIA_SITES = (
 AUDIO_MEDIA_TYPE = "audio/mp4"
 AUDIO_FILE = "sound.m4a"
 AAC = "aac"
+
+# A file that is taken for a recording may be anything, and ffmpeg and ffprobe do what a
+# file tells them. So they are pointed at one in a single way. The file stands on their
+# standard input: nothing they say of it, and nothing said of their failing, then names a
+# file, and no name can be read as an option or an address. They open nothing but files of
+# this machine. And they read only the containers of a recording, each by the name of
+# ffmpeg's reader for it: the kinds of audio and video that a file's bytes can be told to
+# be. A file of another kind may be a script that sends its reader to other files.
+STANDARD_INPUT = "/dev/stdin"
+LOCAL_FILE = "file"
+RECORDING_FORMATS = "aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,ogg,wav"
+HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RECORDING_FORMATS]
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
-FFPROBE = ["ffprobe", "-v", "error", "-of", "json", "-select_streams", FIRST_SOUND, "-show_entries"]
-SOUND_ENTRIES = "stream=codec_name,start_time:format=start_time"
+# ffprobe answers from the index of a file, and reads no further into the sound than its
+# first sixteen packets: enough to tell how long a packet usually lasts, whatever the first
+# one does.
+FIRST_PACKETS = "%+#16"
+FFPROBE = [
+    "ffprobe",
+    "-v",
+    "error",
+    *HELD_TO_RECORDINGS,
+    "-of",
+    "json",
+    "-select_streams",
+    FIRST_SOUND,
+    "-read_intervals",
+    FIRST_PACKETS,
+    "-show_entries",
+]
+SOUND_ENTRIES = "stream=codec_name:packet=size"
+TIMELINE_ENTRIES = "stream=start_pts,duration_ts,nb_frames:packet=duration"
 LENGTH_ENTRIES = "format=duration"
-FFMPEG = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i"]
+# ffmpeg reading the first sound of the recording on its standard input; what it is to make
+# of that sound follows.
+FFMPEG = [
+    "ffmpeg",
+    "-nostdin",
+    "-v",
+    "error",
+    *HELD_TO_RECORDINGS,
+    "-i",
+    STANDARD_INPUT,
+    "-map",
+    f"0:{FIRST_SOUND}",
+]
 # The sound is written alone: without the chapters of its file, which would be a stream of
 # their own, and with the index of samples before the sound, so that a player need not read
 # to the end of the file before it can play or seek.
-SOUND_ALONE = ["-map", f"0:{FIRST_SOUND}", "-map_chapters", "-1", "-movflags", "+faststart"]
+SOUND_ALONE = [*FFMPEG, "-y", "-map_chapters", "-1", "-movflags", "+faststart"]
+# The timeline of a recording is the one its picture and its captions keep: where the sound
+# starts late or breaks off, silence stands in the gap. Players and recognisers do not agree
+# about a file that tells this only by the times of its packets, so the sound that is kept
+# tells it in samples: it starts at zero and runs without a break. Sound in the coding that
+# is kept is copied when the copy does so; other sound is coded anew through this filter,
+# which puts the silence in.
+ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
 COPIED = ["-c:a", "copy"]
-# Sound that is coded anew begins when its presentation does: silence stands before a sound
-# that starts late, and in any hole in it.
-CODED_ANEW = ["-c:a", AAC, "-af", "aresample=async=1:first_pts=0"]
-# Sound that starts this long after its presentation cannot be copied: with nothing before
-# it, it would play that much early.
-LATE_START_SECONDS = 0.1
+CODED_ANEW = ["-c:a", AAC, "-af", ON_THE_TIMELINE]
+# A coder leaves out of the length of a track what it trims from its ends, at most this
+# many packets. A track that is shorter than its packets by more has packets that overlap,
+# and one that is longer by a packet has packets that stand apart.
+TRIMMED_PACKETS = 5
 # The longest ffprobe may take over a file, and ffmpeg over writing its sound.
 PROBE_LIMIT_SECONDS = 60.0
 CONVERSION_LIMIT_SECONDS = 1800.0
@@ -140,19 +188,35 @@ class Download(BaseModel):
 
 
 class SoundStream(BaseModel):
-    # A file that does not say when a stream or its presentation starts is taken to start
-    # both together.
     codec_name: str
-    start_time: float = 0.0
 
 
-class Presentation(BaseModel):
-    start_time: float = 0.0
+class SoundPacket(BaseModel):
+    size: int
 
 
 class SoundProbe(BaseModel):
+    # The first sound of a file and the first packets of that sound, where the file has them.
     streams: list[SoundStream]
-    format: Presentation
+    packets: list[SoundPacket]
+
+
+class CopiedStream(BaseModel):
+    # What the index of a copy tells of its track, in ticks of the track's clock: when it
+    # starts, how long it runs, and how many packets it holds.
+    start_pts: int
+    duration_ts: int
+    nb_frames: int
+
+
+class CopiedPacket(BaseModel):
+    duration: int
+
+
+class CopyProbe(BaseModel):
+    # A copy of sound holds that sound: one track, and packets in it.
+    streams: Annotated[list[CopiedStream], Field(min_length=1)]
+    packets: Annotated[list[CopiedPacket], Field(min_length=1)]
 
 
 class FileLength(BaseModel):
@@ -288,31 +352,41 @@ def fetched_parts(downloader: YoutubeDL, fetch: Fetch, file: CaptionFile) -> lis
     return vtt_parts(content, counts_from=0.0)
 
 
+# What one of the programs writes when it is run on a recording, within a time.
+def run_on(file: Path, command: list[str], limit: float) -> bytes:
+    with file.open("rb") as recording:
+        done = subprocess.run(
+            command, stdin=recording, check=True, capture_output=True, timeout=limit
+        )
+    return done.stdout
+
+
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
-    told = subprocess.run(
-        [*FFPROBE, entries, str(file)],
-        check=True,
-        capture_output=True,
-        timeout=PROBE_LIMIT_SECONDS,
-    )
-    return report.model_validate_json(told.stdout)
+    told = run_on(file, [*FFPROBE, entries, STANDARD_INPUT], PROBE_LIMIT_SECONDS)
+    return report.model_validate_json(told)
+
+
+# Whether a copy starts at zero and runs as long as its packets last.
+def has_plain_timeline(copy: CopyProbe) -> bool:
+    stream = copy.streams[0]
+    usual = median_low(packet.duration for packet in copy.packets)
+    longer = stream.duration_ts - stream.nb_frames * usual
+    return stream.start_pts == 0 and -TRIMMED_PACKETS * usual <= longer <= usual
 
 
 def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
-    if not probe.streams:
-        raise UnreadableSource(f"no sound in {file.name}")
-    first = probe.streams[0]
-    on_time = first.start_time - probe.format.start_time < LATE_START_SECONDS
-    coding = COPIED if first.codec_name == AAC and on_time else CODED_ANEW
-    sound = directory / AUDIO_FILE
-    subprocess.run(
-        [*FFMPEG, str(file), *SOUND_ALONE, *coding, str(sound)],
-        check=True,
-        capture_output=True,
-        timeout=CONVERSION_LIMIT_SECONDS,
-    )
-    return AudioTrack(file=sound, media_type=AUDIO_MEDIA_TYPE)
+    if not probe.streams or not probe.packets:
+        raise UnreadableSource("no sound in the recording")
+    audio = AudioTrack(file=directory / AUDIO_FILE, media_type=AUDIO_MEDIA_TYPE)
+    # Named as a file, the place the sound is written to cannot be read as anything else.
+    sound = f"{LOCAL_FILE}:{audio.file}"
+    if probe.streams[0].codec_name == AAC:
+        run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS)
+        if has_plain_timeline(probed(audio.file, TIMELINE_ENTRIES, CopyProbe)):
+            return audio
+    run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS)
+    return audio
 
 
 def fetch_media(url: str, directory: Path) -> FetchedMedia:
