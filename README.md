@@ -27,6 +27,7 @@ Settings are environment variables, read from `.env` by `make dev`.
 | `OPENAI_API_KEY` | none | Key for the endpoint that serves the model |
 | `OPENAI_BASE_URL` | OpenAI | Endpoint, when the model is served elsewhere |
 | `INFONIUM_MODEL` | `gpt-6.1-terra` | Model that writes digests |
+| `INFONIUM_WIRE_API` | `chat_completions` | API the endpoint speaks: `chat_completions` or `responses` |
 | `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and page snapshots are stored |
 

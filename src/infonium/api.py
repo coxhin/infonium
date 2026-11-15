@@ -105,7 +105,7 @@ def library_store() -> LibraryStore:
 
 @cache
 def language_model() -> LanguageModel:
-    return openai_model(settings.model)
+    return openai_model(name=settings.model, wire_api=settings.wire_api)
 
 
 def entry_of(item: Item) -> ItemEntry:
