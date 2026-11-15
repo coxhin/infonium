@@ -18,7 +18,7 @@ import httpx
 import openai
 from pydantic import BaseModel
 
-from infonium import media, pdf, speech, webpage
+from infonium import captions, media, pdf, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -178,7 +178,7 @@ def recognised_readout(
 def media_page_readout(url: str, directory: Path, engines: Engines) -> Readout:
     match media.fetch_media(url, directory):
         case media.CaptionedMedia(title=title, audio=audio, transcript=transcript):
-            return spoken_readout(media.EXTRACTOR, title, audio, transcript)
+            return spoken_readout(captions.EXTRACTOR, title, audio, transcript)
         case media.UncaptionedMedia(title=title, audio=audio):
             return recognised_readout(title, audio, engines.recogniser)
 
