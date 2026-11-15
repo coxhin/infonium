@@ -13,6 +13,7 @@ dependencies = [
     "openai>=3.51.0",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.3",
+    "pypdfium2>=5.15.2",
     "sqlalchemy>=2.1.8",
     "trafilatura>=2.3.1",
     "uvicorn>=0.54.0",
@@ -39,6 +40,11 @@ ban-relative-imports = "all"
 strict = true
 files = ["src"]
 plugins = ["pydantic.mypy"]
+
+# pypdfium2 carries no type information.
+[[tool.mypy.overrides]]
+module = ["pypdfium2"]
+ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
