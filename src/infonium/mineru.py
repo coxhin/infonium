@@ -181,7 +181,7 @@ class Furniture(BaseModel):
 Margin = Annotated[Furniture | Plain, Field(discriminator="type")]
 
 
-class Settled(BaseModel):
+class MergedRegion(BaseModel):
     # A region after the engine has joined what runs on: the lines of a text that goes on
     # from the text before it, in the next column or on the next page, are moved there.
     type: RegionType
@@ -191,18 +191,18 @@ class Settled(BaseModel):
 
 class ParsedPage(BaseModel):
     # The regions are read as they were found on their page, where every line still has its
-    # own page; the settled ones only tell which texts go on from the text before them.
+    # own page; the merged ones only tell which texts go on from the text before them.
     page_idx: PageNumber
     page_size: tuple[Points, Points]
     preproc_blocks: list[Region]
-    para_blocks: list[Settled]
+    para_blocks: list[MergedRegion]
     discarded_blocks: list[Margin]
 
     def continued(self) -> set[int]:
         return {
-            settled.index
-            for settled in self.para_blocks
-            if settled.type == RegionType.TEXT and settled.lines_deleted
+            merged.index
+            for merged in self.para_blocks
+            if merged.type == RegionType.TEXT and merged.lines_deleted
         }
 
 

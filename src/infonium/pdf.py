@@ -46,13 +46,13 @@ from infonium.mineru import (
     picture_pages,
     word_lines,
 )
+from infonium.webpage import LINE_BREAK
 
 EXTRACTOR = "pdf/1"
 
 TITLE_ENTRY = "Title"
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
-LINE_BREAK = "\n"
 HYPHEN = "-"
 HYPHENS = f"{HYPHEN}\N{HYPHEN}"
 WORD = re.compile(rf"[^\W_]+(?:{HYPHEN}[^\W_]+)*")
@@ -305,7 +305,7 @@ def passages(lines: list[ShownLine], evidence: Evidence, earlier: list[Block]) -
     ]
 
 
-def table_text(markup: str) -> str:
+def grid_text(markup: str) -> str:
     # A cell that spans rows or columns leaves empty cells where it reaches, so that every
     # cell stays under its own column.
     grid: dict[tuple[int, int], str] = {}
@@ -332,7 +332,7 @@ def tables(body: TableBody, page: ParsedPage) -> list[Block]:
         table
         for line in body.lines
         for span in line.spans
-        if span.html and (table := table_text(span.html))
+        if span.html and (table := grid_text(span.html))
     )
     return [Table(text=text, places=[placed(area(page, body.bbox), 0, len(text))])] if text else []
 
