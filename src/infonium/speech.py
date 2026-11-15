@@ -12,7 +12,7 @@ from typing import Annotated, Final, Self
 from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
-from infonium.document import Seconds, UnreadableSource
+from infonium.document import Seconds, UnreadableSource, has_words
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
@@ -204,7 +204,7 @@ def utterances_of(recognition: Recognition, piece: Piece) -> list[Utterance]:
             duration=min(segment.end, piece.duration) - segment.start,
         )
         for segment in recognition.segments
-        if segment.text.strip()
+        if has_words(segment.text)
         and segment.start < piece.duration
         and segment.no_speech_prob < exp(segment.avg_logprob)
     ]
