@@ -7,10 +7,10 @@ from io import BytesIO
 from math import exp, sumprod
 from pathlib import Path
 from tempfile import TemporaryFile
-from typing import Final
+from typing import Annotated, Final, Self
 
 from openai import OpenAI
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from infonium.document import Seconds, UnreadableSource
 from infonium.transcript import Transcript, Utterance
@@ -55,6 +55,9 @@ SEGMENT_TIMES: Final = "segment"
 RECOGNISER_TIMEOUT_SECONDS = 120.0
 RECOGNISER_RETRIES = 1
 
+Probability = Annotated[float, Field(ge=0, le=1)]
+LogProbability = Annotated[float, Field(le=0, allow_inf_nan=False)]
+
 
 class Recogniser(BaseModel):
     # Where a recogniser is reached, the key it asks for, and the model it transcribes with.
@@ -74,12 +77,19 @@ class Piece(BaseModel):
 class Segment(BaseModel):
     # What a recogniser says of one stretch of a piece: the words, when in the piece they
     # are spoken, and its own doubt about them, as the probability that nothing is spoken
-    # there and the mean log probability of the words it wrote.
+    # there and the mean log probability of the words it wrote. A reply whose times or
+    # doubts are not such numbers is refused here, where it comes in.
     text: str
-    start: float
-    end: float
-    no_speech_prob: float
-    avg_logprob: float
+    start: Seconds
+    end: Seconds
+    no_speech_prob: Probability
+    avg_logprob: LogProbability
+
+    @model_validator(mode="after")
+    def ends_after_it_starts(self) -> Self:
+        if self.end < self.start:
+            raise ValueError("a segment ends no earlier than it starts")
+        return self
 
 
 class Recognition(BaseModel):
