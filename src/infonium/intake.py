@@ -1,6 +1,7 @@
 import logging
 import mimetypes
 import re
+import subprocess
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -202,6 +203,15 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     raise UnreadableSource(f"infonium cannot read {source.media_type}: {source.reference}")
 
 
+def failure_reason(error: BaseException) -> str:
+    # A program that fails says why in what it writes, not in the error that reports how it
+    # exited, so its last written line is the reason.
+    if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+        written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
+        return written.strip().splitlines()[-1]
+    return str(error) or type(error).__name__
+
+
 class Intake:
     # Reads the sources of a library's items into documents, a few at a time and off the
     # thread that asks.
@@ -300,8 +310,7 @@ class Intake:
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             logger.error("reading item %s failed", item_id, exc_info=error)
-            reason = str(error) or type(error).__name__
-            self.changed(owner, item_id, partial(reading_failed, reason=reason))
+            self.changed(owner, item_id, partial(reading_failed, reason=failure_reason(error)))
 
     def changed(self, owner: str, item_id: str, change: Callable[[Reading], Reading]) -> Item:
         # Puts an item's reading through one change. A reading that ends with it has no more
