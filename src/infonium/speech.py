@@ -33,19 +33,19 @@ ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
 # network, as a playlist can, does not send it there.
 LOCAL_FILE = "file"
 
-# How loud the sound is, is measured over frames a tenth of a second long.
-FRAMES_PER_SECOND = 10
-FRAME_BYTES = BYTES_PER_SECOND // FRAMES_PER_SECOND
+# How loud the sound is, is measured over slivers a tenth of a second long.
+SLIVERS_PER_SECOND = 10
+SLIVER_BYTES = BYTES_PER_SECOND // SLIVERS_PER_SECOND
 # A recogniser hears half a minute at a time. Given more, it stitches what it hears together
 # itself, and there it repeats itself, drops speech and gives times past the end. So a
 # recording is cut here into pieces the length of an utterance, and each piece is one
 # request: no piece is longer than 16 seconds, and where a recogniser returns a piece as
 # one segment, that is how long an utterance gets.
-PIECE_FRAMES = 16 * FRAMES_PER_SECOND
+PIECE_SLIVERS = 16 * SLIVERS_PER_SECOND
 # A piece ends in the middle of the quietest 0.4 seconds of the later half of what it may
 # hold. Speech pauses that long between sentences and not inside a word, so where there is
 # such a pause the cut falls between two words.
-PAUSE_FRAMES = 4
+PAUSE_SLIVERS = 4
 
 PIECE_NAME = "piece.wav"
 WAVE_MEDIA_TYPE = "audio/wav"
@@ -86,27 +86,27 @@ class Recognition(BaseModel):
     segments: list[Segment]
 
 
-def cut_frame(loudness: list[float]) -> int:
-    # The frame before which a piece that has reached its limit ends.
+def cut_sliver(loudness: list[float]) -> int:
+    # The sliver before which a piece that has reached its limit ends.
     first = len(loudness) // 2
     stretches = [
-        sum(loudness[start : start + PAUSE_FRAMES])
-        for start in range(first, len(loudness) - PAUSE_FRAMES + 1)
+        sum(loudness[start : start + PAUSE_SLIVERS])
+        for start in range(first, len(loudness) - PAUSE_SLIVERS + 1)
     ]
-    return first + stretches.index(min(stretches)) + PAUSE_FRAMES // 2
+    return first + stretches.index(min(stretches)) + PAUSE_SLIVERS // 2
 
 
-def piece_after(frames_before: int, sound: bytes) -> Piece:
+def piece_after(slivers_before: int, sound: bytes) -> Piece:
     return Piece(
-        moment=frames_before / FRAMES_PER_SECOND,
+        moment=slivers_before / SLIVERS_PER_SECOND,
         duration=len(sound) / BYTES_PER_SECOND,
         sound=sound,
     )
 
 
 def decoded(recording: Path) -> Generator[bytes]:
-    # The sound of a recording as the decoder gives it, a frame at a time; the last frame may
-    # be a short one.
+    # The sound of a recording as the decoder gives it, a sliver at a time; the last may be a
+    # short one.
     command = [
         DECODER,
         "-nostdin",
@@ -135,10 +135,10 @@ def decoded(recording: Path) -> Generator[bytes]:
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
-        frame = decoder.stdout.read(FRAME_BYTES)
-        while len(frame) == FRAME_BYTES:
-            yield frame
-            frame = decoder.stdout.read(FRAME_BYTES)
+        sliver = decoder.stdout.read(SLIVER_BYTES)
+        while len(sliver) == SLIVER_BYTES:
+            yield sliver
+            sliver = decoder.stdout.read(SLIVER_BYTES)
         # What is left when the sound ends is given only once the decoder is known to have
         # ended well: one that was stopped may leave half a sample.
         if decoder.wait() != 0:
@@ -147,27 +147,27 @@ def decoded(recording: Path) -> Generator[bytes]:
             raise UnreadableSource(
                 f"no sound could be read from {recording.name}: {first_complaint}"
             )
-        if frame:
-            yield frame
+        if sliver:
+            yield sliver
 
 
-def pieces(frames: Iterable[bytes]) -> Iterator[Piece]:
-    # Sound that arrives a frame at a time, cut into pieces.
+def pieces(slivers: Iterable[bytes]) -> Iterator[Piece]:
+    # Sound that arrives a sliver at a time, cut into pieces.
     sound = bytearray()
     loudness: list[float] = []
-    frames_before = 0
-    for frame in frames:
-        samples = memoryview(frame).cast(SAMPLE_TYPE_CODE)
-        sound += frame
+    slivers_before = 0
+    for sliver in slivers:
+        samples = memoryview(sliver).cast(SAMPLE_TYPE_CODE)
+        sound += sliver
         loudness.append(sumprod(samples, samples))
-        if len(loudness) == PIECE_FRAMES:
-            cut = cut_frame(loudness)
-            yield piece_after(frames_before, bytes(sound[: cut * FRAME_BYTES]))
-            frames_before += cut
-            del sound[: cut * FRAME_BYTES]
+        if len(loudness) == PIECE_SLIVERS:
+            cut = cut_sliver(loudness)
+            yield piece_after(slivers_before, bytes(sound[: cut * SLIVER_BYTES]))
+            slivers_before += cut
+            del sound[: cut * SLIVER_BYTES]
             del loudness[:cut]
     if sound:
-        yield piece_after(frames_before, bytes(sound))
+        yield piece_after(slivers_before, bytes(sound))
 
 
 def wave_file(sound: bytes) -> bytes:
@@ -212,8 +212,8 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
     )
     utterances: list[Utterance] = []
     # The decoder is ended with the reading, however the reading ends.
-    with closing(decoded(recording)) as frames:
-        for piece in pieces(frames):
+    with closing(decoded(recording)) as slivers:
+        for piece in pieces(slivers):
             reply = endpoint.audio.transcriptions.with_raw_response.create(
                 file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
                 model=recogniser.model,
