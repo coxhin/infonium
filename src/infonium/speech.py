@@ -151,12 +151,14 @@ def decoded(recording: Path) -> Generator[bytes]:
             sliver = decoder.stdout.read(SLIVER_BYTES)
         # What is left when the sound ends is given only once the decoder is known to have
         # ended well: one that was stopped may leave half a sample.
-        if decoder.wait() != 0:
+        status = decoder.wait()
+        if status != 0:
             complaints.seek(0)
             first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
-            raise UnreadableSource(
-                f"no sound could be read from {recording.name}: {first_complaint}"
-            )
+            # A decoder that is stopped from outside complains of nothing; how it ended is
+            # then the reason, in the words Python has for it.
+            ending = subprocess.CalledProcessError(status, DECODER)
+            raise UnreadableSource(f"no sound could be read: {first_complaint or ending}")
         if sliver:
             yield sliver
 
