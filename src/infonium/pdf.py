@@ -4,12 +4,9 @@ from pathlib import Path
 
 from lxml import html
 from pydantic import BaseModel
-from pypdfium2 import PdfDocument
 
 from infonium.document import (
-    CELL_SEPARATOR,
     LINE_BREAK,
-    ROW_SEPARATOR,
     SOFT_HYPHEN,
     WORD_GAP,
     Block,
@@ -27,11 +24,14 @@ from infonium.document import (
     StyleMark,
     Table,
     UnreadableSource,
+    has_words,
     joined,
+    tabled,
 )
 from infonium.mineru import (
     Box,
     CodeBody,
+    FileToParse,
     FormulaSpan,
     Group,
     Line,
@@ -46,10 +46,10 @@ from infonium.mineru import (
     picture_pages,
     word_lines,
 )
+from infonium.pdfium import stored_file
 
 EXTRACTOR = "pdf/1"
 
-TITLE_ENTRY = "Title"
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
 HYPHEN = "-"
@@ -115,7 +115,7 @@ class Evidence(BaseModel):
 
 
 def words_of(text: str) -> list[str]:
-    return [word for word in text.split() if word.strip(SOFT_HYPHEN)]
+    return [word for word in text.split() if has_words(word)]
 
 
 def span_pieces(span: TextSpan | FormulaSpan) -> list[Piece]:
@@ -304,7 +304,7 @@ def passages(lines: list[ShownLine], evidence: Evidence, earlier: list[Block]) -
     ]
 
 
-def grid_text(markup: str) -> str:
+def grid_rows(markup: str) -> list[list[str]]:
     # A cell that spans rows or columns leaves empty cells where it reaches, so that every
     # cell stays under its own column.
     grid: dict[tuple[int, int], str] = {}
@@ -319,19 +319,21 @@ def grid_text(markup: str) -> str:
             grid[row_number, column] = WORD_GAP.join(cell.text_content().split())
             column = reach.stop
     columns = range(1 + max((across for _, across in grid), default=-1))
-    table = [
+    return [
         [grid.get((row_number, column), "") for column in columns]
         for row_number in range(1 + max((below for below, _ in grid), default=-1))
     ]
-    return ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in table if any(cells))
 
 
 def tables(body: TableBody, page: ParsedPage) -> list[Block]:
-    text = ROW_SEPARATOR.join(
-        table
-        for line in body.lines
-        for span in line.spans
-        if span.html and (table := grid_text(span.html))
+    text = tabled(
+        [
+            row
+            for line in body.lines
+            for span in line.spans
+            if span.html
+            for row in grid_rows(span.html)
+        ]
     )
     return [Table(text=text, places=[placed(area(page, body.bbox), 0, len(text))])] if text else []
 
@@ -434,14 +436,14 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
-    with PdfDocument(file) as document:
-        own_title = WORD_GAP.join(str(document.get_metadata_value(TITLE_ENTRY)).split())
-        numbers = range(len(document))
-        turned_pages = frozenset(number for number in numbers if document[number].get_rotation())
-        # A file without one character in its text layer can only be read as pictures.
-        lettered = any(document[number].get_textpage().count_chars() for number in numbers)
-    read = lettered_pages if lettered else picture_pages
-    blocks = pdf_blocks(read(file, engine, folder), turned_pages)
+    stored = stored_file(file)
+    numbers = range(len(stored.pages))
+    # A file without one character in its text layer can only be read as pictures.
+    read = lettered_pages if any(page.lettered for page in stored.pages) else picture_pages
+    blocks = pdf_blocks(
+        read(FileToParse(file=file, engine=engine, folder=folder), numbers),
+        frozenset(number for number in numbers if stored.pages[number].turned),
+    )
     if not blocks:
         raise UnreadableSource(f"no readable text in {name}")
-    return Extracted(title=document_title(own_title, blocks, name), blocks=blocks)
+    return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)

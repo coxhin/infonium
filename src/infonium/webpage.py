@@ -8,9 +8,7 @@ from lxml import etree, html
 from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
-    CELL_SEPARATOR,
     LINE_BREAK,
-    ROW_SEPARATOR,
     Block,
     Code,
     Extracted,
@@ -25,6 +23,7 @@ from infonium.document import (
     StyleMark,
     Table,
     UnreadableSource,
+    tabled,
 )
 
 EXTRACTOR = "webpage/1"
@@ -239,8 +238,9 @@ def cell_text(cell: etree._Element) -> str:
 
 
 def table_text(table: etree._Element) -> str:
-    rows = [[cell_text(cell) for cell in row.findall(Tag.CELL)] for row in table.findall(Tag.ROW)]
-    return ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in rows if any(cells))
+    return tabled(
+        [[cell_text(cell) for cell in row.findall(Tag.CELL)] for row in table.findall(Tag.ROW)]
+    )
 
 
 # A run takes its kind from the nearest heading or quotation around it. The search stops at
