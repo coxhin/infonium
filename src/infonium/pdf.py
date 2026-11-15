@@ -1,4 +1,5 @@
 import re
+import threading
 from itertools import pairwise
 from pathlib import Path
 
@@ -49,6 +50,10 @@ from infonium.mineru import (
 
 EXTRACTOR = "pdf/1"
 
+# PDFium may be used by one thread at a time, whatever the file. Nothing else in infonium
+# calls it, so a thread that holds this turn for as long as it has a file open in PDFium is
+# alone in it.
+PDFIUM_TURN = threading.Lock()
 TITLE_ENTRY = "Title"
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
@@ -434,7 +439,7 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
-    with PdfDocument(file) as document:
+    with PDFIUM_TURN, PdfDocument(file) as document:
         own_title = WORD_GAP.join(str(document.get_metadata_value(TITLE_ENTRY)).split())
         numbers = range(len(document))
         turned_pages = frozenset(number for number in numbers if document[number].get_rotation())
