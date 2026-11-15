@@ -1,7 +1,8 @@
 import subprocess
 import sys
 import wave
-from collections.abc import Iterator
+from collections.abc import Generator, Iterable, Iterator
+from contextlib import closing
 from io import BytesIO
 from math import exp, sumprod
 from pathlib import Path
@@ -103,7 +104,9 @@ def piece_after(frames_before: int, sound: bytes) -> Piece:
     )
 
 
-def pieces(recording: Path) -> Iterator[Piece]:
+def decoded(recording: Path) -> Generator[bytes]:
+    # The sound of a recording as the decoder gives it, a frame at a time; the last frame may
+    # be a short one.
     command = [
         DECODER,
         "-nostdin",
@@ -132,27 +135,39 @@ def pieces(recording: Path) -> Iterator[Piece]:
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
-        sound = bytearray()
-        loudness: list[float] = []
-        frames_before = 0
-        while frame := decoder.stdout.read(FRAME_BYTES):
-            samples = memoryview(frame).cast(SAMPLE_TYPE_CODE)
-            sound += frame
-            loudness.append(sumprod(samples, samples))
-            if len(loudness) == PIECE_FRAMES:
-                cut = cut_frame(loudness)
-                yield piece_after(frames_before, bytes(sound[: cut * FRAME_BYTES]))
-                frames_before += cut
-                del sound[: cut * FRAME_BYTES]
-                del loudness[:cut]
+        frame = decoder.stdout.read(FRAME_BYTES)
+        while len(frame) == FRAME_BYTES:
+            yield frame
+            frame = decoder.stdout.read(FRAME_BYTES)
+        # What is left when the sound ends is given only once the decoder is known to have
+        # ended well: one that was stopped may leave half a sample.
         if decoder.wait() != 0:
             complaints.seek(0)
             first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
             raise UnreadableSource(
                 f"no sound could be read from {recording.name}: {first_complaint}"
             )
-        if sound:
-            yield piece_after(frames_before, bytes(sound))
+        if frame:
+            yield frame
+
+
+def pieces(frames: Iterable[bytes]) -> Iterator[Piece]:
+    # Sound that arrives a frame at a time, cut into pieces.
+    sound = bytearray()
+    loudness: list[float] = []
+    frames_before = 0
+    for frame in frames:
+        samples = memoryview(frame).cast(SAMPLE_TYPE_CODE)
+        sound += frame
+        loudness.append(sumprod(samples, samples))
+        if len(loudness) == PIECE_FRAMES:
+            cut = cut_frame(loudness)
+            yield piece_after(frames_before, bytes(sound[: cut * FRAME_BYTES]))
+            frames_before += cut
+            del sound[: cut * FRAME_BYTES]
+            del loudness[:cut]
+    if sound:
+        yield piece_after(frames_before, bytes(sound))
 
 
 def wave_file(sound: bytes) -> bytes:
@@ -196,12 +211,14 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
         max_retries=RECOGNISER_RETRIES,
     )
     utterances: list[Utterance] = []
-    for piece in pieces(recording):
-        reply = endpoint.audio.transcriptions.with_raw_response.create(
-            file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
-            model=recogniser.model,
-            response_format=TIMED_REPLY,
-            timestamp_granularities=[SEGMENT_TIMES],
-        )
-        utterances.extend(utterances_of(Recognition.model_validate_json(reply.text), piece))
+    # The decoder is ended with the reading, however the reading ends.
+    with closing(decoded(recording)) as frames:
+        for piece in pieces(frames):
+            reply = endpoint.audio.transcriptions.with_raw_response.create(
+                file=(PIECE_NAME, wave_file(piece.sound), WAVE_MEDIA_TYPE),
+                model=recogniser.model,
+                response_format=TIMED_REPLY,
+                timestamp_granularities=[SEGMENT_TIMES],
+            )
+            utterances.extend(utterances_of(Recognition.model_validate_json(reply.text), piece))
     return Transcript(utterances=utterances)
