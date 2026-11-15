@@ -177,7 +177,7 @@ class BlockKind(StrEnum):
 
 class Heading(Tagged):
     kind: Literal[BlockKind.HEADING] = BlockKind.HEADING
-    level: Annotated[int, Field(ge=1, le=6)]
+    level: HeadingLevel
     text: str
     marks: list[Mark]
     places: PlacesInText = []
@@ -302,25 +302,35 @@ def is_unspaced(character: str) -> bool:
     return any(ord(character) in code_points for code_points in UNSPACED_CODE_POINTS)
 
 
-def appended(text: str, words: str) -> str:
-    # Words that arrive apart from the text they go on are put after it the way the text
-    # would be written: after one space, after none where either side is written without
-    # spaces, and after none where the text ends in a soft hyphen, which marks a word that
-    # goes on in the words that follow and is dropped.
-    whole = text.removesuffix(SOFT_HYPHEN)
-    apart = whole == text and whole and not is_unspaced(whole[-1]) and not is_unspaced(words[0])
-    return f"{whole}{WORD_GAP if apart else ''}{words}"
+def seams(parts: list[str]) -> list[str]:
+    # What stands before each of the parts of one text that arrive apart, the way the text
+    # would be written: nothing before the first, and one space before each other part, but
+    # none where either side is written without spaces, and none after a part that ends in a
+    # soft hyphen, which marks a word that goes on in the next part.
+    return [
+        WORD_GAP
+        if earlier
+        and not earlier.endswith(SOFT_HYPHEN)
+        and not is_unspaced(earlier[-1])
+        and not is_unspaced(later[0])
+        else ""
+        for earlier, later in zip(["", *parts], parts, strict=False)
+    ]
+
+
+def put_together(parts: list[str]) -> str:
+    # The parts of one text, each after its seam. The soft hyphen that joins a part to the
+    # next is dropped; the last part keeps its own, for a word that goes on after the text.
+    kept = [part.removesuffix(SOFT_HYPHEN) for part in parts[:-1]] + parts[-1:]
+    return "".join(f"{seam}{part}" for seam, part in zip(seams(parts), kept, strict=True))
 
 
 def on_one_line(part: str) -> str:
     # One part of a text as it would be written on one line: runs of spaces become one space,
-    # and a line break inside the part joins its lines as parts are joined. A part may end in
-    # a soft hyphen, for a word that goes on in the next part.
-    text = ""
-    for line in part.splitlines():
-        words = WORD_GAP.join(line.split())
-        text = appended(text, words) if words else text
-    return text
+    # and the lines of the part are put together as parts are. A part may end in a soft
+    # hyphen, for a word that goes on in the next part.
+    lines = [WORD_GAP.join(line.split()) for line in part.splitlines()]
+    return put_together([line for line in lines if line])
 
 
 def has_words(part: str) -> bool:
@@ -337,14 +347,14 @@ def flowed(part: str) -> str:
 def joined(parts: list[str]) -> Joined:
     # Parts of one text that arrive apart, such as the lines of a paragraph or the utterances
     # of a speaker, put together; each part gets the range of the text that holds its words.
-    text = ""
+    words = [flowed(part) for part in parts]
     ranges: list[TextRange] = []
-    for part in parts:
-        words = flowed(part)
-        text = appended(text, words)
-        end = len(text.removesuffix(SOFT_HYPHEN))
-        ranges.append(TextRange(start=end - len(words.removesuffix(SOFT_HYPHEN)), end=end))
-    return Joined(text=text.removesuffix(SOFT_HYPHEN), ranges=ranges)
+    end = 0
+    for seam, part_words in zip(seams(words), words, strict=True):
+        start = end + len(seam)
+        end = start + len(part_words.removesuffix(SOFT_HYPHEN))
+        ranges.append(TextRange(start=start, end=end))
+    return Joined(text=put_together(words).removesuffix(SOFT_HYPHEN), ranges=ranges)
 
 
 def tabled(rows: list[list[str]]) -> str:
