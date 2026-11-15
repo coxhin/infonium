@@ -227,7 +227,7 @@ def failure_reason(error: BaseException) -> str:
     # exited, so its last written line is the reason. A request that a service refused does
     # not carry what the service answered, and one that no service answered does not say
     # which service that was, so the reason gives the address and the answer.
-    if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+    if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         return written.strip().splitlines()[-1]
     if isinstance(error, openai.APIStatusError):
