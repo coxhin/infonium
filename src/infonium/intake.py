@@ -218,7 +218,7 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
         )
     if source.media_type.startswith(RECORDING_MEDIA_TYPES):
         return recognised_readout(
-            title_of(source.reference),
+            media.own_title(source.file) or title_of(source.reference),
             media.audio_track(source.file, directory),
             engines.recogniser,
         )
@@ -230,16 +230,28 @@ def asked_address(error: openai.APIError) -> str:
     return str(error.request.url.copy_with(userinfo=b"", query=None))
 
 
+def program_name(command: object) -> str:
+    # The program a command line starts, by its name alone: the rest of the line names files
+    # of the work folder, which say nothing to a person.
+    first = command[0] if isinstance(command, list) else command
+    return PurePosixPath(str(first)).name
+
+
 def failure_reason(error: BaseException) -> str:
-    # An error's own text is the reason, but for three kinds that leave the reason out of it.
+    # An error's own text is the reason, but for the kinds that leave the reason out of it.
     # A program that fails says why in what it writes, not in the error that reports how it
-    # exited, so its last written line is the reason. A request that a service refused does
+    # exited, so its last written line is the reason; a program that ended without a word,
+    # or ran out of time, is named with how it ended. A request that a service refused does
     # not carry what the service answered, and one that no service answered does not say
     # which service that was, so the reason gives the address and the answer. A reason is
     # kept as one line of a length a person reads: a service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         said = written.strip().splitlines()[-1]
+    elif isinstance(error, subprocess.CalledProcessError):
+        said = f"{program_name(error.cmd)} ended with status {error.returncode}"
+    elif isinstance(error, subprocess.TimeoutExpired):
+        said = f"{program_name(error.cmd)} took longer than {error.timeout:g} seconds"
     elif isinstance(error, openai.APIStatusError):
         said = f"{asked_address(error)} answered {error.status_code}: {error.response.text}"
     elif isinstance(error, openai.APIConnectionError):
