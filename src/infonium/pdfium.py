@@ -14,9 +14,9 @@ TITLE_ENTRY = "Title"
 
 
 class StoredPage(BaseModel):
-    # What a file says of one of its pages before the page is read: whether it has a text
-    # layer, and whether it is stored turned, to be shown turned back.
-    lettered: bool
+    # What a file says of one of its pages before the page is read: what its text layer holds,
+    # nothing when it has none, and whether it is stored turned, to be shown turned back.
+    text: str
     turned: bool
 
 
@@ -31,7 +31,7 @@ def stored_file(file: Path) -> StoredFile:
             title=WORD_GAP.join(document.get_metadata_value(TITLE_ENTRY).split()),
             pages=[
                 StoredPage(
-                    lettered=page.get_textpage().count_chars() > 0,
+                    text=page.get_textpage().get_text_range(),
                     turned=page.get_rotation() != 0,
                 )
                 for page in document

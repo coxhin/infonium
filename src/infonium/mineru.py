@@ -322,7 +322,7 @@ def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     upright = [number for number in numbers if not stored.pages[number].turned]
     from_layer = (
         [page for page in lettered_pages(to_parse, covering(upright)) if page.page_idx in upright]
-        if upright and any(page.lettered for page in stored.pages)
+        if upright and any(page.text for page in stored.pages)
         else []
     )
     taken = {page.page_idx for page in from_layer}

@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from itertools import pairwise
 from pathlib import Path
 
@@ -46,7 +47,7 @@ from infonium.mineru import (
     parsed_pages,
     word_lines,
 )
-from infonium.pdfium import stored_file
+from infonium.pdfium import StoredFile, stored_file
 
 EXTRACTOR = "pdf/1"
 
@@ -59,6 +60,9 @@ BROKEN_END = re.compile(rf"([^\W_]+)[{HYPHENS}]$")
 WORD_START = re.compile(r"[^\W_]+")
 SCRIPT = re.compile(r"<(sub|sup)>(.*?)</\1>", re.DOTALL)
 SCRIPT_STYLES = {"sub": Style.SUBSCRIPT, "sup": Style.SUPERSCRIPT}
+# The ligatures that begin with an f (ff, fi, fl, ffi, ffl), by the code points that stand
+# for them, with their letters written out.
+LIGATURES = {code: unicodedata.normalize("NFKC", chr(code)) for code in range(0xFB00, 0xFB05)}
 BULLETS = (
     "\N{BULLET}\N{WHITE BULLET}\N{TRIANGULAR BULLET}\N{HYPHEN BULLET}\N{BULLET OPERATOR}"
     "\N{MIDDLE DOT}\N{BLACK SMALL SQUARE}\N{WHITE SMALL SQUARE}\N{BLACK SQUARE}\N{WHITE SQUARE}"
@@ -109,25 +113,51 @@ class Flow(BaseModel):
 
 class Evidence(BaseModel):
     # What the whole file tells about the reading of any one line of it: the words it shows
-    # whole, and the pages the engine read as pictures.
+    # whole, the pages the engine read as pictures, and the words that the text layer of each
+    # page holds, none for a page read as a picture.
     whole_words: frozenset[str]
     pictures: frozenset[PageNumber]
+    spellings: dict[PageNumber, frozenset[str]]
 
 
 def words_of(text: str) -> list[str]:
     return [word for word in text.split() if has_words(word)]
 
 
-def span_pieces(span: TextSpan | FormulaSpan) -> list[Piece]:
+def layer_words(text: str) -> frozenset[str]:
+    return frozenset(WORD_START.findall(text.translate(LIGATURES)))
+
+
+def respelled(letters: str, spelled: frozenset[str]) -> str:
+    # The engine keeps only the first letter of a ligature: "different" set with the ligature
+    # ff comes out as "diferent". Letters that the page's text layer does not hold are written
+    # as the layer writes them, where that differs only in such a ligature written out.
+    if letters in spelled:
+        return letters
+    found = {
+        f"{letters[:at]}{whole}{letters[at + 1 :]}"
+        for at, letter in enumerate(letters)
+        for whole in LIGATURES.values()
+        if whole[0] == letter
+    } & spelled
+    match sorted(found):
+        case [whole]:
+            return whole
+        case _:
+            return letters
+
+
+def span_pieces(span: TextSpan | FormulaSpan, spelled: frozenset[str]) -> list[Piece]:
     if isinstance(span, FormulaSpan):
         return [Piece(words=words, styles=[])] if (words := words_of(span.content)) else []
+    content = WORD_START.sub(lambda letters: respelled(letters.group(), spelled), span.content)
     runs: list[tuple[str, list[Style]]] = []
     read = 0
-    for script in SCRIPT.finditer(span.content):
-        runs.append((span.content[read : script.start()], []))
+    for script in SCRIPT.finditer(content):
+        runs.append((content[read : script.start()], []))
         runs.append((script.group(2), [SCRIPT_STYLES[script.group(1)]]))
         read = script.end()
-    runs.append((span.content[read:], []))
+    runs.append((content[read:], []))
     pieces: list[Piece] = []
     # A run that touches the next one, such as a word and the mark set above it, goes on in
     # it; after the last run of a span comes a gap.
@@ -139,8 +169,8 @@ def span_pieces(span: TextSpan | FormulaSpan) -> list[Piece]:
     return pieces
 
 
-def line_pieces(line: Line) -> list[Piece]:
-    return [piece for span in line.spans for piece in span_pieces(span)]
+def line_pieces(line: Line, spelled: frozenset[str]) -> list[Piece]:
+    return [piece for span in line.spans for piece in span_pieces(span, spelled)]
 
 
 def line_code(line: Line) -> str:
@@ -177,11 +207,11 @@ def placed(where: Area, start: int, end: int) -> PagePlace:
     )
 
 
-def shown_lines(page: ParsedPage, lines: list[Line]) -> list[ShownLine]:
+def shown_lines(page: ParsedPage, lines: list[Line], evidence: Evidence) -> list[ShownLine]:
     return [
         ShownLine(pieces=pieces, area=area(page, line.bbox))
         for line in lines
-        if (pieces := line_pieces(line))
+        if (pieces := line_pieces(line, evidence.spellings[page.page_idx]))
     ]
 
 
@@ -195,12 +225,20 @@ def worded(lines: list[ShownLine], evidence: Evidence) -> bool:
     return bool(words) and (lettered or not from_pictures)
 
 
-def whole_words(lines: list[Line]) -> frozenset[str]:
+def whole_words(
+    pages: list[ParsedPage], spellings: dict[PageNumber, frozenset[str]]
+) -> frozenset[str]:
     # The first and the last word of a line are left out: either may be half of a word that
     # a line break has cut.
+    lines = [
+        (page.page_idx, line)
+        for page in pages
+        for region in [*page.preproc_blocks, *page.discarded_blocks]
+        for line in word_lines(region)
+    ]
     whole: set[str] = set()
-    for line in lines:
-        words = [word for piece in line_pieces(line) for word in piece.words]
+    for number, line in lines:
+        words = [word for piece in line_pieces(line, spellings[number]) for word in piece.words]
         for word in WORD.findall(WORD_GAP.join(words).casefold())[1:-1]:
             whole.update([word, *word.split(HYPHEN)])
     return frozenset(whole)
@@ -264,7 +302,7 @@ def paragraphs(lines: list[ShownLine], evidence: Evidence) -> list[Block]:
 
 
 def headings(title: Title, page: ParsedPage, evidence: Evidence) -> list[Block]:
-    lines = shown_lines(page, title.lines)
+    lines = shown_lines(page, title.lines, evidence)
     if not worded(lines, evidence):
         return []
     words = flow(lines, evidence)
@@ -356,7 +394,7 @@ def listings(body: CodeBody, page: ParsedPage) -> list[Block]:
 def member_blocks(member: Member, page: ParsedPage, evidence: Evidence) -> list[Block]:
     match member:
         case Plain():
-            return paragraphs(shown_lines(page, member.lines), evidence)
+            return paragraphs(shown_lines(page, member.lines, evidence), evidence)
         case TableBody():
             return tables(member, page)
         case CodeBody():
@@ -365,7 +403,9 @@ def member_blocks(member: Member, page: ParsedPage, evidence: Evidence) -> list[
             return []
 
 
-def text_chains(pages: list[ParsedPage]) -> dict[tuple[int, int], list[ShownLine]]:
+def text_chains(
+    pages: list[ParsedPage], evidence: Evidence
+) -> dict[tuple[int, int], list[ShownLine]]:
     # Every text that starts a paragraph, with its own lines and those of the texts that go
     # on from it, each line on the page where it was found.
     chains: dict[tuple[int, int], list[ShownLine]] = {}
@@ -376,23 +416,24 @@ def text_chains(pages: list[ParsedPage]) -> dict[tuple[int, int], list[ShownLine
             if isinstance(region, Text):
                 if region.index not in continued:
                     starts.append((page.page_idx, region.index))
-                chains.setdefault(starts[-1], []).extend(shown_lines(page, region.lines))
+                lines = shown_lines(page, region.lines, evidence)
+                chains.setdefault(starts[-1], []).extend(lines)
     return chains
 
 
-def pdf_blocks(parsed: ParsedPages) -> list[Block]:
-    chains = text_chains(parsed.pages)
+def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
+    spellings = {
+        page.page_idx: frozenset()
+        if page.page_idx in parsed.pictures
+        else layer_words(stored.pages[page.page_idx].text)
+        for page in parsed.pages
+    }
     evidence = Evidence(
-        whole_words=whole_words(
-            [
-                line
-                for page in parsed.pages
-                for region in [*page.preproc_blocks, *page.discarded_blocks]
-                for line in word_lines(region)
-            ]
-        ),
+        whole_words=whole_words(parsed.pages, spellings),
         pictures=parsed.pictures,
+        spellings=spellings,
     )
+    chains = text_chains(parsed.pages, evidence)
     blocks: list[Block] = []
     for page in parsed.pages:
         continued = page.continued()
@@ -404,7 +445,7 @@ def pdf_blocks(parsed: ParsedPages) -> list[Block]:
                 case Title():
                     blocks.extend(headings(region, page, evidence))
                 case Plain():
-                    blocks.extend(paragraphs(shown_lines(page, region.lines), evidence))
+                    blocks.extend(paragraphs(shown_lines(page, region.lines, evidence), evidence))
                 case Group():
                     blocks.extend(
                         block
@@ -416,7 +457,7 @@ def pdf_blocks(parsed: ParsedPages) -> list[Block]:
         # not always list the notes of a page in the order they stand, so they go top down.
         notes = [margin for margin in page.discarded_blocks if isinstance(margin, Plain)]
         for note in sorted(notes, key=lambda note: area(page, note.bbox).top):
-            blocks.extend(paragraphs(shown_lines(page, note.lines), evidence))
+            blocks.extend(paragraphs(shown_lines(page, note.lines, evidence), evidence))
     return blocks
 
 
@@ -443,7 +484,7 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # where the engine may write, and is the caller's to clear.
     stored = stored_file(file)
     parsed = parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored)
-    blocks = pdf_blocks(parsed)
+    blocks = pdf_blocks(parsed, stored)
     if not blocks:
         # Lines that the engine found on pages it read as pictures, and that make no block,
         # are writing in a script it cannot read.
