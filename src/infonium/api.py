@@ -1,12 +1,15 @@
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import cache
 from http import HTTPStatus
+from pathlib import PurePath
 from typing import Annotated, Any
+from urllib.parse import urldefrag
 
-import httpx
 import openai
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
 from infonium.digest import (
@@ -17,7 +20,8 @@ from infonium.digest import (
     digest_prompt,
     grounded_sections,
 )
-from infonium.document import HTML_MEDIA_TYPE, Block, UnreadableSource, document_of
+from infonium.document import Block
+from infonium.intake import Intake
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -29,40 +33,73 @@ from infonium.library import (
     Holding,
     Item,
     LibraryStore,
+    Link,
     NotInLibrary,
+    Origin,
+    Reading,
+    Upload,
     item_identity,
 )
 from infonium.settings import Settings
-from infonium.webpage import EXTRACTOR, extract_page, fetch_page
 
 JSON = "application/json"
+# How many sources are read at once. A reading may hold a model on a graphics card for
+# minutes, so the number is small.
+READERS = 2
+# A source is another site's bytes served from this origin; a browser that opens one treats
+# it as inert and as the kind of bytes it is said to be.
+SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+FETCH_SITE = "sec-fetch-site"
+OWN_SITES = frozenset({"same-origin", "none"})
+OTHER_SITE = "only infonium's own page may change the library"
+NAMELESS_UPLOAD = "an uploaded file needs a name"
 
 settings = Settings()
-app = FastAPI(title="infonium")
+
+
+@cache
+def library_store() -> LibraryStore:
+    return LibraryStore(settings.data_dir)
+
+
+@cache
+def intake() -> Intake:
+    return Intake(store=library_store(), readers=READERS)
+
+
+@cache
+def language_model() -> LanguageModel:
+    return openai_model(name=settings.model, wire_api=settings.wire_api)
+
+
+@asynccontextmanager
+async def running(service: FastAPI) -> AsyncIterator[None]:
+    intake().resume()
+    yield
+    intake().close()
+
+
+app = FastAPI(title="infonium", lifespan=running)
 
 
 class Failure(BaseModel):
     detail: str
 
 
-class PageImport(BaseModel):
+class LinkImport(BaseModel):
     url: HttpUrl
 
 
 class ItemEntry(BaseModel):
     id: str
-    url: str
-    title: str
+    origin: Origin
+    reading: Reading
 
 
 class DocumentView(BaseModel):
     id: str
     blocks: list[Block]
-
-
-class ItemReading(BaseModel):
-    entry: ItemEntry
-    document: DocumentView
 
 
 class DigestView(BaseModel):
@@ -72,23 +109,39 @@ class DigestView(BaseModel):
     sections: list[Section]
 
 
+def refusal(status: HTTPStatus, detail: str) -> Response:
+    return Response(
+        content=Failure(detail=detail).model_dump_json(), status_code=status, media_type=JSON
+    )
+
+
 def explained(status: HTTPStatus) -> Callable[[Request, Exception], Response]:
     def explain(request: Request, error: Exception) -> Response:
-        failure = Failure(detail=str(error) or type(error).__name__)
-        return Response(content=failure.model_dump_json(), status_code=status, media_type=JSON)
+        return refusal(status, str(error) or type(error).__name__)
 
     return explain
 
 
 app.add_exception_handler(NotInLibrary, explained(HTTPStatus.NOT_FOUND))
-app.add_exception_handler(UnreadableSource, explained(HTTPStatus.BAD_GATEWAY))
-app.add_exception_handler(httpx.HTTPError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
+
+
+@app.middleware("http")
+async def refuse_other_sites(
+    request: Request, answered: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    # A browser says which site a request comes from, and a page of another site may not
+    # change the library: a form posted across sites needs no leave from this service. A
+    # client that is no browser says nothing and is let through.
+    site = request.headers.get(FETCH_SITE)
+    if request.method not in SAFE_METHODS and site is not None and site not in OWN_SITES:
+        return refusal(HTTPStatus.FORBIDDEN, OTHER_SITE)
+    return await answered(request)
 
 
 def current_owner() -> str:
@@ -98,18 +151,8 @@ def current_owner() -> str:
 Owner = Annotated[str, Depends(current_owner)]
 
 
-@cache
-def library_store() -> LibraryStore:
-    return LibraryStore(settings.data_dir)
-
-
-@cache
-def language_model() -> LanguageModel:
-    return openai_model(name=settings.model, wire_api=settings.wire_api)
-
-
 def entry_of(item: Item) -> ItemEntry:
-    return ItemEntry(id=item.id, url=item.url, title=item.title)
+    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading)
 
 
 def digest_view(digest: Digest) -> DigestView:
@@ -125,7 +168,7 @@ def written_digest(holding: Holding, owner: str) -> Digest:
     model = language_model()
     completion = model.structured(
         instructions=digest_instructions(settings.language),
-        prompt=digest_prompt(holding.item.title, holding.document),
+        prompt=digest_prompt(holding.title, holding.document),
         output=DraftDigest,
     )
     digest = Digest(
@@ -147,37 +190,44 @@ def list_items(owner: Owner) -> list[ItemEntry]:
         return [entry_of(item) for item in library.items()]
 
 
-@app.post("/api/items", responses=UPSTREAM_FAILED)
-def import_page(page: PageImport, owner: Owner) -> ItemEntry:
-    fetched = fetch_page(str(page.url))
-    extracted = extract_page(fetched.content, fetched.url)
-    item = Item(
-        id=item_identity(owner, fetched.url),
-        url=fetched.url,
-        title=extracted.title,
-        added=datetime.now(UTC),
-    )
-    with library_store().library(owner) as library:
-        library.keep_page(
-            item,
-            document_of(
-                item_id=item.id,
-                extractor=EXTRACTOR,
-                snapshot=library.keep_snapshot(fetched.content),
-                media_type=HTML_MEDIA_TYPE,
-                blocks=extracted.blocks,
-            ),
-        )
-    return entry_of(item)
+@app.post("/api/items")
+def import_link(link: LinkImport, owner: Owner) -> ItemEntry:
+    # A fragment names a place in a page, not another page.
+    url = urldefrag(str(link.url)).url
+    return entry_of(intake().begin(owner, item_identity(owner, url), Link(url=url)))
+
+
+@app.post("/api/items/upload")
+def import_upload(file: UploadFile, owner: Owner) -> ItemEntry:
+    if file.filename is None:
+        raise TypeError("a file sent in a form has a name")
+    name = PurePath(file.filename).name
+    if not name:
+        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=NAMELESS_UPLOAD)
+    item_id = library_store().keep_upload(owner, file.file)
+    return entry_of(intake().begin(owner, item_id, Upload(name=name)))
 
 
 @app.get("/api/items/{item_id}", responses=NOT_IN_LIBRARY)
-def item_reading(item_id: str, owner: Owner) -> ItemReading:
+def item_entry(item_id: str, owner: Owner) -> ItemEntry:
     with library_store().library(owner) as library:
-        holding = library.holding(item_id)
-    return ItemReading(
-        entry=entry_of(holding.item),
-        document=DocumentView(id=holding.document.id, blocks=holding.document.blocks),
+        return entry_of(library.item(item_id))
+
+
+@app.get("/api/items/{item_id}/document", responses=NOT_IN_LIBRARY)
+def item_document(item_id: str, owner: Owner) -> DocumentView:
+    with library_store().library(owner) as library:
+        document = library.holding(item_id).document
+    return DocumentView(id=document.id, blocks=document.blocks)
+
+
+@app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)
+def item_source(item_id: str, owner: Owner) -> FileResponse:
+    store = library_store()
+    with store.library(owner) as library:
+        source = library.kept_source(item_id)
+    return FileResponse(
+        store.snapshot(source.snapshot), media_type=source.media_type, headers=SOURCE_HEADERS
     )
 
 

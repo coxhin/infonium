@@ -1,29 +1,44 @@
-import json
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from hashlib import sha256
+from enum import StrEnum
+from hashlib import file_digest, sha256
 from pathlib import Path
-from typing import Any
+from tempfile import NamedTemporaryFile
+from typing import Annotated, Any, BinaryIO, Literal
 
 import sqlalchemy
-from pydantic import AwareDatetime, BaseModel, TypeAdapter
+from filelock import FileLock
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, TypeAdapter
 from sqlalchemy.dialects import sqlite
 
 from infonium.digest import Digest
-from infonium.document import HTML_MEDIA_TYPE, Document
+from infonium.document import HTML_MEDIA_TYPE, Document, MediaType, Tagged
 
 # The one user of a self-hosted library. Item ids hash the owner, so a deployment that adds
 # accounts keeps this id for that first user.
 LOCAL_OWNER = "local"
 LIBRARY_FILE = "library.sqlite"
+LOCK_FILE = "library.lock"
 SNAPSHOT_DIRECTORY = "snapshots"
+UPLOAD_DIRECTORY = "uploads"
+WORK_DIRECTORY = "work"
+CONTENT_HASH = "sha256"
 # Stored with every body, so that a later change to the models can tell which form a row has.
-# Form 1 held web pages only: its documents do not name a media type, and its blocks have no
-# places.
-BODY_FORMAT = 2
-MEDIA_TYPE_FIELD = "media_type"
+# Form 1 held web pages only: its documents name no media type, and its items name a url and
+# a title. Form 2 gave documents a media type. Form 3 gave items an origin and a reading.
+BODY_FORMAT = 3
+EARLIER_DOCUMENT_FORMAT = 1
+ATTEMPT_KIND_PATH = "$.reading.attempt.kind"
+KEPT_DOCUMENT_PATH = "$.reading.document"
+KEPT_TITLE_PATH = "$.reading.title"
+SNAPSHOT_PATH = "$.snapshot"
+MEDIA_TYPE_PATH = "$.media_type"
+# A reading that the service's stopping cut off this many times is given up.
+READING_STARTS = 3
+CUT_OFF = "the reading was cut off {starts} times by the service stopping"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 TIMESTAMP = TypeAdapter(AwareDatetime)
@@ -67,13 +82,123 @@ digest_table = sqlalchemy.Table(
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
 )
+attempt_kind = sqlalchemy.func.json_extract(item_table.c.body, ATTEMPT_KIND_PATH)
+kept_document_id = sqlalchemy.func.json_extract(item_table.c.body, KEPT_DOCUMENT_PATH)
+kept_title = sqlalchemy.func.json_extract(item_table.c.body, KEPT_TITLE_PATH)
 
 
 class NotInLibrary(LookupError):
     pass
 
 
+class OriginKind(StrEnum):
+    LINK = "link"
+    UPLOAD = "upload"
+
+
+class Link(Tagged):
+    kind: Literal[OriginKind.LINK] = OriginKind.LINK
+    url: str
+
+
+class Upload(Tagged):
+    kind: Literal[OriginKind.UPLOAD] = OriginKind.UPLOAD
+    name: Annotated[str, StringConstraints(min_length=1)]
+
+
+Origin = Annotated[Link | Upload, Field(discriminator="kind")]
+
+
+class AttemptKind(StrEnum):
+    UNDERWAY = "underway"
+    FAILED = "failed"
+    SETTLED = "settled"
+
+
+class Underway(Tagged):
+    kind: Literal[AttemptKind.UNDERWAY] = AttemptKind.UNDERWAY
+    starts: Annotated[int, Field(ge=1)]
+
+
+class Failed(Tagged):
+    kind: Literal[AttemptKind.FAILED] = AttemptKind.FAILED
+    reason: str
+
+
+class Settled(Tagged):
+    kind: Literal[AttemptKind.SETTLED] = AttemptKind.SETTLED
+
+
+class ReadingKind(StrEnum):
+    UNREAD = "unread"
+    READ = "read"
+
+
+class Unread(Tagged):
+    # Nothing has been read from the item's source yet.
+    kind: Literal[ReadingKind.UNREAD] = ReadingKind.UNREAD
+    attempt: Annotated[Underway | Failed, Field(discriminator="kind")]
+
+
+class Read(Tagged):
+    # The library keeps a document read from the item's source. The attempt is the latest
+    # one, which may be a later one than the one that gave the document.
+    kind: Literal[ReadingKind.READ] = ReadingKind.READ
+    title: str
+    document: str
+    attempt: Annotated[Underway | Failed | Settled, Field(discriminator="kind")]
+
+
+# What has come of reading an item's source into a document, and how the latest attempt at it
+# stands. The functions below are every change a reading goes through.
+Reading = Annotated[Unread | Read, Field(discriminator="kind")]
+
+FIRST_READING = Unread(attempt=Underway(starts=1))
+
+
+def is_underway(reading: Reading) -> bool:
+    return isinstance(reading.attempt, Underway)
+
+
+def reading_with(reading: Reading, attempt: Underway | Failed) -> Reading:
+    match reading:
+        case Read(title=title, document=document):
+            return Read(title=title, document=document, attempt=attempt)
+        case _:
+            return Unread(attempt=attempt)
+
+
+def reading_started(reading: Reading) -> Reading:
+    return reading_with(reading, Underway(starts=1))
+
+
+def reading_resumed(reading: Reading) -> Reading:
+    # A reading that the service's stopping cut off goes on, until it has been started as
+    # often as a reading may be.
+    match reading.attempt:
+        case Underway(starts=starts) if starts < READING_STARTS:
+            return reading_with(reading, Underway(starts=starts + 1))
+        case _:
+            return reading_with(reading, Failed(reason=CUT_OFF.format(starts=READING_STARTS)))
+
+
+def reading_failed(reading: Reading, reason: str) -> Reading:
+    return reading_with(reading, Failed(reason=reason))
+
+
 class Item(BaseModel):
+    id: str
+    origin: Origin
+    added: AwareDatetime
+    reading: Reading
+
+
+def item_with(item: Item, reading: Reading) -> Item:
+    return Item(id=item.id, origin=item.origin, added=item.added, reading=reading)
+
+
+class EarlierItem(BaseModel):
+    # An item as forms 1 and 2 stored it: a web page, read when it was kept.
     id: str
     url: str
     title: str
@@ -81,21 +206,29 @@ class Item(BaseModel):
 
 
 class Holding(BaseModel):
-    item: Item
+    # The document the library keeps for an item, and what the item is called by it.
+    title: str
     document: Document
 
 
-def item_identity(owner: str, url: str) -> str:
-    return sha256(f"{owner}\n{url}".encode()).hexdigest()
+class KeptSource(BaseModel):
+    snapshot: str
+    media_type: MediaType
 
 
-def kept_document(body: str) -> Document:
-    # A body that names no media type is of form 1, and so a web page.
-    return Document.model_validate({MEDIA_TYPE_FIELD: HTML_MEDIA_TYPE, **json.loads(body)})
+class UnderwayItem(BaseModel):
+    owner: str
+    item_id: str
 
 
-def timestamp_text(moment: datetime) -> str:
-    return str(TIMESTAMP.dump_python(moment, mode="json"))
+def item_identity(owner: str, distinction: str) -> str:
+    # What tells one of an owner's items from another: a link's url, or the hash of an
+    # upload's bytes.
+    return sha256(f"{owner}\n{distinction}".encode()).hexdigest()
+
+
+def timestamp_text(instant: datetime) -> str:
+    return str(TIMESTAMP.dump_python(instant, mode="json"))
 
 
 def replacing_insert(
@@ -112,33 +245,66 @@ def enforce_foreign_keys(connection: sqlite3.Connection, record: object) -> None
     connection.execute(ENFORCE_FOREIGN_KEYS)
 
 
+def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
+    # Rows of an earlier form are rewritten in the current one, once.
+    latest_document = (
+        sqlalchemy.select(document_table.c.id)
+        .where(document_table.c.item_id == item_table.c.id)
+        .order_by(document_table.c.kept.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    earlier_items = connection.execute(
+        sqlalchemy.select(item_table.c.body, latest_document).where(
+            item_table.c.format < BODY_FORMAT
+        )
+    ).all()
+    for body, document_id in earlier_items:
+        earlier = EarlierItem.model_validate_json(body)
+        item = Item(
+            id=earlier.id,
+            origin=Link(url=earlier.url),
+            added=earlier.added,
+            reading=Read(title=earlier.title, document=document_id, attempt=Settled()),
+        )
+        connection.execute(
+            sqlalchemy.update(item_table)
+            .where(item_table.c.id == item.id)
+            .values(format=BODY_FORMAT, body=item.model_dump_json())
+        )
+    connection.execute(
+        sqlalchemy.update(document_table)
+        .where(document_table.c.format == EARLIER_DOCUMENT_FORMAT)
+        .values(
+            body=sqlalchemy.func.json_set(document_table.c.body, MEDIA_TYPE_PATH, HTML_MEDIA_TYPE)
+        )
+    )
+    for table in (document_table, digest_table):
+        connection.execute(
+            sqlalchemy.update(table).where(table.c.format < BODY_FORMAT).values(format=BODY_FORMAT)
+        )
+
+
 class Library:
-    def __init__(self, connection: sqlalchemy.Connection, owner: str, snapshots: Path) -> None:
+    def __init__(self, connection: sqlalchemy.Connection, owner: str) -> None:
         self.connection = connection
         self.owner = owner
-        self.snapshots = snapshots
 
-    def keep_snapshot(self, content: bytes) -> str:
-        name = sha256(content).hexdigest()
-        path = self.snapshots / name[:2] / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        return name
-
-    def keep_page(self, item: Item, document: Document) -> None:
-        added = timestamp_text(item.added)
+    def keep_item(self, item: Item) -> None:
         self.connection.execute(
             replacing_insert(
                 item_table,
                 {
                     item_table.c.id: item.id,
                     item_table.c.owner: self.owner,
-                    item_table.c.added: added,
+                    item_table.c.added: timestamp_text(item.added),
                     item_table.c.format: BODY_FORMAT,
                     item_table.c.body: item.model_dump_json(),
                 },
             )
         )
+
+    def keep_document(self, document: Document, kept: datetime) -> None:
         self.connection.execute(
             replacing_insert(
                 document_table,
@@ -146,7 +312,7 @@ class Library:
                     document_table.c.id: document.id,
                     document_table.c.owner: self.owner,
                     document_table.c.item_id: document.item_id,
-                    document_table.c.kept: added,
+                    document_table.c.kept: timestamp_text(kept),
                     document_table.c.format: BODY_FORMAT,
                     document_table.c.body: document.model_dump_json(),
                 },
@@ -174,20 +340,45 @@ class Library:
         ).scalars()
         return [Item.model_validate_json(body) for body in bodies]
 
-    def holding(self, item_id: str) -> Holding:
+    def sought(self, item_id: str) -> list[Item]:
+        # The item of this id when the library holds it, and nothing when it does not.
         bodies = self.connection.execute(
-            sqlalchemy.select(item_table.c.body, document_table.c.body)
-            .join(document_table, document_table.c.item_id == item_table.c.id)
-            .where(item_table.c.owner == self.owner, item_table.c.id == item_id)
-            .order_by(document_table.c.kept.desc())
-            .limit(1)
-        ).one_or_none()
-        if bodies is None:
+            sqlalchemy.select(item_table.c.body).where(
+                item_table.c.owner == self.owner, item_table.c.id == item_id
+            )
+        ).scalars()
+        return [Item.model_validate_json(body) for body in bodies]
+
+    def item(self, item_id: str) -> Item:
+        found = self.sought(item_id)
+        if not found:
             raise NotInLibrary(f"item {item_id} is not in the library")
-        return Holding(
-            item=Item.model_validate_json(bodies[0]),
-            document=kept_document(bodies[1]),
-        )
+        return found[0]
+
+    def holding(self, item_id: str) -> Holding:
+        kept = self.connection.execute(
+            sqlalchemy.select(kept_title, document_table.c.body)
+            .select_from(item_table)
+            .join(document_table, document_table.c.id == kept_document_id)
+            .where(item_table.c.owner == self.owner, item_table.c.id == item_id)
+        ).one_or_none()
+        if kept is None:
+            raise NotInLibrary(f"item {item_id} has no document in the library")
+        return Holding(title=kept[0], document=Document.model_validate_json(kept[1]))
+
+    def kept_source(self, item_id: str) -> KeptSource:
+        source = self.connection.execute(
+            sqlalchemy.select(
+                sqlalchemy.func.json_extract(document_table.c.body, SNAPSHOT_PATH),
+                sqlalchemy.func.json_extract(document_table.c.body, MEDIA_TYPE_PATH),
+            )
+            .select_from(item_table)
+            .join(document_table, document_table.c.id == kept_document_id)
+            .where(item_table.c.owner == self.owner, item_table.c.id == item_id)
+        ).one_or_none()
+        if source is None:
+            raise NotInLibrary(f"item {item_id} has no document in the library")
+        return KeptSource(snapshot=source[0], media_type=source[1])
 
     def kept_digests(self, document_id: str) -> list[Digest]:
         bodies = self.connection.execute(
@@ -200,13 +391,65 @@ class Library:
 
 class LibraryStore:
     def __init__(self, directory: Path) -> None:
-        directory.mkdir(parents=True, exist_ok=True)
         self.snapshots = directory / SNAPSHOT_DIRECTORY
+        self.uploads = directory / UPLOAD_DIRECTORY
+        self.work = directory / WORK_DIRECTORY
+        for kept in (self.snapshots, self.uploads, self.work):
+            kept.mkdir(parents=True, exist_ok=True)
+        # One service at a time works on a library; a second one stops here.
+        self.guard = FileLock(directory / LOCK_FILE)
+        self.guard.acquire(timeout=0)
         self.engine = sqlalchemy.create_engine(f"sqlite:///{directory / LIBRARY_FILE}")
         sqlalchemy.event.listen(self.engine, CONNECT, enforce_foreign_keys)
         metadata.create_all(self.engine)
+        with self.engine.begin() as connection:
+            bring_up_to_date(connection)
 
     @contextmanager
     def library(self, owner: str) -> Iterator[Library]:
         with self.engine.begin() as connection:
-            yield Library(connection=connection, owner=owner, snapshots=self.snapshots)
+            yield Library(connection=connection, owner=owner)
+
+    def underway(self) -> list[UnderwayItem]:
+        with self.engine.begin() as connection:
+            rows = connection.execute(
+                sqlalchemy.select(item_table.c.owner, item_table.c.id).where(
+                    attempt_kind == AttemptKind.UNDERWAY
+                )
+            )
+            return [UnderwayItem(owner=owner, item_id=item_id) for owner, item_id in rows]
+
+    def clear_work(self) -> None:
+        # What a reading leaves in the work directory when the service stops under it.
+        shutil.rmtree(self.work)
+        self.work.mkdir()
+
+    def staged(self, content: BinaryIO) -> Path:
+        # Bytes arrive in the work directory and are moved to their place whole.
+        with NamedTemporaryFile(dir=self.work, delete=False) as arrived:
+            shutil.copyfileobj(content, arrived)
+        return Path(arrived.name)
+
+    def snapshot(self, name: str) -> Path:
+        return self.snapshots / name[:2] / name
+
+    def keep_snapshot(self, file: Path) -> str:
+        with file.open("rb") as content:
+            name = file_digest(content, CONTENT_HASH).hexdigest()
+            content.seek(0)
+            arrived = self.staged(content)
+        kept = self.snapshot(name)
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        arrived.replace(kept)
+        return name
+
+    def upload(self, item_id: str) -> Path:
+        return self.uploads / item_id
+
+    def keep_upload(self, owner: str, content: BinaryIO) -> str:
+        # An upload waits under the id of its item until it has been read.
+        arrived = self.staged(content)
+        with arrived.open("rb") as stored:
+            item_id = item_identity(owner, file_digest(stored, CONTENT_HASH).hexdigest())
+        arrived.replace(self.upload(item_id))
+        return item_id

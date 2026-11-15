@@ -3,9 +3,10 @@ import type { components, paths } from "./protocol";
 
 type Schemas = components["schemas"];
 export type ItemEntry = Schemas["ItemEntry"];
-export type ItemReading = Schemas["ItemReading"];
-export type Block = Schemas["DocumentView"]["blocks"][number];
+export type ItemDocument = Schemas["DocumentView"];
+export type Block = ItemDocument["blocks"][number];
 export type Mark = Schemas["Paragraph"]["marks"][number];
+export type Place = Block["places"][number];
 export type PagePlace = Schemas["PagePlace"];
 export type TimePlace = Schemas["TimePlace"];
 export type Style = Schemas["Style"];
@@ -13,7 +14,15 @@ export type Digest = Schemas["DigestView"];
 export type Anchor = Schemas["Anchor"];
 type Refusal = Schemas["Failure"] | Schemas["HTTPValidationError"];
 
+const SOURCE_PATH = "/api/items/{item_id}/source" satisfies keyof paths;
+const ITEM_PLACE = "{item_id}";
+
 const api = createClient<paths>();
+
+// Where the file an item's document was read from is served: the PDF, or the recording.
+export function sourceLink(itemId: string): string {
+  return SOURCE_PATH.replace(ITEM_PLACE, itemId);
+}
 
 function refusalText(refusal: Refusal | undefined): string {
   const detail = refusal?.detail;
@@ -35,12 +44,32 @@ export function listItems(): Promise<ItemEntry[]> {
   return settled(api.GET("/api/items"));
 }
 
-export function importPage(url: string): Promise<ItemEntry> {
+export function importLink(url: string): Promise<ItemEntry> {
   return settled(api.POST("/api/items", { body: { url } }));
 }
 
-export function readItem(itemId: string): Promise<ItemReading> {
+export function importUpload(file: File): Promise<ItemEntry> {
+  return settled(
+    api.POST("/api/items/upload", {
+      // The protocol describes the file as a string of bytes; the form carries the file.
+      body: { file: file as unknown as string },
+      bodySerializer: (body) => {
+        const form = new FormData();
+        form.append("file", body.file);
+        return form;
+      },
+    }),
+  );
+}
+
+export function readEntry(itemId: string): Promise<ItemEntry> {
   return settled(api.GET("/api/items/{item_id}", { params: { path: { item_id: itemId } } }));
+}
+
+export function readDocument(itemId: string): Promise<ItemDocument> {
+  return settled(
+    api.GET("/api/items/{item_id}/document", { params: { path: { item_id: itemId } } }),
+  );
 }
 
 export function rewriteDigest(itemId: string): Promise<Digest> {

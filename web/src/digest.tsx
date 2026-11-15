@@ -1,23 +1,26 @@
 import { useEffect, useState } from "react";
 import { ensureDigest, rewriteDigest, type Anchor, type Digest } from "./client";
 import { reasonOf, useLoaded } from "./loading";
-import { hideAnchor, showAnchor } from "./reader";
 
 type Pointing =
   | { state: "nowhere" }
   | { state: "shown"; anchor: Anchor }
   | { state: "lost"; reason: string };
 
-function DigestBody({ digest }: { digest: Digest }) {
+// How a digest's citations reach the source: showing an anchor's passage there, which fails
+// when the source no longer holds it, and taking the passage off show again.
+export type Pointer = { show: (anchor: Anchor) => void; hide: () => void };
+
+function DigestBody({ digest, pointer }: { digest: Digest; pointer: Pointer }) {
   const [pointing, setPointing] = useState<Pointing>({ state: "nowhere" });
-  useEffect(() => hideAnchor, []);
+  useEffect(() => pointer.hide, []);
 
   function point(anchor: Anchor) {
     try {
-      showAnchor(anchor);
+      pointer.show(anchor);
       setPointing({ state: "shown", anchor });
     } catch (error) {
-      hideAnchor();
+      pointer.hide();
       setPointing({ state: "lost", reason: reasonOf(error) });
     }
   }
@@ -61,7 +64,7 @@ function DigestBody({ digest }: { digest: Digest }) {
   );
 }
 
-export function DigestPanel({ itemId }: { itemId: string }) {
+export function DigestPanel({ itemId, pointer }: { itemId: string; pointer: Pointer }) {
   const [round, setRound] = useState(0);
   const digest = useLoaded(
     () => (round === 0 ? ensureDigest(itemId) : rewriteDigest(itemId)),
@@ -77,7 +80,7 @@ export function DigestPanel({ itemId }: { itemId: string }) {
       </header>
       {digest.state === "loading" && <p className="status">正在生成摘要…</p>}
       {digest.state === "failed" && <p className="status failed">生成失败：{digest.reason}</p>}
-      {digest.state === "ready" && <DigestBody digest={digest.value} />}
+      {digest.state === "ready" && <DigestBody digest={digest.value} pointer={pointer} />}
     </aside>
   );
 }

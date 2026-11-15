@@ -1,5 +1,6 @@
 import { createElement, Fragment, type CSSProperties, type ReactNode } from "react";
-import type { Anchor, Block, ItemReading, Mark, Style } from "./client";
+import type { Anchor, Block, ItemDocument, ItemEntry, Mark, Style } from "./client";
+import { originLabel } from "./origin";
 
 const STYLE_ELEMENTS: Record<Style, string> = {
   strong: "strong",
@@ -151,15 +152,27 @@ function BlockView({ block, number }: { block: Block; number: number }) {
   }
 }
 
-export function Reader({ reading }: { reading: ItemReading }) {
-  const blocks = reading.document.blocks;
+export function Reader({
+  entry,
+  title,
+  itemDocument,
+}: {
+  entry: ItemEntry;
+  title: string;
+  itemDocument: ItemDocument;
+}) {
+  const blocks = itemDocument.blocks;
   return (
-    <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: reading.document.id }}>
+    <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}>
       <header>
-        <a href={reading.entry.url} target="_blank" rel="noreferrer noopener">
-          {new URL(reading.entry.url).hostname} ↗
-        </a>
-        {blocks[0]?.kind !== "heading" && <h1>{reading.entry.title}</h1>}
+        {entry.origin.kind === "link" ? (
+          <a href={entry.origin.url} target="_blank" rel="noreferrer noopener">
+            {originLabel(entry.origin)} ↗
+          </a>
+        ) : (
+          <span>{originLabel(entry.origin)}</span>
+        )}
+        {blocks[0]?.kind !== "heading" && <h1>{title}</h1>}
       </header>
       {blocks.map((block, number) => (
         <BlockView key={number} block={block} number={number} />
@@ -188,7 +201,7 @@ function rangeIn(blockElement: Element, start: number, end: number): Range {
   throw new Error(`characters ${start}–${end} lie outside the block's text`);
 }
 
-function scrolls(overflow: string): boolean {
+export function scrolls(overflow: string): boolean {
   return overflow === "auto" || overflow === "scroll";
 }
 
@@ -218,9 +231,9 @@ function bringIntoView(passage: Range): void {
   }
 }
 
-// Highlights an anchor's passage, and refuses when the page does not show the document the
+// Highlights an anchor's passage, and refuses when the page does not hold the document the
 // anchor points into or when the text there is no longer the quoted text.
-export function showAnchor(anchor: Anchor): void {
+export function highlightAnchor(anchor: Anchor): Range {
   const blockElement = document.querySelector(
     `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] [${BLOCK_ATTRIBUTE}="${anchor.block_number}"]`,
   );
@@ -237,7 +250,12 @@ export function showAnchor(anchor: Anchor): void {
     throw new Error("原文已经变化，找不到这段引文");
   }
   CSS.highlights.set(ANCHOR_HIGHLIGHT, new Highlight(passage));
-  bringIntoView(passage);
+  return passage;
+}
+
+// Highlights an anchor's passage and brings it into view, for text that is on show.
+export function showAnchor(anchor: Anchor): void {
+  bringIntoView(highlightAnchor(anchor));
 }
 
 export function hideAnchor(): void {

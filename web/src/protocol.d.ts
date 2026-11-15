@@ -14,8 +14,25 @@ export interface paths {
         /** List Items */
         get: operations["list_items_api_items_get"];
         put?: never;
-        /** Import Page */
-        post: operations["import_page_api_items_post"];
+        /** Import Link */
+        post: operations["import_link_api_items_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Upload */
+        post: operations["import_upload_api_items_upload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -29,8 +46,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Item Reading */
-        get: operations["item_reading_api_items__item_id__get"];
+        /** Item Entry */
+        get: operations["item_entry_api_items__item_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -51,6 +68,40 @@ export interface paths {
         put: operations["ensure_digest_api_items__item_id__digest_put"];
         /** Rewrite Digest */
         post: operations["rewrite_digest_api_items__item_id__digest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Document */
+        get: operations["item_document_api_items__item_id__document_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Source */
+        get: operations["item_source_api_items__item_id__source_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -82,6 +133,11 @@ export interface components {
              * @description A position in a block's text, counted in Unicode code points.
              */
             start: number;
+        };
+        /** Body_import_upload_api_items_upload_post */
+        Body_import_upload_api_items_upload_post: {
+            /** File */
+            file: string;
         };
         /** Code */
         Code: {
@@ -115,6 +171,16 @@ export interface components {
             blocks: (components["schemas"]["Heading"] | components["schemas"]["Paragraph"] | components["schemas"]["ListItem"] | components["schemas"]["Quotation"] | components["schemas"]["Code"] | components["schemas"]["Table"] | components["schemas"]["Figure"])[];
             /** Id */
             id: string;
+        };
+        /** Failed */
+        Failed: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "failed";
+            /** Reason */
+            reason: string;
         };
         /** Failure */
         Failure: {
@@ -166,15 +232,28 @@ export interface components {
         ItemEntry: {
             /** Id */
             id: string;
-            /** Title */
-            title: string;
+            /** Origin */
+            origin: components["schemas"]["Link"] | components["schemas"]["Upload"];
+            /** Reading */
+            reading: components["schemas"]["Unread"] | components["schemas"]["Read"];
+        };
+        /** Link */
+        Link: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "link";
             /** Url */
             url: string;
         };
-        /** ItemReading */
-        ItemReading: {
-            document: components["schemas"]["DocumentView"];
-            entry: components["schemas"]["ItemEntry"];
+        /** LinkImport */
+        LinkImport: {
+            /**
+             * Url
+             * Format: uri
+             */
+            url: string;
         };
         /** LinkMark */
         LinkMark: {
@@ -223,14 +302,6 @@ export interface components {
             position: number;
             /** Text */
             text: string;
-        };
-        /** PageImport */
-        PageImport: {
-            /**
-             * Url
-             * Format: uri
-             */
-            url: string;
         };
         /** PagePlace */
         PagePlace: {
@@ -309,12 +380,34 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** Read */
+        Read: {
+            /** Attempt */
+            attempt: components["schemas"]["Underway"] | components["schemas"]["Failed"] | components["schemas"]["Settled"];
+            /** Document */
+            document: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "read";
+            /** Title */
+            title: string;
+        };
         /** Section */
         Section: {
             /** Statements */
             statements: components["schemas"]["Statement"][];
             /** Title */
             title: string;
+        };
+        /** Settled */
+        Settled: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "settled";
         };
         /** Statement */
         Statement: {
@@ -402,6 +495,36 @@ export interface components {
              */
             start: number;
         };
+        /** Underway */
+        Underway: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "underway";
+            /** Starts */
+            starts: number;
+        };
+        /** Unread */
+        Unread: {
+            /** Attempt */
+            attempt: components["schemas"]["Underway"] | components["schemas"]["Failed"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unread";
+        };
+        /** Upload */
+        Upload: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "upload";
+            /** Name */
+            name: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -444,7 +567,7 @@ export interface operations {
             };
         };
     };
-    import_page_api_items_post: {
+    import_link_api_items_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -453,7 +576,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PageImport"];
+                "application/json": components["schemas"]["LinkImport"];
             };
         };
         responses: {
@@ -475,18 +598,42 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Bad Gateway */
-            502: {
+        };
+    };
+    import_upload_api_items_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_upload_api_items_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Failure"];
+                    "application/json": components["schemas"]["ItemEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
     };
-    item_reading_api_items__item_id__get: {
+    item_entry_api_items__item_id__get: {
         parameters: {
             query?: never;
             header?: never;
@@ -503,7 +650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemReading"];
+                    "application/json": components["schemas"]["ItemEntry"];
                 };
             };
             /** @description Not Found */
@@ -620,6 +767,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    item_document_api_items__item_id__document_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_source_api_items__item_id__source_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

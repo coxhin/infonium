@@ -106,6 +106,32 @@ main > .status {
   padding: 0.3rem 0.5rem;
 }
 
+.library .upload {
+  display: block;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.library .upload[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* The field stays reachable from the keyboard; its label is what shows. */
+.library .upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.library .upload:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .library ul {
   list-style: none;
   margin: 1rem -0.5rem 0;
@@ -143,7 +169,7 @@ main > .status {
   overflow-wrap: break-word;
 }
 
-.reader > header a {
+.reader > header :is(a, span) {
   font-size: 0.85rem;
   color: var(--muted);
   text-decoration: none;
@@ -255,6 +281,99 @@ main > .status {
 ::highlight(anchor) {
   background-color: var(--found);
   color: inherit;
+}
+
+/* Source: the pages of a paged file, or the player of a recording */
+
+.views {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.views button {
+  font-size: 0.85rem;
+}
+
+.views button[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--panel);
+}
+
+.page {
+  position: relative;
+  width: 100%;
+  max-width: 62rem;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.page canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* A page is light whatever the theme, so its marks keep one colour. */
+.page-box {
+  position: absolute;
+  background: rgb(255 208 64 / 0.38);
+  outline: 2px solid #a8481f;
+  border-radius: 2px;
+}
+
+.page .status {
+  position: absolute;
+  inset: 40% 1rem auto;
+  text-align: center;
+}
+
+.player {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.5rem 1rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.player audio {
+  display: block;
+  width: 100%;
+}
+
+.player .status {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.rereading {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.rereading.failed {
+  color: var(--failure);
+  overflow-wrap: anywhere;
 }
 
 /* Digest */

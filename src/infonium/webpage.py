@@ -3,10 +3,8 @@ import string
 from enum import StrEnum
 from itertools import takewhile
 
-import httpx
 import trafilatura
 from lxml import etree, html
-from pydantic import BaseModel
 from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
@@ -29,11 +27,6 @@ from infonium.document import (
 )
 
 EXTRACTOR = "webpage/1"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0 Safari/537.36 infonium/0.1"
-)
-FETCH_TIMEOUT_SECONDS = 20.0
 WEB_SCHEMES = ("http://", "https://")
 WHITESPACE = re.compile(r"\s+")
 LINE_BREAK = "\n"
@@ -103,11 +96,6 @@ FLOW_TAGS = frozenset(
     }
 )
 WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
-
-
-class FetchedPage(BaseModel):
-    url: str
-    content: bytes
 
 
 # The extractor turns a short inline quotation and a block quotation into the same element,
@@ -360,17 +348,6 @@ def is_leftover(block: Block) -> bool:
     return isinstance(block, Heading | Paragraph | ListItem | Quotation) and all(
         character in LEFTOVER_CHARACTERS for character in block.text
     )
-
-
-def fetch_page(url: str) -> FetchedPage:
-    response = httpx.get(
-        url,
-        follow_redirects=True,
-        timeout=FETCH_TIMEOUT_SECONDS,
-        headers={"User-Agent": USER_AGENT},
-    )
-    response.raise_for_status()
-    return FetchedPage(url=str(response.url.copy_with(fragment=None)), content=response.content)
 
 
 def extract_page(content: bytes, url: str) -> Extracted:

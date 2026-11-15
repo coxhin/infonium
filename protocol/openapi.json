@@ -40,6 +40,20 @@
         "title": "Anchor",
         "type": "object"
       },
+      "Body_import_upload_api_items_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_upload_api_items_upload_post",
+        "type": "object"
+      },
       "Code": {
         "properties": {
           "kind": {
@@ -167,6 +181,26 @@
           "blocks"
         ],
         "title": "DocumentView",
+        "type": "object"
+      },
+      "Failed": {
+        "properties": {
+          "kind": {
+            "const": "failed",
+            "default": "failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "title": "Failed",
         "type": "object"
       },
       "Failure": {
@@ -321,8 +355,57 @@
             "title": "Id",
             "type": "string"
           },
-          "title": {
-            "title": "Title",
+          "origin": {
+            "discriminator": {
+              "mapping": {
+                "link": "#/components/schemas/Link",
+                "upload": "#/components/schemas/Upload"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Link"
+              },
+              {
+                "$ref": "#/components/schemas/Upload"
+              }
+            ],
+            "title": "Origin"
+          },
+          "reading": {
+            "discriminator": {
+              "mapping": {
+                "read": "#/components/schemas/Read",
+                "unread": "#/components/schemas/Unread"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unread"
+              },
+              {
+                "$ref": "#/components/schemas/Read"
+              }
+            ],
+            "title": "Reading"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "reading"
+        ],
+        "title": "ItemEntry",
+        "type": "object"
+      },
+      "Link": {
+        "properties": {
+          "kind": {
+            "const": "link",
+            "default": "link",
+            "title": "Kind",
             "type": "string"
           },
           "url": {
@@ -331,27 +414,26 @@
           }
         },
         "required": [
-          "id",
-          "url",
-          "title"
+          "kind",
+          "url"
         ],
-        "title": "ItemEntry",
+        "title": "Link",
         "type": "object"
       },
-      "ItemReading": {
+      "LinkImport": {
         "properties": {
-          "document": {
-            "$ref": "#/components/schemas/DocumentView"
-          },
-          "entry": {
-            "$ref": "#/components/schemas/ItemEntry"
+          "url": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
           }
         },
         "required": [
-          "entry",
-          "document"
+          "url"
         ],
-        "title": "ItemReading",
+        "title": "LinkImport",
         "type": "object"
       },
       "LinkMark": {
@@ -474,22 +556,6 @@
           "places"
         ],
         "title": "ListItem",
-        "type": "object"
-      },
-      "PageImport": {
-        "properties": {
-          "url": {
-            "format": "uri",
-            "maxLength": 2083,
-            "minLength": 1,
-            "title": "Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "url"
-        ],
-        "title": "PageImport",
         "type": "object"
       },
       "PagePlace": {
@@ -690,6 +756,54 @@
         "title": "Quotation",
         "type": "object"
       },
+      "Read": {
+        "properties": {
+          "attempt": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/components/schemas/Failed",
+                "settled": "#/components/schemas/Settled",
+                "underway": "#/components/schemas/Underway"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Underway"
+              },
+              {
+                "$ref": "#/components/schemas/Failed"
+              },
+              {
+                "$ref": "#/components/schemas/Settled"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "kind": {
+            "const": "read",
+            "default": "read",
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "document",
+          "attempt"
+        ],
+        "title": "Read",
+        "type": "object"
+      },
       "Section": {
         "properties": {
           "statements": {
@@ -709,6 +823,21 @@
           "statements"
         ],
         "title": "Section",
+        "type": "object"
+      },
+      "Settled": {
+        "properties": {
+          "kind": {
+            "const": "settled",
+            "default": "settled",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Settled",
         "type": "object"
       },
       "Statement": {
@@ -877,6 +1006,82 @@
         "title": "TimePlace",
         "type": "object"
       },
+      "Underway": {
+        "properties": {
+          "kind": {
+            "const": "underway",
+            "default": "underway",
+            "title": "Kind",
+            "type": "string"
+          },
+          "starts": {
+            "minimum": 1.0,
+            "title": "Starts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "starts"
+        ],
+        "title": "Underway",
+        "type": "object"
+      },
+      "Unread": {
+        "properties": {
+          "attempt": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/components/schemas/Failed",
+                "underway": "#/components/schemas/Underway"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Underway"
+              },
+              {
+                "$ref": "#/components/schemas/Failed"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "kind": {
+            "const": "unread",
+            "default": "unread",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "attempt"
+        ],
+        "title": "Unread",
+        "type": "object"
+      },
+      "Upload": {
+        "properties": {
+          "kind": {
+            "const": "upload",
+            "default": "upload",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "Upload",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -947,12 +1152,12 @@
         "summary": "List Items"
       },
       "post": {
-        "operationId": "import_page_api_items_post",
+        "operationId": "import_link_api_items_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PageImport"
+                "$ref": "#/components/schemas/LinkImport"
               }
             }
           },
@@ -978,24 +1183,52 @@
               }
             },
             "description": "Validation Error"
+          }
+        },
+        "summary": "Import Link"
+      }
+    },
+    "/api/items/upload": {
+      "post": {
+        "operationId": "import_upload_api_items_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_upload_api_items_upload_post"
+              }
+            }
           },
-          "502": {
+          "required": true
+        },
+        "responses": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Failure"
+                  "$ref": "#/components/schemas/ItemEntry"
                 }
               }
             },
-            "description": "Bad Gateway"
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
-        "summary": "Import Page"
+        "summary": "Import Upload"
       }
     },
     "/api/items/{item_id}": {
       "get": {
-        "operationId": "item_reading_api_items__item_id__get",
+        "operationId": "item_entry_api_items__item_id__get",
         "parameters": [
           {
             "in": "path",
@@ -1012,7 +1245,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ItemReading"
+                  "$ref": "#/components/schemas/ItemEntry"
                 }
               }
             },
@@ -1039,7 +1272,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Item Reading"
+        "summary": "Item Entry"
       }
     },
     "/api/items/{item_id}/digest": {
@@ -1156,6 +1389,97 @@
           }
         },
         "summary": "Ensure Digest"
+      }
+    },
+    "/api/items/{item_id}/document": {
+      "get": {
+        "operationId": "item_document_api_items__item_id__document_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Document"
+      }
+    },
+    "/api/items/{item_id}/source": {
+      "get": {
+        "operationId": "item_source_api_items__item_id__source_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Source"
       }
     }
   }

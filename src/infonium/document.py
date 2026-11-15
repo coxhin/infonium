@@ -39,7 +39,7 @@ Seconds = Annotated[
         description="A length of time. A moment is the time from the start of its recording.",
     ),
 ]
-MediaType = Annotated[str, StringConstraints(pattern=r"^[a-z]+/[a-z0-9][a-z0-9.+-]*$")]
+MediaType = Annotated[str, StringConstraints(pattern=r"^[a-z]+/[a-z0-9][a-z0-9!#$&^_.+-]*$")]
 
 HTML_MEDIA_TYPE = "text/html"
 
