@@ -15,7 +15,7 @@ import filetype
 import httpx
 from pydantic import BaseModel
 
-from infonium import webpage
+from infonium import media, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -40,6 +40,7 @@ from infonium.library import (
     reading_settled,
     reading_started,
 )
+from infonium.transcript import Transcript, transcript_blocks
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -134,6 +135,40 @@ def uploaded(file: Path, name: str) -> Source:
     return Source(file=file, media_type=media_type_of(file, declared), reference=name)
 
 
+def spoken_readout(
+    extractor: str, title: str, audio: media.AudioTrack, transcript: Transcript
+) -> Readout:
+    blocks = transcript_blocks(transcript)
+    if not blocks:
+        raise UnreadableSource(f"no speech in {title}")
+    return Readout(
+        extractor=extractor,
+        extracted=Extracted(title=title, blocks=blocks),
+        file=audio.file,
+        media_type=audio.media_type,
+    )
+
+
+def media_page_readout(url: str, directory: Path) -> Readout:
+    match media.fetch_media(url, directory):
+        case media.CaptionedMedia(title=title, audio=audio, transcript=transcript):
+            return spoken_readout(media.EXTRACTOR, title, audio, transcript)
+        case media.UncaptionedMedia(title=title):
+            raise UnreadableSource(
+                f"{title} has no captions, and infonium cannot recognise speech yet"
+            )
+
+
+def link_readout(url: str, directory: Path) -> Readout:
+    if media.is_media_page(url):
+        return media_page_readout(url, directory)
+    source = fetched(url, directory)
+    # An address may lead on to a media page, as a short link does.
+    if media.is_media_page(source.reference):
+        return media_page_readout(source.reference, directory)
+    return readout_of(source)
+
+
 def readout_of(source: Source) -> Readout:
     if source.media_type == HTML_MEDIA_TYPE:
         return Readout(
@@ -220,10 +255,9 @@ class Intake:
         with TemporaryDirectory(dir=self.store.work) as directory:
             match item.origin:
                 case Link(url=url):
-                    source = fetched(url, Path(directory))
+                    readout = link_readout(url, Path(directory))
                 case Upload(name=name):
-                    source = uploaded(self.store.upload(item_id), name)
-            readout = readout_of(source)
+                    readout = readout_of(uploaded(self.store.upload(item_id), name))
             document = document_of(
                 item_id=item.id,
                 extractor=readout.extractor,

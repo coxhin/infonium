@@ -44,6 +44,7 @@ MEDIA_SITES = (
 # AAC in an MP4 file: Chrome, Firefox and Safari play it in an audio element, its index of
 # samples leads a seek to the exact frame, and ffmpeg decodes it for a speech recogniser.
 # Most sites already serve this coding, so their sound is kept as it is.
+EXTRACTOR = "captions/1"
 AUDIO_MEDIA_TYPE = "audio/mp4"
 AUDIO_FILE = "sound.m4a"
 AAC = "aac"
