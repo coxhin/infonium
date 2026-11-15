@@ -3,6 +3,9 @@ import type { TimePlace } from "./client";
 import { reasonOf } from "./loading";
 
 const PLAY_CUT_SHORT = "AbortError";
+// Play starts this long before the moment pointed at: captions timed by hand may come a
+// little after their words.
+const LEAD_SECONDS = 1;
 
 // Plays a recording, and starts from the first of the stretches that were pointed at. The
 // stretches are given anew at every act of pointing, so pointing at one again plays it again.
@@ -13,7 +16,7 @@ export function Player({ source, pointed }: { source: string; pointed: TimePlace
   useEffect(() => {
     const first = pointed[0];
     if (first !== undefined && audio.current !== null) {
-      audio.current.currentTime = first.moment;
+      audio.current.currentTime = Math.max(0, first.moment - LEAD_SECONDS);
       audio.current.play().then(
         () => setFailure(undefined),
         (error: unknown) => {

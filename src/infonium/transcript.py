@@ -1,17 +1,29 @@
 from itertools import pairwise
 from typing import Annotated
+from unicodedata import category
 
 from pydantic import AfterValidator, BaseModel
 
-from infonium.document import Block, Paragraph, Place, Seconds, TimePlace, flowed, joined
+from infonium.document import (
+    WORD_GAP,
+    Block,
+    Paragraph,
+    Place,
+    Seconds,
+    TimePlace,
+    flowed,
+    is_unspaced,
+)
 
 # A silence this long between two utterances starts a new paragraph.
 PARAGRAPH_PAUSE_SECONDS = 2.0
-# A paragraph that has run this long ends with the utterance that next ends a sentence.
+# A paragraph that has run this long ends with the utterance that next ends a sentence, and
+# at once when none of its utterances has ended one: speech that was captioned without
+# punctuation never does.
 PARAGRAPH_TARGET_SECONDS = 45.0
-# A paragraph ends once it has run this long, whether or not a sentence ends there: speech
-# that was captioned without punctuation never ends one.
+# A paragraph ends once it has run this long, however long its sentence goes on.
 PARAGRAPH_LIMIT_SECONDS = 90.0
+PUNCTUATION = "P"
 SENTENCE_ENDS = frozenset(
     ".?!\N{HORIZONTAL ELLIPSIS}"
     "\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH QUESTION MARK}\N{FULLWIDTH EXCLAMATION MARK}"
@@ -50,25 +62,36 @@ def ends_passage(passage: list[Utterance], following: Utterance) -> bool:
     last = passage[-1]
     ended = last.moment + last.duration
     lasted = ended - passage[0].moment
+    unpunctuated = not any(ends_sentence(utterance.text) for utterance in passage)
     return (
         following.moment - ended >= PARAGRAPH_PAUSE_SECONDS
         or lasted >= PARAGRAPH_LIMIT_SECONDS
-        or (lasted >= PARAGRAPH_TARGET_SECONDS and ends_sentence(last.text))
+        or (lasted >= PARAGRAPH_TARGET_SECONDS and (ends_sentence(last.text) or unpunctuated))
     )
 
 
+def gap_after(spoken: str) -> str:
+    # Two utterances are two things said, and a space stands between them in any script, as
+    # in captions written without punctuation. Only a mark of a script written without
+    # spaces is its own gap.
+    closed = is_unspaced(spoken[-1]) and category(spoken[-1]).startswith(PUNCTUATION)
+    return "" if closed else WORD_GAP
+
+
 def paragraph_of(passage: list[Utterance]) -> Paragraph:
-    flow = joined([utterance.text for utterance in passage])
-    places: list[Place] = [
-        TimePlace(
-            start=spoken.start,
-            end=spoken.end,
-            moment=utterance.moment,
-            duration=utterance.duration,
+    text = ""
+    places: list[Place] = []
+    for utterance in passage:
+        text = f"{text}{gap_after(text) if text else ''}{utterance.text}"
+        places.append(
+            TimePlace(
+                start=len(text) - len(utterance.text),
+                end=len(text),
+                moment=utterance.moment,
+                duration=utterance.duration,
+            )
         )
-        for spoken, utterance in zip(flow.ranges, passage, strict=True)
-    ]
-    return Paragraph(text=flow.text, marks=[], places=places)
+    return Paragraph(text=text, marks=[], places=places)
 
 
 def transcript_blocks(transcript: Transcript) -> list[Block]:
