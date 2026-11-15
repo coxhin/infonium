@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field
 
-from infonium.document import PageNumber
+from infonium.document import HeadingLevel, PageNumber
 from infonium.pdfium import StoredFile
 
 # MinerU 3.4.2 parses a PDF, run as a program of its own. Its hybrid backend reads tables,
@@ -22,6 +22,10 @@ ENGINE_FIRST_PAGE = "-s"
 ENGINE_LAST_PAGE = "-e"
 ENGINE_RESULTS = "*_middle.json"
 ENGINE_LOG = "{backend}.log"
+# The keys under which the results say which backend wrote them, and whether the hybrid
+# backend judged the text layer unfit and read the pages as pictures.
+BACKEND_KEY = "_backend"
+READ_AS_PICTURES_KEY = "_ocr_enable"
 # The variable from which the engine takes how long it waits for its own results. When that
 # time has passed it gives up, stops its server and leaves, whoever started it.
 ENGINE_PATIENCE = "MINERU_TASK_RESULT_TIMEOUT_SECONDS"
@@ -48,6 +52,12 @@ class Backend(StrEnum):
 class Method(StrEnum):
     AUTO = "auto"
     OCR = "ocr"
+
+
+class ParsedBy(StrEnum):
+    # The backends as their results name them.
+    HYBRID = "hybrid"
+    PIPELINE = "pipeline"
 
 
 class SpanType(StrEnum):
@@ -140,12 +150,12 @@ class Text(BaseModel):
 
 class Title(BaseModel):
     type: Literal[RegionType.TITLE]
-    level: Annotated[int, Field(ge=1, le=6)]
+    level: HeadingLevel
     lines: list[Line]
 
 
-class Plain(BaseModel):
-    # Words that make a paragraph of their own wherever they stand.
+class OwnParagraph(BaseModel):
+    # A region whose words make a paragraph of their own wherever they stand.
     type: Literal[
         RegionType.ABSTRACT,
         RegionType.CONTENTS,
@@ -180,7 +190,7 @@ class CodeBody(BaseModel):
     lines: list[Line]
 
 
-Member = Annotated[Plain | PictureBody | TableBody | CodeBody, Field(discriminator="type")]
+Member = Annotated[OwnParagraph | PictureBody | TableBody | CodeBody, Field(discriminator="type")]
 
 
 class Group(BaseModel):
@@ -189,14 +199,14 @@ class Group(BaseModel):
     blocks: list[Member]
 
 
-Region = Annotated[Text | Title | Plain | Group, Field(discriminator="type")]
+Region = Annotated[Text | Title | OwnParagraph | Group, Field(discriminator="type")]
 
 
 class Furniture(BaseModel):
     type: Literal[RegionType.HEADER, RegionType.FOOTER, RegionType.PAGE_NUMBER, RegionType.ASIDE]
 
 
-Margin = Annotated[Furniture | Plain, Field(discriminator="type")]
+Margin = Annotated[Furniture | OwnParagraph, Field(discriminator="type")]
 
 
 class MergedRegion(BaseModel):
@@ -225,16 +235,21 @@ class ParsedPage(BaseModel):
 
 
 class ParsedFile(BaseModel):
+    # The results of the pipeline backend, which reads pages as pictures.
+    backend: Literal[ParsedBy.PIPELINE] = Field(alias=BACKEND_KEY)
     pdf_info: list[ParsedPage]
 
 
-class HybridParsedFile(ParsedFile):
-    read_as_pictures: bool = Field(alias="_ocr_enable")
+class HybridParsedFile(BaseModel):
+    # The results of the hybrid backend, which reads a text layer unless it judges it unfit.
+    backend: Literal[ParsedBy.HYBRID] = Field(alias=BACKEND_KEY)
+    read_as_pictures: bool = Field(alias=READ_AS_PICTURES_KEY)
+    pdf_info: list[ParsedPage]
 
 
 def word_lines(region: Region | Member | Margin) -> list[Line]:
     match region:
-        case Text() | Title() | Plain():
+        case Text() | Title() | OwnParagraph():
             return region.lines
         case Group():
             return [line for member in region.blocks for line in word_lines(member)]

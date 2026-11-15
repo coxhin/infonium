@@ -31,6 +31,7 @@ PageFraction = Annotated[
     float,
     Field(ge=0, le=1, description="A distance across or down a page, as a part of its size."),
 ]
+HeadingLevel = Annotated[int, Field(ge=1, le=6)]
 Seconds = Annotated[
     float,
     Field(
