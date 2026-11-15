@@ -64,7 +64,8 @@ AAC = "aac"
 # other files.
 STANDARD_INPUT = "/dev/stdin"
 LOCAL_FILE = "file"
-RECORDING_FORMATS = "aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,ogg,wav"
+OGG = "ogg"
+RECORDING_FORMATS = f"aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,{OGG},wav"
 HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RECORDING_FORMATS]
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
@@ -92,7 +93,7 @@ FFPROBE = [
 SOUND_ENTRIES = "stream=codec_name:packet=size"
 TIMELINE_ENTRIES = "stream=start_pts,duration_ts,nb_frames:packet=duration"
 LENGTH_ENTRIES = "format=duration"
-TITLE_ENTRIES = "format_tags=title"
+TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
 # ffmpeg reading the first sound of the recording on its standard input; what it is to make
 # of that sound follows.
 FFMPEG = [
@@ -243,13 +244,21 @@ class LengthProbe(BaseModel):
     format: FileLength
 
 
+class StreamTags(BaseModel):
+    tags: dict[str, str] = {}
+
+
 class FileTags(BaseModel):
-    # The tags of a file that were asked for, each under the name its kind of file gives it.
+    # The tags of a file that were asked for, each under the name its kind of file gives it,
+    # and ffmpeg's reader for that kind.
+    format_name: str
     tags: dict[str, str] = {}
 
 
 class TagProbe(BaseModel):
+    # The tags of a file, and those of its first sound where it has one.
     format: FileTags
+    streams: list[StreamTags]
 
 
 class Fetch(BaseModel):
@@ -395,9 +404,16 @@ def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) ->
 
 
 # The title a recording carries in the tags of its file, and no words where it carries none.
+# An Ogg file carries its tags in the comments of its sound. In a file of another kind, a
+# title on the sound names its track, such as "English".
 def own_title(file: Path) -> str:
-    tags = probed(file, TITLE_ENTRIES, TagProbe).format.tags
-    return WORD_GAP.join("".join(tags.values()).split())
+    probe = probed(file, TITLE_ENTRIES, TagProbe)
+    commented = probe.streams if probe.format.format_name == OGG else []
+    titles = [
+        *probe.format.tags.values(),
+        *(title for sound in commented for title in sound.tags.values()),
+    ]
+    return WORD_GAP.join("".join(titles).split())
 
 
 # Whether a copy starts at zero and runs as long as its packets last.
