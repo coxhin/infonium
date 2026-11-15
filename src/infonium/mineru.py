@@ -305,7 +305,14 @@ def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
     return [] if hybrid.read_as_pictures else numbered_in_file(hybrid.pdf_info, pages)
 
 
-def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> list[ParsedPage]:
+class ParsedPages(BaseModel):
+    # A file's pages as the engine read them, in order, and the numbers of those it read as
+    # pictures.
+    pages: list[ParsedPage]
+    pictures: frozenset[PageNumber]
+
+
+def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     # How the engine reads each page of a file. It reads a page from the file's text layer
     # when the file has one, but misreads the layer of a page stored turned, so such a page is
     # read as a picture, as is every page of a file without a text layer or whose layer the
@@ -325,4 +332,7 @@ def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> list[ParsedPage]:
         if rest
         else []
     )
-    return sorted([*from_layer, *from_pictures], key=lambda page: page.page_idx)
+    return ParsedPages(
+        pages=sorted([*from_layer, *from_pictures], key=lambda page: page.page_idx),
+        pictures=frozenset(rest),
+    )

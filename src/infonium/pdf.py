@@ -37,6 +37,7 @@ from infonium.mineru import (
     Line,
     Member,
     ParsedPage,
+    ParsedPages,
     Plain,
     TableBody,
     Text,
@@ -108,8 +109,9 @@ class Flow(BaseModel):
 
 class Evidence(BaseModel):
     # What the whole file tells about the reading of any one line of it: the words it shows
-    # whole.
+    # whole, and the pages the engine read as pictures.
     whole_words: frozenset[str]
+    pictures: frozenset[PageNumber]
 
 
 def words_of(text: str) -> list[str]:
@@ -183,6 +185,16 @@ def shown_lines(page: ParsedPage, lines: list[Line]) -> list[ShownLine]:
     ]
 
 
+def worded(lines: list[ShownLine], evidence: Evidence) -> bool:
+    # Of a script it cannot read, the engine reads from a picture only the marks every script
+    # shares: punctuation and digits. So lines read from pictures hold words only when one of
+    # them holds a letter.
+    words = [word for line in lines for piece in line.pieces for word in piece.words]
+    from_pictures = all(line.area.page in evidence.pictures for line in lines)
+    lettered = any(character.isalpha() for word in words for character in word)
+    return bool(words) and (lettered or not from_pictures)
+
+
 def whole_words(lines: list[Line]) -> frozenset[str]:
     # The first and the last word of a line are left out: either may be half of a word that
     # a line break has cut.
@@ -245,7 +257,7 @@ def flow(lines: list[ShownLine], evidence: Evidence) -> Flow:
 
 
 def paragraphs(lines: list[ShownLine], evidence: Evidence) -> list[Block]:
-    if not lines:
+    if not worded(lines, evidence):
         return []
     words = flow(lines, evidence)
     return [Paragraph(text=words.text, marks=words.marks, places=words.places)]
@@ -253,7 +265,7 @@ def paragraphs(lines: list[ShownLine], evidence: Evidence) -> list[Block]:
 
 def headings(title: Title, page: ParsedPage, evidence: Evidence) -> list[Block]:
     lines = shown_lines(page, title.lines)
-    if not lines:
+    if not worded(lines, evidence):
         return []
     words = flow(lines, evidence)
     return [Heading(level=title.level, text=words.text, marks=words.marks, places=words.places)]
@@ -271,7 +283,7 @@ def passages(lines: list[ShownLine], evidence: Evidence, earlier: list[Block]) -
     # The engine does not tell lists apart: it finds each item as a text of its own. A text
     # that starts with a bullet or a number is taken as an item, and loses that marker, which
     # a reader draws again from what the item says of itself.
-    if not lines:
+    if not worded(lines, evidence):
         return []
     first = lines[0].pieces[0]
     marker = ITEM_MARKER.match(first.words[0])
@@ -368,20 +380,21 @@ def text_chains(pages: list[ParsedPage]) -> dict[tuple[int, int], list[ShownLine
     return chains
 
 
-def pdf_blocks(pages: list[ParsedPage]) -> list[Block]:
-    chains = text_chains(pages)
+def pdf_blocks(parsed: ParsedPages) -> list[Block]:
+    chains = text_chains(parsed.pages)
     evidence = Evidence(
         whole_words=whole_words(
             [
                 line
-                for page in pages
+                for page in parsed.pages
                 for region in [*page.preproc_blocks, *page.discarded_blocks]
                 for line in word_lines(region)
             ]
         ),
+        pictures=parsed.pictures,
     )
     blocks: list[Block] = []
-    for page in pages:
+    for page in parsed.pages:
         continued = page.continued()
         for region in page.preproc_blocks:
             match region:
@@ -429,7 +442,18 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear.
     stored = stored_file(file)
-    blocks = pdf_blocks(parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored))
+    parsed = parsed_pages(FileToParse(file=file, engine=engine, folder=folder), stored)
+    blocks = pdf_blocks(parsed)
     if not blocks:
-        raise UnreadableSource(f"no readable text in {name}")
+        # Lines that the engine found on pages it read as pictures, and that make no block,
+        # are writing in a script it cannot read.
+        written = any(
+            word_lines(region)
+            for page in parsed.pages
+            if page.page_idx in parsed.pictures
+            for region in page.preproc_blocks
+        )
+        raise UnreadableSource(
+            f"the script of {name} could not be read" if written else f"no readable text in {name}"
+        )
     return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)
