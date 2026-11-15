@@ -7,18 +7,20 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.message import Message
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from threading import Lock
+from urllib.parse import urlsplit
 
 import filetype
 import httpx
 from pydantic import BaseModel
 
-from infonium import media, webpage
+from infonium import media, pdf, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
+    PDF_MEDIA_TYPE,
     Extracted,
     MediaType,
     UnreadableSource,
@@ -69,6 +71,11 @@ class Source(BaseModel):
     file: Path
     media_type: MediaType
     reference: str
+
+
+class Engines(BaseModel):
+    # Where the programs that read sources other than web pages are found.
+    pdf: Path
 
 
 class Readout(BaseModel):
@@ -159,21 +166,36 @@ def media_page_readout(url: str, directory: Path) -> Readout:
             )
 
 
-def link_readout(url: str, directory: Path) -> Readout:
+def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
         return media_page_readout(url, directory)
     source = fetched(url, directory)
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory)
-    return readout_of(source)
+    return readout_of(source, directory, engines)
 
 
-def readout_of(source: Source) -> Readout:
+def title_of(reference: str) -> str:
+    # What a source with no title of its own goes by: the last name in its address or its
+    # file name, without the suffix.
+    return PurePosixPath(urlsplit(reference).path).stem or reference
+
+
+def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     if source.media_type == HTML_MEDIA_TYPE:
         return Readout(
             extractor=webpage.EXTRACTOR,
             extracted=webpage.extract_page(source.file.read_bytes(), source.reference),
+            file=source.file,
+            media_type=source.media_type,
+        )
+    if source.media_type == PDF_MEDIA_TYPE:
+        return Readout(
+            extractor=pdf.EXTRACTOR,
+            extracted=pdf.extract_pdf(
+                source.file, title_of(source.reference), engines.pdf, directory
+            ),
             file=source.file,
             media_type=source.media_type,
         )
@@ -183,8 +205,9 @@ def readout_of(source: Source) -> Readout:
 class Intake:
     # Reads the sources of a library's items into documents, a few at a time and off the
     # thread that asks.
-    def __init__(self, store: LibraryStore, readers: int) -> None:
+    def __init__(self, store: LibraryStore, readers: int, engines: Engines) -> None:
         self.store = store
+        self.engines = engines
         self.pool = ThreadPoolExecutor(max_workers=readers, thread_name_prefix="reader")
         # A change to an item's reading, and to the waiting copy of its upload, is made by
         # one thread at a time. So an item that is being read is not taken for reading a
@@ -255,9 +278,10 @@ class Intake:
         with TemporaryDirectory(dir=self.store.work) as directory:
             match item.origin:
                 case Link(url=url):
-                    readout = link_readout(url, Path(directory))
+                    readout = link_readout(url, Path(directory), self.engines)
                 case Upload(name=name):
-                    readout = readout_of(uploaded(self.store.upload(item_id), name))
+                    source = uploaded(self.store.upload(item_id), name)
+                    readout = readout_of(source, Path(directory), self.engines)
             document = document_of(
                 item_id=item.id,
                 extractor=readout.extractor,

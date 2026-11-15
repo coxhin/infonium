@@ -44,6 +44,7 @@ MEDIA_TYPE_PATTERN = r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
 MediaType = Annotated[str, StringConstraints(pattern=MEDIA_TYPE_PATTERN)]
 
 HTML_MEDIA_TYPE = "text/html"
+PDF_MEDIA_TYPE = "application/pdf"
 
 RowSeparator = Literal["\n"]
 CellSeparator = Literal["\t"]

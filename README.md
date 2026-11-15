@@ -30,6 +30,7 @@ Settings are environment variables, read from `.env` by `make dev`.
 | `INFONIUM_WIRE_API` | `chat_completions` | API the endpoint speaks: `chat_completions` or `responses` |
 | `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and page snapshots are stored |
+| `INFONIUM_PDF_ENGINE` | `mineru` | [MinerU](https://github.com/opendatalab/MinerU) command that parses PDFs |
 
 ## How it works
 

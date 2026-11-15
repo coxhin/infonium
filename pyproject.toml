@@ -16,6 +16,7 @@ dependencies = [
     "openai>=3.51.0",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.3",
+    "pypdfium2>=5.15.2",
     "python-multipart>=0.0.33",
     "sqlalchemy>=2.1.8",
     "trafilatura>=2.3.1",
@@ -46,8 +47,8 @@ files = ["src"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# filetype ships no type information.
-module = ["filetype"]
+# These ship no type information.
+module = ["filetype", "pypdfium2"]
 ignore_missing_imports = true
 
 [dependency-groups]

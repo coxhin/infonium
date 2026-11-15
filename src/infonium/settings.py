@@ -12,3 +12,4 @@ class Settings(BaseSettings):
     model: str = "gpt-6.1-terra"
     wire_api: WireApi = WireApi.CHAT_COMPLETIONS
     language: str = "简体中文"
+    pdf_engine: Path = Path("mineru")

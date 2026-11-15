@@ -21,7 +21,7 @@ from infonium.digest import (
     grounded_sections,
 )
 from infonium.document import Block
-from infonium.intake import Intake
+from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -64,7 +64,8 @@ def library_store() -> LibraryStore:
 
 @cache
 def intake() -> Intake:
-    return Intake(store=library_store(), readers=READERS)
+    engines = Engines(pdf=settings.pdf_engine)
+    return Intake(store=library_store(), readers=READERS, engines=engines)
 
 
 @cache
