@@ -14,7 +14,7 @@ import { DigestPanel, type Pointer } from "./digest";
 import { Library } from "./library";
 import { itemLink, linkedItem } from "./links";
 import { reasonOf, useLoaded, useWatched } from "./loading";
-import { isBeingRead, itemTitle } from "./origin";
+import { isBeingRead, itemTitle } from "./entry";
 import { PageViewer } from "./pages";
 import { pagePlaces, placesOf, surfaceOf, timePlaces } from "./places";
 import { Player } from "./player";
@@ -161,7 +161,7 @@ function DocumentPane({ entry }: { entry: ReadEntry }) {
 }
 
 function ItemPane({ itemId }: { itemId: string }) {
-  const entry = useWatched(() => readEntry(itemId), itemId, isBeingRead);
+  const { loaded: entry } = useWatched(() => readEntry(itemId), itemId, isBeingRead);
   if (entry.state === "loading") {
     return <Notice failed={false}>正在打开…</Notice>;
   }
@@ -192,7 +192,12 @@ export function App() {
 
   return (
     <div className="app">
-      <Library entries={entries} selected={selected} onImported={openImported} />
+      <Library
+        entries={entries.loaded}
+        interrupted={entries.interrupted}
+        selected={selected}
+        onImported={openImported}
+      />
       {selected === undefined ? (
         <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
       ) : (

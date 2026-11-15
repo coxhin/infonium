@@ -1015,7 +1015,7 @@
             "type": "string"
           },
           "starts": {
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Starts",
             "type": "integer"
           }
@@ -1211,6 +1211,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "422": {
             "content": {

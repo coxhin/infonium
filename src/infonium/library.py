@@ -31,14 +31,11 @@ CONTENT_HASH = "sha256"
 # a title. Form 2 gave documents a media type. Form 3 gave items an origin and a reading.
 BODY_FORMAT = 3
 EARLIER_DOCUMENT_FORMAT = 1
-ATTEMPT_KIND_PATH = "$.reading.attempt.kind"
-KEPT_DOCUMENT_PATH = "$.reading.document"
-KEPT_TITLE_PATH = "$.reading.title"
-SNAPSHOT_PATH = "$.snapshot"
-MEDIA_TYPE_PATH = "$.media_type"
 # A reading that the service's stopping cut off this many times is given up.
 READING_STARTS = 3
 CUT_OFF = "the reading was cut off {starts} times by the service stopping"
+NOT_UNDERWAY = "no reading of the item is under way"
+ALREADY_UNDERWAY = "a reading of the item is under way already"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 TIMESTAMP = TypeAdapter(AwareDatetime)
@@ -82,9 +79,6 @@ digest_table = sqlalchemy.Table(
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
 )
-attempt_kind = sqlalchemy.func.json_extract(item_table.c.body, ATTEMPT_KIND_PATH)
-kept_document_id = sqlalchemy.func.json_extract(item_table.c.body, KEPT_DOCUMENT_PATH)
-kept_title = sqlalchemy.func.json_extract(item_table.c.body, KEPT_TITLE_PATH)
 
 
 class NotInLibrary(LookupError):
@@ -116,8 +110,9 @@ class AttemptKind(StrEnum):
 
 
 class Underway(Tagged):
+    # The attempt waits its turn or runs; starts counts the times it began to run.
     kind: Literal[AttemptKind.UNDERWAY] = AttemptKind.UNDERWAY
-    starts: Annotated[int, Field(ge=1)]
+    starts: Annotated[int, Field(ge=0)]
 
 
 class Failed(Tagged):
@@ -150,10 +145,11 @@ class Read(Tagged):
 
 
 # What has come of reading an item's source into a document, and how the latest attempt at it
-# stands. The functions below are every change a reading goes through.
+# stands. The four functions that follow are every change a reading goes through, and each
+# refuses a reading it does not apply to.
 Reading = Annotated[Unread | Read, Field(discriminator="kind")]
 
-FIRST_READING = Unread(attempt=Underway(starts=1))
+FIRST_READING = Unread(attempt=Underway(starts=0))
 
 
 def is_underway(reading: Reading) -> bool:
@@ -169,21 +165,34 @@ def reading_with(reading: Reading, attempt: Underway | Failed) -> Reading:
 
 
 def reading_started(reading: Reading) -> Reading:
-    return reading_with(reading, Underway(starts=1))
+    # A new attempt joins the readings that wait their turn.
+    if is_underway(reading):
+        raise ValueError(ALREADY_UNDERWAY)
+    return reading_with(reading, Underway(starts=0))
 
 
-def reading_resumed(reading: Reading) -> Reading:
-    # A reading that the service's stopping cut off goes on, until it has been started as
-    # often as a reading may be.
+def reading_begun(reading: Reading) -> Reading:
+    # The attempt begins to run, or begins again after the service's stopping cut it off; one
+    # that has begun as often as a reading may is given up instead.
     match reading.attempt:
         case Underway(starts=starts) if starts < READING_STARTS:
             return reading_with(reading, Underway(starts=starts + 1))
-        case _:
+        case Underway():
             return reading_with(reading, Failed(reason=CUT_OFF.format(starts=READING_STARTS)))
+        case _:
+            raise ValueError(NOT_UNDERWAY)
 
 
 def reading_failed(reading: Reading, reason: str) -> Reading:
+    if not is_underway(reading):
+        raise ValueError(NOT_UNDERWAY)
     return reading_with(reading, Failed(reason=reason))
+
+
+def reading_settled(reading: Reading, title: str, document: str) -> Reading:
+    if not is_underway(reading):
+        raise ValueError(NOT_UNDERWAY)
+    return Read(title=title, document=document, attempt=Settled())
 
 
 class Item(BaseModel):
@@ -219,6 +228,29 @@ class KeptSource(BaseModel):
 class UnderwayItem(BaseModel):
     owner: str
     item_id: str
+
+
+def field_path(*steps: tuple[type[BaseModel], str]) -> str:
+    # The path of a field inside a stored body, for a query to read. Each step names a model
+    # and a field of it, so a field that is renamed stops the service where the path is
+    # built, not where a query quietly finds nothing.
+    for model, field in steps:
+        if field not in model.model_fields:
+            raise LookupError(f"{model.__name__} has no field {field}")
+    return ".".join(["$", *(field for _, field in steps)])
+
+
+attempt_kind = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "reading"), (Read, "attempt"), (Underway, "kind"))
+)
+kept_document_id = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "reading"), (Read, "document"))
+)
+kept_title = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "reading"), (Read, "title"))
+)
+SNAPSHOT_PATH = field_path((Document, "snapshot"))
+MEDIA_TYPE_PATH = field_path((Document, "media_type"))
 
 
 def item_identity(owner: str, distinction: str) -> str:
@@ -424,6 +456,13 @@ class LibraryStore:
         shutil.rmtree(self.work)
         self.work.mkdir()
 
+    def clear_uploads(self, awaited: set[str]) -> None:
+        # A waiting copy that no reading under way is going to read, left when the service
+        # stopped between the end of a reading and the removal of its copy.
+        for waiting in self.uploads.iterdir():
+            if waiting.name not in awaited:
+                waiting.unlink()
+
     def staged(self, content: BinaryIO) -> Path:
         # Bytes arrive in the work directory and are moved to their place whole.
         with NamedTemporaryFile(dir=self.work, delete=False) as arrived:
@@ -444,12 +483,9 @@ class LibraryStore:
         return name
 
     def upload(self, item_id: str) -> Path:
+        # Where an upload waits, under the id of its item, while its reading is under way.
         return self.uploads / item_id
 
-    def keep_upload(self, owner: str, content: BinaryIO) -> str:
-        # An upload waits under the id of its item until it has been read.
-        arrived = self.staged(content)
-        with arrived.open("rb") as stored:
-            item_id = item_identity(owner, file_digest(stored, CONTENT_HASH).hexdigest())
-        arrived.replace(self.upload(item_id))
-        return item_id
+    def upload_identity(self, owner: str, arrived: Path) -> str:
+        with arrived.open("rb") as content:
+            return item_identity(owner, file_digest(content, CONTENT_HASH).hexdigest())

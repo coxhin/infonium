@@ -1,6 +1,8 @@
 import logging
 import mimetypes
+import re
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.message import Message
@@ -16,6 +18,7 @@ from pydantic import BaseModel
 from infonium import webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
+    MEDIA_TYPE_PATTERN,
     Extracted,
     MediaType,
     UnreadableSource,
@@ -27,13 +30,14 @@ from infonium.library import (
     LibraryStore,
     Link,
     Origin,
-    Read,
-    Settled,
+    Reading,
     Upload,
     is_underway,
+    item_identity,
     item_with,
+    reading_begun,
     reading_failed,
-    reading_resumed,
+    reading_settled,
     reading_started,
 )
 
@@ -49,6 +53,8 @@ FETCH_LIMIT_BYTES = 2 * 1024**3
 FETCHED_FILE = "source"
 CONTENT_TYPE = "content-type"
 UNDECLARED = ""
+# What bytes are taken for when nothing tells their kind.
+UNKNOWN_MEDIA_TYPE = "application/octet-stream"
 PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
 PAGE_OPENINGS = (b"<!doctype html", b"<html")
 OPENING_BYTES = 1024
@@ -73,21 +79,29 @@ class Readout(BaseModel):
     media_type: MediaType
 
 
+def declared_media_type(declared: str) -> str:
+    # The kind a server or a file name gives, without its parameters; a kind that is not
+    # given, or not written as a media type, tells nothing.
+    header = Message()
+    header[CONTENT_TYPE] = declared
+    named = header.get_content_type() if declared else UNKNOWN_MEDIA_TYPE
+    return named if re.fullmatch(MEDIA_TYPE_PATTERN, named) else UNKNOWN_MEDIA_TYPE
+
+
 def media_type_of(file: Path, declared: str) -> str:
-    # What the bytes themselves say wins over what a server or a file name declared. A web
-    # page cannot be told by its bytes, so a file is one when it is declared one or opens
-    # like one.
+    # What the bytes themselves say wins over what was declared. A web page cannot be told
+    # by its bytes: a file is one when it is declared one, or when nothing is declared and
+    # it opens like one.
     recognised = filetype.guess(file)
     if recognised is not None:
         return str(recognised.mime)
-    header = Message()
-    header[CONTENT_TYPE] = declared
+    named = declared_media_type(declared)
     with file.open("rb") as content:
-        opening = content.read(OPENING_BYTES).lower()
-    is_page = header.get_content_type() in PAGE_MEDIA_TYPES or any(
-        mark in opening for mark in PAGE_OPENINGS
+        opening = content.read(OPENING_BYTES).lstrip().lower()
+    is_page = named in PAGE_MEDIA_TYPES or (
+        named == UNKNOWN_MEDIA_TYPE and opening.startswith(PAGE_OPENINGS)
     )
-    return HTML_MEDIA_TYPE if is_page else header.get_content_type()
+    return HTML_MEDIA_TYPE if is_page else named
 
 
 def fetched(url: str, directory: Path) -> Source:
@@ -137,15 +151,43 @@ class Intake:
     def __init__(self, store: LibraryStore, readers: int) -> None:
         self.store = store
         self.pool = ThreadPoolExecutor(max_workers=readers, thread_name_prefix="reader")
-        # A change to an item's reading is made by one thread at a time, so an item that is
-        # being read is not taken for reading a second time.
+        # A change to an item's reading, and to the waiting copy of its upload, is made by
+        # one thread at a time. So an item that is being read is not taken for reading a
+        # second time, and a copy is not taken away from under a reading.
         self.turn = Lock()
 
-    def begin(self, owner: str, item_id: str, origin: Origin) -> Item:
-        with self.turn, self.store.library(owner) as library:
+    def begin_link(self, owner: str, url: str) -> Item:
+        item_id = item_identity(owner, url)
+        with self.turn:
+            underway = self.underway(owner, item_id)
+            item = underway[0] if underway else self.started(owner, item_id, Link(url=url))
+        if not underway:
+            self.read_in_background(owner, item_id)
+        return item
+
+    def begin_upload(self, owner: str, name: str, arrived: Path) -> Item:
+        item_id = self.store.upload_identity(owner, arrived)
+        with self.turn:
+            underway = self.underway(owner, item_id)
+            if underway:
+                # The same bytes are waiting already for the reading that is under way.
+                arrived.unlink()
+                item = underway[0]
+            else:
+                arrived.replace(self.store.upload(item_id))
+                item = self.started(owner, item_id, Upload(name=name))
+        if not underway:
+            self.read_in_background(owner, item_id)
+        return item
+
+    def underway(self, owner: str, item_id: str) -> list[Item]:
+        # The item when a reading of it is under way, and nothing otherwise.
+        with self.store.library(owner) as library:
+            return [item for item in library.sought(item_id) if is_underway(item.reading)]
+
+    def started(self, owner: str, item_id: str, origin: Origin) -> Item:
+        with self.store.library(owner) as library:
             earlier = library.sought(item_id)
-            if earlier and is_underway(earlier[0].reading):
-                return earlier[0]
             item = Item(
                 id=item_id,
                 origin=origin,
@@ -153,21 +195,16 @@ class Intake:
                 reading=reading_started(earlier[0].reading) if earlier else FIRST_READING,
             )
             library.keep_item(item)
-        self.read_in_background(owner, item_id)
         return item
 
     def resume(self) -> None:
-        # A reading that was under way when the service last stopped goes on, or is given up.
+        # What the service's last stopping left: work in progress goes, readings that were
+        # under way wait their turn again, and no other upload is kept waiting.
         self.store.clear_work()
-        for underway in self.store.underway():
-            with self.turn, self.store.library(underway.owner) as library:
-                item = library.item(underway.item_id)
-                resumed = item_with(item, reading_resumed(item.reading))
-                library.keep_item(resumed)
-            if is_underway(resumed.reading):
-                self.read_in_background(underway.owner, underway.item_id)
-            else:
-                self.drop_upload(resumed)
+        underway = self.store.underway()
+        self.store.clear_uploads({reading.item_id for reading in underway})
+        for reading in underway:
+            self.read_in_background(reading.owner, reading.item_id)
 
     def close(self) -> None:
         self.pool.shutdown(wait=False, cancel_futures=True)
@@ -177,8 +214,9 @@ class Intake:
         finished.add_done_callback(partial(self.record, owner, item_id))
 
     def read(self, owner: str, item_id: str) -> None:
-        with self.store.library(owner) as library:
-            item = library.item(item_id)
+        item = self.changed(owner, item_id, reading_begun)
+        if not is_underway(item.reading):
+            return
         with TemporaryDirectory(dir=self.store.work) as directory:
             match item.origin:
                 case Link(url=url):
@@ -193,23 +231,32 @@ class Intake:
                 media_type=readout.media_type,
                 blocks=readout.extracted.blocks,
             )
-        read = Read(title=readout.extracted.title, document=document.id, attempt=Settled())
-        with self.turn, self.store.library(owner) as library:
-            library.keep_document(document, datetime.now(UTC))
-            library.keep_item(item_with(item, read))
-        self.drop_upload(item)
+        with self.turn:
+            with self.store.library(owner) as library:
+                settled = reading_settled(item.reading, readout.extracted.title, document.id)
+                library.keep_document(document, datetime.now(UTC))
+                library.keep_item(item_with(item, settled))
+            self.drop_upload(item)
 
     def record(self, owner: str, item_id: str, finished: Future[None]) -> None:
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             logger.error("reading item %s failed", item_id, exc_info=error)
-            with self.turn, self.store.library(owner) as library:
+            reason = str(error) or type(error).__name__
+            self.changed(owner, item_id, partial(reading_failed, reason=reason))
+
+    def changed(self, owner: str, item_id: str, change: Callable[[Reading], Reading]) -> Item:
+        # Puts an item's reading through one change. A reading that ends with it has no more
+        # use for the waiting copy of its upload.
+        with self.turn:
+            with self.store.library(owner) as library:
                 item = library.item(item_id)
-                reason = str(error) or type(error).__name__
-                library.keep_item(item_with(item, reading_failed(item.reading, reason)))
-            self.drop_upload(item)
+                changed = item_with(item, change(item.reading))
+                library.keep_item(changed)
+            if not is_underway(changed.reading):
+                self.drop_upload(changed)
+        return changed
 
     def drop_upload(self, item: Item) -> None:
-        # An upload's waiting copy goes once its reading has ended, either way.
         if isinstance(item.origin, Upload):
             self.store.upload(item.id).unlink()

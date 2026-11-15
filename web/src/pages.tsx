@@ -123,11 +123,14 @@ function Page({
       return;
     }
     let current = true;
+    let drawn: PDFPageProxy | undefined;
     let drawing: RenderTask | undefined;
     function draw(page: PDFPageProxy) {
       if (canvas.current === null || frame.current === null) {
         return;
       }
+      drawn = page;
+      setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
       const sharpness = (frame.current.clientWidth / natural.width) * devicePixelRatio;
       const viewport = page.getViewport({ scale: sharpness });
@@ -146,12 +149,15 @@ function Page({
     return () => {
       current = false;
       drawing?.cancel();
-      // A page that has gone far gives up its drawing, which is as large as a photograph; it
-      // is drawn again when it comes near.
+      // A page that has gone far gives up its drawing, which is as large as a photograph,
+      // and once the drawing has ended, what the file keeps of the page's pictures; it is
+      // drawn again when it comes near.
       if (canvas.current !== null) {
         canvas.current.width = 0;
         canvas.current.height = 0;
       }
+      const release = () => void drawn?.cleanup();
+      void drawing?.promise.then(release, release);
     };
   }, [near, file, number]);
 

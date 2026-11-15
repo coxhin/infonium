@@ -622,6 +622,15 @@ export interface operations {
                     "application/json": components["schemas"]["ItemEntry"];
                 };
             };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {

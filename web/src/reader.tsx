@@ -1,6 +1,6 @@
 import { createElement, Fragment, type CSSProperties, type ReactNode } from "react";
 import type { Anchor, Block, ItemDocument, ItemEntry, Mark, Style } from "./client";
-import { originLabel } from "./origin";
+import { originLabel } from "./entry";
 
 const STYLE_ELEMENTS: Record<Style, string> = {
   strong: "strong",

@@ -28,42 +28,53 @@ export function useLoaded<Value>(load: () => Promise<Value>, key: string): Loade
   return loaded;
 }
 
+export type Watched<Value> = { loaded: Loaded<Value>; interrupted: boolean };
+
 // Like useLoaded, and loads again at intervals for as long as the value is unsettled. The
-// value on show stays until the next one arrives. A load that fails is tried again too, as
-// the service may be on its way back; a value on show stays meanwhile.
+// value on show stays until the next one arrives. A load that fails while a value is on show
+// leaves the value there, marks the watch interrupted, and is tried again, as the service may
+// be on its way back. A first load that fails is a failure and is not tried again.
 export function useWatched<Value>(
   load: () => Promise<Value>,
   key: string,
   unsettled: (value: Value) => boolean,
-): Loaded<Value> {
-  const [loaded, setLoaded] = useState<Loaded<Value>>({ state: "loading" });
+): Watched<Value> {
+  const [watched, setWatched] = useState<Watched<Value>>({
+    loaded: { state: "loading" },
+    interrupted: false,
+  });
   useEffect(() => {
     let current = true;
+    let onShow = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     function watch() {
       load().then(
         (value) => {
           if (current) {
-            setLoaded({ state: "ready", value });
+            onShow = true;
+            setWatched({ loaded: { state: "ready", value }, interrupted: false });
             timer = unsettled(value) ? setTimeout(watch, WATCH_INTERVAL_MS) : undefined;
           }
         },
         (error: unknown) => {
-          if (current) {
-            setLoaded((shown) =>
-              shown.state === "ready" ? shown : { state: "failed", reason: reasonOf(error) },
-            );
+          if (current && onShow) {
+            setWatched((shown) => ({ loaded: shown.loaded, interrupted: true }));
             timer = setTimeout(watch, WATCH_INTERVAL_MS);
+          } else if (current) {
+            setWatched({
+              loaded: { state: "failed", reason: reasonOf(error) },
+              interrupted: false,
+            });
           }
         },
       );
     }
-    setLoaded({ state: "loading" });
+    setWatched({ loaded: { state: "loading" }, interrupted: false });
     watch();
     return () => {
       current = false;
       clearTimeout(timer);
     };
   }, [key]);
-  return loaded;
+  return watched;
 }

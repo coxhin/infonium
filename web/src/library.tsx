@@ -2,7 +2,7 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { importLink, importUpload, type ItemEntry } from "./client";
 import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
-import { itemTitle, originLabel } from "./origin";
+import { itemTitle, originLabel } from "./entry";
 
 type Importing = { state: "idle" } | { state: "running" } | { state: "failed"; reason: string };
 
@@ -16,10 +16,12 @@ const UPLOADABLE = "application/pdf,audio/*,video/*";
 
 export function Library({
   entries,
+  interrupted,
   selected,
   onImported,
 }: {
   entries: Loaded<ItemEntry[]>;
+  interrupted: boolean;
   selected: string | undefined;
   onImported: (entry: ItemEntry) => void;
 }) {
@@ -77,6 +79,7 @@ export function Library({
       </label>
       {importing.state === "failed" && <p className="status failed">{importing.reason}</p>}
       {entries.state === "failed" && <p className="status failed">{entries.reason}</p>}
+      {interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
       {entries.state === "ready" && (
         <ul>
           {entries.value.map((entry) => (

@@ -5,10 +5,10 @@ from functools import cache
 from http import HTTPStatus
 from pathlib import PurePath
 from typing import Annotated, Any
-from urllib.parse import urldefrag
+from urllib.parse import urldefrag, urlsplit
 
 import openai
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
@@ -33,12 +33,9 @@ from infonium.library import (
     Holding,
     Item,
     LibraryStore,
-    Link,
     NotInLibrary,
     Origin,
     Reading,
-    Upload,
-    item_identity,
 )
 from infonium.settings import Settings
 
@@ -52,6 +49,8 @@ SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 FETCH_SITE = "sec-fetch-site"
 OWN_SITES = frozenset({"same-origin", "none"})
+ORIGIN = "origin"
+HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
 
@@ -85,6 +84,10 @@ app = FastAPI(title="infonium", lifespan=running)
 
 class Failure(BaseModel):
     detail: str
+
+
+class NamelessUpload(Exception):
+    pass
 
 
 class LinkImport(BaseModel):
@@ -123,11 +126,13 @@ def explained(status: HTTPStatus) -> Callable[[Request, Exception], Response]:
 
 
 app.add_exception_handler(NotInLibrary, explained(HTTPStatus.NOT_FOUND))
+app.add_exception_handler(NamelessUpload, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
+NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 
 
@@ -135,11 +140,17 @@ UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"mo
 async def refuse_other_sites(
     request: Request, answered: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    # A browser says which site a request comes from, and a page of another site may not
-    # change the library: a form posted across sites needs no leave from this service. A
-    # client that is no browser says nothing and is let through.
+    # A page of another site may not change the library: a form posted across sites needs
+    # no leave from this service. A browser says which site a request comes from; where it
+    # does not, which it does not over plain HTTP to a named host, the origin it names must
+    # be this host. A client that is no browser names neither and is let through.
     site = request.headers.get(FETCH_SITE)
-    if request.method not in SAFE_METHODS and site is not None and site not in OWN_SITES:
+    origin = request.headers.get(ORIGIN)
+    if site is not None:
+        foreign = site not in OWN_SITES
+    else:
+        foreign = origin is not None and urlsplit(origin).netloc != request.headers.get(HOST)
+    if request.method not in SAFE_METHODS and foreign:
         return refusal(HTTPStatus.FORBIDDEN, OTHER_SITE)
     return await answered(request)
 
@@ -193,19 +204,17 @@ def list_items(owner: Owner) -> list[ItemEntry]:
 @app.post("/api/items")
 def import_link(link: LinkImport, owner: Owner) -> ItemEntry:
     # A fragment names a place in a page, not another page.
-    url = urldefrag(str(link.url)).url
-    return entry_of(intake().begin(owner, item_identity(owner, url), Link(url=url)))
+    return entry_of(intake().begin_link(owner, urldefrag(str(link.url)).url))
 
 
-@app.post("/api/items/upload")
+@app.post("/api/items/upload", responses=NAMELESS)
 def import_upload(file: UploadFile, owner: Owner) -> ItemEntry:
     if file.filename is None:
         raise TypeError("a file sent in a form has a name")
     name = PurePath(file.filename).name
     if not name:
-        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=NAMELESS_UPLOAD)
-    item_id = library_store().keep_upload(owner, file.file)
-    return entry_of(intake().begin(owner, item_id, Upload(name=name)))
+        raise NamelessUpload(NAMELESS_UPLOAD)
+    return entry_of(intake().begin_upload(owner, name, library_store().staged(file.file)))
 
 
 @app.get("/api/items/{item_id}", responses=NOT_IN_LIBRARY)
