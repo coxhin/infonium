@@ -13,7 +13,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from infonium.document import Seconds, UnreadableSource, has_words
-from infonium.recording import FFMPEG, started_on
+from infonium.recording import COMPLAINER, FFMPEG, started_on
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
@@ -129,15 +129,19 @@ def decoded(recording: Path) -> Generator[bytes]:
             yield sliver
             sliver = decoder.stdout.read(SLIVER_BYTES)
         # What is left when the sound ends is given only once the decoder is known to have
-        # ended well: one that was stopped may leave half a sample.
+        # ended well: one that was killed may leave half a sample.
         status = decoder.wait()
         if status != 0:
             complaints.seek(0)
-            first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
-            # A decoder that is stopped from outside complains of nothing; how it ended is
-            # then the reason, in the words Python has for it.
+            written = complaints.read().decode(errors="replace").strip()
+            first_complaint = COMPLAINER.sub("", written.partition("\n")[0])
+            # A decoder that is killed complains of nothing. Nor does one that is told to end,
+            # by SIGTERM or SIGINT: ffmpeg then gives the rest of the sound and ends with a
+            # failing status. How it ended is then the reason, in the words Python has for
+            # it. Sound may have been read by then, so the reason says no more than that the
+            # decoder failed.
             ending = subprocess.CalledProcessError(status, command[0])
-            raise UnreadableSource(f"no sound could be read: {first_complaint or ending}")
+            raise UnreadableSource(f"the decoder failed: {first_complaint or ending}")
         if sliver:
             yield sliver
 

@@ -1,3 +1,4 @@
+import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -70,6 +71,9 @@ FFMPEG = [
     "-map",
     f"0:{FIRST_SOUND}",
 ]
+# ffmpeg begins a line it writes with the part of itself that writes it and where that part
+# lies in its memory, as in "[aac @ 0x5581d0a0] ", which tells a person nothing.
+COMPLAINER = re.compile(r"^(?:\[[^\[\]]* @ (?:0x)?[0-9a-f]+\] )+")
 # The sound is written alone: without the chapters of its file, which would be a stream of
 # their own, and with the index of samples before the sound, so that a player need not read
 # to the end of the file before it can play or seek.
