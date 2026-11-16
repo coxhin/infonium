@@ -72,6 +72,7 @@ def intake() -> Intake:
             api_key=settings.speech_api_key,
             model=settings.speech_model,
         ),
+        browser=settings.browser,
     )
     return Intake(store=library_store(), readers=READERS, engines=engines)
 

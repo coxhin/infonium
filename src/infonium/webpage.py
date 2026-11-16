@@ -6,11 +6,13 @@ from urllib.parse import urldefrag, urljoin
 
 import trafilatura
 from lxml import etree, html
+from pydantic import BaseModel
 from trafilatura.htmlprocessing import REND_TAG_MAPPING
 from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
     LINE_BREAK,
+    NO_TEXT,
     Block,
     Code,
     Extracted,
@@ -494,7 +496,13 @@ def is_leftover(block: Block) -> bool:
     )
 
 
-def extract_page(content: bytes, url: str) -> Extracted:
+class PageText(BaseModel):
+    # What the extractor finds in a page, which may be nothing.
+    title: str
+    blocks: list[Block]
+
+
+def page_text(content: bytes, url: str) -> PageText:
     extraction = trafilatura.bare_extraction(
         prepared_page(content, url),
         url=url,
@@ -505,8 +513,16 @@ def extract_page(content: bytes, url: str) -> Extracted:
         with_metadata=True,
     )
     if not isinstance(extraction, Extraction):
-        raise UnreadableSource(f"no readable text at {url}")
+        return PageText(title=url, blocks=[])
     blocks = [block for block in flowed_blocks(extraction.body) if not is_leftover(block)]
-    if not blocks:
-        raise UnreadableSource(f"no readable text at {url}")
-    return Extracted(title=extraction.title or url, blocks=blocks)
+    return PageText(title=extraction.title or url, blocks=blocks)
+
+
+def extracted_text(text: PageText, url: str) -> Extracted:
+    if not text.blocks:
+        raise UnreadableSource(NO_TEXT.format(source=url))
+    return Extracted(title=text.title, blocks=text.blocks)
+
+
+def extract_page(content: bytes, url: str) -> Extracted:
+    return extracted_text(page_text(content, url), url)
