@@ -101,17 +101,12 @@ WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 EXSLT_NAMESPACES = {"re": "http://exslt.org/regular-expressions"}
 LINK = "a"
 PICTURE = "img"
-# The ways the HTML itself hides an element from the person reading it: the hidden attribute
-# and an inline style. A tab panel is not hidden in this sense, since one click shows it, nor
-# is text the browser shows when it is searched for (until-found), nor a part that React
-# streams hidden and its script then moves into place (an id that starts with S:).
-IS_HIDDEN = """
-    ((@hidden and not(@hidden = 'until-found'))
-        or re:test(@style, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i'))
-    and not(@role = 'tabpanel') and not(starts-with(@id, 'S:'))
-"""
-HIDDEN_ELEMENTS = etree.XPath(f"//*[{IS_HIDDEN}]", namespaces=EXSLT_NAMESPACES)
-IS_HIDDEN_ELEMENT = etree.XPath(f"boolean(self::*[{IS_HIDDEN}])", namespaces=EXSLT_NAMESPACES)
+# The ways the HTML itself hides an element from the person reading it.
+IS_HIDDEN = etree.XPath(
+    "boolean(self::*[@hidden"
+    " or re:test(@style, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i')])",
+    namespaces=EXSLT_NAMESPACES,
+)
 DIALOGS = etree.XPath("//dialog | //*[@role = 'dialog' or @role = 'alertdialog']")
 MAIN_PARTS = etree.XPath("descendant-or-self::*[self::article or self::main or @role = 'main']")
 IN_CODE_FOR_THE_BROWSER = (
@@ -119,9 +114,8 @@ IN_CODE_FOR_THE_BROWSER = (
 )
 SHOWN_TEXT = etree.XPath(f".//text()[not({IN_CODE_FOR_THE_BROWSER})]")
 TEXT_OUTSIDE_LINKS = etree.XPath(f".//text()[not(ancestor::{LINK} or {IN_CODE_FOR_THE_BROWSER})]")
-# A hidden part that holds this share of the page's text outside links or more, counted in
-# characters, is taken for the page's text, which a script will show; less, and it is a menu,
-# a notice or a label.
+# A shown dialog that holds this share of the page's text outside links or more, counted in
+# characters, is taken for the page's text.
 PAGE_TEXT_SHARE = 0.5
 # Class names that frameworks give text meant for screen readers only, as whole names with an
 # optional prefix (govuk-visually-hidden). A name for some screen widths only (md:sr-only,
@@ -153,24 +147,20 @@ def text_size(element: html.HtmlElement) -> int:
     return sum(len(WHITESPACE.sub("", text)) for text in TEXT_OUTSIDE_LINKS(element))
 
 
-def drop_hidden_parts(page: html.HtmlElement) -> None:
-    # What a page hides from its reader is not its text, unless it holds that text: a page may
-    # hide its article until a script shows it. A dialog is not the page's text either, open
-    # or closed, unless it holds the page's main part, or is open and holds its text. Dialogs
-    # go first, so that a consent dialog hidden in a hidden frame does not count as the text.
+def drop_dialogs(page: html.HtmlElement) -> None:
+    # A dialog is not the page's text, open or closed, unless it holds the page's main part,
+    # or is shown and holds the page's text. Other hidden parts are left to the extractor,
+    # which drops them unless that would leave a seventh of the page's text or less: a page
+    # that hides its text, in one part or in several, until a script shows it is read whole.
     page_size = text_size(page)
     for dialog in DIALOGS(page):
         holds_text = text_size(dialog) >= PAGE_TEXT_SHARE * page_size
-        kept = MAIN_PARTS(dialog) or (holds_text and not IS_HIDDEN_ELEMENT(dialog))
-        if dialog.getparent() is not None and dialog.getroottree().getroot() is page and not kept:
+        kept = MAIN_PARTS(dialog) or (holds_text and not IS_HIDDEN(dialog))
+        # A dialog inside one already dropped is out of the page, and the root stays.
+        in_page = dialog.getparent() is not None and dialog.getroottree().getroot() is page
+        if in_page and not kept:
             page_size -= text_size(dialog)
             dialog.drop_tree()
-    for element in HIDDEN_ELEMENTS(page):
-        size = text_size(element)
-        attached = element.getparent() is not None and element.getroottree().getroot() is page
-        if attached and size < PAGE_TEXT_SHARE * page_size:
-            page_size -= size
-            element.drop_tree()
 
 
 def drop_screen_reader_text(page: html.HtmlElement) -> None:
@@ -207,7 +197,7 @@ def drop_heading_marks(page: html.HtmlElement, url: str) -> None:
 
 
 def drop_unread_parts(page: html.HtmlElement, url: str) -> None:
-    drop_hidden_parts(page)
+    drop_dialogs(page)
     drop_screen_reader_text(page)
     drop_heading_marks(page, url)
     for link in CELL_LINKS_WITH_PICTURES(page):
