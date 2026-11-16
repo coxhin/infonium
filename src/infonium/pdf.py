@@ -128,10 +128,6 @@ def words_of(text: str) -> list[str]:
     return [word for word in text.split() if has_words(word)]
 
 
-def layer_words(text: str) -> frozenset[str]:
-    return frozenset(LETTER_RUN.findall(text.translate(LIGATURES)))
-
-
 def respelled(letters: str, spelled: frozenset[str]) -> str:
     # The engine keeps only the first letter of a ligature: "different" set with the ligature
     # ff comes out as "diferent". Letters that the page's text layer does not hold are written
@@ -441,7 +437,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
     spellings = {
         page.page_idx: frozenset()
         if page.page_idx in parsed.pictures
-        else layer_words(stored.pages[page.page_idx].text)
+        else frozenset(LETTER_RUN.findall(stored.pages[page.page_idx].text.translate(LIGATURES)))
         for page in parsed.pages
     }
     findings = Findings(
