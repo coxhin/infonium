@@ -335,8 +335,15 @@ def main() -> None:
     # give a reader had it been raised in the starting process, and where it arose is
     # written to standard error, which is that process's own. A fetch that runs out of the
     # memory it is allowed has met a page that holds more than is fetched, and is reported
-    # as one.
-    resource.setrlimit(resource.RLIMIT_DATA, (FETCHER_MEMORY_BYTES, FETCHER_MEMORY_BYTES))
+    # as one. A limit already in force that is lower than the fetcher's own cannot be
+    # raised, and is kept.
+    hard_limit = resource.getrlimit(resource.RLIMIT_DATA)[1]
+    data_limit = (
+        FETCHER_MEMORY_BYTES
+        if hard_limit == resource.RLIM_INFINITY
+        else min(FETCHER_MEMORY_BYTES, hard_limit)
+    )
+    resource.setrlimit(resource.RLIMIT_DATA, (data_limit, data_limit))
     room = bytearray(REPORT_ROOM_BYTES)
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
