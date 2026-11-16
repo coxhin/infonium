@@ -87,9 +87,11 @@ class Recognition(BaseModel):
 
 def cut_sliver(loudness: list[float]) -> int:
     # The sliver before which a piece that has reached its limit ends: the quietest of the
-    # later half of what the piece may hold. Speech falls that quiet between words even where
-    # it is too fast to pause, and a longer stretch weighed as one can be the quietest with a
-    # short word between two gaps in its middle.
+    # later half of what the piece may hold. That is a gap between words where a gap fills a
+    # sliver. Slivers stand side by side, a tenth of a second each, so a gap that is shorter,
+    # or that lies across two of them, fills none: the quietest sliver may then hold the end
+    # of a word, and the piece is cut in it. A longer stretch weighed as one can be the
+    # quietest with a short word between two gaps in its middle.
     first = len(loudness) // 2
     later = loudness[first:]
     return first + later.index(min(later))
