@@ -1,7 +1,7 @@
 import re
 import subprocess
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import closing, contextmanager
 from fractions import Fraction
 from pathlib import Path
@@ -202,6 +202,27 @@ def started_on(
             program.kill()
 
 
+@contextmanager
+def output_of(
+    file: Path, command: list[str], raised_for: Callable[[int, bytes], Exception]
+) -> Iterator[IO[bytes]]:
+    # What one of the programs writes when it is run on a recording, read as it comes. Its
+    # complaints go to a file: a pipe that nobody reads would fill and stall it. Once its
+    # reader is through the output, a program that failed raises what the caller makes of
+    # its status and its complaints.
+    with (
+        TemporaryFile() as complaints,
+        started_on(file, command, stdout=subprocess.PIPE, stderr=complaints) as program,
+    ):
+        if program.stdout is None:
+            raise RuntimeError(f"{command[0]} was started without a pipe for its output")
+        yield program.stdout
+        status = program.wait()
+        if status != 0:
+            complaints.seek(0)
+            raise raised_for(status, complaints.read())
+
+
 def run_on(file: Path, command: list[str], limit: float) -> subprocess.CompletedProcess[bytes]:
     # What one of the programs does when it is run on a recording, within a time.
     with started_on(file, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as program:
@@ -244,21 +265,17 @@ def packet_times(file: Path) -> Generator[int]:
     # done with it, and held to its limit as each time comes.
     command = [*FFPROBE, *PACKET_TIMES]
     began = time.monotonic()
-    # ffprobe's complaints go to a file: a pipe that nobody reads would fill and stall it.
-    with (
-        TemporaryFile() as complaints,
-        started_on(file, command, stdout=subprocess.PIPE, stderr=complaints) as listing,
-    ):
-        if listing.stdout is None:
-            raise RuntimeError("ffprobe was started without a pipe for the times")
-        for line in listing.stdout:
+    with output_of(
+        file,
+        command,
+        lambda status, complaints: subprocess.CalledProcessError(
+            status, command, stderr=complaints
+        ),
+    ) as listing:
+        for line in listing:
             if time.monotonic() - began > PROBE_LIMIT_SECONDS:
                 raise subprocess.TimeoutExpired(command, PROBE_LIMIT_SECONDS)
             yield int(line)
-        status = listing.wait()
-        if status != 0:
-            complaints.seek(0)
-            raise subprocess.CalledProcessError(status, command, stderr=complaints.read())
 
 
 def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
