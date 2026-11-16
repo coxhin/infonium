@@ -342,10 +342,10 @@ def main() -> None:
     # into the folder it is given, and writes the report. An exception does not cross from
     # one process to another, so whatever ends the fetch is reported in the words it would
     # give a reader had it been raised in the starting process, and where it arose is
-    # written to standard error, which is that process's own. A fetch that runs out of the
-    # memory it is allowed has met a page that holds more than is fetched, and is reported
-    # as one. A limit already in force that is lower than the fetcher's own cannot be
-    # raised, and is kept.
+    # written to standard error, which is that process's own. A fetch in which Python runs
+    # out of the memory it is allowed has met a page that holds more than is fetched, and
+    # is reported as one. A hard limit already in force that is lower than the fetcher's
+    # own cannot be raised, and is kept.
     hard_limit = resource.getrlimit(resource.RLIMIT_DATA)[1]
     data_limit = (
         FETCHER_MEMORY_BYTES
