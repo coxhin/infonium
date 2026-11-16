@@ -83,16 +83,20 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
     # of 0. The content of a page stored turned is turned in the copy, and the page is given
     # the width and height it is shown with, so that the copy shows the page as the file does.
     # A page that is only shown turned keeps its content, and stands in the copy as it is
-    # stored.
+    # stored. A file may list one page more than once. Every listing is decided from the
+    # file as it is given, before any page is edited. A page is edited where it is first
+    # listed, and a later listing, which finds it without the rotation the file gave it,
+    # leaves it as it is.
     with PDFIUM_IN_USE, PdfDocument(file) as document:
         rotations = [raw.FPDFPage_GetRotation(page) for page in document]
         if not any(rotations):
             return UprightFile(file=file, turned=rotations)
-        turned: list[int] = []
-        for page, rotation in zip(document, rotations, strict=True):
-            angles = own_angles(page.get_textpage()) if rotation else []
-            righting = righting_quarters(rotation, angles)
-            if righting:
+        rightings = [
+            righting_quarters(rotation, own_angles(page.get_textpage()) if rotation else [])
+            for page, rotation in zip(document, rotations, strict=True)
+        ]
+        for page, rotation, righting in zip(document, rotations, rightings, strict=True):
+            if righting and raw.FPDFPage_GetRotation(page) == rotation:
                 left, bottom, right, top = page.get_bbox()
                 # PDFium flattens only an appearance that is written in the file, and writes
                 # the one it would draw for an annotation without any when it lists the
@@ -110,9 +114,14 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
                 page.set_mediabox(0, 0, width, height)
                 page.set_cropbox(0, 0, width, height)
             page.set_rotation(0)
-            turned.append((rotation - righting) % WHOLE_TURN)
         document.save(copy)
-        return UprightFile(file=copy, turned=turned)
+        return UprightFile(
+            file=copy,
+            turned=[
+                (rotation - righting) % WHOLE_TURN
+                for rotation, righting in zip(rotations, rightings, strict=True)
+            ],
+        )
 
 
 def stored_file(file: Path) -> StoredFile:
