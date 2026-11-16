@@ -297,11 +297,6 @@ def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
     )
 
 
-def decodes_whole(file: Path) -> bool:
-    decoding = run_on(file, [*FFMPEG, *DECODED_FOR_NOTHING], CONVERSION_LIMIT_SECONDS)
-    return decoding.returncode == 0
-
-
 def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
@@ -320,8 +315,10 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
         copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
         with closing(packet_times(audio.file)) as times:
             plain = has_plain_timeline(copy, times)
-        if plain and decodes_whole(audio.file):
-            return audio
+        if plain:
+            decoding = run_on(audio.file, [*FFMPEG, *DECODED_FOR_NOTHING], CONVERSION_LIMIT_SECONDS)
+            if decoding.returncode == 0:
+                return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
 
