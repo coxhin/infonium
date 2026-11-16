@@ -96,16 +96,46 @@ FLOW_TAGS = frozenset(
 )
 WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 
+EXSLT_NAMESPACES = {"re": "http://exslt.org/regular-expressions"}
+# The ways a page hides an element from the person reading it that the HTML itself shows:
+# the hidden attribute, an inline style, the class names that frameworks give text meant
+# for screen readers only, and a dialog, which is never the page's text even when shown.
+# A tab panel is kept, since one click shows it, and so is text the browser shows when it
+# is searched for (until-found) and a part that React streams hidden and its script then
+# moves into place (an id that starts with S:). Text for screen readers is kept beside a
+# part hidden from them, such as a dash that stands for "not available": the extractor
+# drops that part, and the text says it in words.
+HIDDEN_ELEMENTS = etree.XPath(
+    """
+    //*[@hidden and not(@hidden = 'until-found') and not(@role = 'tabpanel')
+        and not(starts-with(@id, 'S:'))]
+    | //*[re:test(@style, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i')
+        and not(@role = 'tabpanel')]
+    | //*[re:test(@class, '(?<!not-)sr-only|visually-?hidden|screen-reader-(text|only)', 'i')
+        and not(../*[@aria-hidden = 'true'])]
+    | //dialog | //*[@role = 'dialog' or @role = 'alertdialog']
+    """,
+    namespaces=EXSLT_NAMESPACES,
+)
+
+
+def drop_unread_parts(page: html.HtmlElement) -> None:
+    # What a page hides from its reader is not its text.
+    for element in HIDDEN_ELEMENTS(page):
+        element.drop_tree()
+
 
 def prepared_page(content: bytes, url: str) -> html.HtmlElement:
     # The extractor turns a short inline quotation and a block quotation into the same
     # element, and so with preformatted text and code, and with code in a sentence and code on
     # lines of its own. The page is rewritten first so that each pair stays apart: an inline
     # quotation becomes its words inside quotation marks, preformatted text is wrapped as
-    # code, and code in a sentence loses its line breaks.
+    # code, and code in a sentence loses its line breaks. Parts that are not the page's text
+    # are dropped before.
     page = trafilatura.load_html(content)
     if page is None:
         raise UnreadableSource(f"no readable text at {url}")
+    drop_unread_parts(page)
     for quotation in list(page.iter(INLINE_QUOTATION)):
         quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
         if len(quotation):
