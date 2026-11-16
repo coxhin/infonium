@@ -93,13 +93,16 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
     # listed, and a later listing, which finds it without the rotation the file gave it,
     # leaves it as it is.
     with PDFIUM_IN_USE, PdfDocument(file) as document:
-        rotations = [raw.FPDFPage_GetRotation(page) for page in document]
+        rotations: list[Quarters] = []
+        rightings: list[Quarters] = []
+        for page in document:
+            rotation = raw.FPDFPage_GetRotation(page)
+            rotations.append(rotation)
+            rightings.append(
+                righting_quarters(rotation, own_angles(page.get_textpage()) if rotation else [])
+            )
         if not any(rotations):
             return UprightFile(file=file, turned=rotations)
-        rightings = [
-            righting_quarters(rotation, own_angles(page.get_textpage()) if rotation else [])
-            for page, rotation in zip(document, rotations, strict=True)
-        ]
         for page, rotation, righting in zip(document, rotations, rightings, strict=True):
             if righting and raw.FPDFPage_GetRotation(page) == rotation:
                 left, bottom, right, top = page.get_bbox()
