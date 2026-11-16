@@ -80,15 +80,15 @@ COMPLAINER = re.compile(r"^(?:\[[^\[\]]* @ (?:0x)?[0-9a-f]+\] )+")
 # to the end of the file before it can play or seek.
 SOUND_ALONE = [*FFMPEG, "-y", "-map_chapters", "-1", "-movflags", "+faststart"]
 # The timeline of a recording is the one its picture and its captions keep: where the sound
-# starts late or breaks off, silence stands in the gap. Players and recognisers do not agree
-# about a file that tells this only by the times of its packets, so the sound that is kept
-# tells it in samples: it starts at zero and runs without a break. Sound in the coding that
-# is kept is copied when the copy does so; other sound is coded anew through this filter,
-# which puts the silence in.
+# starts late or breaks off, silence stands in the gap. Sound that is coded anew goes through
+# this filter, which puts that silence in.
 ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
 COPIED = ["-c:a", "copy"]
 CODED_ANEW = ["-c:a", AAC, "-af", ON_THE_TIMELINE]
-# The longest ffprobe may take over a file, and ffmpeg over writing its sound.
+# The sound is decoded and nothing is written. Told so, ffmpeg ends with a failing status
+# at the first packet it cannot decode; otherwise it goes on without the packet.
+DECODED_FOR_NOTHING = ["-xerror", "-f", "null", "-"]
+# The longest ffprobe may take over a file, and ffmpeg over decoding or writing its sound.
 PROBE_LIMIT_SECONDS = 60.0
 CONVERSION_LIMIT_SECONDS = 1800.0
 
@@ -163,6 +163,11 @@ class TagProbe(BaseModel):
 
 
 class AudioTrack(BaseModel):
+    # The sound that is kept of a recording. audio_track makes it and vouches for it: the
+    # sound starts at zero, runs without a break and decodes whole, so a count of its
+    # samples is a time from its start. Players and recognisers do not agree about a file
+    # that tells a late start or a break only by the times of its packets, and at a packet
+    # they cannot decode one stops and another goes on without it.
     file: Path
     media_type: MediaType
 
@@ -238,6 +243,11 @@ def has_plain_timeline(copy: CopyProbe, times: list[int]) -> bool:
     )
 
 
+def decodes_whole(file: Path) -> bool:
+    decoding = run_on(file, [*FFMPEG, *DECODED_FOR_NOTHING], CONVERSION_LIMIT_SECONDS)
+    return decoding.returncode == 0
+
+
 def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
@@ -247,10 +257,13 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     audio = AudioTrack(file=directory / AUDIO_FILE, media_type=AUDIO_MEDIA_TYPE)
     # Named as a file, the place the sound is written to cannot be read as anything else.
     sound = f"{LOCAL_FILE}:{audio.file}"
+    # A copy is kept only where it is all that the kept sound must be. Sound coded anew is
+    # that by the way it is made: the filter sets it on the timeline, and the coder writes
+    # no packet that cannot be decoded.
     if probe.streams[0].codec_name == AAC:
         run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
         copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
-        if has_plain_timeline(copy, packet_times(audio.file)):
+        if has_plain_timeline(copy, packet_times(audio.file)) and decodes_whole(audio.file):
             return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
