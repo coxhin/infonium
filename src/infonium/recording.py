@@ -17,6 +17,9 @@ from infonium.document import WORD_GAP, MediaType, Seconds, UnreadableSource
 AUDIO_MEDIA_TYPE = "audio/mp4"
 AUDIO_FILE = "sound.m4a"
 AAC = "aac"
+# The profiles of AAC that every one of those browsers plays, by the names ffprobe gives
+# them. Of the others, Firefox plays LD as silence and ELD not at all.
+PLAYED_PROFILES = frozenset({"LC", "HE-AAC", "HE-AACv2"})
 
 # A file that is taken for a recording may be anything, and ffmpeg and ffprobe do what a
 # file tells them. So they are pointed at one in a single way. The file stands on their
@@ -52,7 +55,7 @@ REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-s
 # ffprobe ends with this status when it cannot read a file. Its report then says why without
 # the name the file stands under, which the line it writes of the file begins with.
 UNREADABLE_STATUS = 1
-SOUND_ENTRIES = "stream=codec_name:packet=size"
+SOUND_ENTRIES = "stream=codec_name,profile:packet=size"
 COPY_ENTRIES = "stream=start_pts,time_base,sample_rate:frame=nb_samples"
 LENGTH_ENTRIES = "format=duration"
 TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
@@ -103,8 +106,10 @@ class FailedProbe(BaseModel):
 
 
 class SoundStream(BaseModel):
-    # The coding of a sound, which ffprobe leaves unnamed where ffmpeg does not know it.
+    # The coding of a sound and the profile of that coding. ffprobe leaves unnamed what
+    # ffmpeg does not know.
     codec_name: str | None = None
+    profile: str | None = None
 
 
 class SoundPacket(BaseModel):
@@ -163,11 +168,12 @@ class TagProbe(BaseModel):
 
 
 class AudioTrack(BaseModel):
-    # The sound that is kept of a recording. audio_track makes it and vouches for it: the
-    # sound starts at zero, runs without a break and decodes whole, so a count of its
-    # samples is a time from its start. Players and recognisers do not agree about a file
-    # that tells a late start or a break only by the times of its packets, and at a packet
-    # they cannot decode one stops and another goes on without it.
+    # The sound that is kept of a recording. audio_track makes it and vouches for it: its
+    # coding is one that browsers play, and it starts at zero, runs without a break and
+    # decodes whole, so a count of its samples is a time from its start. Players and
+    # recognisers do not agree about a file that tells a late start or a break only by the
+    # times of its packets, and at a packet they cannot decode one stops and another goes on
+    # without it.
     file: Path
     media_type: MediaType
 
@@ -252,15 +258,16 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
         raise UnreadableSource("no sound in the recording")
-    if probe.streams[0].codec_name is None:
+    coded = probe.streams[0]
+    if coded.codec_name is None:
         raise UnreadableSource("no sound infonium can read in the recording")
     audio = AudioTrack(file=directory / AUDIO_FILE, media_type=AUDIO_MEDIA_TYPE)
     # Named as a file, the place the sound is written to cannot be read as anything else.
     sound = f"{LOCAL_FILE}:{audio.file}"
     # A copy is kept only where it is all that the kept sound must be. Sound coded anew is
     # that by the way it is made: the filter sets it on the timeline, and the coder writes
-    # no packet that cannot be decoded.
-    if probe.streams[0].codec_name == AAC:
+    # no packet that cannot be decoded, in a profile that is played.
+    if coded.codec_name == AAC and coded.profile in PLAYED_PROFILES:
         run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
         copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
         if has_plain_timeline(copy, packet_times(audio.file)) and decodes_whole(audio.file):
