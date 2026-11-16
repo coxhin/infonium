@@ -8,7 +8,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.message import Message
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from threading import Lock
@@ -17,11 +17,13 @@ from urllib.parse import urlsplit
 import filetype
 import httpx
 import openai
+from playwright.sync_api import Error as BrowserError
 from pydantic import BaseModel
 
-from infonium import captions, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
+    LITTLE_TEXT_WORDS,
     MEDIA_TYPE_PATTERN,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
@@ -31,7 +33,10 @@ from infonium.document import (
     MediaType,
     UnreadableSource,
     document_of,
+    error_status,
     error_text,
+    turned_away,
+    word_count,
 )
 from infonium.library import (
     FIRST_READING,
@@ -73,6 +78,9 @@ OPENING_BYTES = 1024
 # The most that is kept of the reason a reading failed, and what stands for the rest.
 REASON_LIMIT_CHARACTERS = 500
 CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
+# How a rendering fails: the browser is missing, it cannot open the page or meets a limit,
+# or the page answers with an error status or a check.
+RENDERING_FAILURES = (OSError, BrowserError, UnreadableSource)
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +94,23 @@ class Source(BaseModel):
 
 
 class Engines(BaseModel):
-    # Where the programs and services that read sources other than web pages are found.
+    # Where the programs and services that read sources are found: the browser renders a web
+    # page that scripts build.
     pdf: Path
     recogniser: speech.Recogniser
+    browser: Path
+
+
+class PageCopy(BaseModel):
+    # A copy of a page read from an address: its file, the address that served it, and what
+    # the extractor found in it.
+    file: Path
+    served: str
+    text: webpage.PageText
+
+    @cached_property
+    def words(self) -> int:
+        return word_count(self.text.blocks)
 
 
 class Readout(BaseModel):
@@ -136,7 +158,10 @@ def fetched(url: str, directory: Path) -> Source:
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": USER_AGENT},
     ) as response:
-        response.raise_for_status()
+        if not response.is_success:
+            raise UnreadableSource(error_status(str(response.url), response.status_code))
+        if guard.is_guarded(response.headers):
+            raise UnreadableSource(turned_away(url))
         with file.open("wb") as kept:
             # Bytes are taken as they arrive, so that a source that only trickles is still
             # held to the time a fetch may take.
@@ -187,6 +212,47 @@ def media_page_readout(url: str, directory: Path, engines: Engines) -> Readout:
             return recognised_readout(title, audio, engines.recogniser)
 
 
+def page_copy(asked: str, file: Path, served: str) -> PageCopy:
+    # A page read from an address is first asked whether it is the page asked for or one that
+    # a guard answered with in its place.
+    content = file.read_bytes()
+    copy = PageCopy(file=file, served=served, text=webpage.page_text(content, served))
+    if guard.is_check_page(
+        guard.ServedPage(asked=asked, served=served, content=content, words=copy.words)
+    ):
+        raise UnreadableSource(turned_away(asked))
+    return copy
+
+
+def copy_readout(copy: PageCopy) -> Readout:
+    return Readout(
+        extractor=webpage.EXTRACTOR,
+        extracted=webpage.extracted_text(copy.text, copy.served),
+        file=copy.file,
+        media_type=HTML_MEDIA_TYPE,
+    )
+
+
+def page_readout(url: str, source: Source, directory: Path, engines: Engines) -> Readout:
+    # A page that holds little text may be one that its scripts build, and is rendered in a
+    # browser and read again. What a rendering reads is kept when it holds more. A check that
+    # the site answers the browser with is a rendering that failed, as an error status is.
+    plain = page_copy(url, source.file, source.reference)
+    if plain.words >= LITTLE_TEXT_WORDS:
+        return copy_readout(plain)
+    try:
+        rendered = browser.rendered_page(source.reference, directory, engines.browser)
+        built = page_copy(url, rendered.file, rendered.address)
+    except RENDERING_FAILURES:
+        if not plain.text.blocks:
+            raise
+        logger.warning(
+            "rendering %s failed; its plain reading is kept", source.reference, exc_info=True
+        )
+        return copy_readout(plain)
+    return copy_readout(built if built.words > plain.words else plain)
+
+
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
@@ -194,6 +260,8 @@ def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
+    if source.media_type == HTML_MEDIA_TYPE:
+        return page_readout(url, source, directory, engines)
     return readout_of(source, directory, engines)
 
 
@@ -254,8 +322,9 @@ def failure_reason(error: BaseException) -> str:
     # with; a program that ended without a word, or ran out of time, is named with how it
     # ended. A request that a service refused does not carry what the service answered, and
     # one that no service answered does not say which service that was, so the reason gives
-    # the address and the answer. A reason is kept as one line of a length a person reads: a
-    # service may answer with a whole page.
+    # the address and the answer. A browser that fails says what failed in its first line and
+    # goes on with the steps it took, which are left out. A reason is kept as one line of a
+    # length a person reads: a service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         said = recording.COMPLAINER.sub("", written.strip().splitlines()[-1])
@@ -267,6 +336,8 @@ def failure_reason(error: BaseException) -> str:
         said = f"{asked_address(error)} answered {error.status_code}: {error.response.text}"
     elif isinstance(error, openai.APIConnectionError):
         said = f"{asked_address(error)} did not answer: {error}"
+    elif isinstance(error, BrowserError):
+        said = f"the browser could not render the page: {error.message.splitlines()[0]}"
     else:
         said = error_text(error)
     line = WORD_GAP.join(said.split())

@@ -1,6 +1,8 @@
 from enum import StrEnum
 from hashlib import sha256
+from http import HTTPStatus
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
@@ -64,6 +66,10 @@ UNSPACED_CODE_POINTS = (
     range(0xFF00, 0xFFF0),
     range(0x20000, 0x40000),
 )
+# A page that holds fewer words than this may hold no article of its own: it may be an
+# opening, a shell that its scripts fill, or a page that a site answers with in place of the
+# one asked for. A short post holds as little, so such a page is looked at again, not refused.
+LITTLE_TEXT_WORDS = 200
 TEXT_FIELD = "text"
 PLACES_FIELD = "places"
 NO_WORDS = "a part of a text holds at least one word"
@@ -259,6 +265,25 @@ class UnreadableSource(Exception):
 # one whose fetch outlasts the time it is allowed.
 OVERSIZE_SOURCE = "{source} holds more than infonium fetches"
 OVERDUE_SOURCE = "{source} takes longer than infonium waits"
+# What a reader is told of a page in which the extractor finds no text, of an address that
+# answered with an error status, and of a site that answered with a check in place of the
+# page asked for.
+NO_TEXT = "no readable text at {source}"
+ERROR_STATUS = "{source} answered {status}"
+TURNED_AWAY = "{site} turned infonium away with a check in place of the page"
+STATUS_NAMES = {status.value: f"{status.value} {status.phrase}" for status in HTTPStatus}
+
+
+def error_status(source: str, status: int) -> str:
+    # A status is told by its number and the name HTTP gives it; a number that HTTP leaves
+    # unnamed, such as one a single service made up, is told by itself.
+    return ERROR_STATUS.format(source=source, status=STATUS_NAMES.get(status, str(status)))
+
+
+def turned_away(asked: str) -> str:
+    # The site is named by the host of the address a person asked for, the one they know,
+    # whichever host served the check.
+    return TURNED_AWAY.format(site=urlsplit(asked).hostname)
 
 
 def error_text(error: BaseException) -> str:
@@ -311,6 +336,15 @@ class Joined(BaseModel):
 
 def is_unspaced(character: str) -> bool:
     return any(ord(character) in code_points for code_points in UNSPACED_CODE_POINTS)
+
+
+def word_count(blocks: list[Block]) -> int:
+    # Words are counted as a reader would count them in each script: a run of letters between
+    # spaces, and every character of a script that is written without spaces.
+    text = WORD_GAP.join(block.text for block in blocks)
+    unspaced = sum(map(is_unspaced, text))
+    spaced = "".join(WORD_GAP if is_unspaced(character) else character for character in text)
+    return unspaced + len(spaced.split())
 
 
 def seams(parts: list[str]) -> list[str]:
