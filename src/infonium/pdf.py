@@ -1,7 +1,8 @@
 import re
 import unicodedata
-from itertools import pairwise
+from itertools import accumulate, pairwise
 from pathlib import Path
+from statistics import median
 from typing import Final
 
 from lxml import html
@@ -41,6 +42,7 @@ from infonium.mineru import (
     OwnParagraph,
     ParsedPage,
     ParsedPages,
+    PicturePages,
     TableBody,
     Text,
     TextSpan,
@@ -48,11 +50,21 @@ from infonium.mineru import (
     parsed_pages,
     word_lines,
 )
-from infonium.pdfium import Quarters, StoredFile, stored_file, upright_file
+from infonium.pdfium import WHOLE_TURN, Quarters, StoredFile, stored_file, upright_file
 
 EXTRACTOR = "pdf/1"
 # The file in the folder that the engine is given when the PDF turns a page.
 UPRIGHT_COPY = "upright.pdf"
+# The language model that recognises the words of a page read as a picture writes them the
+# way Markdown is written, where a dollar sign would open a formula: after a backslash.
+DOLLAR = "$"
+ESCAPED_DOLLAR = rf"\{DOLLAR}"
+# By how many quarters, clockwise, a page is turned for lines written downwards to lie as
+# lines written across do: read from the left, one under the other, the rightmost first.
+LAID_ACROSS: Quarters = 3
+# A tall first letter is about as wide as it is high, and a line of words many times wider:
+# a detected line no more than this many times as wide as it is high is taken for a letter.
+LETTER_WIDTHS = 2
 
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
@@ -107,8 +119,8 @@ class Area(BaseModel):
 
 
 class ShownLine(BaseModel):
-    # One line of a block's words, and the box that shows them on its page as the engine
-    # read it.
+    # One line of a block's words as the engine gives it, and the box that shows them on its
+    # page as the engine read it: in a file read as pictures, a whole region.
     pieces: list[Piece]
     area: Area
 
@@ -123,13 +135,17 @@ class PdfFindings(BaseModel):
     # What the reading of a whole PDF finds that the reading of any one line of it needs:
     # the words the file shows whole; whether the engine read it as pictures; the pages
     # whose characters stand straight; by how many quarters, clockwise, the PDF shows each
-    # page turned from the way the engine read it; and the words that the text layer of each
-    # page holds, none in a file read as pictures.
+    # page turned from the way the engine read it; the words that the text layer of each
+    # page holds, none in a file read as pictures; how many times its width each page is
+    # high, as the engine read it; and the boxes of the lines the engine detected on each
+    # page apart from the words, none in a file read from its text layer.
     whole_words: frozenset[str]
     from_pictures: bool
     straight: frozenset[PageNumber]
     turned: list[Quarters]
     spellings: dict[PageNumber, frozenset[str]]
+    proportions: dict[PageNumber, float]
+    line_boxes: dict[PageNumber, list[Area]]
 
 
 def words_of(text: str) -> list[str]:
@@ -203,11 +219,10 @@ def area(page: ParsedPage, box: Box) -> Area:
     )
 
 
-def turned_back(where: Area, findings: PdfFindings) -> Area:
-    # A box on a page as the engine read it, on the same page as its PDF shows it: the page
-    # is turned clockwise by some quarters, and the box with it.
+def quarter_turned(where: Area, quarters: Quarters) -> Area:
+    # A box on a page, on the same page turned clockwise by some quarters.
     right, bottom = where.left + where.width, where.top + where.height
-    match findings.turned[where.page]:
+    match quarters:
         case 1:
             return Area(
                 page=where.page,
@@ -236,6 +251,11 @@ def turned_back(where: Area, findings: PdfFindings) -> Area:
             return where
 
 
+def turned_back(where: Area, findings: PdfFindings) -> Area:
+    # A box on a page as the engine read it, on the same page as its PDF shows it.
+    return quarter_turned(where, findings.turned[where.page])
+
+
 def placed(where: Area, start: int, end: int) -> PagePlace:
     return PagePlace(
         start=start,
@@ -248,21 +268,37 @@ def placed(where: Area, start: int, end: int) -> PagePlace:
     )
 
 
+def as_printed(line: Line) -> Line:
+    # A line of running words that the language model recognised, with its dollar signs as
+    # the page prints them. A listing is not such a line: there the model writes every
+    # character as it stands.
+    return line.model_copy(
+        update={
+            "spans": [
+                span.model_copy(update={"content": span.content.replace(ESCAPED_DOLLAR, DOLLAR)})
+                if isinstance(span, TextSpan)
+                else span
+                for span in line.spans
+            ]
+        }
+    )
+
+
 def shown_lines(page: ParsedPage, lines: list[Line], findings: PdfFindings) -> list[ShownLine]:
     return [
         ShownLine(pieces=pieces, area=area(page, line.bbox))
-        for line in lines
+        for line in (map(as_printed, lines) if findings.from_pictures else lines)
         if (pieces := line_pieces(line, findings.spellings[page.page_idx]))
     ]
 
 
 def worded(lines: list[ShownLine], findings: PdfFindings) -> bool:
-    # Of a script it cannot read, the engine reads from a picture only the marks every script
-    # shares: punctuation and digits. So lines read from pictures hold words only when one of
-    # them holds a letter.
+    # Of a drawing or an ornament the engine's language model writes marks: a square for each
+    # window of a drawn carriage, the stars of a rule between two paragraphs. So lines read
+    # from pictures hold words only when one of them holds a letter or a digit.
     words = [word for line in lines for piece in line.pieces for word in piece.words]
-    lettered = any(character.isalpha() for word in words for character in word)
-    return bool(words) and (lettered or not findings.from_pictures)
+    read = any(character.isalnum() for word in words for character in word)
+    return bool(words) and (read or not findings.from_pictures)
 
 
 def whole_words(
@@ -308,6 +344,74 @@ def line_end(last: str, first: str, known: frozenset[str]) -> str:
     return f"{last}{SOFT_HYPHEN}"
 
 
+def lies_in(box: Area, where: Area) -> bool:
+    # Whether the middle of a box lies in another.
+    from_left, from_top = box.left + box.width / 2, box.top + box.height / 2
+    return (
+        where.left <= from_left <= where.left + where.width
+        and where.top <= from_top <= where.top + where.height
+    )
+
+
+def in_one_row(box: Area, other: Area) -> bool:
+    # The boxes of two lines stand in one row when their middles are less than half the
+    # height of the less tall one apart.
+    apart = abs(box.top + box.height / 2 - other.top - other.height / 2)
+    return apart < min(box.height, other.height) / 2
+
+
+def in_reading_order(boxes: list[Area]) -> list[Area]:
+    # The boxes of the lines detected in one region, in the order the lines are read: from
+    # the top down, and from the left where several stand in one row. A line with a wide gap
+    # in it is detected as two, and on a page scanned askew the right one may stand higher
+    # than the left. A tall first letter comes before the lines it is set into, or after the
+    # first of them where that line's top stands a little higher.
+    rows: list[list[Area]] = []
+    for box in sorted(boxes, key=lambda box: box.top):
+        if rows and in_one_row(box, rows[-1][-1]):
+            rows[-1].append(box)
+        else:
+            rows.append([box])
+    return [box for row in rows for box in sorted(row, key=lambda box: box.left)]
+
+
+def line_places(where: Area, start: int, end: int, findings: PdfFindings) -> list[Place]:
+    # Where on its page the words of a line stand, which are this range of their block's
+    # text: in the line's own box, unless lines were detected apart from the words inside
+    # it. Then the words are spread over those lines as they are read. A line takes a share
+    # of the characters as large as its share of the lines' lengths. A tall first letter is
+    # detected as a line of its own, about as wide as it is high and as tall as several
+    # lines: it counts as so many times shorter. That is an estimate, which puts the end of
+    # a line a few characters off; a line so short that no character falls to it gets no
+    # place.
+    within = [box for box in findings.line_boxes[where.page] if lies_in(box, where)]
+    if not within:
+        return [placed(turned_back(where, findings), start, end)]
+    # Lines written downwards are taller than they are wide. They are laid across, and each
+    # place is stood up again where its line stands. Widths and heights are parts of the
+    # page's own, so a height is measured in widths by the page's proportion.
+    proportion = findings.proportions[where.page]
+    downwards = proportion * sum(box.height for box in within) > sum(box.width for box in within)
+    laid = LAID_ACROSS if downwards else 0
+    boxes = in_reading_order([quarter_turned(box, laid) for box in within])
+    in_widths = 1 / proportion if downwards else proportion
+    usual = median(box.height for box in boxes)
+    lengths = [
+        box.width / max(1, round(box.height / usual))
+        if box.width <= LETTER_WIDTHS * box.height * in_widths
+        else box.width
+        for box in boxes
+    ]
+    reached = list(accumulate(lengths))
+    edges = [start, *(start + round((end - start) * reach / reached[-1]) for reach in reached)]
+    stood = (WHOLE_TURN - laid) % WHOLE_TURN
+    return [
+        placed(turned_back(quarter_turned(box, stood), findings), first, last)
+        for box, (first, last) in zip(boxes, pairwise(edges), strict=True)
+        if first < last
+    ]
+
+
 def flow(lines: list[ShownLine], findings: PdfFindings) -> Flow:
     # Every word is a part of its own, so that the words of one line are joined by the same
     # rule as two lines are.
@@ -338,7 +442,7 @@ def flow(lines: list[ShownLine], findings: PdfFindings) -> Flow:
             )
             next_word = last_word + 1
         start, end = together.ranges[first_word].start, together.ranges[next_word - 1].end
-        places.append(placed(turned_back(line.area, findings), start, end))
+        places.extend(line_places(line.area, start, end, findings))
     return Flow(text=together.text, marks=marks, places=places)
 
 
@@ -435,13 +539,23 @@ def tables(body: TableBody, page: ParsedPage, findings: PdfFindings) -> list[Blo
 
 
 def listings(body: CodeBody, page: ParsedPage, findings: PdfFindings) -> list[Block]:
+    # The engine's language model reads a listing whole, however the file is read: it comes
+    # as one line that keeps its line breaks, and no line is detected in it. So the box of a
+    # line is cut evenly into as many rows as the line holds. The last row ends where the
+    # box itself ends, so that no row lies a hair past the edge of the page.
     lines = [(line, code) for line in body.lines if (code := line_code(line)).strip()]
     places: list[Place] = []
     offset = 0
     for line, code in lines:
-        where = turned_back(area(page, line.bbox), findings)
-        places.append(placed(where, offset, offset + len(code)))
-        offset += len(code) + len(LINE_BREAK)
+        whole = area(page, line.bbox)
+        rows = code.split(LINE_BREAK)
+        cuts = [whole.top + whole.height * number / len(rows) for number in range(len(rows))]
+        tops = [*cuts, whole.top + whole.height]
+        for row, (top, bottom) in zip(rows, pairwise(tops), strict=True):
+            where = whole.model_copy(update={"top": top, "height": bottom - top})
+            if row.strip():
+                places.append(placed(turned_back(where, findings), offset, offset + len(row)))
+            offset += len(row) + len(LINE_BREAK)
     return [Code(text=LINE_BREAK.join(code for _, code in lines), places=places)] if lines else []
 
 
@@ -475,21 +589,41 @@ def text_chains(
     return chains
 
 
+def detected_lines(parsed: ParsedPages) -> dict[PageNumber, list[Area]]:
+    # The boxes of the lines detected on each page apart from the words. A line without width
+    # or height shows no word, and takes no share of any.
+    match parsed:
+        case PicturePages(pages=pages, line_boxes=boxes):
+            return {
+                page.page_idx: [
+                    line_box
+                    for box in boxes[page.page_idx]
+                    if (line_box := area(page, box)).width and line_box.height
+                ]
+                for page in pages
+            }
+        case _:
+            return {page.page_idx: [] for page in parsed.pages}
+
+
 def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) -> list[Block]:
     # The blocks of a file that the engine read without a turned page, with their places on
     # the pages as the PDF shows them: turned by so many quarters from the way they were read.
+    from_pictures = isinstance(parsed, PicturePages)
     spellings = {
         page.page_idx: frozenset()
-        if parsed.from_pictures
+        if from_pictures
         else frozenset(LETTER_RUN.findall(stored.pages[page.page_idx].text.translate(LIGATURES)))
         for page in parsed.pages
     }
     findings = PdfFindings(
         whole_words=whole_words(parsed.pages, spellings),
-        from_pictures=parsed.from_pictures,
+        from_pictures=from_pictures,
         straight=frozenset(number for number, page in enumerate(stored.pages) if page.straight),
         turned=turned,
         spellings=spellings,
+        proportions={page.page_idx: page.page_size[1] / page.page_size[0] for page in parsed.pages},
+        line_boxes=detected_lines(parsed),
     )
     chains = text_chains(parsed.pages, findings)
     blocks: list[Block] = []
@@ -546,17 +680,9 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # with no page turned, and what it finds is placed on the pages as the file shows them.
     upright = upright_file(file, folder / UPRIGHT_COPY)
     stored = stored_file(upright.file)
-    parsed = parsed_pages(FileToParse(file=upright.file, engine=engine, folder=folder), stored)
+    to_parse = FileToParse(file=upright.file, engine=engine, folder=folder)
+    parsed = parsed_pages(to_parse, len(stored.pages))
     blocks = pdf_blocks(parsed, stored, upright.turned)
     if not blocks:
-        # Lines that the engine found in a file it read as pictures, and that make no block,
-        # are writing in a script it cannot read.
-        unknown_script = parsed.from_pictures and any(
-            word_lines(region) for page in parsed.pages for region in page.preproc_blocks
-        )
-        raise UnreadableSource(
-            f"the script of {name} could not be read"
-            if unknown_script
-            else f"no readable text in {name}"
-        )
+        raise UnreadableSource(f"no readable text in {name}")
     return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)
