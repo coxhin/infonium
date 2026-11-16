@@ -54,7 +54,10 @@ LONGEST_RECORDING_SECONDS = 4.0 * SECONDS_PER_HOUR
 # The longest silence a site is allowed, how often a request that broke off is made again,
 # the longest the fetch may take in all, and the most the recording and its caption track,
 # in one file or in the segments of a stream, may hold. The slowest site seen sent 120 KiB a
-# second, at which three hours of sound take twenty-four minutes.
+# second, at which three hours of sound take twenty-four minutes. The sizes count what a
+# compressed answer holds once it is inflated: yt-dlp reads with requests, which inflates an
+# answer piece by piece as it is read, where the standard library's handler inflates it
+# whole before any of it is counted.
 SILENCE_LIMIT_SECONDS = 20
 REQUEST_RETRIES = 3
 MEDIA_FETCH_LIMIT_SECONDS = 3600.0
