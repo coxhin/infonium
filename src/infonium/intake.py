@@ -171,7 +171,7 @@ def recognised_readout(
 ) -> Readout:
     # The words are recognised in the sound that is kept, so that their times are times of
     # the recording a reader plays.
-    transcript = speech.transcribe(audio.file, recogniser)
+    transcript = speech.transcribe(audio, recogniser)
     return spoken_readout(speech.EXTRACTOR, title, audio, transcript)
 
 

@@ -5,7 +5,6 @@ from collections.abc import Generator, Iterable, Iterator
 from contextlib import closing
 from io import BytesIO
 from math import exp, sumprod
-from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Annotated, Final, Self
 
@@ -13,7 +12,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from infonium.document import Seconds, UnreadableSource, has_words
-from infonium.recording import COMPLAINER, FFMPEG, started_on
+from infonium.recording import COMPLAINER, FFMPEG, AudioTrack, started_on
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
@@ -105,10 +104,9 @@ def piece_after(slivers_before: int, sound: bytes) -> Piece:
     )
 
 
-def decoded(recording: Path) -> Generator[bytes]:
-    # The sound of a recording as the decoder gives it, a sliver at a time; the last may be a
-    # short one. The recording is the sound that is kept of a source, which starts at zero
-    # and runs without a break, so a count of its samples is a time from its start.
+def decoded(audio: AudioTrack) -> Generator[bytes]:
+    # The kept sound of a recording as the decoder gives it, a sliver at a time; the last
+    # may be a short one. Nothing here sets the sound on its timeline: kept sound is on it.
     command = [
         *FFMPEG,
         "-ac",
@@ -122,7 +120,7 @@ def decoded(recording: Path) -> Generator[bytes]:
     # The decoder's complaints go to a file: a pipe that nobody reads would fill and stall it.
     with (
         TemporaryFile() as complaints,
-        started_on(recording, command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
+        started_on(audio.file, command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
@@ -197,10 +195,10 @@ def utterances_of(recognition: Recognition, piece: Piece) -> list[Utterance]:
     ]
 
 
-def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
-    # What is spoken in a recording, as a recogniser behind OpenAI's transcription API hears
-    # it. The recogniser detects the language, piece by piece. A recording without speech
-    # has no utterances.
+def transcribe(audio: AudioTrack, recogniser: Recogniser) -> Transcript:
+    # What is spoken in the kept sound of a recording, as a recogniser behind OpenAI's
+    # transcription API hears it. The recogniser detects the language, piece by piece. A
+    # recording without speech has no utterances.
     utterances: list[Utterance] = []
     # The connection to the recogniser and the decoder are ended with the reading, however
     # the reading ends.
@@ -211,7 +209,7 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
             timeout=RECOGNISER_TIMEOUT_SECONDS,
             max_retries=RECOGNISER_RETRIES,
         ) as endpoint,
-        closing(decoded(recording)) as slivers,
+        closing(decoded(audio)) as slivers,
     ):
         for piece in pieces(slivers):
             reply = endpoint.audio.transcriptions.with_raw_response.create(
