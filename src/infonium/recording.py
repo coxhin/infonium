@@ -55,8 +55,12 @@ FFPROBE = [
 FIRST_PACKETS = "%+#16"
 REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-show_entries"]
 # ffprobe ends with this status when it cannot read a file. Its report then says why without
-# the name the file stands under, which the line it writes of the file begins with.
+# the name the file stands under, which the line it writes of the file begins with. It ends
+# with the same status where it cannot start the decoder of one of the file's streams; then
+# it says nothing and leaves its report as it began it, without the mark that closes one.
 UNREADABLE_STATUS = 1
+REPORT_CLOSE = b"}"
+UNDECODED_STREAM = "ffmpeg cannot decode one of its streams"
 SOUND_ENTRIES = "stream=codec_name,profile:packet=size"
 COPY_ENTRIES = "stream=start_pts,time_base,sample_rate:frame=nb_samples"
 LENGTH_ENTRIES = "format=duration"
@@ -208,7 +212,12 @@ def run_on(file: Path, command: list[str], limit: float) -> subprocess.Completed
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
     done = run_on(file, [*FFPROBE, *REPORT_OF, entries], PROBE_LIMIT_SECONDS)
     if done.returncode == UNREADABLE_STATUS:
-        failure = FailedProbe.model_validate_json(done.stdout).error.string
+        closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
+        failure = (
+            FailedProbe.model_validate_json(done.stdout).error.string
+            if closed
+            else UNDECODED_STREAM
+        )
         raise UnreadableSource(f"infonium cannot read the recording: {failure}")
     done.check_returncode()
     return report.model_validate_json(done.stdout)
