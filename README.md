@@ -66,7 +66,12 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 
 ## Limits
 
-- A site that turns programs away is not read. When it answers with an error status, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
+- A site that turns programs away is not read. When it answers with anything but success, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
+- A page of fewer than 200 words is taken for a check when its title is one that guards give their checks, or when the address it ends at names a captcha and carries another address to go on to, so a short page that happens to look like that is refused.
+- A page whose HTML holds 200 words or more, menus and links included, is read from its HTML and never opened in a browser.
+- A page of fewer than 200 words waits a few seconds more while it is opened in a browser.
+- Of the HTML and the page the browser builds, the one with more words is kept, even when those words are menus and links.
+- Without Chrome, a page whose HTML only asks for JavaScript may be read as that one line.
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.
