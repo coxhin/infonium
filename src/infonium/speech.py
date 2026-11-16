@@ -5,7 +5,6 @@ from collections.abc import Generator, Iterable, Iterator
 from contextlib import closing
 from io import BytesIO
 from math import exp, sumprod
-from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Annotated, Final, Self
 
@@ -13,12 +12,11 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from infonium.document import Seconds, UnreadableSource, has_words
+from infonium.recording import COMPLAINER, FFMPEG, AudioTrack, started_on
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
 
-DECODER = "ffmpeg"
-FIRST_SOUND_TRACK = "0:a:0"
 # The recogniser hears one channel at this rate, each sample a whole number of two bytes.
 CHANNELS = 1
 SAMPLE_RATE = 16000
@@ -26,12 +24,6 @@ SAMPLE_BYTES = 2
 BYTES_PER_SECOND = CHANNELS * SAMPLE_RATE * SAMPLE_BYTES
 SAMPLE_FORMATS = {"little": "s16le", "big": "s16be"}
 SAMPLE_TYPE_CODE: Final = "h"
-# The sound keeps the timeline a player shows: a track that starts late or has a gap is
-# filled with silence, so a count of samples is a time from the start of the recording.
-ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
-# The decoder opens files of this machine only: a recording that names an address on the
-# network, as a playlist can, does not send it there.
-LOCAL_FILE = "file"
 
 # How loud the sound is, is measured over slivers a tenth of a second long.
 SLIVERS_PER_SECOND = 10
@@ -82,7 +74,7 @@ class Segment(BaseModel):
     avg_logprob: LogProbability
 
     @model_validator(mode="after")
-    def ends_after_it_starts(self) -> Self:
+    def ends_no_earlier_than_it_starts(self) -> Self:
         if self.end < self.start:
             raise ValueError("a segment ends no earlier than it starts")
         return self
@@ -94,9 +86,11 @@ class Recognition(BaseModel):
 
 def cut_sliver(loudness: list[float]) -> int:
     # The sliver before which a piece that has reached its limit ends: the quietest of the
-    # later half of what the piece may hold. Speech falls that quiet between words even where
-    # it is too fast to pause, and a longer stretch weighed as one can be the quietest with a
-    # short word between two gaps in its middle.
+    # later half of what the piece may hold. That is a gap between words where a gap fills a
+    # sliver. Slivers stand side by side, a tenth of a second each, so a gap that is shorter,
+    # or that lies across two of them, fills none: the quietest sliver may then hold the end
+    # of a word, and the piece is cut in it. A longer stretch weighed as one can be the
+    # quietest with a short word between two gaps in its middle.
     first = len(loudness) // 2
     later = loudness[first:]
     return first + later.index(min(later))
@@ -110,26 +104,15 @@ def piece_after(slivers_before: int, sound: bytes) -> Piece:
     )
 
 
-def decoded(recording: Path) -> Generator[bytes]:
-    # The sound of a recording as the decoder gives it, a sliver at a time; the last may be a
-    # short one.
+def decoded(audio: AudioTrack) -> Generator[bytes]:
+    # The kept sound of a recording as the decoder gives it, a sliver at a time; the last
+    # may be a short one. Nothing here sets the sound on its timeline: kept sound is on it.
     command = [
-        DECODER,
-        "-nostdin",
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        LOCAL_FILE,
-        "-i",
-        f"{LOCAL_FILE}:{recording}",
-        "-map",
-        FIRST_SOUND_TRACK,
+        *FFMPEG,
         "-ac",
         str(CHANNELS),
         "-ar",
         str(SAMPLE_RATE),
-        "-af",
-        ON_THE_TIMELINE,
         "-f",
         SAMPLE_FORMATS[sys.byteorder],
         "-",
@@ -137,7 +120,7 @@ def decoded(recording: Path) -> Generator[bytes]:
     # The decoder's complaints go to a file: a pipe that nobody reads would fill and stall it.
     with (
         TemporaryFile() as complaints,
-        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
+        started_on(audio.file, command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
@@ -146,15 +129,19 @@ def decoded(recording: Path) -> Generator[bytes]:
             yield sliver
             sliver = decoder.stdout.read(SLIVER_BYTES)
         # What is left when the sound ends is given only once the decoder is known to have
-        # ended well: one that was stopped may leave half a sample.
+        # ended well: one that was killed may leave half a sample.
         status = decoder.wait()
         if status != 0:
             complaints.seek(0)
-            first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
-            # A decoder that is stopped from outside complains of nothing; how it ended is
-            # then the reason, in the words Python has for it.
-            ending = subprocess.CalledProcessError(status, DECODER)
-            raise UnreadableSource(f"no sound could be read: {first_complaint or ending}")
+            written = complaints.read().decode(errors="replace").strip()
+            first_complaint = COMPLAINER.sub("", written.partition("\n")[0])
+            # A decoder that is killed complains of nothing. Nor does one that is told to end,
+            # by SIGTERM or SIGINT: ffmpeg then gives the rest of the sound and ends with a
+            # failing status. How it ended is then the reason, in the words Python has for
+            # it. Sound may have been read by then, so the reason says no more than that the
+            # decoder failed.
+            ending = subprocess.CalledProcessError(status, command[0])
+            raise UnreadableSource(f"the decoder failed: {first_complaint or ending}")
         if sliver:
             yield sliver
 
@@ -208,10 +195,10 @@ def utterances_of(recognition: Recognition, piece: Piece) -> list[Utterance]:
     ]
 
 
-def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
-    # What is spoken in a recording, as a recogniser behind OpenAI's transcription API hears
-    # it. The recogniser detects the language, piece by piece. A recording without speech
-    # has no utterances.
+def transcribe(audio: AudioTrack, recogniser: Recogniser) -> Transcript:
+    # What is spoken in the kept sound of a recording, as a recogniser behind OpenAI's
+    # transcription API hears it. The recogniser detects the language, piece by piece. A
+    # recording without speech has no utterances.
     utterances: list[Utterance] = []
     # The connection to the recogniser and the decoder are ended with the reading, however
     # the reading ends.
@@ -222,7 +209,7 @@ def transcribe(recording: Path, recogniser: Recogniser) -> Transcript:
             timeout=RECOGNISER_TIMEOUT_SECONDS,
             max_retries=RECOGNISER_RETRIES,
         ) as endpoint,
-        closing(decoded(recording)) as slivers,
+        closing(decoded(audio)) as slivers,
     ):
         for piece in pieces(slivers):
             reply = endpoint.audio.transcriptions.with_raw_response.create(

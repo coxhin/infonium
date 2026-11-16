@@ -2,6 +2,7 @@ import logging
 import mimetypes
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -18,7 +19,7 @@ import httpx
 import openai
 from pydantic import BaseModel
 
-from infonium import captions, media, pdf, speech, webpage
+from infonium import captions, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -153,7 +154,7 @@ def uploaded(file: Path, name: str) -> Source:
 
 
 def spoken_readout(
-    extractor: str, title: str, audio: media.AudioTrack, transcript: Transcript
+    extractor: str, title: str, audio: recording.AudioTrack, transcript: Transcript
 ) -> Readout:
     blocks = transcript_blocks(transcript)
     if not blocks:
@@ -167,11 +168,11 @@ def spoken_readout(
 
 
 def recognised_readout(
-    title: str, audio: media.AudioTrack, recogniser: speech.Recogniser
+    title: str, audio: recording.AudioTrack, recogniser: speech.Recogniser
 ) -> Readout:
     # The words are recognised in the sound that is kept, so that their times are times of
     # the recording a reader plays.
-    transcript = speech.transcribe(audio.file, recogniser)
+    transcript = speech.transcribe(audio, recogniser)
     return spoken_readout(speech.EXTRACTOR, title, audio, transcript)
 
 
@@ -218,8 +219,8 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
         )
     if source.media_type.startswith(RECORDING_MEDIA_TYPES):
         return recognised_readout(
-            media.own_title(source.file) or title_of(source.reference),
-            media.audio_track(source.file, directory),
+            recording.own_title(source.file) or title_of(source.reference),
+            recording.audio_track(source.file, directory),
             engines.recogniser,
         )
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
@@ -232,22 +233,29 @@ def asked_address(error: openai.APIError) -> str:
 
 def program_name(command: object) -> str:
     # The program a command line starts, by its name alone: the rest of the line names files
-    # of the work folder, which say nothing to a person.
-    first = command[0] if isinstance(command, list) else command
-    return PurePosixPath(str(first)).name
+    # of the work folder, which say nothing to a person. Where Python runs a module, the
+    # module is the program.
+    match command:
+        case [sys.executable, media.RUN_AS_MODULE, module, *_]:
+            return str(module)
+        case [first, *_]:
+            return PurePosixPath(str(first)).name
+        case _:
+            return PurePosixPath(str(command)).name
 
 
 def failure_reason(error: BaseException) -> str:
     # An error's own text is the reason, but for the kinds that leave the reason out of it.
     # A program that fails says why in what it writes, not in the error that reports how it
-    # exited, so its last written line is the reason; a program that ended without a word,
-    # or ran out of time, is named with how it ended. A request that a service refused does
-    # not carry what the service answered, and one that no service answered does not say
-    # which service that was, so the reason gives the address and the answer. A reason is
-    # kept as one line of a length a person reads: a service may answer with a whole page.
+    # exited, so its last written line is the reason, without the mark ffmpeg begins a line
+    # with; a program that ended without a word, or ran out of time, is named with how it
+    # ended. A request that a service refused does not carry what the service answered, and
+    # one that no service answered does not say which service that was, so the reason gives
+    # the address and the answer. A reason is kept as one line of a length a person reads: a
+    # service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
-        said = written.strip().splitlines()[-1]
+        said = recording.COMPLAINER.sub("", written.strip().splitlines()[-1])
     elif isinstance(error, subprocess.CalledProcessError):
         said = f"{program_name(error.cmd)} ended with status {error.returncode}"
     elif isinstance(error, subprocess.TimeoutExpired):
