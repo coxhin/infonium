@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 import unicodedata
 from enum import StrEnum
@@ -10,18 +11,29 @@ from pydantic import AfterValidator, BaseModel, Field
 from infonium.document import HeadingLevel, PageNumber
 from infonium.pdfium import StoredFile
 
-# MinerU 3.4.2 parses a PDF, run as a program of its own. Its hybrid backend reads tables,
+# MinerU parses a PDF, run as a program of its own. Its hybrid backend reads tables,
 # formulas and listings best, and gives a box for every line as long as it takes the words
 # from the file's text layer. When it has to read the pages as pictures it gives one box for
 # a whole block, so such a file is read by the pipeline backend, which keeps the lines.
+#
+# The engine takes a character from the text layer only when it stands within a tenth of a
+# degree of a quarter turn, and it measures where a character sits in its line by a box of
+# the line's height only when the character stands at exactly no angle. Any other it measures
+# by the outline of its ink, and then it splits words and takes plain letters for raised or
+# lowered ones. On a page that is only shown turned the lines lie, and it reads those worse
+# still. So it is given a file that turns no page: pdfium.upright_file makes one.
 ENGINE_INPUT = "-p"
 ENGINE_OUTPUT = "-o"
 ENGINE_BACKEND = "-b"
 ENGINE_METHOD = "-m"
-ENGINE_FIRST_PAGE = "-s"
-ENGINE_LAST_PAGE = "-e"
 ENGINE_RESULTS = "*_middle.json"
 ENGINE_LOG = "{backend}.log"
+# The version of the engine this module is written to, and the key under which the results
+# name the version that wrote them. How the engine treats a character by its angle is this
+# version's own and shows in no shape of the results, so results of another version are
+# refused where they enter.
+EngineVersion = Literal["3.4.2"]
+VERSION_KEY = "_version_name"
 # The keys under which the results say which backend wrote them, and whether the hybrid
 # backend judged the text layer unfit and read the pages as pictures.
 BACKEND_KEY = "_backend"
@@ -39,6 +51,10 @@ TEMPORARY_FILES = "TMPDIR"
 PAGE_SECONDS = 20
 SPARE_SECONDS = 60
 SILENT_ENGINE = "the PDF engine left with status {status} and wrote nothing"
+STOPPED_ENGINE = "the PDF engine was stopped by signal {signal}"
+# The signals that have a name, by their numbers. A system has more signals than names, and
+# one without a name goes by its number.
+SIGNAL_NAMES = {int(named): named.name for named in signal.Signals}
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
@@ -111,7 +127,8 @@ def legible(text: str) -> str:
 
 Legible = Annotated[str, AfterValidator(legible)]
 Points = Annotated[float, Field(allow_inf_nan=False)]
-# Left, top, right and bottom, measured from the top left corner of the page as it is shown.
+# Left, top, right and bottom, measured from the top left corner of the page as the engine
+# was given it.
 Box = tuple[Points, Points, Points, Points]
 
 
@@ -237,12 +254,14 @@ class ParsedPage(BaseModel):
 class ParsedFile(BaseModel):
     # The results of the pipeline backend, which reads pages as pictures.
     backend: Literal[ParsedBy.PIPELINE] = Field(alias=BACKEND_KEY)
+    version: EngineVersion = Field(alias=VERSION_KEY)
     pdf_info: list[ParsedPage]
 
 
 class HybridParsedFile(BaseModel):
     # The results of the hybrid backend, which reads a text layer unless it judges it unfit.
     backend: Literal[ParsedBy.HYBRID] = Field(alias=BACKEND_KEY)
+    version: EngineVersion = Field(alias=VERSION_KEY)
     read_as_pictures: bool = Field(alias=READ_AS_PICTURES_KEY)
     pdf_info: list[ParsedPage]
 
@@ -258,96 +277,77 @@ def word_lines(region: Region | Member | Margin) -> list[Line]:
 
 
 class FileToParse(BaseModel):
-    # A PDF, the engine that parses it, and the folder in which the engine may write.
+    # A PDF that turns none of its pages, the engine that parses it, and the folder in which
+    # the engine may write.
     file: Path
     engine: Path
     folder: Path
 
 
 class UnparsedFile(Exception):
-    # The engine ended without results. The message is the last line it wrote.
+    # The engine ended without results. The message is the last line it wrote, or how it
+    # ended when it wrote nothing or was stopped by a signal.
     pass
 
 
-def engine_results(to_parse: FileToParse, backend: Backend, method: Method, pages: range) -> bytes:
-    # One run of the engine over some pages of the file. What the engine writes goes to a
+def engine_results(
+    to_parse: FileToParse, backend: Backend, method: Method, page_count: int
+) -> bytes:
+    # One run of the engine over a file of so many pages. What the engine writes goes to a
     # file in the folder and not to the caller, so an engine whose caller has died can still
     # write: it finishes its work and leaves by itself.
-    patience = SPARE_SECONDS + PAGE_SECONDS * len(pages)
+    patience = SPARE_SECONDS + PAGE_SECONDS * page_count
     found = to_parse.folder / backend
     where: list[str | Path] = [ENGINE_INPUT, to_parse.file, ENGINE_OUTPUT, found]
     how: list[str | Path] = [ENGINE_BACKEND, backend, ENGINE_METHOD, method]
-    which = [ENGINE_FIRST_PAGE, str(pages.start), ENGINE_LAST_PAGE, str(pages.stop - 1)]
     told = {ENGINE_PATIENCE: str(patience), TEMPORARY_FILES: str(to_parse.folder)}
     log = to_parse.folder / ENGINE_LOG.format(backend=backend)
-    with log.open("wb") as written:
+    with log.open("wb") as logged:
         ended = subprocess.run(
-            [to_parse.engine, *where, *how, *which],
+            [to_parse.engine, *where, *how],
             check=False,
-            stdout=written,
+            stdout=logged,
             stderr=subprocess.STDOUT,
             env={**os.environ, **told},
             timeout=patience + SPARE_SECONDS,
         )
     results = [*found.rglob(ENGINE_RESULTS)]
+    if ended.returncode < 0:
+        # A signal stops the engine in the middle of its work, where the last line it wrote
+        # says only how far it had come. A program stopped so leaves with the signal's number
+        # as its status, below zero.
+        stopped_by = -ended.returncode
+        raise UnparsedFile(STOPPED_ENGINE.format(signal=SIGNAL_NAMES.get(stopped_by, stopped_by)))
     if ended.returncode or not results:
-        said = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
-        worded = [line for line in said if line]
-        raise UnparsedFile(worded[-1] if worded else SILENT_ENGINE.format(status=ended.returncode))
+        stripped = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
+        log_lines = [line for line in stripped if line]
+        raise UnparsedFile(
+            log_lines[-1] if log_lines else SILENT_ENGINE.format(status=ended.returncode)
+        )
     [kept] = results
     return kept.read_bytes()
 
 
-def numbered_in_file(parsed: list[ParsedPage], pages: range) -> list[ParsedPage]:
-    # The engine counts the pages of a run from the first page of its range.
-    return [page.model_copy(update={"page_idx": pages.start + page.page_idx}) for page in parsed]
-
-
-def covering(numbers: list[PageNumber]) -> range:
-    return range(min(numbers), max(numbers) + 1)
-
-
-def picture_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
-    results = engine_results(to_parse, Backend.PIPELINE, Method.OCR, pages)
-    return numbered_in_file(ParsedFile.model_validate_json(results).pdf_info, pages)
-
-
-def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
+def lettered_pages(to_parse: FileToParse, page_count: int) -> list[ParsedPage]:
     # The pages the engine read from their text layer: none, when it judged the layer unfit,
     # as it judges a scan's hidden one, and read the pages as pictures of its own accord.
-    results = engine_results(to_parse, Backend.HYBRID, Method.AUTO, pages)
+    results = engine_results(to_parse, Backend.HYBRID, Method.AUTO, page_count)
     hybrid = HybridParsedFile.model_validate_json(results)
-    return [] if hybrid.read_as_pictures else numbered_in_file(hybrid.pdf_info, pages)
+    return [] if hybrid.read_as_pictures else hybrid.pdf_info
 
 
 class ParsedPages(BaseModel):
-    # A file's pages as the engine read them, in order, and the numbers of those it read as
-    # pictures.
+    # A file's pages as the engine read them, in order, and whether it read them as pictures.
     pages: list[ParsedPage]
-    pictures: frozenset[PageNumber]
+    from_pictures: bool
 
 
 def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
-    # How the engine reads each page of a file. It reads a page from the file's text layer
-    # when the file has one, but misreads the layer of a page stored turned, so such a page is
-    # read as a picture, as is every page of a file without a text layer or whose layer the
-    # engine judges unfit. The engine runs once for each way of reading, over the pages from
-    # the first to the last that are read that way.
-    numbers = range(len(stored.pages))
-    upright = [number for number in numbers if not stored.pages[number].turned]
-    from_layer = (
-        [page for page in lettered_pages(to_parse, covering(upright)) if page.page_idx in upright]
-        if upright and any(page.text for page in stored.pages)
-        else []
-    )
-    taken = {page.page_idx for page in from_layer}
-    rest = [number for number in numbers if number not in taken]
-    from_pictures = (
-        [page for page in picture_pages(to_parse, covering(rest)) if page.page_idx in rest]
-        if rest
-        else []
-    )
-    return ParsedPages(
-        pages=sorted([*from_layer, *from_pictures], key=lambda page: page.page_idx),
-        pictures=frozenset(rest),
-    )
+    # How the engine reads a file: from its text layer when it has one that the engine
+    # judges fit, and otherwise as pictures, every page of it.
+    page_count = len(stored.pages)
+    layered = any(page.text for page in stored.pages)
+    if layered and (pages := lettered_pages(to_parse, page_count)):
+        return ParsedPages(pages=pages, from_pictures=False)
+    pictures = engine_results(to_parse, Backend.PIPELINE, Method.OCR, page_count)
+    return ParsedPages(pages=ParsedFile.model_validate_json(pictures).pdf_info, from_pictures=True)
