@@ -117,7 +117,7 @@ class Flow(BaseModel):
     places: list[Place]
 
 
-class Findings(BaseModel):
+class PdfFindings(BaseModel):
     # What the reading of a whole PDF finds that the reading of any one line of it needs:
     # the words the file shows whole; whether the engine read it as pictures; the pages
     # whose characters stand straight; by how many quarters, clockwise, the PDF shows each
@@ -201,7 +201,7 @@ def area(page: ParsedPage, box: Box) -> Area:
     )
 
 
-def turned_back(where: Area, findings: Findings) -> Area:
+def turned_back(where: Area, findings: PdfFindings) -> Area:
     # A box on a page as the engine read it, on the same page as its PDF shows it: the page
     # is turned clockwise by some quarters, and the box with it.
     right, bottom = where.left + where.width, where.top + where.height
@@ -246,7 +246,7 @@ def placed(where: Area, start: int, end: int) -> PagePlace:
     )
 
 
-def shown_lines(page: ParsedPage, lines: list[Line], findings: Findings) -> list[ShownLine]:
+def shown_lines(page: ParsedPage, lines: list[Line], findings: PdfFindings) -> list[ShownLine]:
     return [
         ShownLine(pieces=pieces, area=area(page, line.bbox))
         for line in lines
@@ -254,7 +254,7 @@ def shown_lines(page: ParsedPage, lines: list[Line], findings: Findings) -> list
     ]
 
 
-def worded(lines: list[ShownLine], findings: Findings) -> bool:
+def worded(lines: list[ShownLine], findings: PdfFindings) -> bool:
     # Of a script it cannot read, the engine reads from a picture only the marks every script
     # shares: punctuation and digits. So lines read from pictures hold words only when one of
     # them holds a letter.
@@ -306,7 +306,7 @@ def line_end(last: str, first: str, known: frozenset[str]) -> str:
     return f"{last}{SOFT_HYPHEN}"
 
 
-def flow(lines: list[ShownLine], findings: Findings) -> Flow:
+def flow(lines: list[ShownLine], findings: PdfFindings) -> Flow:
     # Every word is a part of its own, so that the words of one line are joined by the same
     # rule as two lines are.
     line_words = [[word for piece in line.pieces for word in piece.words] for line in lines]
@@ -340,14 +340,14 @@ def flow(lines: list[ShownLine], findings: Findings) -> Flow:
     return Flow(text=together.text, marks=marks, places=places)
 
 
-def paragraphs(lines: list[ShownLine], findings: Findings) -> list[Block]:
+def paragraphs(lines: list[ShownLine], findings: PdfFindings) -> list[Block]:
     if not worded(lines, findings):
         return []
     flowing = flow(lines, findings)
     return [Paragraph(text=flowing.text, marks=flowing.marks, places=flowing.places)]
 
 
-def headings(region: Title, page: ParsedPage, findings: Findings) -> list[Block]:
+def headings(region: Title, page: ParsedPage, findings: PdfFindings) -> list[Block]:
     lines = shown_lines(page, region.lines, findings)
     if not worded(lines, findings):
         return []
@@ -366,7 +366,7 @@ def bullet_position(earlier: list[Block]) -> int:
 
 
 def items_or_paragraphs(
-    lines: list[ShownLine], findings: Findings, earlier: list[Block]
+    lines: list[ShownLine], findings: PdfFindings, earlier: list[Block]
 ) -> list[Block]:
     # The engine does not tell lists apart: it finds each item as a text of its own. A text
     # that starts with a bullet or a number is taken as an item, and loses that marker, which
@@ -418,7 +418,7 @@ def grid_rows(markup: str) -> list[list[str]]:
     ]
 
 
-def tables(body: TableBody, page: ParsedPage, findings: Findings) -> list[Block]:
+def tables(body: TableBody, page: ParsedPage, findings: PdfFindings) -> list[Block]:
     text = tabled(
         [
             row
@@ -432,7 +432,7 @@ def tables(body: TableBody, page: ParsedPage, findings: Findings) -> list[Block]
     return [Table(text=text, places=[placed(where, 0, len(text))])] if text else []
 
 
-def listings(body: CodeBody, page: ParsedPage, findings: Findings) -> list[Block]:
+def listings(body: CodeBody, page: ParsedPage, findings: PdfFindings) -> list[Block]:
     lines = [(line, code) for line in body.lines if (code := line_code(line)).strip()]
     places: list[Place] = []
     offset = 0
@@ -443,7 +443,7 @@ def listings(body: CodeBody, page: ParsedPage, findings: Findings) -> list[Block
     return [Code(text=LINE_BREAK.join(code for _, code in lines), places=places)] if lines else []
 
 
-def member_blocks(member: Member, page: ParsedPage, findings: Findings) -> list[Block]:
+def member_blocks(member: Member, page: ParsedPage, findings: PdfFindings) -> list[Block]:
     match member:
         case OwnParagraph():
             return paragraphs(shown_lines(page, member.lines, findings), findings)
@@ -456,7 +456,7 @@ def member_blocks(member: Member, page: ParsedPage, findings: Findings) -> list[
 
 
 def text_chains(
-    pages: list[ParsedPage], findings: Findings
+    pages: list[ParsedPage], findings: PdfFindings
 ) -> dict[tuple[int, int], list[ShownLine]]:
     # Every text that starts a paragraph, with its own lines and those of the texts that go
     # on from it, each line on the page where it was found.
@@ -482,7 +482,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
         else frozenset(LETTER_RUN.findall(stored.pages[page.page_idx].text.translate(LIGATURES)))
         for page in parsed.pages
     }
-    findings = Findings(
+    findings = PdfFindings(
         whole_words=whole_words(parsed.pages, spellings),
         from_pictures=parsed.from_pictures,
         straight=frozenset(number for number, page in enumerate(stored.pages) if page.straight),
@@ -521,9 +521,9 @@ def names_document(title: str) -> bool:
     # A program that cannot write a title's characters writes question marks in their place,
     # so a title names the document when most of what it shows is letters and digits, and it
     # is not the name of a file.
-    shown = "".join(title.split())
-    lettered = sum(character.isalnum() for character in shown)
-    return 2 * lettered > len(shown) and not title.lower().endswith(FILE_SUFFIXES)
+    characters = "".join(title.split())
+    letters_and_digits = sum(character.isalnum() for character in characters)
+    return 2 * letters_and_digits > len(characters) and not title.lower().endswith(FILE_SUFFIXES)
 
 
 def document_title(own: str, blocks: list[Block], name: str) -> str:

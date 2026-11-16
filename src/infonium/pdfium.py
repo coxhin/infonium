@@ -10,9 +10,9 @@ from pypdfium2 import PdfDocument, PdfiumError, PdfTextPage, raw
 from infonium.document import WORD_GAP
 
 # PDFium may be used by one thread at a time, whatever the file. infonium calls it in this
-# module and nowhere else, and every function here holds this turn for as long as it has a
+# module and nowhere else, and every function here holds this lock for as long as it has a
 # file open in PDFium, so no caller can let a second thread in.
-PDFIUM_TURN = threading.Lock()
+PDFIUM_IN_USE = threading.Lock()
 TITLE_ENTRY = "Title"
 # A file turns a page clockwise by quarters of a whole turn, and a character is taken to be
 # drawn at the quarter nearest to its angle.
@@ -84,7 +84,7 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
     # the width and height it is shown with, so that the copy shows the page as the file does.
     # A page that is only shown turned keeps its content, and stands in the copy as it is
     # stored.
-    with PDFIUM_TURN, PdfDocument(file) as document:
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
         rotations = [raw.FPDFPage_GetRotation(page) for page in document]
         if not any(rotations):
             return UprightFile(file=file, turned=rotations)
@@ -116,7 +116,7 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
 
 
 def stored_file(file: Path) -> StoredFile:
-    with PDFIUM_TURN, PdfDocument(file) as document:
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
         pages: list[StoredPage] = []
         for page in document:
             layer = page.get_textpage()
