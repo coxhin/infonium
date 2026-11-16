@@ -97,12 +97,12 @@ FLOW_TAGS = frozenset(
 WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 
 
-# The extractor turns a short inline quotation and a block quotation into the same element,
-# and so with preformatted text and code, and with code in a sentence and code on lines of
-# its own. The page is rewritten first so that each pair stays apart: an inline quotation
-# becomes its words inside quotation marks, preformatted text is wrapped as code, and code
-# in a sentence loses its line breaks.
 def prepared_page(content: bytes, url: str) -> html.HtmlElement:
+    # The extractor turns a short inline quotation and a block quotation into the same
+    # element, and so with preformatted text and code, and with code in a sentence and code on
+    # lines of its own. The page is rewritten first so that each pair stays apart: an inline
+    # quotation becomes its words inside quotation marks, preformatted text is wrapped as
+    # code, and code in a sentence loses its line breaks.
     page = trafilatura.load_html(content)
     if page is None:
         raise UnreadableSource(f"no readable text at {url}")
@@ -191,8 +191,8 @@ def verbatim_text(element: etree._Element) -> str:
     return "".join(pieces)
 
 
-# Words directly before or after an element show that it sits in a sentence.
 def is_in_sentence(element: etree._Element) -> bool:
+    # Words directly before or after an element show that it sits in a sentence.
     parent = element.getparent()
     earlier = element.getprevious()
     parent_text = parent.text if parent is not None else None
@@ -216,8 +216,8 @@ def is_inline(element: etree._Element) -> bool:
             return tag not in FLOW_TAGS
 
 
-# A quotation that holds nothing but code is a listing with one piece of code per line.
 def is_code_listing(quote: etree._Element) -> bool:
+    # A quotation that holds nothing but code is a listing with one piece of code per line.
     lines = list(quote)
     loose_text = (quote.text or "") + "".join(line.tail or "" for line in lines)
     return bool(lines) and all(line.tag == Tag.CODE for line in lines) and not loose_text.strip()
@@ -243,9 +243,9 @@ def table_text(table: etree._Element) -> str:
     )
 
 
-# A run takes its kind from the nearest heading or quotation around it. The search stops at
-# a list item, whose runs are told apart from the rest of its content by item_blocks.
 def block_of_run(container: etree._Element, text: str, marks: list[Mark]) -> Block:
+    # A run takes its kind from the nearest heading or quotation around it. The search stops
+    # at a list item, whose runs are told apart from the rest of its content by item_blocks.
     within_item = takewhile(
         lambda element: element.tag != Tag.ITEM, (container, *container.iterancestors())
     )
@@ -283,14 +283,14 @@ def flowed_blocks(container: etree._Element) -> list[Block]:
     return blocks
 
 
-# The terms and descriptions of a definition list read as paragraphs, not as list items.
 def is_definition(item: etree._Element) -> bool:
+    # The terms and descriptions of a definition list read as paragraphs, not as list items.
     return next(item.iterancestors(Tag.LIST)).get(RENDITION) == DEFINITION_LIST
 
 
-# The paragraphs of an item's own text become its list items: the first carries the item's
-# place in the list, and each later one continues it.
 def item_blocks(item: etree._Element) -> list[Block]:
+    # The paragraphs of an item's own text become its list items: the first carries the item's
+    # place in the list, and each later one continues it.
     enclosing = list(item.iterancestors(Tag.LIST))
     ordered = enclosing[0].get(RENDITION) == ORDERED_LIST
     depth = len(enclosing) - 1
@@ -342,9 +342,9 @@ def blocks_of(element: etree._Element) -> list[Block]:
             return flowed_blocks(element)
 
 
-# A block of nothing but punctuation is what is left of something stripped from the page,
-# such as the brackets around a removed link.
 def is_leftover(block: Block) -> bool:
+    # A block of nothing but punctuation is what is left of something stripped from the page,
+    # such as the brackets around a removed link.
     return isinstance(block, Heading | Paragraph | ListItem | Quotation) and all(
         character in LEFTOVER_CHARACTERS for character in block.text
     )
