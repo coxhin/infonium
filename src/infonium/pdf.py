@@ -30,6 +30,7 @@ from infonium.document import (
     tabled,
 )
 from infonium.mineru import (
+    PLAIN_FORM,
     Box,
     CodeBody,
     FileToParse,
@@ -64,7 +65,7 @@ SCRIPT_STYLES = {"sub": Style.SUBSCRIPT, "sup": Style.SUPERSCRIPT}
 SCRIPT = re.compile(rf"<({'|'.join(SCRIPT_STYLES)})>(.*?)</\1>", re.DOTALL)
 # The ligatures that begin with an f (ff, fi, fl, ffi, ffl), by the code points that stand
 # for them, with their letters written out.
-LIGATURES = {code: unicodedata.normalize("NFKC", chr(code)) for code in range(0xFB00, 0xFB05)}
+LIGATURES = {code: unicodedata.normalize(PLAIN_FORM, chr(code)) for code in range(0xFB00, 0xFB05)}
 BULLETS = (
     "\N{BULLET}\N{WHITE BULLET}\N{TRIANGULAR BULLET}\N{HYPHEN BULLET}\N{BULLET OPERATOR}"
     "\N{MIDDLE DOT}\N{BLACK SMALL SQUARE}\N{WHITE SMALL SQUARE}\N{BLACK SQUARE}\N{WHITE SQUARE}"
