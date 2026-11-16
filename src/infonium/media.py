@@ -3,6 +3,7 @@ import re
 import signal
 import subprocess
 import sys
+import traceback
 from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
@@ -13,7 +14,6 @@ from typing import Annotated, Any, Final, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
-from yt_dlp.utils import YoutubeDLError
 
 from infonium.captions import (
     CaptionFormat,
@@ -145,7 +145,8 @@ class CompletedFetch(Tagged):
 
 
 class AbortedFetch(Tagged):
-    # Why a media page was not fetched, in the words of whoever refused it.
+    # Why a media page was not fetched, in the words of what ended the fetch: a site or a
+    # rule of this module that refused the page, or a fault.
     kind: Literal[FetchReportKind.ABORTED] = FetchReportKind.ABORTED
     reason: str
 
@@ -306,15 +307,17 @@ def end_when_abandoned() -> None:
 
 # What this module does when it is run as a program: it fetches the page it is given into
 # the folder it is given, and writes the report. An exception does not cross from one
-# process to another, so a page that is refused, by its site or by a rule of this module, is
-# reported with the reason.
+# process to another, so whatever ends the fetch is reported in the words it would give a
+# reader had it been raised in the starting process, and where it arose is written to
+# standard error, which is that process's own.
 def main() -> None:
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
     try:
         report: FetchReport = page_fetch(url, downloads)
-    except (UnreadableSource, YoutubeDLError) as ending:
-        report = AbortedFetch(reason=str(ending))
+    except Exception as ending:
+        traceback.print_exc()
+        report = AbortedFetch(reason=str(ending) or type(ending).__name__)
     (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
