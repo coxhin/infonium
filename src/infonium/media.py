@@ -1,14 +1,19 @@
+import os
 import re
-import time
+import signal
+import subprocess
+import sys
 from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Thread
 from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
+from yt_dlp.utils import YoutubeDLError
 
 from infonium.captions import (
     CaptionFormat,
@@ -65,6 +70,17 @@ RECORDING_LIMIT_BYTES = 2 * 1024**3
 CAPTION_LIMIT_BYTES = 16 * 1024**2
 DOWNLOADED_BYTES = "downloaded_bytes"
 
+# yt-dlp waits on a host for the bytes it has asked for, however slowly they come, so no
+# check from inside it holds a fetch to a time. A media page is therefore fetched by a
+# process of its own, this module run as a program, which is ended at the limit together
+# with whatever it has started. It leaves the recording in the folder it is given, and a
+# report of the fetch beside it.
+FETCHER = [sys.executable, "-m", __spec__.name]
+FETCH_REPORT = "fetch.json"
+# The fetcher ends with this status, the usual one for an input that cannot be read, when
+# the page is refused; its report then says why.
+REFUSED_STATUS = os.EX_NOINPUT
+
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
 SOUND_FORMATS = "bestaudio/best"
@@ -117,10 +133,17 @@ class Download(BaseModel):
     requested_downloads: list[DownloadedFile]
 
 
-class Fetch(BaseModel):
-    # The media page a fetch is for, and the moment on the clock by which it must be done.
-    url: str
-    deadline: float
+class PageFetch(BaseModel):
+    # What the fetch of a media page brings: the title of its recording, the parts of its
+    # captions, and the file its recording was downloaded to.
+    title: str
+    parts: list[CaptionPart]
+    recording: Path
+
+
+class Refusal(BaseModel):
+    # Why a media page was not fetched, in the words of whoever refused it.
+    reason: str
 
 
 class FetchedMediaKind(StrEnum):
@@ -183,17 +206,15 @@ def usable_captions(page: MediaPage) -> list[CaptionFile]:
     ]
 
 
-def within_bounds(fetch: Fetch, brought: int, limit: int) -> None:
+def within_bounds(page_url: str, brought: int, limit: int) -> None:
     if brought > limit:
-        raise UnreadableSource(f"{fetch.url} holds more than infonium fetches")
-    if time.monotonic() > fetch.deadline:
-        raise UnreadableSource(f"{fetch.url} takes longer than infonium waits")
+        raise UnreadableSource(f"{page_url} holds more than infonium fetches")
 
 
-def downloader_for(fetch: Fetch, downloads: Path) -> YoutubeDL:
+def downloader_for(url: str, downloads: Path) -> YoutubeDL:
     # yt-dlp reports how a download goes as it goes, and a report that raises ends it.
     def held_to_bounds(progress: Mapping[str, Any]) -> None:
-        within_bounds(fetch, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
+        within_bounds(url, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
 
     return YoutubeDL(
         {
@@ -220,32 +241,28 @@ def downloader_for(fetch: Fetch, downloads: Path) -> YoutubeDL:
     )
 
 
-def caption_content(downloader: YoutubeDL, fetch: Fetch, url: str) -> bytes:
+def caption_content(downloader: YoutubeDL, page_url: str, url: str) -> bytes:
     content = downloader.urlopen(url).read(CAPTION_LIMIT_BYTES + 1)
-    within_bounds(fetch, len(content), CAPTION_LIMIT_BYTES)
+    within_bounds(page_url, len(content), CAPTION_LIMIT_BYTES)
     return content
 
 
-def fetched_parts(downloader: YoutubeDL, fetch: Fetch, file: CaptionFile) -> list[CaptionPart]:
-    content = caption_content(downloader, fetch, file.url)
+def fetched_parts(downloader: YoutubeDL, page_url: str, file: CaptionFile) -> list[CaptionPart]:
+    content = caption_content(downloader, page_url, file.url)
     if file.protocol == SEGMENTED:
         segments = caption_segments(content.decode(), file.url)
         contents: list[bytes] = []
         for segment in segments:
-            contents.append(caption_content(downloader, fetch, segment.url))
-            within_bounds(fetch, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
+            contents.append(caption_content(downloader, page_url, segment.url))
+            within_bounds(page_url, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
         return segmented_parts(segments, contents)
     if file.ext == CaptionFormat.JSON3:
         return json3_parts(content)
     return vtt_parts(content, counts_from=0.0)
 
 
-def fetch_media(url: str, directory: Path) -> FetchedMedia:
-    fetch = Fetch(url=url, deadline=time.monotonic() + MEDIA_FETCH_LIMIT_SECONDS)
-    with (
-        TemporaryDirectory(dir=directory) as downloads,
-        downloader_for(fetch, Path(downloads)) as downloader,
-    ):
+def page_fetch(url: str, downloads: Path) -> PageFetch:
+    with downloader_for(url, downloads) as downloader:
         found = downloader.extract_info(url, download=False)
         if ENTRIES in found:
             raise UnreadableSource(f"{url} lists recordings; give the address of one of them")
@@ -260,14 +277,70 @@ def fetch_media(url: str, directory: Path) -> FetchedMedia:
         parts = [
             part
             for file in usable_captions(page)[:1]
-            for part in fetched_parts(downloader, fetch, file)
+            for part in fetched_parts(downloader, url, file)
         ]
         download = Download.model_validate(downloader.process_ie_result(found, download=True))
-        audio = audio_track(download.requested_downloads[0].filepath, directory)
+    return PageFetch(
+        title=page.title, parts=parts, recording=download.requested_downloads[0].filepath
+    )
+
+
+# The process that started the fetcher holds the other end of its standard input open and
+# writes nothing to it. When that end closes, that process is gone and no longer holds the
+# fetcher to its time, so the fetcher ends the group it leads: itself and whatever it has
+# started.
+def end_when_abandoned() -> None:
+    os.read(sys.stdin.fileno(), 1)
+    os.killpg(os.getpid(), signal.SIGKILL)
+
+
+# What this module does when it is run as a program: it fetches the page it is given into
+# the folder it is given, and writes the report. An exception does not cross from one
+# process to another, so a page that is refused, by its site or by a rule of this module, is
+# reported with the reason, and the status says that it was.
+def main() -> int:
+    url, downloads = sys.argv[1], Path(sys.argv[2])
+    Thread(target=end_when_abandoned, daemon=True).start()
+    report = downloads / FETCH_REPORT
+    try:
+        fetch = page_fetch(url, downloads)
+    except (UnreadableSource, YoutubeDLError) as refusal:
+        report.write_bytes(Refusal(reason=str(refusal)).model_dump_json().encode())
+        return REFUSED_STATUS
+    report.write_bytes(fetch.model_dump_json().encode())
+    return os.EX_OK
+
+
+# The fetch of a page as the fetcher reports it.
+def reported_fetch(url: str, downloads: Path) -> PageFetch:
+    command = [*FETCHER, url, str(downloads)]
+    # The fetcher leads a session of its own, so that all it has started is ended with it,
+    # and its standard input is a pipe that closes when this process is gone.
+    with subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True) as fetcher:
+        try:
+            fetcher.wait(timeout=MEDIA_FETCH_LIMIT_SECONDS)
+        finally:
+            if fetcher.returncode is None:
+                os.killpg(fetcher.pid, signal.SIGKILL)
+    report = downloads / FETCH_REPORT
+    if fetcher.returncode == REFUSED_STATUS:
+        raise UnreadableSource(Refusal.model_validate_json(report.read_bytes()).reason)
+    subprocess.CompletedProcess(command, fetcher.returncode).check_returncode()
+    return PageFetch.model_validate_json(report.read_bytes())
+
+
+def fetch_media(url: str, directory: Path) -> FetchedMedia:
+    with TemporaryDirectory(dir=directory) as downloads:
+        fetch = reported_fetch(url, Path(downloads))
+        audio = audio_track(fetch.recording, directory)
     length = probed(audio.file, LENGTH_ENTRIES, LengthProbe).format.duration
-    utterances = caption_utterances(parts, length)
+    utterances = caption_utterances(fetch.parts, length)
     if utterances:
         return CaptionedMedia(
-            title=page.title, audio=audio, transcript=Transcript(utterances=utterances)
+            title=fetch.title, audio=audio, transcript=Transcript(utterances=utterances)
         )
-    return UncaptionedMedia(title=page.title, audio=audio)
+    return UncaptionedMedia(title=fetch.title, audio=audio)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
