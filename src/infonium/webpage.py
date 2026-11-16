@@ -128,6 +128,8 @@ HEADING_LINKS = etree.XPath(
 FRAGMENT_MARK = "#"
 REFERENCE_ADDRESS = "href"
 LINK_AND_STYLE_ELEMENTS = ("a", CODE_ELEMENT, *REND_TAG_MAPPING)
+CELL_LINKS_WITH_PICTURES = etree.XPath("//*[self::td or self::th]//a[.//img]")
+PICTURE = "img"
 
 
 def has_words(element: html.HtmlElement) -> bool:
@@ -148,6 +150,12 @@ def drop_unread_parts(page: html.HtmlElement) -> None:
     for link in HEADING_LINKS(page):
         if is_heading_mark(link):
             link.drop_tree()
+    for link in CELL_LINKS_WITH_PICTURES(page):
+        # A picture in a link that has words of its own repeats them, as a logo beside a name
+        # does, and its description would be read into the cell beside the words.
+        if has_words(link):
+            for picture in list(link.iter(PICTURE)):
+                picture.drop_tree()
 
 
 def prepared_page(content: bytes, url: str) -> html.HtmlElement:
