@@ -154,8 +154,9 @@ def text_size(element: html.HtmlElement) -> int:
 def drop_dialogs(page: html.HtmlElement) -> None:
     # A dialog is not the page's text, open or closed, unless it holds the page's main part,
     # or is shown and holds the page's text. Other hidden parts are left to the extractor,
-    # which drops them unless that would leave a seventh of the page's text or less: a page
-    # that hides its text, in one part or in several, until a script shows it is read whole.
+    # which reads what carries the hidden attribute, and drops what a style hides unless that
+    # would leave a seventh or less of the text of the part it takes for the page's own: a
+    # page may hide its text until a script shows it.
     page_size = text_size(page)
     for dialog in DIALOGS(page):
         holds_text = text_size(dialog) >= PAGE_TEXT_SHARE * page_size
