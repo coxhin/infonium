@@ -98,7 +98,8 @@ class FailedProbe(BaseModel):
 
 
 class SoundStream(BaseModel):
-    codec_name: str
+    # The coding of a sound, which ffprobe leaves unnamed where ffmpeg does not know it.
+    codec_name: str | None = None
 
 
 class SoundPacket(BaseModel):
@@ -106,7 +107,7 @@ class SoundPacket(BaseModel):
 
 
 class SoundProbe(BaseModel):
-    # The first sound of a file and the first packets of that sound, where the file has them.
+    # The first sound of a file and the first packet of that sound, where the file has them.
     streams: list[SoundStream]
     packets: list[SoundPacket]
 
@@ -219,6 +220,8 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
         raise UnreadableSource("no sound in the recording")
+    if probe.streams[0].codec_name is None:
+        raise UnreadableSource("no sound infonium can read in the recording")
     audio = AudioTrack(file=directory / AUDIO_FILE, media_type=AUDIO_MEDIA_TYPE)
     # Named as a file, the place the sound is written to cannot be read as anything else.
     sound = f"{LOCAL_FILE}:{audio.file}"
