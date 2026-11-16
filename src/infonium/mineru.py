@@ -4,7 +4,7 @@ import subprocess
 import unicodedata
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Final, Literal
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field
 
@@ -58,9 +58,6 @@ SIGNAL_NAMES = {int(named): named.name for named in signal.Signals}
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
-# The normal form in which a letter is the plain one, however it was set: a ligature is its
-# letters, and a letter of full width or in the style of a formula is the common one.
-PLAIN_FORM: Final = "NFKC"
 
 
 class Backend(StrEnum):

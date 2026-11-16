@@ -2,6 +2,7 @@ import re
 import unicodedata
 from itertools import pairwise
 from pathlib import Path
+from typing import Final
 
 from lxml import html
 from pydantic import BaseModel
@@ -30,7 +31,6 @@ from infonium.document import (
     tabled,
 )
 from infonium.mineru import (
-    PLAIN_FORM,
     Box,
     CodeBody,
     FileToParse,
@@ -65,6 +65,8 @@ WORD = re.compile(rf"{LETTERS}(?:{HYPHEN}{LETTERS})*")
 BROKEN_END = re.compile(rf"({LETTERS})[{HYPHENS}]$")
 SCRIPT_STYLES = {"sub": Style.SUBSCRIPT, "sup": Style.SUPERSCRIPT}
 SCRIPT = re.compile(rf"<({'|'.join(SCRIPT_STYLES)})>(.*?)</\1>", re.DOTALL)
+# The normal form of a text in which a ligature is its letters.
+PLAIN_FORM: Final = "NFKC"
 # The ligatures that begin with an f (ff, fi, fl, ffi, ffl), by the code points that stand
 # for them, with their letters written out.
 LIGATURES = {code: unicodedata.normalize(PLAIN_FORM, chr(code)) for code in range(0xFB00, 0xFB05)}
