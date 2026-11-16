@@ -65,6 +65,9 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 ## Limits
 
 - A web page that scripts build in the browser, or that turns programs away, is not read.
+- A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
+- A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
+- How well a page read as pictures comes out depends on its writing, and that has been tried on no more than a paragraph of each. Latin, Cyrillic and Greek writing, Chinese and Japanese came out right or nearly, and Korean, Arabic, Thai, Hindi, Tamil, Bengali and Tibetan with a few wrong characters. In writing the engine does not know, Hebrew, Georgian, Armenian, Amharic and Khmer among what was tried, it writes words that are not on the page, and may take so long that the reading is given up.
 - Of a video only the sound is kept. The reader plays it and does not show the picture.
 - Speech is recognised in pieces of up to 16 seconds. A citation in a recognised recording plays from the start of the piece that holds the quote.
 - The default speech model is less accurate in Chinese than in English.
