@@ -1,10 +1,12 @@
 import re
 import subprocess
-from collections.abc import Iterator
-from contextlib import contextmanager
+import time
+from collections.abc import Generator, Iterator
+from contextlib import closing, contextmanager
 from fractions import Fraction
 from pathlib import Path
 from statistics import median_low
+from tempfile import TemporaryFile
 from typing import IO, Annotated
 
 from pydantic import BaseModel, Field
@@ -59,8 +61,7 @@ SOUND_ENTRIES = "stream=codec_name,profile:packet=size"
 COPY_ENTRIES = "stream=start_pts,time_base,sample_rate:frame=nb_samples"
 LENGTH_ENTRIES = "format=duration"
 TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
-# The time of every packet of the sound, in ticks of its track's clock, one to a line. Read
-# as a report into models, the packets of four hours hold half a gigabyte.
+# The time of every packet of the sound, in ticks of its track's clock, one to a line.
 PACKET_TIMES = ["-of", "default=nokey=1:noprint_wrappers=1", "-show_entries", "packet=dts"]
 # ffmpeg reading the first sound of the recording on its standard input; what it is to make
 # of that sound follows.
@@ -226,10 +227,27 @@ def own_title(file: Path) -> str:
     return WORD_GAP.join("".join(titles).split())
 
 
-def packet_times(file: Path) -> list[int]:
-    listed = run_on(file, [*FFPROBE, *PACKET_TIMES], PROBE_LIMIT_SECONDS)
-    listed.check_returncode()
-    return [int(time) for time in listed.stdout.split()]
+def packet_times(file: Path) -> Generator[int]:
+    # The time of each packet of the sound, as ffprobe writes it: the times of a day of
+    # sound, held all at once, fill most of a gigabyte. ffprobe is ended when its reader is
+    # done with it, and held to its limit as each time comes.
+    command = [*FFPROBE, *PACKET_TIMES]
+    began = time.monotonic()
+    # ffprobe's complaints go to a file: a pipe that nobody reads would fill and stall it.
+    with (
+        TemporaryFile() as complaints,
+        started_on(file, command, stdout=subprocess.PIPE, stderr=complaints) as listing,
+    ):
+        if listing.stdout is None:
+            raise RuntimeError("ffprobe was started without a pipe for the times")
+        for line in listing.stdout:
+            if time.monotonic() - began > PROBE_LIMIT_SECONDS:
+                raise subprocess.TimeoutExpired(command, PROBE_LIMIT_SECONDS)
+            yield int(line)
+        status = listing.wait()
+        if status != 0:
+            complaints.seek(0)
+            raise subprocess.CalledProcessError(status, command, stderr=complaints.read())
 
 
 # Whether a copy starts at zero and runs without a break: each of its packets stands within
@@ -237,15 +255,17 @@ def packet_times(file: Path) -> list[int]:
 # as the sound it holds. A track whose times jump ahead and later fall back does not run so,
 # though it lasts as long as its packets do; nor does one whose packets stand evenly, but
 # further apart than they last.
-def has_plain_timeline(copy: CopyProbe, times: list[int]) -> bool:
+def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
     track = copy.streams[0]
     held = [packet.nb_samples for packet in copy.frames]
     # Where none of the first packets can be decoded, how long a packet lasts is not known.
-    if not held:
+    if track.start_pts != 0 or not held:
         return False
     length = float(median_low(held) / (track.sample_rate * track.time_base))
-    return track.start_pts == 0 and all(
-        abs(time - times[0] - number * length) <= length for number, time in enumerate(times)
+    first = next(times)
+    # No more times are taken than up to the first packet that is out of its place.
+    return all(
+        abs(tick - first - number * length) <= length for number, tick in enumerate(times, 1)
     )
 
 
@@ -270,7 +290,9 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     if coded.codec_name == AAC and coded.profile in PLAYED_PROFILES:
         run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
         copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
-        if has_plain_timeline(copy, packet_times(audio.file)) and decodes_whole(audio.file):
+        with closing(packet_times(audio.file)) as times:
+            plain = has_plain_timeline(copy, times)
+        if plain and decodes_whole(audio.file):
             return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
