@@ -58,6 +58,8 @@ REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-s
 # the name the file stands under, which the line it writes of the file begins with. It ends
 # with the same status where it cannot start the decoder of one of the file's streams; then
 # it says nothing and leaves its report as it began it, without the mark that closes one.
+# Where it refuses one of its options, it ends with that status too, without a report, and
+# says why.
 UNREADABLE_STATUS = 1
 REPORT_CLOSE = b"}"
 UNDECODED_STREAM = "ffmpeg cannot decode one of its streams"
@@ -211,8 +213,8 @@ def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) ->
     # A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
     # without an answer for any other reason fails as a program.
     done = run_on(file, [*FFPROBE, *REPORT_OF, entries], PROBE_LIMIT_SECONDS)
-    if done.returncode == UNREADABLE_STATUS:
-        closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
+    closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
+    if done.returncode == UNREADABLE_STATUS and (closed or not done.stderr):
         failure = (
             FailedProbe.model_validate_json(done.stdout).error.string
             if closed
