@@ -51,7 +51,10 @@ TEMPORARY_FILES = "TMPDIR"
 PAGE_SECONDS = 20
 SPARE_SECONDS = 60
 SILENT_ENGINE = "the PDF engine left with status {status} and wrote nothing"
-STOPPED_ENGINE = "the PDF engine was stopped by {signal}"
+STOPPED_ENGINE = "the PDF engine was stopped by signal {signal}"
+# The signals that have a name, by their numbers. A system has more signals than names, and
+# one without a name goes by its number.
+SIGNAL_NAMES = {int(named): named.name for named in signal.Signals}
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
@@ -316,7 +319,8 @@ def engine_results(
         # A signal stops the engine in the middle of its work, where the last line it wrote
         # says only how far it had come. A program stopped so leaves with the signal's number
         # as its status, below zero.
-        raise UnparsedFile(STOPPED_ENGINE.format(signal=signal.Signals(-ended.returncode).name))
+        stopped_by = -ended.returncode
+        raise UnparsedFile(STOPPED_ENGINE.format(signal=SIGNAL_NAMES.get(stopped_by, stopped_by)))
     if ended.returncode or not results:
         stripped = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
         log_lines = [line for line in stripped if line]
