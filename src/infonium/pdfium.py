@@ -16,9 +16,9 @@ PDFIUM_IN_USE = threading.Lock()
 TITLE_ENTRY = "Title"
 # A file turns a page clockwise by quarters of a whole turn, and a character is taken to be
 # drawn at the quarter nearest to its angle.
-QUARTERS_IN_A_TURN = 4
-QUARTER_IN_RADIANS = math.tau / QUARTERS_IN_A_TURN
-Quarters = Annotated[int, Field(ge=0, lt=QUARTERS_IN_A_TURN)]
+WHOLE_TURN = 4
+QUARTER = math.tau / WHOLE_TURN
+Quarters = Annotated[int, Field(ge=0, lt=WHOLE_TURN)]
 # What turns the content of a page clockwise by one, two and three quarters. Whole numbers
 # leave a character that was drawn a quarter turn off standing at exactly no angle, which the
 # cosine of a quarter turn, worked out, does not.
@@ -64,9 +64,7 @@ def righting_quarters(rotation: Quarters, angles: list[float]) -> Quarters:
     # stored than once it is turned. Characters that stand neither way, as the labels along
     # the side of a figure do, tell nothing, and where none tells, the page is taken as its
     # file shows it.
-    standing = Counter(
-        (rotation + round(angle / QUARTER_IN_RADIANS)) % QUARTERS_IN_A_TURN for angle in angles
-    )
+    standing = Counter((rotation + round(angle / QUARTER)) % WHOLE_TURN for angle in angles)
     return 0 if standing[rotation] > standing[0] else rotation
 
 
@@ -131,7 +129,7 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
         return UprightFile(
             file=copy,
             turned=[
-                (rotation - righting) % QUARTERS_IN_A_TURN
+                (rotation - righting) % WHOLE_TURN
                 for rotation, righting in zip(rotations, rightings, strict=True)
             ],
         )
