@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 import unicodedata
 from enum import StrEnum
@@ -39,6 +40,7 @@ TEMPORARY_FILES = "TMPDIR"
 PAGE_SECONDS = 20
 SPARE_SECONDS = 60
 SILENT_ENGINE = "the PDF engine left with status {status} and wrote nothing"
+STOPPED_ENGINE = "the PDF engine was stopped by {signal}"
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
@@ -285,7 +287,8 @@ class FileToParse(BaseModel):
 
 
 class UnparsedFile(Exception):
-    # The engine ended without results. The message is the last line it wrote.
+    # The engine ended without results. The message is the last line it wrote, or how it
+    # ended when it wrote nothing or was stopped by a signal.
     pass
 
 
@@ -310,6 +313,11 @@ def engine_results(to_parse: FileToParse, backend: Backend, method: Method, page
             timeout=patience + SPARE_SECONDS,
         )
     results = [*found.rglob(ENGINE_RESULTS)]
+    if ended.returncode < 0:
+        # A signal stops the engine in the middle of its work, where the last line it wrote
+        # says only how far it had come. A program stopped so leaves with the signal's number
+        # as its status, below zero.
+        raise UnparsedFile(STOPPED_ENGINE.format(signal=signal.Signals(-ended.returncode).name))
     if ended.returncode or not results:
         stripped = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
         log_lines = [line for line in stripped if line]
