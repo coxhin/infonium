@@ -1,40 +1,37 @@
 import math
 import threading
 from collections import Counter
-from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import BaseModel
-from pypdfium2 import PdfDocument, raw
+from pydantic import BaseModel, Field
+from pypdfium2 import PdfDocument, PdfiumError, PdfTextPage, raw
 
-from infonium.document import WORD_GAP, PageNumber
+from infonium.document import WORD_GAP
 
 # PDFium may be used by one thread at a time, whatever the file. infonium calls it in this
 # module and nowhere else, and every function here holds this turn for as long as it has a
 # file open in PDFium, so no caller can let a second thread in.
 PDFIUM_TURN = threading.Lock()
 TITLE_ENTRY = "Title"
-# A file turns a page by quarters of a whole turn, and a character is taken to be drawn at
-# the quarter nearest to its angle.
-QUARTERS = 4
-QUARTER_TURN = math.tau / QUARTERS
-
-
-class Shown(StrEnum):
-    # How a file asks for a page to be shown: as it is stored, or turned. Turning sets upright
-    # a page that is stored turned, with its characters drawn on their side or upside down;
-    # any other page it turns away, so that characters drawn upright are shown lying. A page
-    # that has no character to tell by is taken as turned away.
-    AS_STORED = "as stored"
-    TURNED_UPRIGHT = "turned upright"
-    TURNED_AWAY = "turned away"
+# A file turns a page clockwise by quarters of a whole turn, and a character is taken to be
+# drawn at the quarter nearest to its angle.
+WHOLE_TURN = 4
+QUARTER = math.tau / WHOLE_TURN
+Quarters = Annotated[int, Field(ge=0, lt=WHOLE_TURN)]
+# What turns the content of a page clockwise by one, two and three quarters. Whole numbers
+# leave a character that was drawn a quarter turn off standing at exactly no angle, which the
+# cosine of a quarter turn, worked out, does not.
+CLOCKWISE = {1: (0, -1, 1, 0), 2: (-1, 0, 0, -1), 3: (0, 1, -1, 0)}
+UNFLATTENED = "PDFium could not draw the annotations of a page into its content"
 
 
 class StoredPage(BaseModel):
     # What a file says of one of its pages before the page is read: what its text layer holds,
-    # nothing when it has none, and how the page is to be shown.
+    # nothing when it has none, and whether its characters stand straight, which is to say
+    # that most of them stand at exactly no angle.
     text: str
-    shown: Shown
+    straight: bool
 
 
 class StoredFile(BaseModel):
@@ -42,31 +39,80 @@ class StoredFile(BaseModel):
     pages: list[StoredPage]
 
 
-def shown_as(rotation: int, angles: list[float]) -> Shown:
-    # How a page is shown that its file turns clockwise by a rotation in degrees, and whose
-    # characters are drawn at these angles, in radians and clockwise too. The page is stored
-    # turned when more of its characters stand upright once it is turned than stand upright
-    # as it is stored. Characters that stand neither way, as the labels along the side of a
-    # figure do, tell nothing, however many they are.
-    if not rotation:
-        return Shown.AS_STORED
-    turned_by = round(math.radians(rotation) / QUARTER_TURN)
-    standing = Counter((turned_by + round(angle / QUARTER_TURN)) % QUARTERS for angle in angles)
-    if standing[0] > standing[turned_by]:
-        return Shown.TURNED_UPRIGHT
-    return Shown.TURNED_AWAY
+class UprightFile(BaseModel):
+    # A file that turns none of its pages, and for each page by how many quarters, clockwise,
+    # the file it was made from shows the page turned from the way it stands here.
+    file: Path
+    turned: list[Quarters]
 
 
-def file_of_pages(file: Path, numbers: list[PageNumber], copy: Path) -> Path:
-    # A file that holds these pages of a file, in this order, and no other page: the file
-    # itself when they are all its pages, and otherwise a copy, written where it is asked for.
+def own_angles(layer: PdfTextPage) -> list[float]:
+    # The angle each character of a page is drawn at, in radians and clockwise. A character
+    # that PDFium added itself, such as the space between two words, is not drawn.
+    return [
+        raw.FPDFText_GetCharAngle(layer, index)
+        for index in range(layer.count_chars())
+        if not raw.FPDFText_IsGenerated(layer, index)
+    ]
+
+
+def righting_quarters(rotation: int, angles: list[float]) -> int:
+    # By how many quarters the stored content of a page must be turned for its characters to
+    # stand upright, when its file shows the page turned by its rotation, in quarters, and
+    # draws its characters at these angles. A page stored turned needs the file's own turn. A
+    # page that is only shown turned needs none: more of its characters stand upright as it is
+    # stored than once it is turned. Characters that stand neither way, as the labels along
+    # the side of a figure do, tell nothing, and where none tells, the page is taken as its
+    # file shows it.
+    standing = Counter((rotation + round(angle / QUARTER)) % WHOLE_TURN for angle in angles)
+    return 0 if standing[rotation] > standing[0] else rotation
+
+
+def upright_matrix(
+    righting: int, left: float, bottom: float, right: float, top: float
+) -> tuple[float, float, float, float, float, float]:
+    # The matrix that turns what lies between these edges of a page clockwise by one to three
+    # quarters, and sets the lower left corner of what it has turned at the origin.
+    lands = {1: (-bottom, right), 2: (right, top), 3: (top, -left)}
+    return (*CLOCKWISE[righting], *lands[righting])
+
+
+def upright_file(file: Path, copy: Path) -> UprightFile:
+    # A file for a reader that misreads a turned page: the file itself when it turns no page,
+    # and otherwise a copy, written where it is asked for, in which every page has a rotation
+    # of 0. The content of a page stored turned is turned in the copy, and the page is given
+    # the width and height it is shown with, so that the copy shows the page as the file does.
+    # A page that is only shown turned keeps its content, and stands in the copy as it is
+    # stored.
     with PDFIUM_TURN, PdfDocument(file) as document:
-        if numbers == [*range(len(document))]:
-            return file
-        with PdfDocument.new() as copied:
-            copied.import_pages(document, numbers)
-            copied.save(copy)
-        return copy
+        rotations = [raw.FPDFPage_GetRotation(page) for page in document]
+        if not any(rotations):
+            return UprightFile(file=file, turned=rotations)
+        turned: list[int] = []
+        for page, rotation in zip(document, rotations, strict=True):
+            angles = own_angles(page.get_textpage()) if rotation else []
+            righting = righting_quarters(rotation, angles)
+            if righting:
+                left, bottom, right, top = page.get_bbox()
+                # PDFium flattens only an appearance that is written in the file, and writes
+                # the one it would draw for an annotation without any when it lists the
+                # page's annotations, as it does to move them: here by nothing.
+                raw.FPDFPage_TransformAnnots(page, 1, 0, 0, 1, 0, 0)
+                if raw.FPDFPage_Flatten(page, raw.FLAT_NORMALDISPLAY) == raw.FLATTEN_FAIL:
+                    raise PdfiumError(UNFLATTENED)
+                matrix = upright_matrix(righting, left, bottom, right, top)
+                # PDFium says it transformed nothing only of a page without content.
+                raw.FPDFPage_TransFormWithClip(page, raw.FS_MATRIX(*matrix), None)
+                # An odd number of quarters lays the page on its side.
+                width, height = (
+                    (top - bottom, right - left) if righting % 2 else (right - left, top - bottom)
+                )
+                page.set_mediabox(0, 0, width, height)
+                page.set_cropbox(0, 0, width, height)
+            page.set_rotation(0)
+            turned.append((rotation - righting) % WHOLE_TURN)
+        document.save(copy)
+        return UprightFile(file=copy, turned=turned)
 
 
 def stored_file(file: Path) -> StoredFile:
@@ -74,16 +120,12 @@ def stored_file(file: Path) -> StoredFile:
         pages: list[StoredPage] = []
         for page in document:
             layer = page.get_textpage()
-            rotation = page.get_rotation()
-            # Only a page that is turned is asked how its characters are drawn. A character
-            # that PDFium added itself, such as the space between two words, is not drawn.
-            drawn = range(layer.count_chars()) if rotation else range(0)
-            angles = [
-                raw.FPDFText_GetCharAngle(layer, index)
-                for index in drawn
-                if not raw.FPDFText_IsGenerated(layer, index)
-            ]
-            pages.append(StoredPage(text=layer.get_text_range(), shown=shown_as(rotation, angles)))
+            angles = own_angles(layer)
+            pages.append(
+                StoredPage(
+                    text=layer.get_text_range(), straight=2 * angles.count(0.0) > len(angles)
+                )
+            )
         return StoredFile(
             title=WORD_GAP.join(document.get_metadata_value(TITLE_ENTRY).split()),
             pages=pages,
