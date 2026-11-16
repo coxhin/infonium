@@ -206,15 +206,15 @@ def usable_captions(page: MediaPage) -> list[CaptionFile]:
     ]
 
 
-def within_bounds(page_url: str, brought: int, limit: int) -> None:
+def hold_to_size(page_url: str, brought: int, limit: int) -> None:
     if brought > limit:
         raise UnreadableSource(f"{page_url} holds more than infonium fetches")
 
 
 def downloader_for(url: str, downloads: Path) -> YoutubeDL:
     # yt-dlp reports how a download goes as it goes, and a report that raises ends it.
-    def held_to_bounds(progress: Mapping[str, Any]) -> None:
-        within_bounds(url, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
+    def hold_recording_to_size(progress: Mapping[str, Any]) -> None:
+        hold_to_size(url, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
 
     return YoutubeDL(
         {
@@ -233,7 +233,7 @@ def downloader_for(url: str, downloads: Path) -> YoutubeDL:
             "fragment_retries": REQUEST_RETRIES,
             # A recording with a part missing is not the recording.
             "skip_unavailable_fragments": False,
-            "progress_hooks": [held_to_bounds],
+            "progress_hooks": [hold_recording_to_size],
             "color": {"stderr": UNCOLOURED, "stdout": UNCOLOURED},
             "quiet": True,
             "noprogress": True,
@@ -243,7 +243,7 @@ def downloader_for(url: str, downloads: Path) -> YoutubeDL:
 
 def caption_content(downloader: YoutubeDL, page_url: str, url: str) -> bytes:
     content = downloader.urlopen(url).read(CAPTION_LIMIT_BYTES + 1)
-    within_bounds(page_url, len(content), CAPTION_LIMIT_BYTES)
+    hold_to_size(page_url, len(content), CAPTION_LIMIT_BYTES)
     return content
 
 
@@ -254,7 +254,7 @@ def fetched_parts(downloader: YoutubeDL, page_url: str, file: CaptionFile) -> li
         contents: list[bytes] = []
         for segment in segments:
             contents.append(caption_content(downloader, page_url, segment.url))
-            within_bounds(page_url, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
+            hold_to_size(page_url, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
         return segmented_parts(segments, contents)
     if file.ext == CaptionFormat.JSON3:
         return json3_parts(content)
