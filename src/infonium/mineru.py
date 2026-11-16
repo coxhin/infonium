@@ -11,7 +11,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from infonium.document import HeadingLevel, PageNumber
 from infonium.pdfium import Shown, StoredFile
 
-# MinerU 3.4.2 parses a PDF, run as a program of its own. Its hybrid backend reads tables,
+# MinerU parses a PDF, run as a program of its own. Its hybrid backend reads tables,
 # formulas and listings best, and gives a box for every line as long as it takes the words
 # from the file's text layer. When it has to read the pages as pictures it gives one box for
 # a whole block, so such a file is read by the pipeline backend, which keeps the lines.
@@ -23,6 +23,14 @@ ENGINE_FIRST_PAGE = "-s"
 ENGINE_LAST_PAGE = "-e"
 ENGINE_RESULTS = "*_middle.json"
 ENGINE_LOG = "{backend}.log"
+# The version of the engine this module is written to, and the key under which the results
+# name the version that wrote them. Two things the module relies on are this version's own
+# and show in no shape of the results: it numbers the pages of a run from 0 wherever the run
+# starts, and it reads from a picture the letters listed below. Results of another version
+# are refused where they enter, so that a later engine fails by name and loses no page
+# unnoticed.
+EngineVersion = Literal["3.4.2"]
+VERSION_KEY = "_version_name"
 # The keys under which the results say which backend wrote them, and whether the hybrid
 # backend judged the text layer unfit and read the pages as pictures.
 BACKEND_KEY = "_backend"
@@ -51,10 +59,10 @@ LAYOUT_CHARACTERS = "\n\t"
 # Latin as far as the phonetic alphabet, the Greek capitals and small letters that formulas
 # use, without accents and without the final sigma, kana, and Chinese characters. They are
 # read from the dictionary of the recognition model the engine then uses, ppocrv6_dict.txt
-# of MinerU 3.4.2. It holds every one of these Latin and Greek letters, all kana but three
-# rare ones, and the three quarters of the Chinese characters that are in common use. It
-# holds no letter of Cyrillic, Hangul, Arabic, Hebrew, Devanagari or Thai, and but two of the
-# letters with tone marks that Vietnamese adds to Latin.
+# in the version named above. It holds every one of these Latin and Greek letters, all kana
+# but three rare ones, and the three quarters of the Chinese characters that are in common
+# use. It holds no letter of Cyrillic, Hangul, Arabic, Hebrew, Devanagari or Thai, and but
+# two of the letters with tone marks that Vietnamese adds to Latin.
 PICTURE_LETTERS = (
     range(0x0041, 0x02B0),
     range(0x0391, 0x03AA),
@@ -262,12 +270,14 @@ class ParsedPage(BaseModel):
 class ParsedFile(BaseModel):
     # The results of the pipeline backend, which reads pages as pictures.
     backend: Literal[ParsedBy.PIPELINE] = Field(alias=BACKEND_KEY)
+    version: EngineVersion = Field(alias=VERSION_KEY)
     pdf_info: list[ParsedPage]
 
 
 class HybridParsedFile(BaseModel):
     # The results of the hybrid backend, which reads a text layer unless it judges it unfit.
     backend: Literal[ParsedBy.HYBRID] = Field(alias=BACKEND_KEY)
+    version: EngineVersion = Field(alias=VERSION_KEY)
     read_as_pictures: bool = Field(alias=READ_AS_PICTURES_KEY)
     pdf_info: list[ParsedPage]
 
