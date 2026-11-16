@@ -5,6 +5,7 @@ from itertools import takewhile
 
 import trafilatura
 from lxml import etree, html
+from trafilatura.htmlprocessing import REND_TAG_MAPPING
 from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
@@ -126,6 +127,7 @@ HEADING_LINKS = etree.XPath(
 )
 FRAGMENT_MARK = "#"
 REFERENCE_ADDRESS = "href"
+LINK_AND_STYLE_ELEMENTS = ("a", CODE_ELEMENT, *REND_TAG_MAPPING)
 
 
 def has_words(element: html.HtmlElement) -> bool:
@@ -159,6 +161,20 @@ def prepared_page(content: bytes, url: str) -> html.HtmlElement:
     if page is None:
         raise UnreadableSource(f"no readable text at {url}")
     drop_unread_parts(page)
+    for element in page.iter(LINK_AND_STYLE_ELEMENTS):
+        # The extractor drops the spaces after a link or a style whose words all sit in an
+        # element inside it, such as a link whose words are underlined, so they are moved to
+        # the start of the next one.
+        following = element.getnext()
+        if (
+            not element.text
+            and element.tail is not None
+            and element.tail.isspace()
+            and following is not None
+            and following.tag in LINK_AND_STYLE_ELEMENTS
+        ):
+            following.text = element.tail + (following.text or "")
+            element.tail = None
     for quotation in list(page.iter(INLINE_QUOTATION)):
         quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
         if len(quotation):
