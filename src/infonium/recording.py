@@ -296,3 +296,8 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
             return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
+
+
+def audio_length(audio: AudioTrack) -> float:
+    # How long the kept sound lasts, in seconds.
+    return probed(audio.file, LENGTH_ENTRIES, LengthProbe).format.duration

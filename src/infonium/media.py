@@ -25,7 +25,7 @@ from infonium.captions import (
     vtt_parts,
 )
 from infonium.document import Tagged, UnreadableSource
-from infonium.recording import AAC, LENGTH_ENTRIES, AudioTrack, LengthProbe, audio_track, probed
+from infonium.recording import AAC, AudioTrack, audio_length, audio_track
 from infonium.transcript import Transcript
 
 # yt-dlp also reads recordings out of news sites and blogs, whose pages are articles first,
@@ -334,8 +334,7 @@ def fetch_media(url: str, directory: Path) -> FetchedMedia:
     with TemporaryDirectory(dir=directory) as downloads:
         fetch = reported_fetch(url, Path(downloads))
         audio = audio_track(fetch.recording, directory)
-    length = probed(audio.file, LENGTH_ENTRIES, LengthProbe).format.duration
-    utterances = caption_utterances(fetch.parts, length)
+    utterances = caption_utterances(fetch.parts, audio_length(audio))
     if utterances:
         return CaptionedMedia(
             title=fetch.title, audio=audio, transcript=Transcript(utterances=utterances)
