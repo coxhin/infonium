@@ -82,6 +82,9 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
     # and otherwise a copy, written where it is asked for, in which every page has a rotation
     # of 0. The content of a page stored turned is turned in the copy, and the page is given
     # the width and height it is shown with, so that the copy shows the page as the file does.
+    # Its annotations are drawn into its content before it is turned. PDFium draws them only
+    # within the box the page holds itself, and within 612 by 792 points on a page that holds
+    # none, so a page that inherits its box is first given the one it is shown with.
     # A page that is only shown turned keeps its content, and stands in the copy as it is
     # stored. A file may list one page more than once. Every listing is decided from the
     # file as it is given, before any page is edited. A page is edited where it is first
@@ -98,6 +101,11 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
         for page, rotation, righting in zip(document, rotations, rightings, strict=True):
             if righting and raw.FPDFPage_GetRotation(page) == rotation:
                 left, bottom, right, top = page.get_bbox()
+                if (
+                    page.get_mediabox(fallback_ok=False) is None
+                    and page.get_cropbox(fallback_ok=False) is None
+                ):
+                    page.set_mediabox(left, bottom, right, top)
                 # PDFium flattens only an appearance that is written in the file, and writes
                 # the one it would draw for an annotation without any when it lists the
                 # page's annotations, as it does to move them: here by nothing.
