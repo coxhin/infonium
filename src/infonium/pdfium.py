@@ -23,7 +23,8 @@ QUARTER_TURN = math.tau / QUARTERS
 class Shown(StrEnum):
     # How a file asks for a page to be shown: as it is stored, or turned. Turning sets upright
     # a page that is stored turned, with its characters drawn on their side or upside down;
-    # any other page it turns away, so that characters drawn upright are shown lying.
+    # any other page it turns away, so that characters drawn upright are shown lying. A page
+    # that has no character to tell by is taken as turned away.
     AS_STORED = "as stored"
     TURNED_UPRIGHT = "turned upright"
     TURNED_AWAY = "turned away"
