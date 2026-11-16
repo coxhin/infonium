@@ -242,7 +242,8 @@ def downloader_for(url: str, downloads: Path) -> YoutubeDL:
 
 
 def caption_content(downloader: YoutubeDL, page_url: str, url: str) -> bytes:
-    content = downloader.urlopen(url).read(CAPTION_LIMIT_BYTES + 1)
+    with downloader.urlopen(url) as answer:
+        content = answer.read(CAPTION_LIMIT_BYTES + 1)
     hold_to_size(page_url, len(content), CAPTION_LIMIT_BYTES)
     return content
 
