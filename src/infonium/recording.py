@@ -2,7 +2,7 @@ import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from itertools import pairwise
+from fractions import Fraction
 from pathlib import Path
 from statistics import median_low
 from typing import IO, Annotated
@@ -45,14 +45,15 @@ FFPROBE = [
     FIRST_SOUND,
 ]
 # A report is answered from the index of a file, and from no more of the sound than its
-# first packet, which shows that the sound holds any.
-FIRST_PACKET = "%+#1"
-REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKET, "-show_entries"]
+# first sixteen packets: enough to show that the sound holds any and, where they are
+# decoded, how much sound a packet holds, whatever is trimmed from the first.
+FIRST_PACKETS = "%+#16"
+REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-show_entries"]
 # ffprobe ends with this status when it cannot read a file. Its report then says why without
 # the name the file stands under, which the line it writes of the file begins with.
 UNREADABLE_STATUS = 1
 SOUND_ENTRIES = "stream=codec_name:packet=size"
-START_ENTRIES = "stream=start_pts"
+COPY_ENTRIES = "stream=start_pts,time_base,sample_rate:frame=nb_samples"
 LENGTH_ENTRIES = "format=duration"
 TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
 # The time of every packet of the sound, in ticks of its track's clock, one to a line. Read
@@ -111,19 +112,29 @@ class SoundPacket(BaseModel):
 
 
 class SoundProbe(BaseModel):
-    # The first sound of a file and the first packet of that sound, where the file has them.
+    # The first sound of a file and the first packets of that sound, where the file has them.
     streams: list[SoundStream]
     packets: list[SoundPacket]
 
 
 class CopiedStream(BaseModel):
-    # When the track of a copy starts, in ticks of the track's clock.
+    # What the index of a copy tells of its track: when it starts, in ticks of the track's
+    # clock, how long a tick lasts in seconds, and how many samples a second the sound has.
     start_pts: int
+    time_base: Fraction
+    sample_rate: int
+
+
+class DecodedPacket(BaseModel):
+    # How many samples a packet holds once it is decoded.
+    nb_samples: int
 
 
 class CopyProbe(BaseModel):
-    # A copy of sound holds that sound: one track.
+    # A copy of sound holds that sound: one track. Its first packets are decoded, those of
+    # them that can be.
     streams: Annotated[list[CopiedStream], Field(min_length=1)]
+    frames: list[DecodedPacket]
 
 
 class FileLength(BaseModel):
@@ -210,14 +221,21 @@ def packet_times(file: Path) -> list[int]:
     return [int(time) for time in listed.stdout.split()]
 
 
-# Whether a track runs without a break: each of its packets stands within one usual step of
-# where its number puts it after the first. A track whose times jump ahead and later fall
-# back does not, though it lasts as long as its packets do.
-def is_unbroken(times: list[int]) -> bool:
-    steps = [later - earlier for earlier, later in pairwise(times)]
-    # A packet that stands alone has no step, and nothing to stand apart from.
-    usual = median_low(steps) if steps else 0
-    return all(abs(time - times[0] - number * usual) <= usual for number, time in enumerate(times))
+# Whether a copy starts at zero and runs without a break: each of its packets stands within
+# one packet's length of where its number puts it after the first, a packet lasting as long
+# as the sound it holds. A track whose times jump ahead and later fall back does not run so,
+# though it lasts as long as its packets do; nor does one whose packets stand evenly, but
+# further apart than they last.
+def has_plain_timeline(copy: CopyProbe, times: list[int]) -> bool:
+    track = copy.streams[0]
+    held = [packet.nb_samples for packet in copy.frames]
+    # Where none of the first packets can be decoded, how long a packet lasts is not known.
+    if not held:
+        return False
+    length = float(median_low(held) / (track.sample_rate * track.time_base))
+    return track.start_pts == 0 and all(
+        abs(time - times[0] - number * length) <= length for number, time in enumerate(times)
+    )
 
 
 def audio_track(file: Path, directory: Path) -> AudioTrack:
@@ -231,8 +249,8 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     sound = f"{LOCAL_FILE}:{audio.file}"
     if probe.streams[0].codec_name == AAC:
         run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
-        copy = probed(audio.file, START_ENTRIES, CopyProbe).streams[0]
-        if copy.start_pts == 0 and is_unbroken(packet_times(audio.file)):
+        copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
+        if has_plain_timeline(copy, packet_times(audio.file)):
             return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
