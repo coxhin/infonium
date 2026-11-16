@@ -19,19 +19,23 @@ import httpx
 import openai
 from pydantic import BaseModel
 
-from infonium import captions, media, pdf, recording, speech, webpage
+from infonium import captions, guard, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
+    NO_TEXT,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     PDF_MEDIA_TYPE,
+    TURNED_AWAY,
     WORD_GAP,
     Extracted,
     MediaType,
     UnreadableSource,
     document_of,
+    error_status,
     error_text,
+    word_count,
 )
 from infonium.library import (
     FIRST_READING,
@@ -91,6 +95,15 @@ class Engines(BaseModel):
     recogniser: speech.Recogniser
 
 
+class PageCopy(BaseModel):
+    # A copy of a page read from an address: its file, the address that served it, what the
+    # extractor found in it, and how many words that is.
+    file: Path
+    served: str
+    text: webpage.PageText
+    words: int
+
+
 class Readout(BaseModel):
     # What reading a source gives: its text, and the file kept for a reader to show beside
     # the text, which for a recording is not the file that came in.
@@ -136,7 +149,10 @@ def fetched(url: str, directory: Path) -> Source:
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": USER_AGENT},
     ) as response:
-        response.raise_for_status()
+        if response.is_error:
+            raise UnreadableSource(error_status(str(response.url), response.status_code))
+        if guard.is_guarded(response.headers):
+            raise UnreadableSource(TURNED_AWAY.format(site=response.url.host))
         with file.open("wb") as kept:
             # Bytes are taken as they arrive, so that a source that only trickles is still
             # held to the time a fetch may take.
@@ -187,6 +203,30 @@ def media_page_readout(url: str, directory: Path, engines: Engines) -> Readout:
             return recognised_readout(title, audio, engines.recogniser)
 
 
+def page_copy(asked: str, file: Path, served: str) -> PageCopy:
+    # A page read from an address is first asked whether it is the page asked for or one that
+    # a guard answered with in its place.
+    content = file.read_bytes()
+    text = webpage.page_text(content, served)
+    words = word_count(text.blocks)
+    if guard.is_check_page(
+        guard.ServedPage(asked=asked, served=served, content=content, words=words)
+    ):
+        raise UnreadableSource(TURNED_AWAY.format(site=urlsplit(served).hostname))
+    return PageCopy(file=file, served=served, text=text, words=words)
+
+
+def copy_readout(copy: PageCopy) -> Readout:
+    if not copy.text.blocks:
+        raise UnreadableSource(NO_TEXT.format(source=copy.served))
+    return Readout(
+        extractor=webpage.EXTRACTOR,
+        extracted=Extracted(title=copy.text.title, blocks=copy.text.blocks),
+        file=copy.file,
+        media_type=HTML_MEDIA_TYPE,
+    )
+
+
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
@@ -194,6 +234,8 @@ def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
+    if source.media_type == HTML_MEDIA_TYPE:
+        return copy_readout(page_copy(url, source.file, source.reference))
     return readout_of(source, directory, engines)
 
 
