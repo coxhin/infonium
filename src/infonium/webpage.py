@@ -117,12 +117,35 @@ HIDDEN_ELEMENTS = etree.XPath(
     """,
     namespaces=EXSLT_NAMESPACES,
 )
+IS_HEADING = " or ".join(f"self::{tag}" for tag in HEADING_LEVELS)
+# The links a page sets in a heading or right beside it, among them the mark that links to
+# the heading's own place.
+HEADING_LINKS = etree.XPath(
+    f"//a[ancestor::*[{IS_HEADING}] or preceding-sibling::*[1][{IS_HEADING}]"
+    f" or following-sibling::*[1][{IS_HEADING}]]"
+)
+FRAGMENT_MARK = "#"
+REFERENCE_ADDRESS = "href"
+
+
+def has_words(element: html.HtmlElement) -> bool:
+    return any(character.isalnum() for character in element.text_content())
+
+
+def is_heading_mark(link: html.HtmlElement) -> bool:
+    # A link to a place in the page with no letter or digit in it is a mark such as # or ¶.
+    return FRAGMENT_MARK in link.get(REFERENCE_ADDRESS, "") and not has_words(link)
 
 
 def drop_unread_parts(page: html.HtmlElement) -> None:
     # What a page hides from its reader is not its text.
     for element in HIDDEN_ELEMENTS(page):
         element.drop_tree()
+    # Nor is the mark that links to a heading; an empty one beside a heading also makes the
+    # extractor take the heading for a block of links and drop it.
+    for link in HEADING_LINKS(page):
+        if is_heading_mark(link):
+            link.drop_tree()
 
 
 def prepared_page(content: bytes, url: str) -> html.HtmlElement:
