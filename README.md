@@ -6,7 +6,7 @@ infonium digests what you read, watch and listen to into a summary and takeaways
 
 | Source | Add it by | Read through |
 | --- | --- | --- |
-| Web article | pasting its address | the page's HTML |
+| Web article | pasting its address | the page's HTML, and the page as a browser builds it when its HTML holds little text |
 | PDF, with a text layer or scanned | uploading the file or pasting its address | [MinerU](https://github.com/opendatalab/MinerU), which also recognises the text of scanned pages |
 | Video or podcast page, such as YouTube, Bilibili, TED, Apple Podcasts and SoundCloud | pasting its address | the page's own captions, or speech recognition when it has none |
 | Audio or video file | uploading the file or pasting its address | speech recognition |
@@ -27,10 +27,11 @@ Open <http://localhost:5173>. Paste an address or upload a file. The source open
 
 The API listens on port 8710 and the UI on 5173. When one is taken, pass another: `make dev API_PORT=8720 UI_PORT=5180`.
 
-Web articles need nothing more. Each other kind of source needs one more program:
+Each kind of source needs one more program:
 
 | To read | Install |
 | --- | --- |
+| Web pages that scripts build | [Google Chrome](https://www.google.com/chrome/), as the `google-chrome` command. A page whose HTML holds little text is opened in it and read again. Without it, such a page is read from its HTML alone, and one with no text there is not read. Set `INFONIUM_BROWSER` when the command is not on the `PATH`. |
 | PDFs | [MinerU](https://github.com/opendatalab/MinerU) 3.4.2 with its `core` extra (`mineru[core]==3.4.2`), as the `mineru` command. infonium reads what this version writes, and with another version every PDF fails. Set `INFONIUM_PDF_ENGINE` when the command is not on the `PATH`. |
 | Recordings | [FFmpeg](https://ffmpeg.org/), as the `ffmpeg` and `ffprobe` commands on the `PATH`. |
 | Recordings without captions | A speech recogniser. [`engines/speech`](engines/speech) starts one on your machine with two commands. |
@@ -48,6 +49,7 @@ Settings are environment variables, read from `.env` by `make dev`.
 | `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and the snapshots of its sources are stored |
 | `INFONIUM_PDF_ENGINE` | `mineru` | MinerU command that parses PDFs |
+| `INFONIUM_BROWSER` | `google-chrome` | Chrome command, or its path, that renders web pages |
 | `INFONIUM_SPEECH_BASE_URL` | `http://127.0.0.1:8750/v1` | Endpoint of the speech recogniser; the default is the one that `engines/speech` starts |
 | `INFONIUM_SPEECH_API_KEY` | `unused` | Key for that endpoint; the local recogniser asks for none |
 | `INFONIUM_SPEECH_MODEL` | `Systran/faster-whisper-large-v3` | Model the recogniser transcribes with |
@@ -64,7 +66,7 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 
 ## Limits
 
-- A web page that scripts build in the browser, or that turns programs away, is not read.
+- A site that turns programs away is not read. When it answers with an error status, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.

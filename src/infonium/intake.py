@@ -17,11 +17,13 @@ from urllib.parse import urlsplit
 import filetype
 import httpx
 import openai
+from playwright.sync_api import Error as BrowserError
 from pydantic import BaseModel
 
-from infonium import captions, guard, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
+    LITTLE_TEXT_WORDS,
     MEDIA_TYPE_PATTERN,
     NO_TEXT,
     OVERDUE_SOURCE,
@@ -77,6 +79,9 @@ OPENING_BYTES = 1024
 # The most that is kept of the reason a reading failed, and what stands for the rest.
 REASON_LIMIT_CHARACTERS = 500
 CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
+# How a rendering fails: the browser is missing, it cannot open the page or meets a limit,
+# or the page answers with an error status.
+RENDERING_FAILURES = (OSError, BrowserError, UnreadableSource)
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +95,11 @@ class Source(BaseModel):
 
 
 class Engines(BaseModel):
-    # Where the programs and services that read sources other than web pages are found.
+    # Where the programs and services that read sources are found: the browser renders a web
+    # page that scripts build.
     pdf: Path
     recogniser: speech.Recogniser
+    browser: Path
 
 
 class PageCopy(BaseModel):
@@ -227,6 +234,23 @@ def copy_readout(copy: PageCopy) -> Readout:
     )
 
 
+def page_readout(url: str, source: Source, directory: Path, engines: Engines) -> Readout:
+    # A page that holds little text may be one that its scripts build, and is rendered in a
+    # browser and read again. What a rendering reads is kept when it holds more.
+    plain = page_copy(url, source.file, source.reference)
+    if plain.words >= LITTLE_TEXT_WORDS:
+        return copy_readout(plain)
+    try:
+        rendered = browser.rendered_page(source.reference, directory, engines.browser)
+    except RENDERING_FAILURES:
+        if not plain.text.blocks:
+            raise
+        logger.warning("rendering %s failed; its plain reading is kept", url, exc_info=True)
+        return copy_readout(plain)
+    built = page_copy(source.reference, rendered.file, rendered.address)
+    return copy_readout(built if built.words > plain.words else plain)
+
+
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
@@ -235,7 +259,7 @@ def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
     if source.media_type == HTML_MEDIA_TYPE:
-        return copy_readout(page_copy(url, source.file, source.reference))
+        return page_readout(url, source, directory, engines)
     return readout_of(source, directory, engines)
 
 
@@ -296,8 +320,9 @@ def failure_reason(error: BaseException) -> str:
     # with; a program that ended without a word, or ran out of time, is named with how it
     # ended. A request that a service refused does not carry what the service answered, and
     # one that no service answered does not say which service that was, so the reason gives
-    # the address and the answer. A reason is kept as one line of a length a person reads: a
-    # service may answer with a whole page.
+    # the address and the answer. A browser that fails says what failed in its first line and
+    # goes on with the steps it took, which are left out. A reason is kept as one line of a
+    # length a person reads: a service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         said = recording.COMPLAINER.sub("", written.strip().splitlines()[-1])
@@ -309,6 +334,8 @@ def failure_reason(error: BaseException) -> str:
         said = f"{asked_address(error)} answered {error.status_code}: {error.response.text}"
     elif isinstance(error, openai.APIConnectionError):
         said = f"{asked_address(error)} did not answer: {error}"
+    elif isinstance(error, BrowserError):
+        said = f"the browser could not render the page: {error.message.splitlines()[0]}"
     else:
         said = error_text(error)
     line = WORD_GAP.join(said.split())
