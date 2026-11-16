@@ -243,7 +243,7 @@ def prepared_page(content: bytes, url: str) -> html.HtmlElement:
     # as code, and code in a sentence loses its line breaks.
     page = trafilatura.load_html(content)
     if page is None:
-        raise UnreadableSource(f"no readable text at {url}")
+        raise UnreadableSource(NO_TEXT.format(source=url))
     drop_unread_parts(page, url)
     keep_spaces_after_bare_elements(page)
     for quotation in list(page.iter(INLINE_QUOTATION)):
