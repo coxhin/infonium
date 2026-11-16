@@ -26,7 +26,13 @@ from infonium.captions import (
     json3_parts,
     vtt_parts,
 )
-from infonium.document import Tagged, UnreadableSource
+from infonium.document import (
+    OVERDUE_SOURCE,
+    OVERSIZE_SOURCE,
+    Tagged,
+    UnreadableSource,
+    error_text,
+)
 from infonium.recording import AAC, AudioTrack, audio_length, audio_track
 from infonium.transcript import Transcript
 
@@ -98,8 +104,6 @@ FETCHER_MEMORY_BYTES = 512 * 1024**2
 # Memory the fetcher holds from its start and gives up first when a fetch fails: one that
 # ran out of memory in small pieces that it still holds has none left to report the ending.
 REPORT_ROOM_BYTES = 4 * 1024**2
-# What a reader is told of a page that holds more than a bound of its fetch allows.
-OVERSIZE_PAGE = "{page} holds more than infonium fetches"
 
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
@@ -241,7 +245,7 @@ def usable_captions(page: MediaPage) -> list[CaptionFile]:
 
 def hold_to_size(page_url: str, brought: int, limit: int) -> None:
     if brought > limit:
-        raise UnreadableSource(OVERSIZE_PAGE.format(page=page_url))
+        raise UnreadableSource(OVERSIZE_SOURCE.format(source=page_url))
 
 
 def downloader_for(url: str, downloads: Path) -> YoutubeDL:
@@ -352,9 +356,10 @@ def main() -> None:
     except Exception as ending:
         del room
         traceback.print_exc()
-        worded = str(ending) or type(ending).__name__
         outgrown = isinstance(ending, MemoryError)
-        report = AbortedFetch(reason=OVERSIZE_PAGE.format(page=url) if outgrown else worded)
+        report = AbortedFetch(
+            reason=OVERSIZE_SOURCE.format(source=url) if outgrown else error_text(ending)
+        )
     (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
@@ -368,7 +373,7 @@ def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
         try:
             while fetcher.poll() is None:
                 if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
-                    raise UnreadableSource(f"{url} takes longer than infonium waits")
+                    raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
                 time.sleep(FETCHER_WATCH_SECONDS)
         finally:
             if fetcher.returncode is None:

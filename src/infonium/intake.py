@@ -23,12 +23,15 @@ from infonium import captions, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
+    OVERDUE_SOURCE,
+    OVERSIZE_SOURCE,
     PDF_MEDIA_TYPE,
     WORD_GAP,
     Extracted,
     MediaType,
     UnreadableSource,
     document_of,
+    error_text,
 )
 from infonium.library import (
     FIRST_READING,
@@ -140,9 +143,9 @@ def fetched(url: str, directory: Path) -> Source:
             for chunk in response.iter_bytes():
                 kept.write(chunk)
                 if kept.tell() > FETCH_LIMIT_BYTES:
-                    raise UnreadableSource(f"{url} holds more than infonium fetches")
+                    raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
                 if time.monotonic() - began > FETCH_LIMIT_SECONDS:
-                    raise UnreadableSource(f"{url} takes longer than infonium waits")
+                    raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
         declared = response.headers.get(CONTENT_TYPE, UNDECLARED)
         reference = str(response.url.copy_with(fragment=None))
     return Source(file=file, media_type=media_type_of(file, declared), reference=reference)
@@ -265,7 +268,7 @@ def failure_reason(error: BaseException) -> str:
     elif isinstance(error, openai.APIConnectionError):
         said = f"{asked_address(error)} did not answer: {error}"
     else:
-        said = str(error) or type(error).__name__
+        said = error_text(error)
     line = WORD_GAP.join(said.split())
     cut = len(line) > REASON_LIMIT_CHARACTERS
     return f"{line[:REASON_LIMIT_CHARACTERS]}{CUT_SHORT}" if cut else line

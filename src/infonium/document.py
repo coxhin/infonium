@@ -255,6 +255,17 @@ class UnreadableSource(Exception):
     pass
 
 
+# What a reader is told of a source that holds more than a bound of its fetch allows, and of
+# one whose fetch outlasts the time it is allowed.
+OVERSIZE_SOURCE = "{source} holds more than infonium fetches"
+OVERDUE_SOURCE = "{source} takes longer than infonium waits"
+
+
+def error_text(error: BaseException) -> str:
+    # What an error says, and the name of its kind where it says nothing.
+    return str(error) or type(error).__name__
+
+
 class Extracted(BaseModel):
     # What an extractor makes of one source, before it is kept as a document. An extractor
     # that finds nothing to read raises UnreadableSource.

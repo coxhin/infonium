@@ -20,7 +20,7 @@ from infonium.digest import (
     digest_prompt,
     grounded_sections,
 )
-from infonium.document import Block
+from infonium.document import Block, error_text
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
@@ -129,7 +129,7 @@ def refusal(status: HTTPStatus, detail: str) -> Response:
 
 def explained(status: HTTPStatus) -> Callable[[Request, Exception], Response]:
     def explain(request: Request, error: Exception) -> Response:
-        return refusal(status, str(error) or type(error).__name__)
+        return refusal(status, error_text(error))
 
     return explain
 
