@@ -429,8 +429,8 @@ class LibraryStore:
         for kept in (self.snapshots, self.uploads, self.work):
             kept.mkdir(parents=True, exist_ok=True)
         # One service at a time works on a library; a second one stops here.
-        self.guard = FileLock(directory / LOCK_FILE)
-        self.guard.acquire(timeout=0)
+        self.lock = FileLock(directory / LOCK_FILE)
+        self.lock.acquire(timeout=0)
         self.engine = sqlalchemy.create_engine(f"sqlite:///{directory / LIBRARY_FILE}")
         sqlalchemy.event.listen(self.engine, CONNECT, enforce_foreign_keys)
         metadata.create_all(self.engine)
