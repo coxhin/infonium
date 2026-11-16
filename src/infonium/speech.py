@@ -13,12 +13,11 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from infonium.document import Seconds, UnreadableSource, has_words
+from infonium.recording import FFMPEG, started_on
 from infonium.transcript import Transcript, Utterance
 
 EXTRACTOR = "speech/1"
 
-DECODER = "ffmpeg"
-FIRST_SOUND_TRACK = "0:a:0"
 # The recogniser hears one channel at this rate, each sample a whole number of two bytes.
 CHANNELS = 1
 SAMPLE_RATE = 16000
@@ -26,12 +25,6 @@ SAMPLE_BYTES = 2
 BYTES_PER_SECOND = CHANNELS * SAMPLE_RATE * SAMPLE_BYTES
 SAMPLE_FORMATS = {"little": "s16le", "big": "s16be"}
 SAMPLE_TYPE_CODE: Final = "h"
-# The sound keeps the timeline a player shows: a track that starts late or has a gap is
-# filled with silence, so a count of samples is a time from the start of the recording.
-ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
-# The decoder opens files of this machine only: a recording that names an address on the
-# network, as a playlist can, does not send it there.
-LOCAL_FILE = "file"
 
 # How loud the sound is, is measured over slivers a tenth of a second long.
 SLIVERS_PER_SECOND = 10
@@ -112,24 +105,14 @@ def piece_after(slivers_before: int, sound: bytes) -> Piece:
 
 def decoded(recording: Path) -> Generator[bytes]:
     # The sound of a recording as the decoder gives it, a sliver at a time; the last may be a
-    # short one.
+    # short one. The recording is the sound that is kept of a source, which starts at zero
+    # and runs without a break, so a count of its samples is a time from its start.
     command = [
-        DECODER,
-        "-nostdin",
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        LOCAL_FILE,
-        "-i",
-        f"{LOCAL_FILE}:{recording}",
-        "-map",
-        FIRST_SOUND_TRACK,
+        *FFMPEG,
         "-ac",
         str(CHANNELS),
         "-ar",
         str(SAMPLE_RATE),
-        "-af",
-        ON_THE_TIMELINE,
         "-f",
         SAMPLE_FORMATS[sys.byteorder],
         "-",
@@ -137,7 +120,7 @@ def decoded(recording: Path) -> Generator[bytes]:
     # The decoder's complaints go to a file: a pipe that nobody reads would fill and stall it.
     with (
         TemporaryFile() as complaints,
-        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
+        started_on(recording, command, stdout=subprocess.PIPE, stderr=complaints) as decoder,
     ):
         if decoder.stdout is None:
             raise RuntimeError("the decoder was started without a pipe for its sound")
@@ -153,7 +136,7 @@ def decoded(recording: Path) -> Generator[bytes]:
             first_complaint = complaints.read().decode(errors="replace").strip().partition("\n")[0]
             # A decoder that is stopped from outside complains of nothing; how it ended is
             # then the reason, in the words Python has for it.
-            ending = subprocess.CalledProcessError(status, DECODER)
+            ending = subprocess.CalledProcessError(status, command[0])
             raise UnreadableSource(f"no sound could be read: {first_complaint or ending}")
         if sliver:
             yield sliver

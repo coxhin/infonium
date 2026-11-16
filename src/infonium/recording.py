@@ -1,8 +1,10 @@
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from itertools import pairwise
 from pathlib import Path
 from statistics import median_low
-from typing import Annotated
+from typing import IO, Annotated
 
 from pydantic import BaseModel, Field
 
@@ -149,10 +151,28 @@ class AudioTrack(BaseModel):
     media_type: MediaType
 
 
+# One of the programs at work on a recording, which is handed to it as its standard input.
+# Started in any other way, it would read whatever this process has for a standard input.
+# The program is ended when its user is done with it.
+@contextmanager
+def started_on(
+    file: Path, command: list[str], stdout: int | IO[bytes], stderr: int | IO[bytes]
+) -> Iterator[subprocess.Popen[bytes]]:
+    with (
+        file.open("rb") as recording,
+        subprocess.Popen(command, stdin=recording, stdout=stdout, stderr=stderr) as program,
+    ):
+        try:
+            yield program
+        finally:
+            program.kill()
+
+
 # What one of the programs does when it is run on a recording, within a time.
 def run_on(file: Path, command: list[str], limit: float) -> subprocess.CompletedProcess[bytes]:
-    with file.open("rb") as recording:
-        return subprocess.run(command, stdin=recording, capture_output=True, timeout=limit)
+    with started_on(file, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as program:
+        written, complaints = program.communicate(timeout=limit)
+    return subprocess.CompletedProcess(command, program.returncode, written, complaints)
 
 
 # A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
