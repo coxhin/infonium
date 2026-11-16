@@ -3,6 +3,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import traceback
 from collections.abc import Mapping
 from enum import StrEnum
@@ -77,6 +78,9 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # report of the fetch beside it.
 FETCHER = [sys.executable, "-m", __spec__.name]
 FETCH_REPORT_FILE = "fetch.json"
+# How long the process that started the fetcher lets pass between two looks at whether it
+# has ended.
+FETCHER_WATCH_SECONDS = 0.05
 
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
@@ -324,11 +328,15 @@ def main() -> None:
 # The fetch of a page as the fetcher reports it.
 def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
     command = [*FETCHER, url, str(downloads)]
+    began = time.monotonic()
     # The fetcher leads a session of its own, so that all it has started is ended with it,
     # and its standard input is a pipe that closes when this process is gone.
     with subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True) as fetcher:
         try:
-            fetcher.wait(timeout=MEDIA_FETCH_LIMIT_SECONDS)
+            while fetcher.poll() is None:
+                if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
+                    raise UnreadableSource(f"{url} takes longer than infonium waits")
+                time.sleep(FETCHER_WATCH_SECONDS)
         finally:
             if fetcher.returncode is None:
                 os.killpg(fetcher.pid, signal.SIGKILL)
