@@ -95,6 +95,9 @@ FETCHER_WATCH_SECONDS = 0.05
 # it uses: 72 MiB for each thread it starts, and a JavaScript runtime, which yt-dlp starts
 # for YouTube where one is installed, a gigabyte.
 FETCHER_MEMORY_BYTES = 512 * 1024**2
+# Memory the fetcher holds from its start and gives up first when a fetch fails: one that
+# ran out of memory in small pieces that it still holds has none left to report the ending.
+REPORT_ROOM_BYTES = 4 * 1024**2
 # What a reader is told of a page that holds more than a bound of its fetch allows.
 OVERSIZE_PAGE = "{page} holds more than infonium fetches"
 
@@ -334,11 +337,13 @@ def main() -> None:
     # memory it is allowed has met a page that holds more than is fetched, and is reported
     # as one.
     resource.setrlimit(resource.RLIMIT_DATA, (FETCHER_MEMORY_BYTES, FETCHER_MEMORY_BYTES))
+    room = bytearray(REPORT_ROOM_BYTES)
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
     try:
         report: FetchReport = page_fetch(url, downloads)
     except Exception as ending:
+        del room
         traceback.print_exc()
         worded = str(ending) or type(ending).__name__
         outgrown = isinstance(ending, MemoryError)
