@@ -134,10 +134,10 @@ def vtt_parts(content: bytes, counts_from: float) -> list[CaptionPart]:
     ]
 
 
-# The cues of a fragment count their times from the start of the stretch of the stream the
-# fragment lies in: a stream spliced from several recordings, such as an introduction before
-# a talk, starts counting anew at each splice.
 def caption_fragments(playlist: str, url: str) -> list[CaptionFragment]:
+    # The cues of a fragment count their times from the start of the stretch of the stream
+    # the fragment lies in: a stream spliced from several recordings, such as an
+    # introduction before a talk, starts counting anew at each splice.
     fragments: list[CaptionFragment] = []
     elapsed = 0.0
     counts_from = 0.0
@@ -148,8 +148,8 @@ def caption_fragments(playlist: str, url: str) -> list[CaptionFragment]:
     return fragments
 
 
-# A cue shown across the cut between two fragments is in both of them, and is read once.
 def fragmented_parts(fragments: list[CaptionFragment], contents: list[bytes]) -> list[CaptionPart]:
+    # A cue shown across the cut between two fragments is in both of them, and is read once.
     cut = [
         part
         for fragment, content in zip(fragments, contents, strict=True)
@@ -158,9 +158,9 @@ def fragmented_parts(fragments: list[CaptionFragment], contents: list[bytes]) ->
     return list(dict.fromkeys(cut))
 
 
-# The parts with what is not spoken taken out of their words: sounds and speakers in
-# brackets, the marks of a change of speaker, and the names of speakers before a colon.
 def spoken_parts(parts: list[CaptionPart]) -> list[CaptionPart]:
+    # The parts with what is not spoken taken out of their words: sounds and speakers in
+    # brackets, the marks of a change of speaker, and the names of speakers before a colon.
     unmarked = [SPEAKER_CHANGE.sub("", ANNOTATION.sub("", part.text)) for part in parts]
     # A speaker is named where a line of the captions begins: in the first part, and in a
     # part after one that ends a line. Where each word is a part of its own, a word before
@@ -188,12 +188,12 @@ def spoken_parts(parts: list[CaptionPart]) -> list[CaptionPart]:
     ]
 
 
-# The parts that lie in a recording of a length, in the order they are spoken, each with the
-# moment it is over. A part is over when a later one begins: a rolling line stays shown
-# while the next is spoken. Parts that begin together are said together, and each lasts as
-# long as it is shown. Captions may run on past the end of a recording that was cut after
-# they were written; those words are not in it.
 def heard_parts(parts: list[CaptionPart], length: float) -> list[CaptionPart]:
+    # The parts that lie in a recording of a length, in the order they are spoken, each with
+    # the moment it is over. A part is over when a later one begins: a rolling line stays
+    # shown while the next is spoken. Parts that begin together are said together, and each
+    # lasts as long as it is shown. Captions may run on past the end of a recording that was
+    # cut after they were written; those words are not in it.
     spoken = spoken_parts(
         sorted((part for part in parts if part.start < length), key=lambda part: part.start)
     )
@@ -211,9 +211,9 @@ def heard_parts(parts: list[CaptionPart], length: float) -> list[CaptionPart]:
     ]
 
 
-# An utterance is a clause where the captions mark one, and a line of the captions where
-# they do not, so that it begins where a listener would begin.
 def caption_utterances(parts: list[CaptionPart], length: float) -> list[Utterance]:
+    # An utterance is a clause where the captions mark one, and a line of the captions where
+    # they do not, so that it begins where a listener would begin.
     heard = heard_parts(parts, length)
     ends_clause = [part.text.rstrip().rstrip(CLOSING_MARKS)[-1:] in CLAUSE_ENDS for part in heard]
     # For each part, the moment the clause it lies in is over: never, where no mark ends it.

@@ -201,8 +201,8 @@ def is_media_page(url: str) -> bool:
     return any(get_info_extractor(site).suitable(url) for site in MEDIA_SITES)
 
 
-# The tracks in one language, the one named exactly as it first.
 def tracks_in(tracks: dict[str, list[CaptionFile]], language: str) -> list[list[CaptionFile]]:
+    # The tracks in one language, the one named exactly as it first.
     in_language = re.compile(
         rf"{re.escape(LANGUAGE_NARROWING.split(language)[0])}(?:{LANGUAGE_NARROWING.pattern}.*)?",
         re.IGNORECASE,
@@ -214,11 +214,11 @@ def tracks_in(tracks: dict[str, list[CaptionFile]], language: str) -> list[list[
     ]
 
 
-# The captions that hold the words as they were spoken, the best first: those people made
-# before the automatic ones, and each track in the form that is read most exactly. A page
-# that does not say which language is spoken has none, since any of its tracks may be a
-# translation.
 def usable_captions(page: MediaPage) -> list[CaptionFile]:
+    # The captions that hold the words as they were spoken, the best first: those people
+    # made before the automatic ones, and each track in the form that is read most exactly.
+    # A page that does not say which language is spoken has none, since any of its tracks
+    # may be a translation.
     if page.language is None:
         return []
     originals = {
@@ -242,8 +242,8 @@ def hold_to_size(page_url: str, brought: int, limit: int) -> None:
 
 
 def downloader_for(url: str, downloads: Path) -> YoutubeDL:
-    # yt-dlp reports how a download goes as it goes, and a report that raises ends it.
     def hold_recording_to_size(progress: Mapping[str, Any]) -> None:
+        # yt-dlp reports how a download goes as it goes, and a report that raises ends it.
         hold_to_size(url, progress.get(DOWNLOADED_BYTES) or 0, RECORDING_LIMIT_BYTES)
 
     return YoutubeDL(
@@ -316,22 +316,23 @@ def page_fetch(url: str, downloads: Path) -> CompletedFetch:
     )
 
 
-# The process that started the fetcher holds the other end of its standard input open and
-# writes nothing to it. When that end closes, that process is gone and no longer holds the
-# fetcher to its time, so the fetcher ends the group it leads: itself and whatever it has
-# started.
 def end_when_abandoned() -> None:
+    # The process that started the fetcher holds the other end of its standard input open
+    # and writes nothing to it. When that end closes, that process is gone and no longer
+    # holds the fetcher to its time, so the fetcher ends the group it leads: itself and
+    # whatever it has started.
     os.read(sys.stdin.fileno(), 1)
     os.killpg(os.getpid(), signal.SIGKILL)
 
 
-# What this module does when it is run as a program: it fetches the page it is given into
-# the folder it is given, and writes the report. An exception does not cross from one
-# process to another, so whatever ends the fetch is reported in the words it would give a
-# reader had it been raised in the starting process, and where it arose is written to
-# standard error, which is that process's own. A fetch that runs out of the memory it is
-# allowed has met a page that holds more than is fetched, and is reported as one.
 def main() -> None:
+    # What this module does when it is run as a program: it fetches the page it is given
+    # into the folder it is given, and writes the report. An exception does not cross from
+    # one process to another, so whatever ends the fetch is reported in the words it would
+    # give a reader had it been raised in the starting process, and where it arose is
+    # written to standard error, which is that process's own. A fetch that runs out of the
+    # memory it is allowed has met a page that holds more than is fetched, and is reported
+    # as one.
     resource.setrlimit(resource.RLIMIT_DATA, (FETCHER_MEMORY_BYTES, FETCHER_MEMORY_BYTES))
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
@@ -345,8 +346,8 @@ def main() -> None:
     (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
-# The fetch of a page as the fetcher reports it.
 def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
+    # The fetch of a page as the fetcher reports it.
     command = [*FETCHER, url, str(downloads)]
     began = time.monotonic()
     # The fetcher leads a session of its own, so that all it has started is ended with it,

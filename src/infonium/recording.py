@@ -183,13 +183,13 @@ class AudioTrack(BaseModel):
     media_type: MediaType
 
 
-# One of the programs at work on a recording, which is handed to it as its standard input.
-# Started in any other way, it would read whatever this process has for a standard input.
-# The program is ended when its user is done with it.
 @contextmanager
 def started_on(
     file: Path, command: list[str], stdout: int | IO[bytes], stderr: int | IO[bytes]
 ) -> Iterator[subprocess.Popen[bytes]]:
+    # One of the programs at work on a recording, which is handed to it as its standard
+    # input. Started in any other way, it would read whatever this process has for a
+    # standard input. The program is ended when its user is done with it.
     with (
         file.open("rb") as recording,
         subprocess.Popen(command, stdin=recording, stdout=stdout, stderr=stderr) as program,
@@ -200,16 +200,16 @@ def started_on(
             program.kill()
 
 
-# What one of the programs does when it is run on a recording, within a time.
 def run_on(file: Path, command: list[str], limit: float) -> subprocess.CompletedProcess[bytes]:
+    # What one of the programs does when it is run on a recording, within a time.
     with started_on(file, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as program:
         written, complaints = program.communicate(timeout=limit)
     return subprocess.CompletedProcess(command, program.returncode, written, complaints)
 
 
-# A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
-# without an answer for any other reason fails as a program.
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
+    # A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
+    # without an answer for any other reason fails as a program.
     done = run_on(file, [*FFPROBE, *REPORT_OF, entries], PROBE_LIMIT_SECONDS)
     if done.returncode == UNREADABLE_STATUS:
         closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
@@ -223,10 +223,10 @@ def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) ->
     return report.model_validate_json(done.stdout)
 
 
-# The title a recording carries in the tags of its file, and no words where it carries none.
-# An Ogg file carries its tags in the comments of its sound. In a file of another kind, a
-# title on the sound names its track, such as "English".
 def own_title(file: Path) -> str:
+    # The title a recording carries in the tags of its file, and no words where it carries
+    # none. An Ogg file carries its tags in the comments of its sound. In a file of another
+    # kind, a title on the sound names its track, such as "English".
     probe = probed(file, TITLE_ENTRIES, TagProbe)
     commented = probe.streams if probe.format.format_name == OGG else []
     titles = [
@@ -259,12 +259,12 @@ def packet_times(file: Path) -> Generator[int]:
             raise subprocess.CalledProcessError(status, command, stderr=complaints.read())
 
 
-# Whether a copy starts at zero and runs without a break: each of its packets stands within
-# one packet's length of where its number puts it after the first, a packet lasting as long
-# as the sound it holds. A track whose times jump ahead and later fall back does not run so,
-# though it lasts as long as its packets do; nor does one whose packets stand evenly, but
-# further apart than they last.
 def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
+    # Whether a copy starts at zero and runs without a break: each of its packets stands
+    # within one packet's length of where its number puts it after the first, a packet
+    # lasting as long as the sound it holds. A track whose times jump ahead and later fall
+    # back does not run so, though it lasts as long as its packets do; nor does one whose
+    # packets stand evenly, but further apart than they last.
     track = copy.streams[0]
     held = [packet.nb_samples for packet in copy.frames]
     # Where none of the first packets can be decoded, how long a packet lasts is not known.
