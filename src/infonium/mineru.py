@@ -3,7 +3,7 @@ import subprocess
 import unicodedata
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, Field
 
@@ -42,6 +42,26 @@ SILENT_ENGINE = "the PDF engine left with status {status} and wrote nothing"
 CONTROL_CHARACTER = "Cc"
 # The control characters that lay text out; a listing keeps them.
 LAYOUT_CHARACTERS = "\n\t"
+# The letters the engine reads from a picture when it is told no language, by code point:
+# Latin as far as the phonetic alphabet, the Greek capitals and small letters that formulas
+# use, without accents and without the final sigma, kana, and Chinese characters. They are
+# read from the dictionary of the recognition model the engine then uses, ppocrv6_dict.txt
+# of MinerU 3.4.2. It holds every one of these Latin and Greek letters, all kana but three
+# rare ones, and the three quarters of the Chinese characters that are in common use. It
+# holds no letter of Cyrillic, Hangul, Arabic, Hebrew, Devanagari or Thai, and but two of the
+# letters with tone marks that Vietnamese adds to Latin.
+PICTURE_LETTERS = (
+    range(0x0041, 0x02B0),
+    range(0x0391, 0x03AA),
+    range(0x03B1, 0x03C2),
+    range(0x03C3, 0x03CA),
+    range(0x3041, 0x3100),
+    range(0x4E00, 0xA000),
+)
+# The normal form in which a letter is the plain one, however it was set: a ligature is its
+# letters, and a letter of full width or in the style of a formula is the common one.
+PLAIN_FORM: Final = "NFKC"
+MODIFIER_LETTER = "Lm"
 
 
 class Backend(StrEnum):
@@ -327,16 +347,36 @@ class ParsedPages(BaseModel):
     pictures: frozenset[PageNumber]
 
 
+def readable_from_pictures(text: str) -> bool:
+    # Whether the engine reads from a picture every letter that a text holds. A letter counts
+    # as the plain one it is a form of. A modifier letter, such as an accent or a length mark
+    # set beside a letter, belongs to no script and counts for nothing.
+    letters = [
+        letter
+        for letter in unicodedata.normalize(PLAIN_FORM, text)
+        if letter.isalpha() and unicodedata.category(letter) != MODIFIER_LETTER
+    ]
+    return all(any(ord(letter) in block for block in PICTURE_LETTERS) for letter in letters)
+
+
 def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     # How the engine reads each page of a file. It reads a page from the file's text layer
     # when the file has one, but misreads the layer of a page that is turned. A page stored
-    # turned is read as a picture instead, which shows its characters upright. A page that is
-    # only shown turned stays with its layer: in a picture its characters lie, and the engine
+    # turned is read as a picture instead, which shows its characters upright, when the
+    # engine reads every letter of the page from a picture. In any other script the picture
+    # would lose the page's words, so the page stays with its layer, which holds them. So
+    # does a page that is only shown turned: in a picture its characters lie, and the engine
     # reads those worse still. Every page of a file without a text layer, or whose layer the
     # engine judges unfit, is read as a picture too. The engine runs once for each way of
     # reading, over the pages from the first to the last that are read that way.
     numbers = range(len(stored.pages))
-    layered = [number for number in numbers if stored.pages[number].shown != Shown.TURNED_UPRIGHT]
+    pictured = [
+        number
+        for number in numbers
+        if stored.pages[number].shown == Shown.TURNED_UPRIGHT
+        and readable_from_pictures(stored.pages[number].text)
+    ]
+    layered = [number for number in numbers if number not in pictured]
     from_layer = (
         [page for page in lettered_pages(to_parse, covering(layered)) if page.page_idx in layered]
         if layered and any(page.text for page in stored.pages)
