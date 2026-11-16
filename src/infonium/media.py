@@ -1,5 +1,6 @@
 import os
 import re
+import resource
 import signal
 import subprocess
 import sys
@@ -83,6 +84,15 @@ FETCH_REPORT_FILE = "fetch.json"
 # How long the process that started the fetcher lets pass between two looks at whether it
 # has ended.
 FETCHER_WATCH_SECONDS = 0.05
+# The most data the fetcher, and each program it starts, may hold in memory: yt-dlp reads a
+# page and the manifest of a streamed recording whole, however much a host sends for one.
+# Fetching from YouTube and TED the fetcher holds 70 MiB of data and yt-dlp's ffmpeg 46 MiB.
+# The bound is on data, not on address space, of which a program reserves many times what
+# it uses: 72 MiB for each thread it starts, and a JavaScript runtime, which yt-dlp starts
+# for YouTube where one is installed, a gigabyte.
+FETCHER_MEMORY_BYTES = 512 * 1024**2
+# What a reader is told of a page that holds more than a bound of its fetch allows.
+OVERSIZE_PAGE = "{page} holds more than infonium fetches"
 
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
@@ -224,7 +234,7 @@ def usable_captions(page: MediaPage) -> list[CaptionFile]:
 
 def hold_to_size(page_url: str, brought: int, limit: int) -> None:
     if brought > limit:
-        raise UnreadableSource(f"{page_url} holds more than infonium fetches")
+        raise UnreadableSource(OVERSIZE_PAGE.format(page=page_url))
 
 
 def downloader_for(url: str, downloads: Path) -> YoutubeDL:
@@ -315,15 +325,19 @@ def end_when_abandoned() -> None:
 # the folder it is given, and writes the report. An exception does not cross from one
 # process to another, so whatever ends the fetch is reported in the words it would give a
 # reader had it been raised in the starting process, and where it arose is written to
-# standard error, which is that process's own.
+# standard error, which is that process's own. A fetch that runs out of the memory it is
+# allowed has met a page that holds more than is fetched, and is reported as one.
 def main() -> None:
+    resource.setrlimit(resource.RLIMIT_DATA, (FETCHER_MEMORY_BYTES, FETCHER_MEMORY_BYTES))
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
     try:
         report: FetchReport = page_fetch(url, downloads)
     except Exception as ending:
         traceback.print_exc()
-        report = AbortedFetch(reason=str(ending) or type(ending).__name__)
+        worded = str(ending) or type(ending).__name__
+        outgrown = isinstance(ending, MemoryError)
+        report = AbortedFetch(reason=OVERSIZE_PAGE.format(page=url) if outgrown else worded)
     (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
