@@ -60,9 +60,9 @@ NAME_LENGTH_BYTES = 1
 PORT_BYTES = 2
 IPV4_BYTES = 4
 IPV6_BYTES = 16
-# The characters of a host's name as Chrome sends it: letters, digits, dots, hyphens, and
-# the underscores some names carry.
-HOST_NAME = re.compile(r"[A-Za-z0-9._-]+")
+# A host as Chrome names it: a name of letters, digits, dots, hyphens and the underscores
+# some names carry, or an IPv6 address, which it sends as a name too, in brackets or bare.
+HOST_NAME = re.compile(r"\[?(?P<host>[A-Za-z0-9._:-]+)\]?")
 # How long the browser is given to say where it wants to go, and a host to take a
 # connection; how many connections the proxy carries at once, which is more than Chrome
 # opens through one proxy (32); and how much of a connection is passed on at a time.
@@ -198,10 +198,12 @@ def asked_destination(client: socket.socket) -> tuple[str, int]:
         case AddressKind.IPV6:
             host = str(IPv6Address(received(client, IPV6_BYTES)))
         case AddressKind.NAME:
-            name = received(client, received(client, NAME_LENGTH_BYTES)[0])
-            if not HOST_NAME.fullmatch(name.decode("latin-1")):
+            name = HOST_NAME.fullmatch(
+                received(client, received(client, NAME_LENGTH_BYTES)[0]).decode("latin-1")
+            )
+            if name is None:
                 raise MalformedRequest(SocksReply.GENERAL_FAILURE)
-            host = name.decode("ascii")
+            host = name["host"]
         case _:
             raise MalformedRequest(SocksReply.ADDRESS_KIND_NOT_SUPPORTED)
     return host, int.from_bytes(received(client, PORT_BYTES))

@@ -382,13 +382,18 @@ class PageRendering:
         return taken.address
 
 
-def end_when_abandoned() -> None:
+def end_when_abandoned(work: Path) -> None:
     # The process that started the renderer holds the other end of its standard input open
-    # and writes nothing to it. When that end closes, that process is gone, so the renderer
-    # ends all it started, and itself.
+    # and writes nothing to it. When that end closes, that process is gone and removes
+    # nothing, so the renderer ends all it started, removes the folders of the rendering,
+    # and ends itself, whatever of this fails.
     os.read(sys.stdin.fileno(), 1)
-    lineage.end_own_descendants()
-    os._exit(ABANDONED_STATUS)
+    try:
+        lineage.end_own_descendants()
+        shutil.rmtree(work)
+        shutil.rmtree(os.environ[TEMPORARY_FOLDER_VARIABLE])
+    finally:
+        os._exit(ABANDONED_STATUS)
 
 
 def main() -> None:
@@ -402,7 +407,7 @@ def main() -> None:
     url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
     lineage.become_reaper()
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
-    Thread(target=end_when_abandoned, daemon=True).start()
+    Thread(target=end_when_abandoned, args=(work,), daemon=True).start()
     proxy = PublicProxy()
     proxy.serve_in_background()
     rendering = PageRendering(proxy, program)
