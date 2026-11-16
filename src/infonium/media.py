@@ -75,7 +75,12 @@ SILENCE_LIMIT_SECONDS = 20
 REQUEST_RETRIES = 3
 MEDIA_FETCH_LIMIT_SECONDS = 3600.0
 RECORDING_LIMIT_BYTES = 2 * 1024**3
-CAPTION_LIMIT_BYTES = 16 * 1024**2
+# A caption track is bounded by its bytes. A recording of the longest length that is fetched
+# has, in YouTube's automatic captions as YouTube writes them, a track of 4.9 MB, and the
+# bound is about twice that. A track of a real layout within the bound is read in about two
+# thirds of the fetcher's memory or less. A track made of very many very short parts can
+# still need more memory than the fetcher has, and the fetch then ends without a report.
+CAPTION_LIMIT_BYTES = 10 * 1024**2
 DOWNLOADED_BYTES = "downloaded_bytes"
 
 # yt-dlp waits on a host for the bytes it has asked for, however slowly they come, so no
