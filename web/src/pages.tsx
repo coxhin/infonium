@@ -16,7 +16,8 @@ GlobalWorkerOptions.workerSrc = workerSource;
 
 // Character maps, fonts and image decoders that the renderer fetches when a file needs them.
 const RENDERER_FILES = "/node_modules/pdfjs-dist";
-// The shape pages are laid out in until the file's first page has told its own.
+// The shape pages are laid out in until the file has told theirs, and the shape a page that
+// cannot be opened keeps.
 const LETTER_SHAPE = 792 / 612;
 // A page is drawn once it comes this close to what its scroller shows, as a part of that
 // height.
@@ -103,7 +104,6 @@ function Page({
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
-  const [ownShape, setOwnShape] = useState<number>();
   const [failure, setFailure] = useState<string>();
 
   useEffect(() => {
@@ -136,7 +136,6 @@ function Page({
       const viewport = page.getViewport({ scale: sharpness });
       canvas.current.width = viewport.width;
       canvas.current.height = viewport.height;
-      setOwnShape(natural.height / natural.width);
       drawing = page.render({ canvas: canvas.current, viewport });
       // Leaving the page cancels its drawing, which is no failure; anything else is one.
       drawing.promise.catch((error: unknown) => {
@@ -162,7 +161,7 @@ function Page({
   }, [near, file, number]);
 
   return (
-    <div className="page" ref={frame} style={{ aspectRatio: `1 / ${ownShape ?? shape}` }}>
+    <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
       <canvas ref={canvas} />
       {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
       {boxes.map((box, index) => (
@@ -191,31 +190,37 @@ function Pages({
   inView: boolean;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
-  const [shape, setShape] = useState(LETTER_SHAPE);
+  const [shapes, setShapes] = useState<number[]>();
 
+  // Pages of one file may differ in shape, so the file is asked for the shape of every page,
+  // once. A page that cannot be opened keeps the shape assumed for it, and says why when it
+  // is drawn.
   useEffect(() => {
     let current = true;
-    // A first page that cannot be opened keeps the shape assumed for it, and says why when
-    // it is drawn.
-    void whileCurrent(
-      file.getPage(1),
-      () => current,
-      (page) => {
-        const natural = page.getViewport({ scale: 1 });
-        setShape(natural.height / natural.width);
-      },
-      () => undefined,
+    const asked = Array.from({ length: file.numPages }, (_, number) =>
+      file.getPage(number + 1).then(
+        (page) => {
+          const natural = page.getViewport({ scale: 1 });
+          return natural.height / natural.width;
+        },
+        () => LETTER_SHAPE,
+      ),
     );
+    void whileCurrent(Promise.all(asked), () => current, setShapes, () => undefined);
     return () => {
       current = false;
     };
   }, [file]);
 
-  // Turns to the first of the boxes that were pointed at; one pointed at while the pages
-  // were out of view is turned to when they come back.
+  // Turns to the first of the boxes that were pointed at, once the pages have their shapes: a
+  // page that took its shape afterwards would move the box out of where it was turned to.
+  // One pointed at before the shapes were known, or while the pages were out of view, is
+  // turned to when the shapes come or the pages come back.
   useEffect(() => {
-    viewer.current?.querySelector(`.${BOX_CLASS}`)?.scrollIntoView({ block: "center" });
-  }, [pointed, inView]);
+    if (shapes !== undefined) {
+      viewer.current?.querySelector(`.${BOX_CLASS}`)?.scrollIntoView({ block: "center" });
+    }
+  }, [pointed, inView, shapes]);
 
   return (
     <div className="pages" ref={viewer}>
@@ -224,7 +229,7 @@ function Pages({
           key={number}
           file={file}
           number={number}
-          shape={shape}
+          shape={shapes?.[number] ?? LETTER_SHAPE}
           boxes={pointed.filter((place) => place.page === number)}
         />
       ))}
