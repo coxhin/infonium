@@ -40,18 +40,21 @@ DEFAULT_PORTS = {"http": 80, "https": 443}
 # How long a server is given to answer for the page, how long the page is then given to load
 # and after that to fall quiet, and how long what its scripts still do after that is waited
 # for, in milliseconds. A page that answers is taken as it stands when it has not loaded or
-# not fallen quiet in its time. Rendered in the survey of 30 sites, the slowest page that
-# was taken loaded and fell quiet in 15.8 s.
+# not fallen quiet in its time. In a survey of 30 sites the slowest page that was taken
+# was taken 26.5 s after its browser started.
 ANSWER_LIMIT_MS = 30_000
 LOAD_LIMIT_MS = 20_000
 QUIET_LIMIT_MS = 8_000
 SETTLING_MS = 1_500
 # How Chrome names a request it broke off because the network of the machine changed, and
-# how many times a page is rendered when that keeps happening.
+# how many times a page is rendered when that keeps happening. On a machine where containers
+# came and went every few seconds, 2 of 35 renderings of one page, and one page of 30 others,
+# met a change three times running.
 NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED"
-RENDERING_ATTEMPTS = 3
+RENDERING_ATTEMPTS = 5
 # The longest a rendering may take in all, from the start of the browser to the kept file:
-# the waits above, the start of the browser, and the page's own work while it is read.
+# the waits above, the start of the browser, and the page's own work while it is read. A
+# page Chrome broke off twice was taken after 30.3 s.
 RENDERING_LIMIT_SECONDS = 90.0
 # The most a rendered page may hold. The extractor reads no page that is longer than this
 # (trafilatura's MAX_FILE_SIZE); the largest page of the survey held 1.4 MB.
