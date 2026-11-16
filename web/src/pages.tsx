@@ -193,8 +193,7 @@ function Pages({
   const [shapes, setShapes] = useState<number[]>();
 
   // Pages of one file may differ in shape, so the file is asked for the shape of every page,
-  // once. A page that cannot be opened keeps the shape assumed for it, and says why when it
-  // is drawn.
+  // once. A page that cannot be opened says why when it is drawn.
   useEffect(() => {
     let current = true;
     const asked = Array.from({ length: file.numPages }, (_, number) =>
