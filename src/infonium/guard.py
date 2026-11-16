@@ -1,6 +1,5 @@
-import re
 from collections.abc import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import trafilatura
 from pydantic import BaseModel
@@ -17,12 +16,20 @@ GUARD_HEADERS = ("x-amzn-waf-action", "bxpunish")
 # Words that the address of a guard's check holds, as the address of Tencent's check of WeChat
 # pages and that of Baidu's check do.
 CHECK_ADDRESS_WORDS = ("captcha",)
-# Titles that guards give their checks: PerimeterX's, Reddit's, Anubis's and Fastly's. A
-# title may join one to the site's name, with a separator between.
+WEB_SCHEMES = ("http://", "https://")
+# Whole titles that guards give their checks: PerimeterX's, Anubis's and Fastly's. A title is
+# matched whole, as a short page may begin its own title with the same words. Reddit's is that
+# site's own, and stays until a single site's checks are told apart by a reader of that site:
+# without it Reddit's check, rendered, holds more words than the empty plain page and is read
+# as the article.
 CHECK_TITLES = frozenset(
-    {"robot or human?", "prove your humanity", "making sure you're not a bot!", "client challenge"}
+    {
+        "robot or human?",
+        "making sure you're not a bot!",
+        "client challenge",
+        "reddit - prove your humanity",
+    }
 )
-TITLE_SEPARATOR = re.compile(r"\s+[-|]\s+")
 TITLE_PATH = "//head/title"
 # Elements that only a guard's check holds: Anubis's challenge and PerimeterX's.
 CHECK_ELEMENTS = "//*[@id='anubis_challenge' or @id='px-captcha']"
@@ -48,18 +55,24 @@ def address_part(address: str) -> str:
     return f"{parts.netloc}{parts.path}".casefold()
 
 
+def leads_on(address: str) -> bool:
+    # Whether the query of an address carries another address, the one a check sends the
+    # reader on to once it is passed.
+    return any(value.startswith(WEB_SCHEMES) for _, value in parse_qsl(urlsplit(address).query))
+
+
 def names_check(asked: str, served: str) -> bool:
-    # An address that leads to a check names it where the address asked for does not, so a
-    # page about checks that is asked for by its own address is not taken for one.
-    return any(
+    # A check that a site puts in the way names itself in its address where the address asked
+    # for does not, and carries in its query an address to go on to. A word in an article's
+    # slug is no sign: a link to an article about captchas may lead to such a slug.
+    return leads_on(served) and any(
         word in address_part(served) and word not in address_part(asked)
         for word in CHECK_ADDRESS_WORDS
     )
 
 
 def has_check_title(title: str) -> bool:
-    parts = TITLE_SEPARATOR.split(WORD_GAP.join(title.split()))
-    return any(part.casefold() in CHECK_TITLES for part in parts)
+    return WORD_GAP.join(title.split()).casefold() in CHECK_TITLES
 
 
 def is_check_page(page: ServedPage) -> bool:
