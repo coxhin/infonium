@@ -113,10 +113,11 @@ class Flow(BaseModel):
     places: list[Place]
 
 
-class FileFacts(BaseModel):
-    # What the whole file tells about the reading of any one line of it: the words it shows
-    # whole, the pages the engine read as pictures, the pages the file shows turned, and the
-    # words that the text layer of each page holds, none for a page read as a picture.
+class Findings(BaseModel):
+    # What the reading of a whole file finds that the reading of any one line of it needs:
+    # the words the file shows whole, the pages the engine read as pictures, the pages the
+    # file shows turned, and the words that the text layer of each page holds, none for a
+    # page read as a picture.
     whole_words: frozenset[str]
     pictures: frozenset[PageNumber]
     turned: frozenset[PageNumber]
@@ -210,20 +211,20 @@ def placed(where: Area, start: int, end: int) -> PagePlace:
     )
 
 
-def shown_lines(page: ParsedPage, lines: list[Line], facts: FileFacts) -> list[ShownLine]:
+def shown_lines(page: ParsedPage, lines: list[Line], findings: Findings) -> list[ShownLine]:
     return [
         ShownLine(pieces=pieces, area=area(page, line.bbox))
         for line in lines
-        if (pieces := line_pieces(line, facts.spellings[page.page_idx]))
+        if (pieces := line_pieces(line, findings.spellings[page.page_idx]))
     ]
 
 
-def worded(lines: list[ShownLine], facts: FileFacts) -> bool:
+def worded(lines: list[ShownLine], findings: Findings) -> bool:
     # Of a script it cannot read, the engine reads from a picture only the marks every script
     # shares: punctuation and digits. So lines read from pictures hold words only when one of
     # them holds a letter.
     words = [word for line in lines for piece in line.pieces for word in piece.words]
-    from_pictures = all(line.area.page in facts.pictures for line in lines)
+    from_pictures = all(line.area.page in findings.pictures for line in lines)
     lettered = any(character.isalpha() for word in words for character in word)
     return bool(words) and (lettered or not from_pictures)
 
@@ -271,16 +272,16 @@ def line_end(last: str, first: str, known: frozenset[str]) -> str:
     return f"{last}{SOFT_HYPHEN}"
 
 
-def flow(lines: list[ShownLine], facts: FileFacts) -> Flow:
+def flow(lines: list[ShownLine], findings: Findings) -> Flow:
     # Every word is a part of its own, so that the words of one line are joined by the same
     # rule as two lines are.
-    spoken = [[word for piece in line.pieces for word in piece.words] for line in lines]
-    known = facts.whole_words
-    ends = [line_end(words[-1], after[0], known) for words, after in pairwise(spoken)]
-    said = joined(
+    line_words = [[word for piece in line.pieces for word in piece.words] for line in lines]
+    known = findings.whole_words
+    ends = [line_end(words[-1], after[0], known) for words, after in pairwise(line_words)]
+    together = joined(
         [
             word
-            for words, end in zip(spoken, [*ends, spoken[-1][-1]], strict=True)
+            for words, end in zip(line_words, [*ends, line_words[-1][-1]], strict=True)
             for word in [*words[:-1], end]
         ]
     )
@@ -291,34 +292,34 @@ def flow(lines: list[ShownLine], facts: FileFacts) -> Flow:
         first_word = next_word
         # In the text layer of a page that its file shows turned, the engine misjudges what
         # is set above or below the line, so there its word for it is not taken.
-        believed = line.area.page not in facts.turned
+        believed = line.area.page not in findings.turned
         for piece in line.pieces:
             last_word = next_word + len(piece.words) - 1
-            start, end = said.ranges[next_word].start, said.ranges[last_word].end
+            start, end = together.ranges[next_word].start, together.ranges[last_word].end
             marks.extend(
                 StyleMark(style=style, start=start, end=end) for style in piece.styles if believed
             )
             next_word = last_word + 1
         places.append(
-            placed(line.area, said.ranges[first_word].start, said.ranges[next_word - 1].end)
+            placed(line.area, together.ranges[first_word].start, together.ranges[next_word - 1].end)
         )
-    return Flow(text=said.text, marks=marks, places=places)
+    return Flow(text=together.text, marks=marks, places=places)
 
 
-def paragraphs(lines: list[ShownLine], facts: FileFacts) -> list[Block]:
-    if not worded(lines, facts):
+def paragraphs(lines: list[ShownLine], findings: Findings) -> list[Block]:
+    if not worded(lines, findings):
         return []
-    written = flow(lines, facts)
-    return [Paragraph(text=written.text, marks=written.marks, places=written.places)]
+    flowing = flow(lines, findings)
+    return [Paragraph(text=flowing.text, marks=flowing.marks, places=flowing.places)]
 
 
-def headings(region: Title, page: ParsedPage, facts: FileFacts) -> list[Block]:
-    lines = shown_lines(page, region.lines, facts)
-    if not worded(lines, facts):
+def headings(region: Title, page: ParsedPage, findings: Findings) -> list[Block]:
+    lines = shown_lines(page, region.lines, findings)
+    if not worded(lines, findings):
         return []
-    written = flow(lines, facts)
+    flowing = flow(lines, findings)
     return [
-        Heading(level=region.level, text=written.text, marks=written.marks, places=written.places)
+        Heading(level=region.level, text=flowing.text, marks=flowing.marks, places=flowing.places)
     ]
 
 
@@ -331,23 +332,23 @@ def bullet_position(earlier: list[Block]) -> int:
 
 
 def items_or_paragraphs(
-    lines: list[ShownLine], facts: FileFacts, earlier: list[Block]
+    lines: list[ShownLine], findings: Findings, earlier: list[Block]
 ) -> list[Block]:
     # The engine does not tell lists apart: it finds each item as a text of its own. A text
     # that starts with a bullet or a number is taken as an item, and loses that marker, which
     # a reader draws again from what the item says of itself.
-    if not worded(lines, facts):
+    if not worded(lines, findings):
         return []
     first = lines[0].pieces[0]
     marker = ITEM_MARKER.match(first.words[0])
     if not marker:
-        return paragraphs(lines, facts)
+        return paragraphs(lines, findings)
     rest = [*words_of(first.words[0][marker.end() :]), *first.words[1:]]
     pieces = [*([Piece(words=rest, styles=first.styles)] if rest else []), *lines[0].pieces[1:]]
     item = [*([ShownLine(pieces=pieces, area=lines[0].area)] if pieces else []), *lines[1:]]
     if not item:
         return []
-    written = flow(item, facts)
+    flowing = flow(item, findings)
     number = marker.group("number")
     return [
         ListItem(
@@ -355,9 +356,9 @@ def items_or_paragraphs(
             depth=0,
             position=int(number) if number else bullet_position(earlier),
             continues=False,
-            text=written.text,
-            marks=written.marks,
-            places=written.places,
+            text=flowing.text,
+            marks=flowing.marks,
+            places=flowing.places,
         )
     ]
 
@@ -406,10 +407,10 @@ def listings(body: CodeBody, page: ParsedPage) -> list[Block]:
     return [Code(text=LINE_BREAK.join(code for _, code in lines), places=places)] if lines else []
 
 
-def member_blocks(member: Member, page: ParsedPage, facts: FileFacts) -> list[Block]:
+def member_blocks(member: Member, page: ParsedPage, findings: Findings) -> list[Block]:
     match member:
         case OwnParagraph():
-            return paragraphs(shown_lines(page, member.lines, facts), facts)
+            return paragraphs(shown_lines(page, member.lines, findings), findings)
         case TableBody():
             return tables(member, page)
         case CodeBody():
@@ -419,7 +420,7 @@ def member_blocks(member: Member, page: ParsedPage, facts: FileFacts) -> list[Bl
 
 
 def text_chains(
-    pages: list[ParsedPage], facts: FileFacts
+    pages: list[ParsedPage], findings: Findings
 ) -> dict[tuple[int, int], list[ShownLine]]:
     # Every text that starts a paragraph, with its own lines and those of the texts that go
     # on from it, each line on the page where it was found.
@@ -431,7 +432,7 @@ def text_chains(
             if isinstance(region, Text):
                 if region.index not in continued:
                     starts.append((page.page_idx, region.index))
-                lines = shown_lines(page, region.lines, facts)
+                lines = shown_lines(page, region.lines, findings)
                 chains.setdefault(starts[-1], []).extend(lines)
     return chains
 
@@ -443,7 +444,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
         else layer_words(stored.pages[page.page_idx].text)
         for page in parsed.pages
     }
-    facts = FileFacts(
+    findings = Findings(
         whole_words=whole_words(parsed.pages, spellings),
         pictures=parsed.pictures,
         turned=frozenset(
@@ -451,7 +452,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
         ),
         spellings=spellings,
     )
-    chains = text_chains(parsed.pages, facts)
+    chains = text_chains(parsed.pages, findings)
     blocks: list[Block] = []
     for page in parsed.pages:
         continued = page.continued()
@@ -459,23 +460,23 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
             match region:
                 case Text() if region.index not in continued:
                     lines = chains[page.page_idx, region.index]
-                    blocks.extend(items_or_paragraphs(lines, facts, blocks))
+                    blocks.extend(items_or_paragraphs(lines, findings, blocks))
                 case Title():
-                    blocks.extend(headings(region, page, facts))
+                    blocks.extend(headings(region, page, findings))
                 case OwnParagraph():
-                    blocks.extend(paragraphs(shown_lines(page, region.lines, facts), facts))
+                    blocks.extend(paragraphs(shown_lines(page, region.lines, findings), findings))
                 case Group():
                     blocks.extend(
                         block
                         for member in region.blocks
-                        for block in member_blocks(member, page, facts)
+                        for block in member_blocks(member, page, findings)
                     )
         # A footnote says something the document says, so it is kept: as a paragraph after
         # the text of its page, where it interrupts no sentence of that page. The engine does
         # not always list the notes of a page in the order they stand, so they go top down.
         notes = [margin for margin in page.discarded_blocks if isinstance(margin, OwnParagraph)]
         for note in sorted(notes, key=lambda note: area(page, note.bbox).top):
-            blocks.extend(paragraphs(shown_lines(page, note.lines, facts), facts))
+            blocks.extend(paragraphs(shown_lines(page, note.lines, findings), findings))
     return blocks
 
 
@@ -509,13 +510,15 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     if not blocks:
         # Lines that the engine found on pages it read as pictures, and that make no block,
         # are writing in a script it cannot read.
-        written = any(
+        unknown_script = any(
             word_lines(region)
             for page in parsed.pages
             if page.page_idx in parsed.pictures
             for region in page.preproc_blocks
         )
         raise UnreadableSource(
-            f"the script of {name} could not be read" if written else f"no readable text in {name}"
+            f"the script of {name} could not be read"
+            if unknown_script
+            else f"no readable text in {name}"
         )
     return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)

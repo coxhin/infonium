@@ -300,20 +300,22 @@ def engine_results(to_parse: FileToParse, backend: Backend, method: Method, page
     which = [ENGINE_FIRST_PAGE, str(pages.start), ENGINE_LAST_PAGE, str(pages.stop - 1)]
     told = {ENGINE_PATIENCE: str(patience), TEMPORARY_FILES: str(to_parse.folder)}
     log = to_parse.folder / ENGINE_LOG.format(backend=backend)
-    with log.open("wb") as written:
+    with log.open("wb") as logged:
         ended = subprocess.run(
             [to_parse.engine, *where, *how, *which],
             check=False,
-            stdout=written,
+            stdout=logged,
             stderr=subprocess.STDOUT,
             env={**os.environ, **told},
             timeout=patience + SPARE_SECONDS,
         )
     results = [*found.rglob(ENGINE_RESULTS)]
     if ended.returncode or not results:
-        said = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
-        worded = [line for line in said if line]
-        raise UnparsedFile(worded[-1] if worded else SILENT_ENGINE.format(status=ended.returncode))
+        stripped = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
+        log_lines = [line for line in stripped if line]
+        raise UnparsedFile(
+            log_lines[-1] if log_lines else SILENT_ENGINE.format(status=ended.returncode)
+        )
     [kept] = results
     return kept.read_bytes()
 
