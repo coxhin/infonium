@@ -247,14 +247,15 @@ def program_name(command: object) -> str:
 def failure_reason(error: BaseException) -> str:
     # An error's own text is the reason, but for the kinds that leave the reason out of it.
     # A program that fails says why in what it writes, not in the error that reports how it
-    # exited, so its last written line is the reason; a program that ended without a word,
-    # or ran out of time, is named with how it ended. A request that a service refused does
-    # not carry what the service answered, and one that no service answered does not say
-    # which service that was, so the reason gives the address and the answer. A reason is
-    # kept as one line of a length a person reads: a service may answer with a whole page.
+    # exited, so its last written line is the reason, without the mark ffmpeg begins a line
+    # with; a program that ended without a word, or ran out of time, is named with how it
+    # ended. A request that a service refused does not carry what the service answered, and
+    # one that no service answered does not say which service that was, so the reason gives
+    # the address and the answer. A reason is kept as one line of a length a person reads: a
+    # service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
-        said = written.strip().splitlines()[-1]
+        said = recording.COMPLAINER.sub("", written.strip().splitlines()[-1])
     elif isinstance(error, subprocess.CalledProcessError):
         said = f"{program_name(error.cmd)} ended with status {error.returncode}"
     elif isinstance(error, subprocess.TimeoutExpired):
