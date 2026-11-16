@@ -75,8 +75,10 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # check from inside it holds a fetch to a time. A media page is therefore fetched by a
 # process of its own, this module run as a program, which is ended at the limit together
 # with whatever it has started. It leaves the recording in the folder it is given, and a
-# report of the fetch beside it.
-FETCHER = [sys.executable, "-m", __spec__.name]
+# report of the fetch beside it. Python is told the module by the name in its specification:
+# run as a program, the module calls itself "__main__".
+RUN_AS_MODULE = "-m"
+FETCHER = [sys.executable, RUN_AS_MODULE, __spec__.name]
 FETCH_REPORT_FILE = "fetch.json"
 # How long the process that started the fetcher lets pass between two looks at whether it
 # has ended.

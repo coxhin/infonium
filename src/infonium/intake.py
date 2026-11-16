@@ -2,6 +2,7 @@ import logging
 import mimetypes
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -232,9 +233,15 @@ def asked_address(error: openai.APIError) -> str:
 
 def program_name(command: object) -> str:
     # The program a command line starts, by its name alone: the rest of the line names files
-    # of the work folder, which say nothing to a person.
-    first = command[0] if isinstance(command, list) else command
-    return PurePosixPath(str(first)).name
+    # of the work folder, which say nothing to a person. Where Python runs a module, the
+    # module is the program.
+    match command:
+        case [sys.executable, media.RUN_AS_MODULE, module, *_]:
+            return str(module)
+        case [first, *_]:
+            return PurePosixPath(str(first)).name
+        case _:
+            return PurePosixPath(str(command)).name
 
 
 def failure_reason(error: BaseException) -> str:
