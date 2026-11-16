@@ -75,7 +75,7 @@ class Segment(BaseModel):
     avg_logprob: LogProbability
 
     @model_validator(mode="after")
-    def ends_after_it_starts(self) -> Self:
+    def ends_no_earlier_than_it_starts(self) -> Self:
         if self.end < self.start:
             raise ValueError("a segment ends no earlier than it starts")
         return self
