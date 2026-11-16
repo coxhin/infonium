@@ -2,6 +2,7 @@ import re
 import string
 from enum import StrEnum
 from itertools import takewhile
+from urllib.parse import urldefrag, urljoin
 
 import trafilatura
 from lxml import etree, html
@@ -137,7 +138,6 @@ HEADING_LINKS = etree.XPath(
     f"//{LINK}[ancestor::*[{IS_HEADING}] or preceding-sibling::*[1][{IS_HEADING}]"
     f" or following-sibling::*[1][{IS_HEADING}]]"
 )
-FRAGMENT_MARK = "#"
 REFERENCE_ADDRESS = "href"
 # The tags trafilatura turns into styles; its public interface does not name them, and the
 # rule below must cover the same tags as the fault it works around.
@@ -189,18 +189,27 @@ def drop_screen_reader_text(page: html.HtmlElement) -> None:
                 element.drop_tree()
 
 
-def drop_heading_marks(page: html.HtmlElement) -> None:
-    # The mark that links to a heading, such as # or ¶, is not text; an empty one beside a
-    # heading also makes the extractor take the heading for a block of links and drop it.
+def drop_heading_marks(page: html.HtmlElement, url: str) -> None:
+    # The mark that links to a heading's own place, such as # or ¶, is not text; an empty one
+    # beside a heading also makes the extractor take the heading for a block of links and drop
+    # it. A mark leads to a place in this page that is the heading, holds it, or is named
+    # nowhere in the page, and holds no letter, digit or picture; a footnote mark leads
+    # elsewhere and is kept.
     for link in HEADING_LINKS(page):
-        if FRAGMENT_MARK in link.get(REFERENCE_ADDRESS, "") and not has_words(link):
+        address, place_name = urldefrag(urljoin(url, link.get(REFERENCE_ADDRESS, "")))
+        within_page = bool(place_name) and address == urldefrag(url).url
+        place = page.get_element_by_id(place_name, None) if within_page else None
+        around = {link, *link.iterancestors(), link.getprevious(), link.getnext()}
+        own_place = within_page and (place is None or place in around)
+        bare = not has_words(link) and link.find(f".//{PICTURE}") is None
+        if own_place and bare:
             link.drop_tree()
 
 
-def drop_unread_parts(page: html.HtmlElement) -> None:
+def drop_unread_parts(page: html.HtmlElement, url: str) -> None:
     drop_hidden_parts(page)
     drop_screen_reader_text(page)
-    drop_heading_marks(page)
+    drop_heading_marks(page, url)
     for link in CELL_LINKS_WITH_PICTURES(page):
         # A picture in a link that has words of its own repeats them, as a logo beside a name
         # does, and its description would be read into the cell beside the words.
@@ -236,7 +245,7 @@ def prepared_page(content: bytes, url: str) -> html.HtmlElement:
     page = trafilatura.load_html(content)
     if page is None:
         raise UnreadableSource(f"no readable text at {url}")
-    drop_unread_parts(page)
+    drop_unread_parts(page, url)
     keep_spaces_after_bare_elements(page)
     for quotation in list(page.iter(INLINE_QUOTATION)):
         quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
