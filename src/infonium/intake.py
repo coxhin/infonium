@@ -8,7 +8,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.message import Message
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from threading import Lock
@@ -25,11 +25,9 @@ from infonium.document import (
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
     MEDIA_TYPE_PATTERN,
-    NO_TEXT,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     PDF_MEDIA_TYPE,
-    TURNED_AWAY,
     WORD_GAP,
     Extracted,
     MediaType,
@@ -37,6 +35,7 @@ from infonium.document import (
     document_of,
     error_status,
     error_text,
+    turned_away,
     word_count,
 )
 from infonium.library import (
@@ -80,7 +79,7 @@ OPENING_BYTES = 1024
 REASON_LIMIT_CHARACTERS = 500
 CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
 # How a rendering fails: the browser is missing, it cannot open the page or meets a limit,
-# or the page answers with an error status.
+# or the page answers with an error status or a check.
 RENDERING_FAILURES = (OSError, BrowserError, UnreadableSource)
 
 logger = logging.getLogger(__name__)
@@ -103,12 +102,15 @@ class Engines(BaseModel):
 
 
 class PageCopy(BaseModel):
-    # A copy of a page read from an address: its file, the address that served it, what the
-    # extractor found in it, and how many words that is.
+    # A copy of a page read from an address: its file, the address that served it, and what
+    # the extractor found in it.
     file: Path
     served: str
     text: webpage.PageText
-    words: int
+
+    @cached_property
+    def words(self) -> int:
+        return word_count(self.text.blocks)
 
 
 class Readout(BaseModel):
@@ -156,10 +158,10 @@ def fetched(url: str, directory: Path) -> Source:
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": USER_AGENT},
     ) as response:
-        if response.is_error:
+        if not response.is_success:
             raise UnreadableSource(error_status(str(response.url), response.status_code))
         if guard.is_guarded(response.headers):
-            raise UnreadableSource(TURNED_AWAY.format(site=response.url.host))
+            raise UnreadableSource(turned_away(url))
         with file.open("wb") as kept:
             # Bytes are taken as they arrive, so that a source that only trickles is still
             # held to the time a fetch may take.
@@ -214,21 +216,18 @@ def page_copy(asked: str, file: Path, served: str) -> PageCopy:
     # A page read from an address is first asked whether it is the page asked for or one that
     # a guard answered with in its place.
     content = file.read_bytes()
-    text = webpage.page_text(content, served)
-    words = word_count(text.blocks)
+    copy = PageCopy(file=file, served=served, text=webpage.page_text(content, served))
     if guard.is_check_page(
-        guard.ServedPage(asked=asked, served=served, content=content, words=words)
+        guard.ServedPage(asked=asked, served=served, content=content, words=copy.words)
     ):
-        raise UnreadableSource(TURNED_AWAY.format(site=urlsplit(served).hostname))
-    return PageCopy(file=file, served=served, text=text, words=words)
+        raise UnreadableSource(turned_away(asked))
+    return copy
 
 
 def copy_readout(copy: PageCopy) -> Readout:
-    if not copy.text.blocks:
-        raise UnreadableSource(NO_TEXT.format(source=copy.served))
     return Readout(
         extractor=webpage.EXTRACTOR,
-        extracted=Extracted(title=copy.text.title, blocks=copy.text.blocks),
+        extracted=webpage.extracted_text(copy.text, copy.served),
         file=copy.file,
         media_type=HTML_MEDIA_TYPE,
     )
@@ -236,18 +235,21 @@ def copy_readout(copy: PageCopy) -> Readout:
 
 def page_readout(url: str, source: Source, directory: Path, engines: Engines) -> Readout:
     # A page that holds little text may be one that its scripts build, and is rendered in a
-    # browser and read again. What a rendering reads is kept when it holds more.
+    # browser and read again. What a rendering reads is kept when it holds more. A check that
+    # the site answers the browser with is a rendering that failed, as an error status is.
     plain = page_copy(url, source.file, source.reference)
     if plain.words >= LITTLE_TEXT_WORDS:
         return copy_readout(plain)
     try:
         rendered = browser.rendered_page(source.reference, directory, engines.browser)
+        built = page_copy(url, rendered.file, rendered.address)
     except RENDERING_FAILURES:
         if not plain.text.blocks:
             raise
-        logger.warning("rendering %s failed; its plain reading is kept", url, exc_info=True)
+        logger.warning(
+            "rendering %s failed; its plain reading is kept", source.reference, exc_info=True
+        )
         return copy_readout(plain)
-    built = page_copy(source.reference, rendered.file, rendered.address)
     return copy_readout(built if built.words > plain.words else plain)
 
 

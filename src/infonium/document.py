@@ -2,6 +2,7 @@ from enum import StrEnum
 from hashlib import sha256
 from http import HTTPStatus
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
@@ -277,6 +278,12 @@ def error_status(source: str, status: int) -> str:
     # A status is told by its number and the name HTTP gives it; a number that HTTP leaves
     # unnamed, such as one a single service made up, is told by itself.
     return ERROR_STATUS.format(source=source, status=STATUS_NAMES.get(status, str(status)))
+
+
+def turned_away(asked: str) -> str:
+    # The site is named by the host of the address a person asked for, the one they know,
+    # whichever host served the check.
+    return TURNED_AWAY.format(site=urlsplit(asked).hostname)
 
 
 def error_text(error: BaseException) -> str:

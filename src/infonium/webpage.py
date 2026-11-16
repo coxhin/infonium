@@ -374,8 +374,11 @@ def page_text(content: bytes, url: str) -> PageText:
     return PageText(title=extraction.title or url, blocks=blocks)
 
 
-def extract_page(content: bytes, url: str) -> Extracted:
-    text = page_text(content, url)
+def extracted_text(text: PageText, url: str) -> Extracted:
     if not text.blocks:
         raise UnreadableSource(NO_TEXT.format(source=url))
     return Extracted(title=text.title, blocks=text.blocks)
+
+
+def extract_page(content: bytes, url: str) -> Extracted:
+    return extracted_text(page_text(content, url), url)
