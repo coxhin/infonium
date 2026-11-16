@@ -18,7 +18,7 @@ import httpx
 import openai
 from pydantic import BaseModel
 
-from infonium import captions, media, pdf, speech, webpage
+from infonium import captions, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     MEDIA_TYPE_PATTERN,
@@ -153,7 +153,7 @@ def uploaded(file: Path, name: str) -> Source:
 
 
 def spoken_readout(
-    extractor: str, title: str, audio: media.AudioTrack, transcript: Transcript
+    extractor: str, title: str, audio: recording.AudioTrack, transcript: Transcript
 ) -> Readout:
     blocks = transcript_blocks(transcript)
     if not blocks:
@@ -167,7 +167,7 @@ def spoken_readout(
 
 
 def recognised_readout(
-    title: str, audio: media.AudioTrack, recogniser: speech.Recogniser
+    title: str, audio: recording.AudioTrack, recogniser: speech.Recogniser
 ) -> Readout:
     # The words are recognised in the sound that is kept, so that their times are times of
     # the recording a reader plays.
@@ -218,8 +218,8 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
         )
     if source.media_type.startswith(RECORDING_MEDIA_TYPES):
         return recognised_readout(
-            media.own_title(source.file) or title_of(source.reference),
-            media.audio_track(source.file, directory),
+            recording.own_title(source.file) or title_of(source.reference),
+            recording.audio_track(source.file, directory),
             engines.recogniser,
         )
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
