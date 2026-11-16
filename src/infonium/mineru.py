@@ -2,6 +2,7 @@ import os
 import signal
 import subprocess
 import unicodedata
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final, Literal
@@ -9,7 +10,7 @@ from typing import Annotated, Final, Literal
 from pydantic import AfterValidator, BaseModel, Field
 
 from infonium.document import HeadingLevel, PageNumber
-from infonium.pdfium import Shown, StoredFile
+from infonium.pdfium import Shown, StoredFile, file_of_pages
 
 # MinerU parses a PDF, run as a program of its own. Its hybrid backend reads tables,
 # formulas and listings best, and gives a box for every line as long as it takes the words
@@ -23,6 +24,9 @@ ENGINE_FIRST_PAGE = "-s"
 ENGINE_LAST_PAGE = "-e"
 ENGINE_RESULTS = "*_middle.json"
 ENGINE_LOG = "{backend}.log"
+# The file in the folder that holds the pages read as pictures, when they are not all the
+# pages of the PDF.
+PICTURED_PAGES = "pictured.pdf"
 # The version of the engine this module is written to, and the key under which the results
 # name the version that wrote them. Two things the module relies on are this version's own
 # and show in no shape of the results: it numbers the pages of a run from 0 wherever the run
@@ -341,20 +345,25 @@ def engine_results(to_parse: FileToParse, backend: Backend, method: Method, page
     return kept.read_bytes()
 
 
-def numbered_in_file(parsed: list[ParsedPage], pages: range) -> list[ParsedPage]:
-    # The engine counts the pages of a run from the first page of its range.
-    return [
-        page.model_copy(update={PAGE_NUMBER_KEY: pages.start + page.page_idx}) for page in parsed
-    ]
+def numbered_in_file(parsed: list[ParsedPage], numbers: Sequence[PageNumber]) -> list[ParsedPage]:
+    # The engine counts the pages of a run from 0, whichever pages of the file they are.
+    return [page.model_copy(update={PAGE_NUMBER_KEY: numbers[page.page_idx]}) for page in parsed]
 
 
-def covering(numbers: list[PageNumber]) -> range:
-    return range(min(numbers), max(numbers) + 1)
-
-
-def picture_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
-    results = engine_results(to_parse, Backend.PIPELINE, Method.OCR, pages)
-    return numbered_in_file(ParsedFile.model_validate_json(results).pdf_info, pages)
+def picture_pages(to_parse: FileToParse, numbers: list[PageNumber]) -> list[ParsedPage]:
+    # These pages of a file as the engine reads them from pictures. A run reads every page
+    # from its first to its last, so the engine is given a file that holds no page it need
+    # not read: the pages asked for, each after the page that comes before it in the file,
+    # from which the engine tells whether the first text of a page goes on from there.
+    given = sorted({*numbers, *(number - 1 for number in numbers if number)})
+    to_read = FileToParse(
+        file=file_of_pages(to_parse.file, given, to_parse.folder / PICTURED_PAGES),
+        engine=to_parse.engine,
+        folder=to_parse.folder,
+    )
+    results = engine_results(to_read, Backend.PIPELINE, Method.OCR, range(len(given)))
+    parsed = numbered_in_file(ParsedFile.model_validate_json(results).pdf_info, given)
+    return [page for page in parsed if page.page_idx in numbers]
 
 
 def lettered_pages(to_parse: FileToParse, pages: range) -> list[ParsedPage]:
@@ -393,7 +402,8 @@ def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     # does a page that is only shown turned: in a picture its characters lie, and the engine
     # reads those worse still. Every page of a file without a text layer, or whose layer the
     # engine judges unfit, is read as a picture too. The engine runs once for each way of
-    # reading, over the pages from the first to the last that are read that way.
+    # reading: over the layer's pages from the first of them to the last, which keeps every
+    # page beside its neighbours, and over the pictures' pages in a file of their own.
     numbers = range(len(stored.pages))
     pictured = [
         number
@@ -403,17 +413,17 @@ def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     ]
     layered = [number for number in numbers if number not in pictured]
     from_layer = (
-        [page for page in lettered_pages(to_parse, covering(layered)) if page.page_idx in layered]
+        [
+            page
+            for page in lettered_pages(to_parse, range(min(layered), max(layered) + 1))
+            if page.page_idx in layered
+        ]
         if layered and any(page.text for page in stored.pages)
         else []
     )
     taken = {page.page_idx for page in from_layer}
     rest = [number for number in numbers if number not in taken]
-    from_pictures = (
-        [page for page in picture_pages(to_parse, covering(rest)) if page.page_idx in rest]
-        if rest
-        else []
-    )
+    from_pictures = picture_pages(to_parse, rest) if rest else []
     return ParsedPages(
         pages=sorted([*from_layer, *from_pictures], key=lambda page: page.page_idx),
         pictures=frozenset(rest),

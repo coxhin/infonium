@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from pypdfium2 import PdfDocument, raw
 
-from infonium.document import WORD_GAP
+from infonium.document import WORD_GAP, PageNumber
 
 # PDFium may be used by one thread at a time, whatever the file. infonium calls it in this
 # module and nowhere else, and every function here holds this turn for as long as it has a
@@ -56,6 +56,18 @@ def shown_as(rotation: int, angles: list[float]) -> Shown:
             return Shown.TURNED_UPRIGHT
         case _:
             return Shown.TURNED_AWAY
+
+
+def file_of_pages(file: Path, numbers: list[PageNumber], copy: Path) -> Path:
+    # A file that holds these pages of a file, in this order, and no other page: the file
+    # itself when they are all its pages, and otherwise a copy, written where it is asked for.
+    with PDFIUM_TURN, PdfDocument(file) as document:
+        if numbers == [*range(len(document))]:
+            return file
+        with PdfDocument.new() as copied:
+            copied.import_pages(document, numbers)
+            copied.save(copy)
+        return copy
 
 
 def stored_file(file: Path) -> StoredFile:
