@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
 from yt_dlp.utils import YoutubeDLError
@@ -76,10 +76,7 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # with whatever it has started. It leaves the recording in the folder it is given, and a
 # report of the fetch beside it.
 FETCHER = [sys.executable, "-m", __spec__.name]
-FETCH_REPORT = "fetch.json"
-# The fetcher ends with this status, the usual one for an input that cannot be read, when
-# the page is refused; its report then says why.
-REFUSED_STATUS = os.EX_NOINPUT
+FETCH_REPORT_FILE = "fetch.json"
 
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
@@ -133,17 +130,29 @@ class Download(BaseModel):
     requested_downloads: list[DownloadedFile]
 
 
-class PageFetch(BaseModel):
+class FetchReportKind(StrEnum):
+    COMPLETED = "completed"
+    ABORTED = "aborted"
+
+
+class CompletedFetch(Tagged):
     # What the fetch of a media page brings: the title of its recording, the parts of its
     # captions, and the file its recording was downloaded to.
+    kind: Literal[FetchReportKind.COMPLETED] = FetchReportKind.COMPLETED
     title: str
     parts: list[CaptionPart]
     recording: Path
 
 
-class Refusal(BaseModel):
+class AbortedFetch(Tagged):
     # Why a media page was not fetched, in the words of whoever refused it.
+    kind: Literal[FetchReportKind.ABORTED] = FetchReportKind.ABORTED
     reason: str
+
+
+# What the fetcher tells the process that started it of how the fetch ended.
+FetchReport = Annotated[CompletedFetch | AbortedFetch, Field(discriminator="kind")]
+FETCH_REPORT = TypeAdapter(FetchReport)
 
 
 class FetchedMediaKind(StrEnum):
@@ -262,7 +271,7 @@ def fetched_parts(downloader: YoutubeDL, page_url: str, file: CaptionFile) -> li
     return vtt_parts(content, counts_from=0.0)
 
 
-def page_fetch(url: str, downloads: Path) -> PageFetch:
+def page_fetch(url: str, downloads: Path) -> CompletedFetch:
     with downloader_for(url, downloads) as downloader:
         found = downloader.extract_info(url, download=False)
         if ENTRIES in found:
@@ -281,7 +290,7 @@ def page_fetch(url: str, downloads: Path) -> PageFetch:
             for part in fetched_parts(downloader, url, file)
         ]
         download = Download.model_validate(downloader.process_ie_result(found, download=True))
-    return PageFetch(
+    return CompletedFetch(
         title=page.title, parts=parts, recording=download.requested_downloads[0].filepath
     )
 
@@ -298,22 +307,19 @@ def end_when_abandoned() -> None:
 # What this module does when it is run as a program: it fetches the page it is given into
 # the folder it is given, and writes the report. An exception does not cross from one
 # process to another, so a page that is refused, by its site or by a rule of this module, is
-# reported with the reason, and the status says that it was.
-def main() -> int:
+# reported with the reason.
+def main() -> None:
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
-    report = downloads / FETCH_REPORT
     try:
-        fetch = page_fetch(url, downloads)
-    except (UnreadableSource, YoutubeDLError) as refusal:
-        report.write_bytes(Refusal(reason=str(refusal)).model_dump_json().encode())
-        return REFUSED_STATUS
-    report.write_bytes(fetch.model_dump_json().encode())
-    return os.EX_OK
+        report: FetchReport = page_fetch(url, downloads)
+    except (UnreadableSource, YoutubeDLError) as ending:
+        report = AbortedFetch(reason=str(ending))
+    (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
 # The fetch of a page as the fetcher reports it.
-def reported_fetch(url: str, downloads: Path) -> PageFetch:
+def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
     command = [*FETCHER, url, str(downloads)]
     # The fetcher leads a session of its own, so that all it has started is ended with it,
     # and its standard input is a pipe that closes when this process is gone.
@@ -323,11 +329,14 @@ def reported_fetch(url: str, downloads: Path) -> PageFetch:
         finally:
             if fetcher.returncode is None:
                 os.killpg(fetcher.pid, signal.SIGKILL)
-    report = downloads / FETCH_REPORT
-    if fetcher.returncode == REFUSED_STATUS:
-        raise UnreadableSource(Refusal.model_validate_json(report.read_bytes()).reason)
-    subprocess.CompletedProcess(command, fetcher.returncode).check_returncode()
-    return PageFetch.model_validate_json(report.read_bytes())
+    # A fetcher that ends with a failing status has written no report.
+    if fetcher.returncode != 0:
+        raise subprocess.CalledProcessError(fetcher.returncode, command)
+    match FETCH_REPORT.validate_json((downloads / FETCH_REPORT_FILE).read_bytes()):
+        case CompletedFetch() as fetch:
+            return fetch
+        case AbortedFetch(reason=reason):
+            raise UnreadableSource(reason)
 
 
 def fetch_media(url: str, directory: Path) -> FetchedMedia:
@@ -343,4 +352,4 @@ def fetch_media(url: str, directory: Path) -> FetchedMedia:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
