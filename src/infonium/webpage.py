@@ -295,7 +295,11 @@ class Run:
             for child in element:
                 self.write_inline(child)
                 self.write(child.tail)
-            self.spans.append((element, start, len(self.text)))
+            end = len(self.text)
+            # A mark covers words; a space before or after them belongs to the sentence.
+            start += self.text[start:end].startswith(" ")
+            end -= self.text[start:end].endswith(" ")
+            self.spans.append((element, start, end))
 
     def trimmed_text(self) -> str:
         return self.text.rstrip()
