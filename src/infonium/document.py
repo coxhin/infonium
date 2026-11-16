@@ -266,13 +266,10 @@ OVERSIZE_SOURCE = "{source} holds more than infonium fetches"
 OVERDUE_SOURCE = "{source} takes longer than infonium waits"
 # What a reader is told of a page in which the extractor finds no text, of an address that
 # answered with an error status, and of a site that answered with a check in place of the
-# page asked for. A page saved from a browser that passed the check can be uploaded instead.
+# page asked for.
 NO_TEXT = "no readable text at {source}"
 ERROR_STATUS = "{source} answered {status}"
-TURNED_AWAY = (
-    "{site} turned infonium away with a check in place of the page; "
-    "open the page in a browser, save it, and upload the file instead"
-)
+TURNED_AWAY = "{site} turned infonium away with a check in place of the page"
 STATUS_NAMES = {status.value: f"{status.value} {status.phrase}" for status in HTTPStatus}
 
 
