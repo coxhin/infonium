@@ -1,7 +1,7 @@
 import re
 import subprocess
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import closing, contextmanager
 from fractions import Fraction
 from pathlib import Path
@@ -58,6 +58,8 @@ REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-s
 # the name the file stands under, which the line it writes of the file begins with. It ends
 # with the same status where it cannot start the decoder of one of the file's streams; then
 # it says nothing and leaves its report as it began it, without the mark that closes one.
+# Where it refuses one of its options, it ends with that status too, without a report, and
+# says why.
 UNREADABLE_STATUS = 1
 REPORT_CLOSE = b"}"
 UNDECODED_STREAM = "ffmpeg cannot decode one of its streams"
@@ -200,6 +202,27 @@ def started_on(
             program.kill()
 
 
+@contextmanager
+def output_of(
+    file: Path, command: list[str], raised_for: Callable[[int, bytes], Exception]
+) -> Iterator[IO[bytes]]:
+    # What one of the programs writes when it is run on a recording, read as it comes. Its
+    # complaints go to a file: a pipe that nobody reads would fill and stall it. Once its
+    # reader is through the output, a program that failed raises what the caller makes of
+    # its status and its complaints.
+    with (
+        TemporaryFile() as complaints,
+        started_on(file, command, stdout=subprocess.PIPE, stderr=complaints) as program,
+    ):
+        if program.stdout is None:
+            raise RuntimeError(f"{command[0]} was started without a pipe for its output")
+        yield program.stdout
+        status = program.wait()
+        if status != 0:
+            complaints.seek(0)
+            raise raised_for(status, complaints.read())
+
+
 def run_on(file: Path, command: list[str], limit: float) -> subprocess.CompletedProcess[bytes]:
     # What one of the programs does when it is run on a recording, within a time.
     with started_on(file, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as program:
@@ -211,8 +234,8 @@ def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) ->
     # A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
     # without an answer for any other reason fails as a program.
     done = run_on(file, [*FFPROBE, *REPORT_OF, entries], PROBE_LIMIT_SECONDS)
-    if done.returncode == UNREADABLE_STATUS:
-        closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
+    closed = done.stdout.rstrip().endswith(REPORT_CLOSE)
+    if done.returncode == UNREADABLE_STATUS and (closed or not done.stderr):
         failure = (
             FailedProbe.model_validate_json(done.stdout).error.string
             if closed
@@ -242,21 +265,17 @@ def packet_times(file: Path) -> Generator[int]:
     # done with it, and held to its limit as each time comes.
     command = [*FFPROBE, *PACKET_TIMES]
     began = time.monotonic()
-    # ffprobe's complaints go to a file: a pipe that nobody reads would fill and stall it.
-    with (
-        TemporaryFile() as complaints,
-        started_on(file, command, stdout=subprocess.PIPE, stderr=complaints) as listing,
-    ):
-        if listing.stdout is None:
-            raise RuntimeError("ffprobe was started without a pipe for the times")
-        for line in listing.stdout:
+    with output_of(
+        file,
+        command,
+        lambda status, complaints: subprocess.CalledProcessError(
+            status, command, stderr=complaints
+        ),
+    ) as listing:
+        for line in listing:
             if time.monotonic() - began > PROBE_LIMIT_SECONDS:
                 raise subprocess.TimeoutExpired(command, PROBE_LIMIT_SECONDS)
             yield int(line)
-        status = listing.wait()
-        if status != 0:
-            complaints.seek(0)
-            raise subprocess.CalledProcessError(status, command, stderr=complaints.read())
 
 
 def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
@@ -278,11 +297,6 @@ def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
     )
 
 
-def decodes_whole(file: Path) -> bool:
-    decoding = run_on(file, [*FFMPEG, *DECODED_FOR_NOTHING], CONVERSION_LIMIT_SECONDS)
-    return decoding.returncode == 0
-
-
 def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
@@ -301,8 +315,10 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
         copy = probed(audio.file, COPY_ENTRIES, CopyProbe)
         with closing(packet_times(audio.file)) as times:
             plain = has_plain_timeline(copy, times)
-        if plain and decodes_whole(audio.file):
-            return audio
+        if plain:
+            decoding = run_on(audio.file, [*FFMPEG, *DECODED_FOR_NOTHING], CONVERSION_LIMIT_SECONDS)
+            if decoding.returncode == 0:
+                return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
 

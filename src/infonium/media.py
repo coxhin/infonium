@@ -26,7 +26,13 @@ from infonium.captions import (
     json3_parts,
     vtt_parts,
 )
-from infonium.document import Tagged, UnreadableSource
+from infonium.document import (
+    OVERDUE_SOURCE,
+    OVERSIZE_SOURCE,
+    Tagged,
+    UnreadableSource,
+    error_text,
+)
 from infonium.recording import AAC, AudioTrack, audio_length, audio_track
 from infonium.transcript import Transcript
 
@@ -69,7 +75,12 @@ SILENCE_LIMIT_SECONDS = 20
 REQUEST_RETRIES = 3
 MEDIA_FETCH_LIMIT_SECONDS = 3600.0
 RECORDING_LIMIT_BYTES = 2 * 1024**3
-CAPTION_LIMIT_BYTES = 16 * 1024**2
+# A caption track is bounded by its bytes. A recording of the longest length that is fetched
+# has, in YouTube's automatic captions as YouTube writes them, a track of 4.9 MB, and the
+# bound is about twice that. A track of a real layout within the bound is read in about two
+# thirds of the fetcher's memory or less. A track made of very many very short parts can
+# still need more memory than the fetcher has, and the fetch then ends without a report.
+CAPTION_LIMIT_BYTES = 10 * 1024**2
 DOWNLOADED_BYTES = "downloaded_bytes"
 
 # yt-dlp waits on a host for the bytes it has asked for, however slowly they come, so no
@@ -95,8 +106,9 @@ FETCHER_WATCH_SECONDS = 0.05
 # it uses: 72 MiB for each thread it starts, and a JavaScript runtime, which yt-dlp starts
 # for YouTube where one is installed, a gigabyte.
 FETCHER_MEMORY_BYTES = 512 * 1024**2
-# What a reader is told of a page that holds more than a bound of its fetch allows.
-OVERSIZE_PAGE = "{page} holds more than infonium fetches"
+# Memory the fetcher holds from its start and gives up first when a fetch fails: one that
+# ran out of memory in small pieces that it still holds has none left to report the ending.
+REPORT_ROOM_BYTES = 4 * 1024**2
 
 # A format without a picture before any with one, of those with a picture the smallest, and
 # sound in the coding that is kept before other sound: only the sound is kept.
@@ -238,7 +250,7 @@ def usable_captions(page: MediaPage) -> list[CaptionFile]:
 
 def hold_to_size(page_url: str, brought: int, limit: int) -> None:
     if brought > limit:
-        raise UnreadableSource(OVERSIZE_PAGE.format(page=page_url))
+        raise UnreadableSource(OVERSIZE_SOURCE.format(source=page_url))
 
 
 def downloader_for(url: str, downloads: Path) -> YoutubeDL:
@@ -332,17 +344,27 @@ def main() -> None:
     # give a reader had it been raised in the starting process, and where it arose is
     # written to standard error, which is that process's own. A fetch that runs out of the
     # memory it is allowed has met a page that holds more than is fetched, and is reported
-    # as one.
-    resource.setrlimit(resource.RLIMIT_DATA, (FETCHER_MEMORY_BYTES, FETCHER_MEMORY_BYTES))
+    # as one. A limit already in force that is lower than the fetcher's own cannot be
+    # raised, and is kept.
+    hard_limit = resource.getrlimit(resource.RLIMIT_DATA)[1]
+    data_limit = (
+        FETCHER_MEMORY_BYTES
+        if hard_limit == resource.RLIM_INFINITY
+        else min(FETCHER_MEMORY_BYTES, hard_limit)
+    )
+    resource.setrlimit(resource.RLIMIT_DATA, (data_limit, data_limit))
+    room = bytearray(REPORT_ROOM_BYTES)
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
     try:
         report: FetchReport = page_fetch(url, downloads)
     except Exception as ending:
+        del room
         traceback.print_exc()
-        worded = str(ending) or type(ending).__name__
         outgrown = isinstance(ending, MemoryError)
-        report = AbortedFetch(reason=OVERSIZE_PAGE.format(page=url) if outgrown else worded)
+        report = AbortedFetch(
+            reason=OVERSIZE_SOURCE.format(source=url) if outgrown else error_text(ending)
+        )
     (downloads / FETCH_REPORT_FILE).write_bytes(FETCH_REPORT.dump_json(report))
 
 
@@ -356,7 +378,7 @@ def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
         try:
             while fetcher.poll() is None:
                 if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
-                    raise UnreadableSource(f"{url} takes longer than infonium waits")
+                    raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
                 time.sleep(FETCHER_WATCH_SECONDS)
         finally:
             if fetcher.returncode is None:
