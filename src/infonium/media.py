@@ -18,10 +18,10 @@ from yt_dlp.utils import YoutubeDLError
 from infonium.captions import (
     CaptionFormat,
     CaptionPart,
-    caption_segments,
+    caption_fragments,
     caption_utterances,
+    fragmented_parts,
     json3_parts,
-    segmented_parts,
     vtt_parts,
 )
 from infonium.document import Tagged, UnreadableSource
@@ -58,7 +58,7 @@ SECONDS_PER_HOUR = 3600
 LONGEST_RECORDING_SECONDS = 4.0 * SECONDS_PER_HOUR
 # The longest silence a site is allowed, how often a request that broke off is made again,
 # the longest the fetch may take in all, and the most the recording and its caption track,
-# in one file or in the segments of a stream, may hold. The slowest site seen sent 120 KiB a
+# in one file or in the fragments of a stream, may hold. The slowest site seen sent 120 KiB a
 # second, at which three hours of sound take twenty-four minutes. The sizes count what a
 # compressed answer holds once it is inflated: yt-dlp reads with requests, which inflates an
 # answer piece by piece as it is read, where the standard library's handler inflates it
@@ -103,8 +103,8 @@ LANGUAGE_NARROWING = re.compile(r"[-_]")
 # The caption channels of a broadcast (CC1, DTVCC1 and the like) were typed while it was on
 # air, and run seconds behind the words.
 BROADCAST_CHANNEL = re.compile(r"\b(?:DTV)?CC\d+$")
-# A caption track cut into the segments of a stream.
-SEGMENTED = "m3u8_native"
+# A caption track cut into the fragments of a stream.
+FRAGMENTED = "m3u8_native"
 
 
 class CaptionFile(BaseModel):
@@ -250,13 +250,13 @@ def caption_content(downloader: YoutubeDL, page_url: str, url: str) -> bytes:
 
 def fetched_parts(downloader: YoutubeDL, page_url: str, file: CaptionFile) -> list[CaptionPart]:
     content = caption_content(downloader, page_url, file.url)
-    if file.protocol == SEGMENTED:
-        segments = caption_segments(content.decode(), file.url)
+    if file.protocol == FRAGMENTED:
+        fragments = caption_fragments(content.decode(), file.url)
         contents: list[bytes] = []
-        for segment in segments:
-            contents.append(caption_content(downloader, page_url, segment.url))
+        for fragment in fragments:
+            contents.append(caption_content(downloader, page_url, fragment.url))
             hold_to_size(page_url, sum(map(len, contents)), CAPTION_LIMIT_BYTES)
-        return segmented_parts(segments, contents)
+        return fragmented_parts(fragments, contents)
     if file.ext == CaptionFormat.JSON3:
         return json3_parts(content)
     return vtt_parts(content, counts_from=0.0)

@@ -7,7 +7,7 @@ from math import inf
 from urllib.parse import urljoin
 
 import m3u8
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from yt_dlp.webvtt import CueBlock, parse_fragment
 
 from infonium.document import LINE_BREAK, Seconds, has_words
@@ -17,6 +17,8 @@ EXTRACTOR = "captions/1"
 MILLISECONDS_PER_SECOND = 1000
 # yt-dlp gives the times of a cue in ticks of the clock of MPEG streams.
 TICKS_PER_SECOND = 90_000
+# The m3u8 library's name for the fragments of a playlist.
+M3U8_FRAGMENTS = "segments"
 
 MARKUP = re.compile(r"<[^<>]*>")
 # What captions put in square brackets apart from a word, and without a number, is a sound
@@ -63,20 +65,20 @@ class CaptionPart(BaseModel):
     ends_line: bool
 
 
-class CaptionSegment(BaseModel):
-    # One segment of a caption track and the moment of the recording its times count from.
+class CaptionFragment(BaseModel):
+    # One fragment of a caption track and the moment of the recording its times count from.
     url: str
     counts_from: Seconds
 
 
-class PlaylistSegment(BaseModel):
+class PlaylistFragment(BaseModel):
     uri: str
     duration: Seconds
     discontinuity: bool
 
 
 class MediaPlaylist(BaseModel):
-    segments: list[PlaylistSegment]
+    fragments: list[PlaylistFragment] = Field(validation_alias=M3U8_FRAGMENTS)
 
 
 class VttCue(BaseModel):
@@ -132,26 +134,26 @@ def vtt_parts(content: bytes, counts_from: float) -> list[CaptionPart]:
     ]
 
 
-# The cues of a segment count their times from the start of the stretch of the stream the
-# segment lies in: a stream spliced from several recordings, such as an introduction before
+# The cues of a fragment count their times from the start of the stretch of the stream the
+# fragment lies in: a stream spliced from several recordings, such as an introduction before
 # a talk, starts counting anew at each splice.
-def caption_segments(playlist: str, url: str) -> list[CaptionSegment]:
-    segments: list[CaptionSegment] = []
+def caption_fragments(playlist: str, url: str) -> list[CaptionFragment]:
+    fragments: list[CaptionFragment] = []
     elapsed = 0.0
     counts_from = 0.0
-    for segment in MediaPlaylist.model_validate(m3u8.loads(playlist).data).segments:
-        counts_from = elapsed if segment.discontinuity else counts_from
-        segments.append(CaptionSegment(url=urljoin(url, segment.uri), counts_from=counts_from))
-        elapsed += segment.duration
-    return segments
+    for listed in MediaPlaylist.model_validate(m3u8.loads(playlist).data).fragments:
+        counts_from = elapsed if listed.discontinuity else counts_from
+        fragments.append(CaptionFragment(url=urljoin(url, listed.uri), counts_from=counts_from))
+        elapsed += listed.duration
+    return fragments
 
 
-# A cue shown across the cut between two segments is in both of them, and is read once.
-def segmented_parts(segments: list[CaptionSegment], contents: list[bytes]) -> list[CaptionPart]:
+# A cue shown across the cut between two fragments is in both of them, and is read once.
+def fragmented_parts(fragments: list[CaptionFragment], contents: list[bytes]) -> list[CaptionPart]:
     cut = [
         part
-        for segment, content in zip(segments, contents, strict=True)
-        for part in vtt_parts(content, segment.counts_from)
+        for fragment, content in zip(fragments, contents, strict=True)
+        for part in vtt_parts(content, fragment.counts_from)
     ]
     return list(dict.fromkeys(cut))
 
