@@ -27,6 +27,9 @@ ENGINE_LOG = "{backend}.log"
 # backend judged the text layer unfit and read the pages as pictures.
 BACKEND_KEY = "_backend"
 READ_AS_PICTURES_KEY = "_ocr_enable"
+# The key under which the results give a page's number, and the name of the field that holds
+# it in a parsed page.
+PAGE_NUMBER_KEY = "page_idx"
 # The variable from which the engine takes how long it waits for its own results. When that
 # time has passed it gives up, stops its server and leaves, whoever started it.
 ENGINE_PATIENCE = "MINERU_TASK_RESULT_TIMEOUT_SECONDS"
@@ -330,7 +333,9 @@ def engine_results(to_parse: FileToParse, backend: Backend, method: Method, page
 
 def numbered_in_file(parsed: list[ParsedPage], pages: range) -> list[ParsedPage]:
     # The engine counts the pages of a run from the first page of its range.
-    return [page.model_copy(update={"page_idx": pages.start + page.page_idx}) for page in parsed]
+    return [
+        page.model_copy(update={PAGE_NUMBER_KEY: pages.start + page.page_idx}) for page in parsed
+    ]
 
 
 def covering(numbers: list[PageNumber]) -> range:
