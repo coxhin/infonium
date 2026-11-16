@@ -78,6 +78,10 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # with whatever it has started. It leaves the recording in the folder it is given, and a
 # report of the fetch beside it. Python is told the module by the name in its specification:
 # run as a program, the module calls itself "__main__".
+# The fetcher is given the address of the page and the folder. It is to be started as the
+# leader of a session of its own, with a pipe for its standard input that the process which
+# starts it holds open and writes nothing to: when the pipe closes, the fetcher ends the
+# group it leads. Started with a standard input that is at its end, it ends at once.
 RUN_AS_MODULE = "-m"
 FETCHER = [sys.executable, RUN_AS_MODULE, __spec__.name]
 FETCH_REPORT_FILE = "fetch.json"
