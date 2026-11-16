@@ -16,9 +16,9 @@ PDFIUM_IN_USE = threading.Lock()
 TITLE_ENTRY = "Title"
 # A file turns a page clockwise by quarters of a whole turn, and a character is taken to be
 # drawn at the quarter nearest to its angle.
-WHOLE_TURN = 4
-QUARTER = math.tau / WHOLE_TURN
-Quarters = Annotated[int, Field(ge=0, lt=WHOLE_TURN)]
+QUARTERS_IN_A_TURN = 4
+QUARTER_IN_RADIANS = math.tau / QUARTERS_IN_A_TURN
+Quarters = Annotated[int, Field(ge=0, lt=QUARTERS_IN_A_TURN)]
 # What turns the content of a page clockwise by one, two and three quarters. Whole numbers
 # leave a character that was drawn a quarter turn off standing at exactly no angle, which the
 # cosine of a quarter turn, worked out, does not.
@@ -56,7 +56,7 @@ def own_angles(layer: PdfTextPage) -> list[float]:
     ]
 
 
-def righting_quarters(rotation: int, angles: list[float]) -> int:
+def righting_quarters(rotation: Quarters, angles: list[float]) -> Quarters:
     # By how many quarters the stored content of a page must be turned for its characters to
     # stand upright, when its file shows the page turned by its rotation, in quarters, and
     # draws its characters at these angles. A page stored turned needs the file's own turn. A
@@ -64,12 +64,14 @@ def righting_quarters(rotation: int, angles: list[float]) -> int:
     # stored than once it is turned. Characters that stand neither way, as the labels along
     # the side of a figure do, tell nothing, and where none tells, the page is taken as its
     # file shows it.
-    standing = Counter((rotation + round(angle / QUARTER)) % WHOLE_TURN for angle in angles)
+    standing = Counter(
+        (rotation + round(angle / QUARTER_IN_RADIANS)) % QUARTERS_IN_A_TURN for angle in angles
+    )
     return 0 if standing[rotation] > standing[0] else rotation
 
 
 def upright_matrix(
-    righting: int, left: float, bottom: float, right: float, top: float
+    righting: Quarters, left: float, bottom: float, right: float, top: float
 ) -> tuple[float, float, float, float, float, float]:
     # The matrix that turns what lies between these edges of a page clockwise by one to three
     # quarters, and sets the lower left corner of what it has turned at the origin.
@@ -126,7 +128,7 @@ def upright_file(file: Path, copy: Path) -> UprightFile:
         return UprightFile(
             file=copy,
             turned=[
-                (rotation - righting) % WHOLE_TURN
+                (rotation - righting) % QUARTERS_IN_A_TURN
                 for rotation, righting in zip(rotations, rightings, strict=True)
             ],
         )
