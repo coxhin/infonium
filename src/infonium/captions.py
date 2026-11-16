@@ -160,21 +160,29 @@ def segmented_parts(segments: list[CaptionSegment], contents: list[bytes]) -> li
 # brackets, the marks of a change of speaker, and the names of speakers before a colon.
 def spoken_parts(parts: list[CaptionPart]) -> list[CaptionPart]:
     unmarked = [SPEAKER_CHANGE.sub("", ANNOTATION.sub("", part.text)) for part in parts]
-    labelled = Counter(label[LABEL_NAME] for text in unmarked for label in LABEL.finditer(text))
+    # A speaker is named where a line of the captions begins: in the first part, and in a
+    # part after one that ends a line. Where each word is a part of its own, a word before
+    # a colon in the middle of a line is one that was spoken.
+    begins_line = [number == 0 or parts[number - 1].ends_line for number in range(len(parts))]
+    labelled = Counter(
+        label[LABEL_NAME]
+        for text, begins in zip(unmarked, begins_line, strict=True)
+        if begins
+        for label in LABEL.finditer(text)
+    )
     speakers = {
         name
         for name, count in labelled.items()
         if count >= SPEAKER_LINES and name == name.upper() and name != name.lower()
     }
+    spoken = [
+        LABEL.sub(lambda label: "" if label[LABEL_NAME] in speakers else label.group(), text)
+        if begins
+        else text
+        for text, begins in zip(unmarked, begins_line, strict=True)
+    ]
     return [
-        part.model_copy(
-            update={
-                "text": LABEL.sub(
-                    lambda label: "" if label[LABEL_NAME] in speakers else label.group(), text
-                )
-            }
-        )
-        for part, text in zip(parts, unmarked, strict=True)
+        part.model_copy(update={"text": text}) for part, text in zip(parts, spoken, strict=True)
     ]
 
 
