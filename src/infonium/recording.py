@@ -1,4 +1,5 @@
 import subprocess
+from itertools import pairwise
 from pathlib import Path
 from statistics import median_low
 from typing import Annotated
@@ -28,31 +29,32 @@ RECORDING_FORMATS = f"aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,{OGG},
 HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RECORDING_FORMATS]
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
-# ffprobe answers from the index of a file, and reads no further into the sound than its
-# first sixteen packets: enough to tell how long a packet usually lasts, whatever the first
-# one does.
-FIRST_PACKETS = "%+#16"
-# ffprobe ends with this status when it cannot read a file. Its report then says why without
-# the name the file stands under, which the line it writes of the file begins with.
-UNREADABLE_STATUS = 1
+# ffprobe reading the first sound of the recording on its standard input; what it is asked
+# of that sound follows.
 FFPROBE = [
     "ffprobe",
     "-v",
     "error",
     *HELD_TO_RECORDINGS,
-    "-show_error",
-    "-of",
-    "json",
+    "-i",
+    STANDARD_INPUT,
     "-select_streams",
     FIRST_SOUND,
-    "-read_intervals",
-    FIRST_PACKETS,
-    "-show_entries",
 ]
+# A report is answered from the index of a file, and from no more of the sound than its
+# first packet, which shows that the sound holds any.
+FIRST_PACKET = "%+#1"
+REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKET, "-show_entries"]
+# ffprobe ends with this status when it cannot read a file. Its report then says why without
+# the name the file stands under, which the line it writes of the file begins with.
+UNREADABLE_STATUS = 1
 SOUND_ENTRIES = "stream=codec_name:packet=size"
-TIMELINE_ENTRIES = "stream=start_pts,duration_ts,nb_frames:packet=duration"
+START_ENTRIES = "stream=start_pts"
 LENGTH_ENTRIES = "format=duration"
 TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
+# The time of every packet of the sound, in ticks of its track's clock, one to a line. Read
+# as a report into models, the packets of four hours hold half a gigabyte.
+PACKET_TIMES = ["-of", "default=nokey=1:noprint_wrappers=1", "-show_entries", "packet=dts"]
 # ffmpeg reading the first sound of the recording on its standard input; what it is to make
 # of that sound follows.
 FFMPEG = [
@@ -79,10 +81,6 @@ SOUND_ALONE = [*FFMPEG, "-y", "-map_chapters", "-1", "-movflags", "+faststart"]
 ON_THE_TIMELINE = "aresample=async=1:first_pts=0"
 COPIED = ["-c:a", "copy"]
 CODED_ANEW = ["-c:a", AAC, "-af", ON_THE_TIMELINE]
-# A coder leaves out of the length of a track what it trims from its ends, at most this
-# many packets. A track that is shorter than its packets by more has packets that overlap,
-# and one that is longer by a packet has packets that stand apart.
-TRIMMED_PACKETS = 5
 # The longest ffprobe may take over a file, and ffmpeg over writing its sound.
 PROBE_LIMIT_SECONDS = 60.0
 CONVERSION_LIMIT_SECONDS = 1800.0
@@ -112,21 +110,13 @@ class SoundProbe(BaseModel):
 
 
 class CopiedStream(BaseModel):
-    # What the index of a copy tells of its track, in ticks of the track's clock: when it
-    # starts, how long it runs, and how many packets it holds.
+    # When the track of a copy starts, in ticks of the track's clock.
     start_pts: int
-    duration_ts: int
-    nb_frames: int
-
-
-class CopiedPacket(BaseModel):
-    duration: int
 
 
 class CopyProbe(BaseModel):
-    # A copy of sound holds that sound: one track, and packets in it.
+    # A copy of sound holds that sound: one track.
     streams: Annotated[list[CopiedStream], Field(min_length=1)]
-    packets: Annotated[list[CopiedPacket], Field(min_length=1)]
 
 
 class FileLength(BaseModel):
@@ -168,7 +158,7 @@ def run_on(file: Path, command: list[str], limit: float) -> subprocess.Completed
 # A file that ffprobe cannot read is a source with nothing to read. An ffprobe that ends
 # without an answer for any other reason fails as a program.
 def probed[Report: BaseModel](file: Path, entries: str, report: type[Report]) -> Report:
-    done = run_on(file, [*FFPROBE, entries, STANDARD_INPUT], PROBE_LIMIT_SECONDS)
+    done = run_on(file, [*FFPROBE, *REPORT_OF, entries], PROBE_LIMIT_SECONDS)
     if done.returncode == UNREADABLE_STATUS:
         failure = FailedProbe.model_validate_json(done.stdout).error.string
         raise UnreadableSource(f"infonium cannot read the recording: {failure}")
@@ -189,12 +179,20 @@ def own_title(file: Path) -> str:
     return WORD_GAP.join("".join(titles).split())
 
 
-# Whether a copy starts at zero and runs as long as its packets last.
-def has_plain_timeline(copy: CopyProbe) -> bool:
-    stream = copy.streams[0]
-    usual = median_low(packet.duration for packet in copy.packets)
-    longer = stream.duration_ts - stream.nb_frames * usual
-    return stream.start_pts == 0 and -TRIMMED_PACKETS * usual <= longer <= usual
+def packet_times(file: Path) -> list[int]:
+    listed = run_on(file, [*FFPROBE, *PACKET_TIMES], PROBE_LIMIT_SECONDS)
+    listed.check_returncode()
+    return [int(time) for time in listed.stdout.split()]
+
+
+# Whether a track runs without a break: each of its packets stands within one usual step of
+# where its number puts it after the first. A track whose times jump ahead and later fall
+# back does not, though it lasts as long as its packets do.
+def is_unbroken(times: list[int]) -> bool:
+    steps = [later - earlier for earlier, later in pairwise(times)]
+    # A packet that stands alone has no step, and nothing to stand apart from.
+    usual = median_low(steps) if steps else 0
+    return all(abs(time - times[0] - number * usual) <= usual for number, time in enumerate(times))
 
 
 def audio_track(file: Path, directory: Path) -> AudioTrack:
@@ -206,7 +204,8 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     sound = f"{LOCAL_FILE}:{audio.file}"
     if probe.streams[0].codec_name == AAC:
         run_on(file, [*SOUND_ALONE, *COPIED, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
-        if has_plain_timeline(probed(audio.file, TIMELINE_ENTRIES, CopyProbe)):
+        copy = probed(audio.file, START_ENTRIES, CopyProbe).streams[0]
+        if copy.start_pts == 0 and is_unbroken(packet_times(audio.file)):
             return audio
     run_on(file, [*SOUND_ALONE, *CODED_ANEW, sound], CONVERSION_LIMIT_SECONDS).check_returncode()
     return audio
