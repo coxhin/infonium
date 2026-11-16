@@ -45,18 +45,16 @@ class StoredFile(BaseModel):
 def shown_as(rotation: int, angles: list[float]) -> Shown:
     # How a page is shown that its file turns clockwise by a rotation in degrees, and whose
     # characters are drawn at these angles, in radians and clockwise too. The page is stored
-    # turned when more of its characters stand upright once it is turned than stand any
-    # other way.
+    # turned when more of its characters stand upright once it is turned than stand upright
+    # as it is stored. Characters that stand neither way, as the labels along the side of a
+    # figure do, tell nothing, however many they are.
     if not rotation:
         return Shown.AS_STORED
-    standing = Counter(
-        round((math.radians(rotation) + angle) / QUARTER_TURN) % QUARTERS for angle in angles
-    )
-    match standing.most_common(1):
-        case [(0, _)]:
-            return Shown.TURNED_UPRIGHT
-        case _:
-            return Shown.TURNED_AWAY
+    turned_by = round(math.radians(rotation) / QUARTER_TURN)
+    standing = Counter((turned_by + round(angle / QUARTER_TURN)) % QUARTERS for angle in angles)
+    if standing[0] > standing[turned_by]:
+        return Shown.TURNED_UPRIGHT
+    return Shown.TURNED_AWAY
 
 
 def file_of_pages(file: Path, numbers: list[PageNumber], copy: Path) -> Path:
