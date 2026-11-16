@@ -1,7 +1,7 @@
 import re
 import string
 from enum import StrEnum
-from itertools import takewhile
+from itertools import chain, takewhile
 from urllib.parse import urldefrag, urljoin
 
 import trafilatura
@@ -139,8 +139,12 @@ LINK_AND_STYLE_ELEMENTS = (LINK, CODE_ELEMENT, *REND_TAG_MAPPING)
 CELL_LINKS_WITH_PICTURES = etree.XPath(f"//*[self::td or self::th]//{LINK}[.//{PICTURE}]")
 
 
+def holds_words(text: str) -> bool:
+    return any(character.isalnum() for character in text)
+
+
 def has_words(element: html.HtmlElement) -> bool:
-    return any(character.isalnum() for character in element.text_content())
+    return holds_words("".join(SHOWN_TEXT(element)))
 
 
 def text_size(element: html.HtmlElement) -> int:
@@ -173,9 +177,11 @@ def drop_screen_reader_text(page: html.HtmlElement) -> None:
         shown_again = any(name.endswith(SHOWN_AGAIN) for name in names)
         parent = element.getparent()
         if for_screen_readers and not shown_again and parent is not None:
-            own = "".join(SHOWN_TEXT(element))
-            beside = "".join(SHOWN_TEXT(parent)).replace(own, "", 1)
-            if any(character.isalnum() for character in beside):
+            texts_beside = chain((parent.text or "",), (child.tail or "" for child in parent))
+            words_beside = any(holds_words(text) for text in texts_beside) or any(
+                has_words(child) for child in parent if child is not element
+            )
+            if words_beside:
                 element.drop_tree()
 
 
@@ -287,8 +293,10 @@ class Run:
                 self.write(child.tail)
             end = len(self.text)
             # A mark covers words; a space before or after them belongs to the sentence.
-            start += self.text[start:end].startswith(" ")
-            end -= self.text[start:end].endswith(" ")
+            if self.text[start:end].startswith(" "):
+                start += 1
+            if self.text[start:end].endswith(" "):
+                end -= 1
             self.spans.append((element, start, end))
 
     def trimmed_text(self) -> str:
