@@ -1,8 +1,7 @@
-import errno
+import json
 import os
-import resource
+import select
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -10,28 +9,29 @@ import time
 import traceback
 from codecs import BOM_UTF8
 from contextlib import suppress
-from enum import IntEnum, StrEnum
-from functools import partial
-from ipaddress import IPv4Address, IPv6Address, IPv6Network, ip_address
+from enum import StrEnum
 from pathlib import Path
-from socketserver import BaseRequestHandler, ThreadingTCPServer
 from tempfile import TemporaryDirectory
-from threading import Thread
-from typing import Annotated, Any, Literal
+from threading import Event, Thread
+from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
+import psutil
 from playwright.sync_api import BrowserContext, Page, Request, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as WaitOverdue
 from pydantic import BaseModel, Field, TypeAdapter
 
+from infonium import lineage
 from infonium.document import (
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     Tagged,
     UnreadableSource,
+    error_status,
     error_text,
 )
+from infonium.egress import EVERY_PORT, LOOPBACK, PublicProxy, Refusal
 
 RENDERED_FILE = "rendered"
 FIRST_ERROR_STATUS = 400
@@ -46,16 +46,30 @@ ANSWER_LIMIT_MS = 30_000
 LOAD_LIMIT_MS = 20_000
 QUIET_LIMIT_MS = 8_000
 SETTLING_MS = 1_500
-# How Chrome names a request it broke off because the network of the machine changed, and
-# how many times a page is rendered when that keeps happening. On a machine where containers
-# came and went every few seconds, 2 of 35 renderings of one page, and one page of 30 others,
-# met a change three times running.
+MS_PER_SECOND = 1000
+# The longest one attempt at a page takes: no attempt begins that the time left cannot hold.
+ATTEMPT_LIMIT_SECONDS = (ANSWER_LIMIT_MS + LOAD_LIMIT_MS + QUIET_LIMIT_MS + SETTLING_MS) / (
+    MS_PER_SECOND
+)
+# Chrome breaks off every request it has under way when an address of this machine changes,
+# as one does each time a container starts or stops beside it, and names such a request so.
+# A page is rendered again, a few times at most, when what broke off was its own document,
+# a script, or a request its scripts made: what fills a page that its scripts build.
 NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED"
 RENDERING_ATTEMPTS = 5
+DOCUMENT_RESOURCE = "document"
+SCRIPTED_RESOURCES = frozenset({"script", "xhr", "fetch"})
+# How Chrome names a request the proxy did not connect.
+PROXY_FAILURE = "net::ERR_SOCKS_CONNECTION_FAILED"
+# What Playwright adds to an error of a browser that ended as it started, before the lines
+# the browser wrote.
+BROWSER_LOGS = "Browser logs:"
 # The longest a rendering may take in all, from the start of the browser to the kept file:
-# the waits above, the start of the browser, and the page's own work while it is read. A
-# page Chrome broke off twice was taken after 30.3 s.
+# the waits above, the start of the browser, and the page's own work while it is read. The
+# renderer begins no attempt that would end later than a few seconds before it, which it
+# leaves to the report. A page Chrome broke off twice was taken after 30.3 s.
 RENDERING_LIMIT_SECONDS = 90.0
+REPORTING_SECONDS = 5.0
 # The most a rendered page may hold. The extractor reads no page that is longer than this
 # (trafilatura's MAX_FILE_SIZE); the largest page of the survey held 1.4 MB.
 RENDERED_LIMIT_BYTES = 20_000_000
@@ -68,91 +82,84 @@ SCRIPT_MEMORY_MIB = 1024
 # more than 2 GiB. Half of it is too little to hand the renderer a page of the largest size
 # that is kept.
 PROCESS_MEMORY_BYTES = 4 * 1024**3
+# The most a whole rendering may hold, in the memory of all its processes that they share
+# with no other, and on disk in its work folder; a page that holds more is ended.
+RENDERING_MEMORY_BYTES = 3 * 1024**3
+RENDERING_DISK_BYTES = 1024**3
+TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 
 # The browser is driven by a process of its own, this module run as a program, which starts
-# the browser, the proxy the browser connects through, and Playwright's driver, so that a
-# rendering is ended at its limit together with all of them. It is given the address of the
-# page, a folder for its work, and the browser to start; it leaves the page in the folder
-# and a report of the rendering beside it. It is to be started as the leader of a session of
-# its own, with a pipe for its standard input that the process which starts it holds open and
-# writes nothing to: when the pipe closes, the renderer ends the group it leads.
+# the proxy the browser connects through and Playwright, which starts the browser. It is
+# given the address of the page, a folder for its work, the browser to start and the
+# moment, on the system's monotonic clock, by which it is to be done; it leaves the page in
+# the folder and a report of the rendering beside it, and then waits to be ended. It is to
+# be started with a pipe for its standard input that the process which starts it holds open
+# and writes nothing to: when the pipe closes, the renderer ends all it started, and itself.
 RUN_AS_MODULE = "-m"
-RENDERER = [sys.executable, RUN_AS_MODULE, __spec__.name]
+RENDERER = (sys.executable, RUN_AS_MODULE, __spec__.name)
 RENDERING_REPORT_FILE = "rendering.json"
+WRITTEN_REPORT_FILE = "rendering.json.part"
+ABANDONED_STATUS = 1
 # How long the process that started the renderer lets pass between two looks at whether it
-# has ended, and at whether all it started has ended after it.
+# is done, and between two looks at what the rendering holds.
 RENDERER_WATCH_SECONDS = 0.05
+HOLDING_WATCH_SECONDS = 0.2
 # A look at whether a process has ended that does not wait, and leaves it unreaped.
 ENDED_UNREAPED = os.WEXITED | os.WNOHANG | os.WNOWAIT
 # The browser makes the socket that keeps it single in the folder for temporary files, whose
 # path must stay short enough for a socket's address, so that folder is one of its own made
 # where the system keeps temporary files, apart from the work folder.
 TEMPORARY_FOLDER_VARIABLE = "TMPDIR"
+# The browser keeps its profile, and writes what it keeps beside a profile, its reports of
+# crashes among them, under a home of its own in the work folder.
 PROFILE_FOLDER = "profile"
-BROWSER_LOG_FILE = "browser.log"
-# The browser writes the port it takes for Playwright's connection into this file of its
-# profile, on the first of two lines.
-DEVTOOLS_PORT_FILE = "DevToolsActivePort"
-DEVTOOLS_PORT_LINES = 2
-LOOPBACK = "127.0.0.1"
-EVERY_PORT = 0
+HOME_FOLDER = "home"
+HOME_VARIABLES = {
+    "HOME": ".",
+    "XDG_CONFIG_HOME": ".config",
+    "XDG_CACHE_HOME": ".cache",
+    "XDG_DATA_HOME": ".local/share",
+}
+# The profile's preferences, written before the browser starts: WebRTC sends nothing over
+# UDP, which the proxy cannot carry.
+PREFERENCES_FILE = Path("Default") / "Preferences"
+WEBRTC_POLICY = "disable_non_proxied_udp"
+PROFILE_PREFERENCES = {"webrtc": {"ip_handling_policy": WEBRTC_POLICY}}
 
-# The proxy speaks SOCKS 5, which carries every connection a browser opens, a WebSocket and
-# a secure connection alike, as a plain connection to a named host and port, and through
-# which Chrome sends the name of a host unresolved. No library of SOCKS or HTTP proxies lets
-# its caller decide on the address it resolved and then connect to that same address.
-SOCKS_VERSION = 5
-NO_AUTHENTICATION = 0
-CONNECT = 1
-SOCKS_HEADER_BYTES = 4
-SOCKS_PORT_BYTES = 2
-IPV4_BYTES = 4
-IPV6_BYTES = 16
-# How long a host is given to take a connection, and how much of a connection is passed on
-# at a time.
-CONNECTION_LIMIT_SECONDS = 15.0
-RELAYED_BYTES = 64 * 1024
-# IPv6 prefixes whose last 32 bits are an IPv4 address that a host or a gateway connects
-# to: the IPv4-compatible form and the prefix of translation by NAT64.
-IPV4_CARRYING_PREFIXES = (IPv6Network("::/96"), IPv6Network("64:ff9b::/96"))
-IPV4_PART = 0xFFFF_FFFF
-
-
-class AddressKind(IntEnum):
-    IPV4 = 1
-    NAME = 3
-    IPV6 = 4
-
-
-class SocksReply(IntEnum):
-    SUCCEEDED = 0
-    GENERAL_FAILURE = 1
-
-
-# The address in a reply, which no browser reads: a zero IPv4 address and port.
-SOCKS_REPLY_ADDRESS = bytes([AddressKind.IPV4, *bytes(IPV4_BYTES), *bytes(SOCKS_PORT_BYTES)])
-
-# What the browser is started with. It renders without a window, in a profile of its own;
-# Playwright connects to it on a port of loopback that the browser chooses. Every connection
-# it opens goes through the proxy, those to loopback too, which a browser otherwise opens
+# What the browser is started with besides what Playwright gives it. Every connection it
+# opens goes through the proxy, those to loopback too, which a browser otherwise opens
 # itself; it looks up no name itself, so a name is looked up only by the proxy; and it sends
-# no WebRTC over UDP, which the proxy cannot carry. It sends no reports of its crashes, and
-# fewer requests of its own.
-BROWSER_FLAGS = [
-    "--headless",
-    f"--remote-debugging-port={EVERY_PORT}",
+# no WebRTC over UDP.
+BROWSER_FLAGS = (
     "--proxy-bypass-list=<-loopback>",
     f"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE {LOOPBACK}",
-    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
-    "--disable-background-networking",
-    "--disable-component-update",
-    "--disable-crash-reporter",
-    "--disable-breakpad",
-    "--no-first-run",
-    "--no-default-browser-check",
+    f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",
     f"--js-flags=--max-old-space-size={SCRIPT_MEMORY_MIB}",
-]
-BLANK_PAGE = "about:blank"
+)
+# A process of the browser that runs pages, and how Linux shows a process held to the calls
+# its seccomp filter lets through: the browser's sandbox, seen in what runs rather than in
+# what the browser was told.
+PAGE_PROCESS = "--type=renderer"
+SECCOMP_FILTER = "Seccomp:\t2"
+# Before the page is asked for, the browser is shown a STUN server on a UDP port the renderer
+# holds, and must gather no candidate for it and send it nothing.
+WEBRTC_PROOF_LIMIT_MS = 2_000
+WEBRTC_PROOF = """async ([server, limit]) => {
+  const connection = new RTCPeerConnection({iceServers: [{urls: server}]});
+  let candidates = 0;
+  connection.onicecandidate = (event) => { if (event.candidate) candidates += 1; };
+  connection.createDataChannel("proof");
+  await connection.setLocalDescription(await connection.createOffer());
+  await new Promise((done) => {
+    connection.onicegatheringstatechange = () => {
+      if (connection.iceGatheringState === "complete") done();
+    };
+    if (connection.iceGatheringState === "complete") done();
+    setTimeout(done, limit);
+  });
+  connection.close();
+  return candidates;
+}"""
 
 
 class RenderedPage(BaseModel):
@@ -168,11 +175,10 @@ class TakenPage(BaseModel):
     address: str
 
 
-class Refusal(BaseModel):
-    # A connection the browser asked the proxy for and did not get, and why.
-    host: str
-    port: int
-    reason: str
+class FailedHop(BaseModel):
+    # An address the page itself was asked at that the browser could not open, and why.
+    url: str
+    failure: str
 
 
 class RenderingReportKind(StrEnum):
@@ -196,141 +202,9 @@ RenderingReport = Annotated[CompletedRendering | AbortedRendering, Field(discrim
 RENDERING_REPORT = TypeAdapter(RenderingReport)
 
 
-def is_public(address: IPv4Address | IPv6Address) -> bool:
-    # An address is public when it, and every IPv4 address it carries inside it, is reachable
-    # across the internet and names one host.
-    carried = (
-        []
-        if isinstance(address, IPv4Address)
-        else [
-            *[inner for inner in (address.ipv4_mapped, address.sixtofour) if inner is not None],
-            *(address.teredo or ()),
-            *[
-                IPv4Address(int(address) & IPV4_PART)
-                for prefix in IPV4_CARRYING_PREFIXES
-                if address in prefix
-            ],
-        ]
-    )
-    return all(each.is_global and not each.is_multicast for each in (address, *carried))
-
-
-def public_connection(host: str, port: int) -> socket.socket:
-    # A connection to a host, made to the address that was judged: the name is looked up once.
-    found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
-    for *_, place in found:
-        if not is_public(ip_address(place[0])):
-            raise UnreadableSource(f"{place[0]} is not a public address")
-    family, kind, protocol, _, place = found[0]
-    connection = socket.socket(family, kind, protocol)
-    connection.settimeout(CONNECTION_LIMIT_SECONDS)
-    connection.connect(place)
-    connection.settimeout(None)
-    return connection
-
-
-def received(connection: socket.socket, size: int) -> bytes:
-    content = connection.recv(size, socket.MSG_WAITALL)
-    if len(content) < size:
-        raise ConnectionError(f"the browser closed the connection to the proxy after {content!r}")
-    return content
-
-
-def relayed(source: socket.socket, sink: socket.socket) -> None:
-    # Passes on what one side sends until it closes, or either side breaks the connection off.
-    with suppress(OSError):
-        while chunk := source.recv(RELAYED_BYTES):
-            sink.sendall(chunk)
-        sink.shutdown(socket.SHUT_WR)
-
-
-class GuardedProxy(ThreadingTCPServer):
-    # The proxy a browser connects through. It connects only to public addresses, and keeps
-    # what it refused.
-    daemon_threads = True
-
-    def __init__(self) -> None:
-        super().__init__((LOOPBACK, EVERY_PORT), SocksRequest)
-        self.refusals: list[Refusal] = []
-
-    def port(self) -> int:
-        return int(self.server_address[1])
-
-    def handle_error(self, request: Any, client_address: Any) -> None:
-        # A connection the browser breaks off while it asks for a host ends there; the browser
-        # opens connections ahead of its needs and drops those it does not use.
-        if not isinstance(sys.exception(), OSError):
-            super().handle_error(request, client_address)
-
-
-class SocksRequest(BaseRequestHandler):
-    # One connection the browser asks the proxy for, carried until either side closes it.
-    server: GuardedProxy
-
-    def handle(self) -> None:
-        client: socket.socket = self.request
-        _, method_count = received(client, 2)
-        received(client, method_count)
-        client.sendall(bytes([SOCKS_VERSION, NO_AUTHENTICATION]))
-        _, command, _, kind = received(client, SOCKS_HEADER_BYTES)
-        match AddressKind(kind):
-            case AddressKind.IPV4:
-                host = str(IPv4Address(received(client, IPV4_BYTES)))
-            case AddressKind.IPV6:
-                host = str(IPv6Address(received(client, IPV6_BYTES)))
-            case AddressKind.NAME:
-                host = received(client, received(client, 1)[0]).decode()
-        port = int.from_bytes(received(client, SOCKS_PORT_BYTES))
-        if command != CONNECT:
-            client.sendall(bytes([SOCKS_VERSION, SocksReply.GENERAL_FAILURE, 0]))
-            return
-        # The browser is told only that the connection failed; the proxy keeps the reason,
-        # for the report of a page that could not be opened.
-        try:
-            upstream = public_connection(host, port)
-        except (OSError, UnreadableSource) as refused:
-            self.server.refusals.append(Refusal(host=host, port=port, reason=error_text(refused)))
-            client.sendall(bytes([SOCKS_VERSION, SocksReply.GENERAL_FAILURE, 0]))
-            return
-        with upstream:
-            client.sendall(bytes([SOCKS_VERSION, SocksReply.SUCCEEDED, 0, *SOCKS_REPLY_ADDRESS]))
-            answers = Thread(target=relayed, args=(upstream, client), daemon=True)
-            answers.start()
-            relayed(client, upstream)
-            answers.join()
-
-
-def browser_command(program: str, profile: Path, proxy: GuardedProxy) -> list[str]:
-    return [
-        program,
-        *BROWSER_FLAGS,
-        f"--user-data-dir={profile}",
-        f"--proxy-server=socks5://{LOOPBACK}:{proxy.port()}",
-        BLANK_PAGE,
-    ]
-
-
-def devtools_endpoint(program: str, work: Path, proxy: GuardedProxy) -> str:
-    # Starts the browser in the renderer's group and waits for the port it listens on.
-    profile = work / PROFILE_FOLDER
-    port_file = profile / DEVTOOLS_PORT_FILE
-    log = work / BROWSER_LOG_FILE
-    with log.open("wb") as written:
-        browser = subprocess.Popen(
-            browser_command(program, profile, proxy),
-            stdin=subprocess.DEVNULL,
-            stdout=written,
-            stderr=written,
-        )
-    while not port_file.exists() or len(port_file.read_text().splitlines()) < DEVTOOLS_PORT_LINES:
-        if browser.poll() is not None:
-            said = log.read_text(errors="replace").strip().splitlines() or [""]
-            raise UnreadableSource(
-                f"the browser {program} ended with status {browser.returncode} as it started: "
-                f"{said[-1]}"
-            )
-        time.sleep(RENDERER_WATCH_SECONDS)
-    return f"http://{LOOPBACK}:{port_file.read_text().split()[0]}"
+def browser_environment(work: Path) -> dict[str, str | float | bool]:
+    home = work / HOME_FOLDER
+    return {**os.environ, **{name: str(home / part) for name, part in HOME_VARIABLES.items()}}
 
 
 def page_content(page: Page, url: str) -> str:
@@ -338,7 +212,7 @@ def page_content(page: Page, url: str) -> str:
     # its time for these has passed, and its scripts have had a moment more.
     answer = page.goto(url, wait_until="commit", timeout=ANSWER_LIMIT_MS)
     if answer is not None and answer.status >= FIRST_ERROR_STATUS:
-        raise UnreadableSource(f"{answer.url} answered {answer.status}")
+        raise UnreadableSource(error_status(answer.url, answer.status))
     with suppress(WaitOverdue):
         page.wait_for_load_state("load", timeout=LOAD_LIMIT_MS)
     with suppress(WaitOverdue):
@@ -347,141 +221,249 @@ def page_content(page: Page, url: str) -> str:
     return page.content()
 
 
-def note_interruption(interrupted: list[str], request: Request) -> None:
-    if request.failure == NETWORK_CHANGED:
-        interrupted.append(request.url)
+def page_process_states() -> list[list[str]]:
+    # The states, as Linux shows them, of the browser's processes that run pages, of those
+    # still running as they are read.
+    states = []
+    for process in lineage.descendants(os.getpid()):
+        with suppress(psutil.NoSuchProcess, FileNotFoundError, ProcessLookupError):
+            if PAGE_PROCESS in process.cmdline():
+                states.append(Path(f"/proc/{process.pid}/status").read_text().splitlines())
+    return states
 
 
-def taken_page(context: BrowserContext, url: str, hops: list[str]) -> TakenPage:
-    # Chrome breaks off every request it has under way when an address of this machine
-    # changes, as one does each time a container starts or stops beside it; a page whose
-    # scripts were broken off so comes out as the empty shell they would have filled. Such a
-    # page is rendered again, in a page of its own, so that the error page Chrome shows for an
-    # address it broke off does not take the place of the next attempt. The addresses the page
-    # itself was asked at, a redirect after another, are noted in `hops`.
+def datagram_waits(listener: socket.socket) -> bool:
+    readable, _, _ = select.select([listener], [], [], 0)
+    return bool(readable)
 
-    def note_hop(request: Request) -> None:
-        if request.is_navigation_request() and request.frame.parent_frame is None:
-            hops.append(request.url)
 
-    for _ in range(RENDERING_ATTEMPTS):
-        page = context.new_page()
-        interrupted: list[str] = []
-        page.on("request", note_hop)
-        page.on("requestfailed", partial(note_interruption, interrupted))
-        try:
-            content = page_content(page, url)
-        except PlaywrightError:
-            if not interrupted:
-                raise
-            continue
-        if not interrupted:
-            return TakenPage(content=content, address=urldefrag(page.url).url)
-        page.close()
-    raise UnreadableSource(
-        f"the network of this machine changed each time {url} was rendered, "
-        f"{RENDERING_ATTEMPTS} times"
+def breaks_page(request: Request) -> bool:
+    # A request whose breaking off leaves the page without what fills it.
+    is_own_document = (
+        request.resource_type == DOCUMENT_RESOURCE and request.frame.parent_frame is None
+    )
+    return request.failure == NETWORK_CHANGED and (
+        is_own_document or request.resource_type in SCRIPTED_RESOURCES
     )
 
 
-def rendering(url: str, work: Path, program: str, proxy: GuardedProxy, hops: list[str]) -> str:
-    # Renders the page into the work folder and gives the address the browser ended at.
-    endpoint = devtools_endpoint(program, work, proxy)
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.connect_over_cdp(endpoint)
-        # A context of its own keeps nothing on disk; no download is taken and no service
-        # worker is let in.
-        context = browser.new_context(accept_downloads=False, service_workers="block")
-        taken = taken_page(context, url, hops)
-    # The page is kept as UTF-8 with its mark in front, which a browser and the extractor
-    # both read before any charset the page declares in its head or a server in a header.
-    kept = BOM_UTF8 + taken.content.encode()
-    if len(kept) > RENDERED_LIMIT_BYTES:
-        raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
-    (work / RENDERED_FILE).write_bytes(kept)
-    return taken.address
+class PageRendering:
+    # The rendering of a page in the renderer: the proxy the browser connects through, what
+    # the proxy refused, and of the attempt under way, the addresses of the page itself that
+    # the browser could not open and the requests that broke the page off. The browser tells
+    # of these in the thread that drives it, which alone writes them.
+    def __init__(self, proxy: PublicProxy, program: str) -> None:
+        self.proxy = proxy
+        self.program = program
+        self.refusals: list[Refusal] = []
+        self.failed_hops: list[FailedHop] = []
+        self.broken: list[str] = []
 
+    def note_failure(self, request: Request) -> None:
+        if request.is_navigation_request() and request.frame.parent_frame is None:
+            self.failed_hops.append(FailedHop(url=request.url, failure=request.failure or ""))
+        if breaks_page(request):
+            self.broken.append(request.url)
 
-def ending_reason(ending: Exception, hops: list[str], refusals: list[Refusal]) -> str:
-    # Why a rendering ended, in one line: the proxy's reason when it refused the last address
-    # the page was asked at, and otherwise the first line of the error, without the call log
-    # that follows an error of Playwright.
-    last_hop = urlsplit(hops[-1]) if hops else None
-    refused = [
-        refusal.reason
-        for refusal in refusals
-        if last_hop is not None
-        and refusal.host == last_hop.hostname
-        and refusal.port == (last_hop.port or DEFAULT_PORTS.get(last_hop.scheme))
-    ]
-    if refused:
-        return f"{hops[-1]} could not be opened: {refused[0]}"
-    return error_text(ending).splitlines()[0]
+    def proxy_refusals(self) -> list[str]:
+        # Why the proxy refused the last address the page itself was asked at, when the
+        # browser could not open it because the proxy did not connect it.
+        self.refusals.extend(self.proxy.refusals())
+        hops = [urlsplit(hop.url) for hop in self.failed_hops[-1:] if hop.failure == PROXY_FAILURE]
+        return [
+            f"{hop.geturl()} could not be opened: {refusal.reason}"
+            for hop in hops
+            for refusal in self.refusals[::-1]
+            if (refusal.host, refusal.port)
+            == (hop.hostname, hop.port or DEFAULT_PORTS.get(hop.scheme))
+        ][:1]
+
+    def ending_reason(self, ending: PlaywrightError | UnreadableSource) -> str:
+        # Why a rendering ended, in one line: the proxy's reason when the page's own address
+        # was not connected by the proxy; what the browser wrote last when it ended as it
+        # started; and otherwise the first line of the error, without the call log that
+        # follows an error of Playwright.
+        said = error_text(ending)
+        refused = self.proxy_refusals() if PROXY_FAILURE in said else []
+        logs = said.partition(BROWSER_LOGS)[2].strip().splitlines()
+        if refused:
+            return refused[0]
+        if logs:
+            return f"the browser {self.program} could not start: {logs[-1].strip()}"
+        return said.splitlines()[0]
+
+    def prove_browser(self, context: BrowserContext) -> None:
+        # The browser runs its pages in its sandbox, and its WebRTC sends nothing over UDP,
+        # or no page is asked for.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
+            listener.bind((LOOPBACK, EVERY_PORT))
+            server = f"stun:{LOOPBACK}:{listener.getsockname()[1]}"
+            page = context.new_page()
+            try:
+                candidates = page.evaluate(WEBRTC_PROOF, [server, WEBRTC_PROOF_LIMIT_MS])
+                states = page_process_states()
+            finally:
+                page.close()
+            sent = datagram_waits(listener)
+        if not states or not all(SECCOMP_FILTER in state for state in states):
+            raise UnreadableSource(f"the browser {self.program} runs pages without its sandbox")
+        if candidates or sent:
+            raise UnreadableSource(
+                f"the browser {self.program} sends WebRTC over UDP, which infonium cannot hold "
+                "to public addresses"
+            )
+
+    def attempt(self, context: BrowserContext, url: str) -> TakenPage:
+        # One attempt at the page, in a page of its own that is closed whatever comes of it.
+        self.failed_hops.clear()
+        self.broken.clear()
+        page = context.new_page()
+        page.on("requestfailed", self.note_failure)
+        try:
+            content = page_content(page, url)
+            if urlsplit(page.url).scheme not in WEB_ADDRESS_SCHEMES:
+                raise UnreadableSource(
+                    (self.proxy_refusals() or [f"{url} led the browser to {page.url}"])[0]
+                )
+            return TakenPage(content=content, address=urldefrag(page.url).url)
+        finally:
+            page.close()
+
+    def taken_page(self, context: BrowserContext, url: str, deadline: float) -> TakenPage:
+        # The page once it is done. A page whose own document, scripts or the requests of
+        # its scripts were broken off is rendered again, in a page of its own, as long as the
+        # time left holds another attempt; of the attempts that were broken off, the one that
+        # holds the most is kept.
+        taken: list[TakenPage] = []
+        failures: list[PlaywrightError] = []
+        for attempt in range(RENDERING_ATTEMPTS):
+            if attempt and deadline - time.monotonic() < ATTEMPT_LIMIT_SECONDS:
+                break
+            try:
+                taken.append(self.attempt(context, url))
+            except PlaywrightError as failure:
+                if not self.broken:
+                    raise
+                failures.append(failure)
+                continue
+            if not self.broken:
+                return taken[-1]
+        if not taken:
+            raise failures[-1]
+        return max(taken, key=lambda page: len(page.content))
+
+    def render(self, url: str, work: Path, deadline: float) -> str:
+        # Renders the page into the work folder and gives the address the browser ended at.
+        profile = work / PROFILE_FOLDER
+        (profile / PREFERENCES_FILE).parent.mkdir(parents=True)
+        (profile / PREFERENCES_FILE).write_text(json.dumps(PROFILE_PREFERENCES))
+        with sync_playwright() as playwright:
+            # Without being told to keep it, Playwright starts the browser without its sandbox.
+            context = playwright.chromium.launch_persistent_context(
+                profile,
+                executable_path=self.program,
+                chromium_sandbox=True,
+                args=[
+                    *BROWSER_FLAGS,
+                    f"--proxy-server=socks5://{LOOPBACK}:{self.proxy.port()}",
+                ],
+                env=browser_environment(work),
+                accept_downloads=False,
+                service_workers="block",
+            )
+            self.prove_browser(context)
+            taken = self.taken_page(context, url, deadline)
+        # The page is kept as UTF-8 with its mark in front, which a browser and the extractor
+        # both read before any charset the page declares in its head or a server in a header.
+        kept = BOM_UTF8 + taken.content.encode()
+        if len(kept) > RENDERED_LIMIT_BYTES:
+            raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
+        (work / RENDERED_FILE).write_bytes(kept)
+        return taken.address
 
 
 def end_when_abandoned() -> None:
     # The process that started the renderer holds the other end of its standard input open
     # and writes nothing to it. When that end closes, that process is gone, so the renderer
-    # ends the group it leads: itself, the browser and Playwright's driver.
+    # ends all it started, and itself.
     os.read(sys.stdin.fileno(), 1)
-    os.killpg(os.getpid(), signal.SIGKILL)
+    lineage.end_own_descendants()
+    os._exit(ABANDONED_STATUS)
 
 
 def main() -> None:
     # What this module does when it is run as a program: it renders the page it is given
     # into the folder it is given, and writes the report. An exception does not cross from
-    # one process to another, so whatever ends the rendering is reported in one line, and
-    # where it arose is written to standard error, which is the starting process's own.
-    url, work, program = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
-    # A hard limit already in force that is lower than the rendering's own cannot be
-    # raised, and is kept.
-    hard_limit = resource.getrlimit(resource.RLIMIT_DATA)[1]
-    data_limit = (
-        PROCESS_MEMORY_BYTES
-        if hard_limit == resource.RLIM_INFINITY
-        else min(PROCESS_MEMORY_BYTES, hard_limit)
-    )
-    resource.setrlimit(resource.RLIMIT_DATA, (data_limit, data_limit))
+    # one process to another, so a rendering that failed is reported in one line, and where
+    # it arose is written to standard error, which is the starting process's own. Any other
+    # exception is a fault of the renderer's own, and ends it without a report. Whatever the
+    # renderer started is ended before it reports or ends, and it is the reaper of their
+    # orphans, so that all of them stay its descendants until then.
+    url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+    lineage.become_reaper()
+    lineage.hold_data_to(PROCESS_MEMORY_BYTES)
     Thread(target=end_when_abandoned, daemon=True).start()
-    proxy = GuardedProxy()
-    Thread(target=proxy.serve_forever, daemon=True).start()
-    hops: list[str] = []
+    proxy = PublicProxy()
+    proxy.serve_in_background()
+    rendering = PageRendering(proxy, program)
     try:
         report: RenderingReport = CompletedRendering(
-            address=rendering(url, work, program, proxy, hops)
+            address=rendering.render(url, work, float(deadline))
         )
-    except Exception as ending:
+    except (PlaywrightError, UnreadableSource) as ending:
         traceback.print_exc()
-        report = AbortedRendering(reason=ending_reason(ending, hops, proxy.refusals))
-    (work / RENDERING_REPORT_FILE).write_bytes(RENDERING_REPORT.dump_json(report))
+        report = AbortedRendering(reason=rendering.ending_reason(ending))
+    finally:
+        lineage.end_own_descendants()
+    (work / WRITTEN_REPORT_FILE).write_bytes(RENDERING_REPORT.dump_json(report))
+    (work / WRITTEN_REPORT_FILE).replace(work / RENDERING_REPORT_FILE)
+    Event().wait()
+
+
+def folder_bytes(folder: Path) -> int:
+    # What the files of a folder hold, of those that are still there as they are counted.
+    held = 0
+    for file in folder.rglob("*"):
+        with suppress(FileNotFoundError):
+            held += file.lstat().st_size
+    return held
+
+
+def watch_rendering(url: str, renderer: subprocess.Popen[bytes], work: Path) -> None:
+    # Waits until the renderer has reported or ended; a rendering that takes longer than its
+    # limit, or holds more than its bounds, is ended there.
+    began = time.monotonic()
+    next_look = began
+    while (
+        not (work / RENDERING_REPORT_FILE).exists()
+        and os.waitid(os.P_PID, renderer.pid, ENDED_UNREAPED) is None
+    ):
+        now = time.monotonic()
+        if now - began > RENDERING_LIMIT_SECONDS:
+            raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
+        if now >= next_look:
+            if lineage.held_memory(renderer.pid) > RENDERING_MEMORY_BYTES:
+                raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
+            if folder_bytes(work) > RENDERING_DISK_BYTES:
+                raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
+            next_look = now + HOLDING_WATCH_SECONDS
+        time.sleep(RENDERER_WATCH_SECONDS)
 
 
 def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     # The rendering of a page as the renderer reports it. Whatever the renderer started is
     # ended with it, and gone, before this returns or raises.
-    command = [*RENDERER, url, str(work), program]
-    began = time.monotonic()
+    deadline = time.monotonic() + RENDERING_LIMIT_SECONDS - REPORTING_SECONDS
+    command = [*RENDERER, url, str(work), program, repr(deadline)]
     with TemporaryDirectory() as temporary:
         environment = {**os.environ, TEMPORARY_FOLDER_VARIABLE: temporary}
-        with subprocess.Popen(
-            command, stdin=subprocess.PIPE, start_new_session=True, env=environment
-        ) as renderer:
+        with subprocess.Popen(command, stdin=subprocess.PIPE, env=environment) as renderer:
             try:
-                # The renderer is looked at without being reaped, so that its group keeps its
-                # number until all of it is ended.
-                while os.waitid(os.P_PID, renderer.pid, ENDED_UNREAPED) is None:
-                    if time.monotonic() - began > RENDERING_LIMIT_SECONDS:
-                        raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
-                    time.sleep(RENDERER_WATCH_SECONDS)
+                watch_rendering(url, renderer, work)
             finally:
-                os.killpg(renderer.pid, signal.SIGKILL)
-                renderer.wait()
-                with suppress(ProcessLookupError):
-                    while True:
-                        os.killpg(renderer.pid, 0)
-                        time.sleep(RENDERER_WATCH_SECONDS)
-    # A renderer that ends with a failing status has written no report.
-    if renderer.returncode != 0:
+                lineage.end_process_tree(renderer)
+    # A renderer that ended before it reported has met a fault of its own.
+    if not (work / RENDERING_REPORT_FILE).exists():
         raise subprocess.CalledProcessError(renderer.returncode, command)
     return RENDERING_REPORT.validate_json((work / RENDERING_REPORT_FILE).read_bytes())
 
@@ -491,7 +473,7 @@ def rendered_page(url: str, directory: Path, browser: Path) -> RenderedPage:
         raise UnreadableSource(f"infonium renders only web pages, and {url} is not one")
     program = shutil.which(browser)
     if program is None:
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(browser))
+        raise UnreadableSource(f"the browser {browser} was not found")
     file = directory / RENDERED_FILE
     with TemporaryDirectory(dir=directory) as work:
         match reported_rendering(url, Path(work), program):

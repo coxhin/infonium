@@ -1,6 +1,5 @@
 import os
 import re
-import resource
 import signal
 import subprocess
 import sys
@@ -17,6 +16,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import get_info_extractor
 
+from infonium import lineage
 from infonium.captions import (
     CaptionFormat,
     CaptionPart,
@@ -344,15 +344,8 @@ def main() -> None:
     # give a reader had it been raised in the starting process, and where it arose is
     # written to standard error, which is that process's own. A fetch in which Python runs
     # out of the memory it is allowed has met a page that holds more than is fetched, and
-    # is reported as one. A hard limit already in force that is lower than the fetcher's
-    # own cannot be raised, and is kept.
-    hard_limit = resource.getrlimit(resource.RLIMIT_DATA)[1]
-    data_limit = (
-        FETCHER_MEMORY_BYTES
-        if hard_limit == resource.RLIM_INFINITY
-        else min(FETCHER_MEMORY_BYTES, hard_limit)
-    )
-    resource.setrlimit(resource.RLIMIT_DATA, (data_limit, data_limit))
+    # is reported as one.
+    lineage.hold_data_to(FETCHER_MEMORY_BYTES)
     room = bytearray(REPORT_ROOM_BYTES)
     url, downloads = sys.argv[1], Path(sys.argv[2])
     Thread(target=end_when_abandoned, daemon=True).start()
