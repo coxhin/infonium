@@ -47,7 +47,7 @@ from infonium.mineru import (
     parsed_pages,
     word_lines,
 )
-from infonium.pdfium import StoredFile, stored_file
+from infonium.pdfium import Shown, StoredFile, stored_file
 
 EXTRACTOR = "pdf/1"
 
@@ -115,10 +115,11 @@ class Flow(BaseModel):
 
 class FileFacts(BaseModel):
     # What the whole file tells about the reading of any one line of it: the words it shows
-    # whole, the pages the engine read as pictures, and the words that the text layer of each
-    # page holds, none for a page read as a picture.
+    # whole, the pages the engine read as pictures, the pages the file shows turned, and the
+    # words that the text layer of each page holds, none for a page read as a picture.
     whole_words: frozenset[str]
     pictures: frozenset[PageNumber]
+    turned: frozenset[PageNumber]
     spellings: dict[PageNumber, frozenset[str]]
 
 
@@ -288,10 +289,15 @@ def flow(lines: list[ShownLine], facts: FileFacts) -> Flow:
     next_word = 0
     for line in lines:
         first_word = next_word
+        # In the text layer of a page that its file shows turned, the engine misjudges what
+        # is set above or below the line, so there its word for it is not taken.
+        believed = line.area.page not in facts.turned
         for piece in line.pieces:
             last_word = next_word + len(piece.words) - 1
             start, end = said.ranges[next_word].start, said.ranges[last_word].end
-            marks.extend(StyleMark(style=style, start=start, end=end) for style in piece.styles)
+            marks.extend(
+                StyleMark(style=style, start=start, end=end) for style in piece.styles if believed
+            )
             next_word = last_word + 1
         places.append(
             placed(line.area, said.ranges[first_word].start, said.ranges[next_word - 1].end)
@@ -440,6 +446,9 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile) -> list[Block]:
     facts = FileFacts(
         whole_words=whole_words(parsed.pages, spellings),
         pictures=parsed.pictures,
+        turned=frozenset(
+            number for number, page in enumerate(stored.pages) if page.shown != Shown.AS_STORED
+        ),
         spellings=spellings,
     )
     chains = text_chains(parsed.pages, facts)

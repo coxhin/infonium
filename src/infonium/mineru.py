@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field
 
 from infonium.document import HeadingLevel, PageNumber
-from infonium.pdfium import StoredFile
+from infonium.pdfium import Shown, StoredFile
 
 # MinerU 3.4.2 parses a PDF, run as a program of its own. Its hybrid backend reads tables,
 # formulas and listings best, and gives a box for every line as long as it takes the words
@@ -329,15 +329,17 @@ class ParsedPages(BaseModel):
 
 def parsed_pages(to_parse: FileToParse, stored: StoredFile) -> ParsedPages:
     # How the engine reads each page of a file. It reads a page from the file's text layer
-    # when the file has one, but misreads the layer of a page stored turned, so such a page is
-    # read as a picture, as is every page of a file without a text layer or whose layer the
-    # engine judges unfit. The engine runs once for each way of reading, over the pages from
-    # the first to the last that are read that way.
+    # when the file has one, but misreads the layer of a page that is turned. A page stored
+    # turned is read as a picture instead, which shows its characters upright. A page that is
+    # only shown turned stays with its layer: in a picture its characters lie, and the engine
+    # reads those worse still. Every page of a file without a text layer, or whose layer the
+    # engine judges unfit, is read as a picture too. The engine runs once for each way of
+    # reading, over the pages from the first to the last that are read that way.
     numbers = range(len(stored.pages))
-    upright = [number for number in numbers if not stored.pages[number].turned]
+    layered = [number for number in numbers if stored.pages[number].shown != Shown.TURNED_UPRIGHT]
     from_layer = (
-        [page for page in lettered_pages(to_parse, covering(upright)) if page.page_idx in upright]
-        if upright and any(page.text for page in stored.pages)
+        [page for page in lettered_pages(to_parse, covering(layered)) if page.page_idx in layered]
+        if layered and any(page.text for page in stored.pages)
         else []
     )
     taken = {page.page_idx for page in from_layer}
