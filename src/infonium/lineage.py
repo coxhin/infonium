@@ -89,14 +89,17 @@ def end_own_descendants() -> None:
 def end_process_tree(process: subprocess.Popen[bytes]) -> None:
     # Ends a process that reaps the orphans of all it started, together with all of them. It
     # is stopped first, so that it can neither end nor let a descendant slip out of its tree,
-    # and ended last. Where this process inherits the dead, as process 1 of a container or a
+    # and ended and reaped last, also when a descendant could not be ended: stopped, it would
+    # never end. Where this process inherits the dead, as process 1 of a container or a
     # reaper of orphans does, the ended become its children when that process is gone; they
     # are reaped by their numbers, each known to be the one that was ended, and no other child
     # of this process is touched.
     os.kill(process.pid, signal.SIGSTOP)
-    ended = ended_descendants(process.pid)
-    process.kill()
-    process.wait(timeout=ENDING_LIMIT_SECONDS)
+    try:
+        ended = ended_descendants(process.pid)
+    finally:
+        process.kill()
+        process.wait(timeout=ENDING_LIMIT_SECONDS)
     for descendant in ended:
         with suppress(psutil.NoSuchProcess, ChildProcessError):
             if descendant.is_running() and descendant.ppid() == os.getpid():
