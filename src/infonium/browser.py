@@ -488,7 +488,12 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     command = [*RENDERER, url, str(work), program, repr(deadline)]
     with TemporaryDirectory() as temporary:
         environment = {**os.environ, TEMPORARY_FOLDER_VARIABLE: temporary}
-        with subprocess.Popen(command, stdin=subprocess.PIPE, env=environment) as renderer:
+        # The renderer leads a session of its own, so that a signal to this process's group
+        # does not end it before it has ended all it started and removed the rendering's
+        # folders, which it does when its standard input closes.
+        with subprocess.Popen(
+            command, stdin=subprocess.PIPE, env=environment, start_new_session=True
+        ) as renderer:
             try:
                 watch_rendering(url, renderer, work)
             finally:
