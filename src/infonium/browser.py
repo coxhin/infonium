@@ -89,7 +89,8 @@ SCRIPT_MEMORY_MIB = 1024
 # that is kept.
 PROCESS_MEMORY_BYTES = 4 * 1024**3
 # The most a whole rendering may hold, in the memory of all its processes that they share
-# with no other, and on disk in its work folder; a page that holds more is ended.
+# with no other, and on disk in its work folder; a page that holds more is ended. Of a survey
+# of 30 sites, the page that held the most held 1.0 GiB, and the most on disk was 48 MB.
 RENDERING_MEMORY_BYTES = 3 * 1024**3
 RENDERING_DISK_BYTES = 1024**3
 TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
