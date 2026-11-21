@@ -403,14 +403,17 @@ class PageRendering:
         return taken.address
 
 
-def end_when_abandoned(work: Path) -> None:
+def end_when_abandoned(work: Path, reported: Event) -> None:
     # The process that started the renderer holds the other end of its standard input open
     # and writes nothing to it. When that end closes, that process is gone and removes
-    # nothing, so the renderer ends all it started, removes the folders of the rendering,
-    # and ends itself, whatever of this fails.
+    # nothing, so the renderer ends all it started, which ends the rendering under way; lets
+    # it write its report, for a few seconds at most, so that nothing is written into the
+    # folders of the rendering as they are removed; removes them; and ends itself, whatever
+    # of this fails.
     os.read(sys.stdin.fileno(), 1)
     try:
         lineage.end_own_descendants()
+        reported.wait(REPORTING_SECONDS)
         shutil.rmtree(work)
         shutil.rmtree(os.environ[TEMPORARY_FOLDER_VARIABLE])
     finally:
@@ -428,7 +431,8 @@ def main() -> None:
     url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
     lineage.become_reaper()
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
-    Thread(target=end_when_abandoned, args=(work,), daemon=True).start()
+    reported = Event()
+    Thread(target=end_when_abandoned, args=(work, reported), daemon=True).start()
     proxy = PublicProxy()
     proxy.serve_in_background()
     rendering = PageRendering(proxy, program)
@@ -443,6 +447,7 @@ def main() -> None:
         lineage.end_own_descendants()
     (work / WRITTEN_REPORT_FILE).write_bytes(RENDERING_REPORT.dump_json(report))
     (work / WRITTEN_REPORT_FILE).replace(work / RENDERING_REPORT_FILE)
+    reported.set()
     Event().wait()
 
 
