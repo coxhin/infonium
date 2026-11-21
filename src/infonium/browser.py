@@ -351,8 +351,8 @@ class PageRendering:
         # The page once it is done. A page whose own document, scripts or the requests of
         # its scripts were broken off is rendered again, in a page of its own, as long as the
         # time left holds another attempt; of the attempts that were broken off, the one that
-        # holds the most is kept. An attempt that fails once another was taken ends the
-        # attempts and leaves what was taken.
+        # holds the most is kept. An attempt that fails for another reason once another was
+        # taken ends the attempts and leaves what was taken.
         taken: list[TakenPage] = []
         failures: list[PlaywrightError | UnreadableSource] = []
         for attempt in range(RENDERING_ATTEMPTS):
@@ -361,12 +361,12 @@ class PageRendering:
             try:
                 taken.append(self.attempt(context, url))
             except (PlaywrightError, UnreadableSource) as failure:
+                if self.broken:
+                    failures.append(failure)
+                    continue
                 if taken:
                     break
-                if not self.broken:
-                    raise
-                failures.append(failure)
-                continue
+                raise
             if not self.broken:
                 return taken[-1]
         if not taken:
