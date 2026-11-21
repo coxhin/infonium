@@ -125,6 +125,14 @@ HOME_VARIABLES = {
 PREFERENCES_FILE = Path("Default") / "Preferences"
 WEBRTC_POLICY = "disable_non_proxied_udp"
 PROFILE_PREFERENCES = {"webrtc": {"ip_handling_policy": WEBRTC_POLICY}}
+# The browser's own state, written before it starts: WebRTC puts no names in place of this
+# machine's addresses, names the browser would listen for on the networks of all its
+# interfaces as soon as a page opens a WebRTC connection. It is turned off as chrome://flags
+# turns it off (option 2), since a switch of features replaces the one Playwright passes.
+LOCAL_STATE_FILE = "Local State"
+BROWSER_STATE = {
+    "browser": {"enabled_labs_experiments": ["enable-webrtc-hide-local-ips-with-mdns@2"]}
+}
 
 # What the browser is started with besides what Playwright gives it. Every connection it
 # opens goes through the proxy, those to loopback too, which a browser otherwise opens
@@ -357,6 +365,7 @@ class PageRendering:
         profile = work / PROFILE_FOLDER
         (profile / PREFERENCES_FILE).parent.mkdir(parents=True)
         (profile / PREFERENCES_FILE).write_text(json.dumps(PROFILE_PREFERENCES))
+        (profile / LOCAL_STATE_FILE).write_text(json.dumps(BROWSER_STATE))
         with sync_playwright() as playwright:
             # Without being told to keep it, Playwright starts the browser without its sandbox.
             context = playwright.chromium.launch_persistent_context(
