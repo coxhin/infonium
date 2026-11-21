@@ -1,6 +1,7 @@
 import re
 import socket
 import sys
+import time
 from collections.abc import Sequence
 from contextlib import suppress
 from enum import IntEnum
@@ -63,9 +64,10 @@ IPV6_BYTES = 16
 # A host as Chrome names it: a name of letters, digits, dots, hyphens and the underscores
 # some names carry, or an IPv6 address, which it sends as a name too, in brackets or bare.
 HOST_NAME = re.compile(r"\[?(?P<host>[A-Za-z0-9._:-]+)\]?")
-# How long the browser is given to say where it wants to go, and a host to take a
-# connection; how many connections the proxy carries at once, which is more than Chrome
-# opens through one proxy (32); and how much of a connection is passed on at a time.
+# How long the browser is given for the whole handshake in which it says where it wants to
+# go, and a host to take a connection; how many connections the proxy carries at once, which
+# is more than Chrome opens through one proxy (32); and how much of a connection is passed on
+# at a time.
 HANDSHAKE_LIMIT_SECONDS = 10.0
 CONNECTION_LIMIT_SECONDS = 15.0
 CONNECTIONS_AT_ONCE = 64
@@ -175,38 +177,51 @@ def socks_reply(reply: SocksReply) -> bytes:
     )
 
 
-def received(connection: socket.socket, size: int) -> bytes:
-    content = connection.recv(size, socket.MSG_WAITALL)
-    if len(content) < size:
-        raise ConnectionError(f"the browser closed the connection to the proxy after {content!r}")
+def received(connection: socket.socket, size: int, deadline: float) -> bytes:
+    # The next bytes the browser sends, as many as asked for, by the moment on the monotonic
+    # clock that the handshake ends at. A socket with a time limit hands back what has come
+    # so far, however much is asked for, so what is missing is read again.
+    content = b""
+    while len(content) < size:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(f"the browser said only {content!r} in the time of a handshake")
+        connection.settimeout(left)
+        part = connection.recv(size - len(content))
+        if not part:
+            raise ConnectionError(
+                f"the browser closed the connection to the proxy after {content!r}"
+            )
+        content += part
     return content
 
 
 def asked_destination(client: socket.socket) -> tuple[str, int]:
-    # The host and port a browser asks the proxy to connect it to.
-    _, method_count = received(client, GREETING_BYTES)
-    received(client, method_count)
+    # The host and port a browser asks the proxy to connect it to, within the time of a
+    # handshake.
+    deadline = time.monotonic() + HANDSHAKE_LIMIT_SECONDS
+    _, method_count = received(client, GREETING_BYTES, deadline)
+    received(client, method_count, deadline)
     client.sendall(bytes([SOCKS_VERSION, NO_AUTHENTICATION]))
-    version, command, _, kind = received(client, REQUEST_HEADER_BYTES)
+    version, command, _, kind = received(client, REQUEST_HEADER_BYTES, deadline)
     if version != SOCKS_VERSION:
         raise MalformedRequest(SocksReply.GENERAL_FAILURE)
     if command != CONNECT:
         raise MalformedRequest(SocksReply.COMMAND_NOT_SUPPORTED)
     match kind:
         case AddressKind.IPV4:
-            host = str(IPv4Address(received(client, IPV4_BYTES)))
+            host = str(IPv4Address(received(client, IPV4_BYTES, deadline)))
         case AddressKind.IPV6:
-            host = str(IPv6Address(received(client, IPV6_BYTES)))
+            host = str(IPv6Address(received(client, IPV6_BYTES, deadline)))
         case AddressKind.NAME:
-            name = HOST_NAME.fullmatch(
-                received(client, received(client, NAME_LENGTH_BYTES)[0]).decode("latin-1")
-            )
+            name_length = received(client, NAME_LENGTH_BYTES, deadline)[0]
+            name = HOST_NAME.fullmatch(received(client, name_length, deadline).decode("latin-1"))
             if name is None:
                 raise MalformedRequest(SocksReply.GENERAL_FAILURE)
             host = name["host"]
         case _:
             raise MalformedRequest(SocksReply.ADDRESS_KIND_NOT_SUPPORTED)
-    return host, int.from_bytes(received(client, PORT_BYTES))
+    return host, int.from_bytes(received(client, PORT_BYTES, deadline))
 
 
 def relayed(source: socket.socket, sink: socket.socket) -> None:
@@ -268,7 +283,6 @@ class SocksConnection(BaseRequestHandler):
 
     def handle(self) -> None:
         client: socket.socket = self.request
-        client.settimeout(HANDSHAKE_LIMIT_SECONDS)
         try:
             host, port = asked_destination(client)
         except MalformedRequest as malformed:
