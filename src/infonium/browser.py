@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import select
 import shutil
 import socket
@@ -61,9 +62,14 @@ DOCUMENT_RESOURCE = "document"
 SCRIPTED_RESOURCES = frozenset({"script", "xhr", "fetch"})
 # How Chrome names a request the proxy did not connect.
 PROXY_FAILURE = "net::ERR_SOCKS_CONNECTION_FAILED"
-# What Playwright adds to an error of a browser that ended as it started, before the lines
-# the browser wrote.
+# What Playwright adds to an error of a browser that has ended, as it started or later: the
+# lines the browser wrote, each marked with its process, between the first mark and the
+# steps Playwright took; Chrome begins a line of its log with where it was written.
 BROWSER_LOGS = "Browser logs:"
+CALL_LOG = "Call log:"
+WRITTEN_LINE = re.compile(
+    r"^\[pid=\d+\]\[(?:err|out)\] (?:\[[^\]]*\] )?(?P<said>.+)$", re.MULTILINE
+)
 # The longest a rendering may take in all, from the start of the browser to the kept file:
 # the waits above, the start of the browser, and the page's own work while it is read. The
 # renderer begins no attempt that would end later than a few seconds before it, which it
@@ -288,16 +294,19 @@ class PageRendering:
 
     def ending_reason(self, ending: PlaywrightError | UnreadableSource) -> str:
         # Why a rendering ended, in one line: the proxy's reason when the page's own address
-        # was not connected by the proxy; what the browser wrote last when it ended as it
-        # started; and otherwise the first line of the error, without the call log that
-        # follows an error of Playwright.
+        # was not connected by the proxy; the last line the browser wrote when it ended, or
+        # that it wrote none; and otherwise the first line of the error, without the call log
+        # that follows an error of Playwright.
         said = error_text(ending)
         refused = self.proxy_refusals() if PROXY_FAILURE in said else []
-        logs = said.partition(BROWSER_LOGS)[2].strip().splitlines()
+        logs = said.partition(BROWSER_LOGS)[2].partition(CALL_LOG)[0]
+        written = [line["said"] for line in WRITTEN_LINE.finditer(logs)]
         if refused:
             return refused[0]
-        if logs:
-            return f"the browser {self.program} could not start: {logs[-1].strip()}"
+        if written:
+            return f"the browser {self.program} ended: {written[-1]}"
+        if BROWSER_LOGS in said:
+            return f"the browser {self.program} ended without saying why"
         return said.splitlines()[0]
 
     def prove_browser(self, context: BrowserContext) -> None:
