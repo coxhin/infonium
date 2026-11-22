@@ -155,11 +155,16 @@ BROWSER_FLAGS = (
     f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",
     f"--js-flags=--max-old-space-size={SCRIPT_MEMORY_MIB}",
 )
-# A process of the browser that runs pages, and how Linux shows a process held to the calls
-# its seccomp filter lets through: the browser's sandbox, seen in what runs rather than in
-# what the browser was told.
+# The browser's sandbox, seen in what runs rather than in what the browser was told: a process
+# of the browser that runs pages runs under more seccomp filters than the browser's own
+# process, its nearest ancestor that carries no type of process, and stands in none of its
+# namespaces. Linux shows the filters of a process in its status, from Linux 5.9 on.
+PROCESS_TYPE = "--type="
 PAGE_PROCESS = "--type=renderer"
-SECCOMP_FILTER = "Seccomp:\t2"
+PROCESS_STATUS = "/proc/{pid}/status"
+PROCESS_NAMESPACE = "/proc/{pid}/ns/{kind}"
+SECCOMP_FILTERS = "Seccomp_filters:"
+SANDBOX_NAMESPACES = ("user", "pid", "net")
 # Before the page is asked for, the browser is shown a STUN server on a UDP port the renderer
 # holds, and must gather no candidate for it and send it nothing.
 WEBRTC_PROOF_LIMIT_MS = 2_000
@@ -198,6 +203,17 @@ class FailedHop(BaseModel):
     # An address the page itself was asked at that the browser could not open, and why.
     url: str
     failure: str
+
+
+class BrowserProcess(BaseModel):
+    # A process of the rendering as Linux shows it: its parent, whether it runs pages or
+    # carries any type of the browser's processes, the seccomp filters it runs under, none
+    # where Linux does not show them, and the namespaces it stands in.
+    parent: int
+    runs_pages: bool
+    typed: bool
+    filters: int | None
+    namespaces: list[str]
 
 
 class RenderingReportKind(StrEnum):
@@ -244,15 +260,51 @@ def page_content(page: Page, url: str) -> str:
     return wellformed(page.content())
 
 
-def page_process_states() -> list[list[str]]:
-    # The states, as Linux shows them, of the browser's processes that run pages, of those
-    # still running as they are read.
-    states = []
+def browser_processes() -> dict[int, BrowserProcess]:
+    # The processes this renderer started, by their numbers, of those still running as they
+    # are read.
+    found = {}
     for process in lineage.descendants(os.getpid()):
         with suppress(psutil.NoSuchProcess, FileNotFoundError, ProcessLookupError):
-            if PAGE_PROCESS in process.cmdline():
-                states.append(Path(f"/proc/{process.pid}/status").read_text().splitlines())
-    return states
+            arguments = process.cmdline()
+            status = Path(PROCESS_STATUS.format(pid=process.pid)).read_text().splitlines()
+            filters = [int(line.split()[1]) for line in status if line.startswith(SECCOMP_FILTERS)]
+            found[process.pid] = BrowserProcess(
+                parent=process.ppid(),
+                runs_pages=PAGE_PROCESS in arguments,
+                typed=any(argument.startswith(PROCESS_TYPE) for argument in arguments),
+                filters=filters[0] if filters else None,
+                namespaces=[
+                    os.readlink(PROCESS_NAMESPACE.format(pid=process.pid, kind=kind))
+                    for kind in SANDBOX_NAMESPACES
+                ],
+            )
+    return found
+
+
+def browser_of(
+    process: BrowserProcess, processes: dict[int, BrowserProcess]
+) -> BrowserProcess | None:
+    # The browser's own process for a process it started, where it is among `processes`.
+    ancestor = processes.get(process.parent)
+    while ancestor is not None and ancestor.typed:
+        ancestor = processes.get(ancestor.parent)
+    return ancestor
+
+
+def runs_pages_sandboxed(processes: dict[int, BrowserProcess]) -> bool:
+    # There is a process that runs pages, and every such process runs under more seccomp
+    # filters than the browser's own process and stands in none of its namespaces.
+    pages = [process for process in processes.values() if process.runs_pages]
+    browsers = [browser_of(page, processes) for page in pages]
+    return bool(pages) and all(
+        browser is not None
+        and page.filters is not None
+        and browser.filters is not None
+        and page.filters > browser.filters
+        and set(page.namespaces).isdisjoint(browser.namespaces)
+        for page, browser in zip(pages, browsers, strict=True)
+    )
 
 
 def datagram_waits(listener: socket.socket) -> bool:
@@ -328,11 +380,11 @@ class PageRendering:
             page = context.new_page()
             try:
                 candidates = page.evaluate(WEBRTC_PROOF, [server, WEBRTC_PROOF_LIMIT_MS])
-                states = page_process_states()
+                processes = browser_processes()
             finally:
                 page.close()
             sent = datagram_waits(listener)
-        if not states or not all(SECCOMP_FILTER in state for state in states):
+        if not runs_pages_sandboxed(processes):
             raise UnreadableSource(f"the browser {self.program} runs pages without its sandbox")
         if candidates or sent:
             raise UnreadableSource(
