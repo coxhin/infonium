@@ -1,4 +1,5 @@
 import ctypes
+import glob
 import os
 import resource
 import signal
@@ -7,6 +8,7 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import Path
 from threading import Event, Thread
 from types import TracebackType
 from typing import Self
@@ -25,6 +27,15 @@ ABANDONED_STATUS = 1
 # two looks at what of it is still alive.
 ENDING_LIMIT_SECONDS = 10.0
 ENDING_WATCH_SECONDS = 0.02
+# Where Linux lists the children of each thread of a process: a walk over these lists reads
+# the descendants alone, where one over every process reads all the machine runs (25 ms for
+# 2,171 processes here). And where it shows the files a process holds open, and the unit of
+# the blocks a file takes on disk.
+TASKS = "/proc/{pid}/task"
+CHILDREN_LISTS = "*/children"
+DESCRIPTORS = "/proc/{pid}/fd"
+EVERY_ENTRY = "*"
+BLOCK_BYTES = 512
 
 
 def hold_data_to(limit: int) -> None:
@@ -60,9 +71,33 @@ def held_memory(processes: list[psutil.Process]) -> int:
     return held
 
 
+def held_files(processes: list[psutil.Process], folder: Path) -> int:
+    # What the files under a folder that processes hold open take on disk, each file once,
+    # those removed from the folder while held among them, which no walk of the folder finds.
+    under = os.path.join(folder, "")
+    blocks: dict[tuple[int, int], int] = {}
+    for process in processes:
+        for descriptor in glob.glob(os.path.join(DESCRIPTORS.format(pid=process.pid), EVERY_ENTRY)):
+            with suppress(FileNotFoundError, ProcessLookupError):
+                if os.readlink(descriptor).startswith(under):
+                    held = os.stat(descriptor)
+                    blocks[(held.st_dev, held.st_ino)] = held.st_blocks * BLOCK_BYTES
+    return sum(blocks.values())
+
+
 def descendants(pid: int) -> list[psutil.Process]:
-    # The descendants of a process as they stand, those that have ended among them.
-    return psutil.Process(pid).children(recursive=True)
+    # The descendants of a process as they stand, those that have ended among them, as Linux
+    # lists them by the threads that started them. A list read while processes start or end
+    # may leave one out, which a walk made again finds.
+    found: list[psutil.Process] = []
+    parents = [pid]
+    while parents:
+        for listing in Path(TASKS.format(pid=parents.pop())).glob(CHILDREN_LISTS):
+            with suppress(FileNotFoundError, ProcessLookupError, psutil.NoSuchProcess):
+                children = [psutil.Process(int(child)) for child in listing.read_text().split()]
+                found += children
+                parents += [child.pid for child in children]
+    return found
 
 
 def end_all(standing: Callable[[], list[psutil.Process]]) -> None:

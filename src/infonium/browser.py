@@ -94,8 +94,9 @@ SCRIPT_MEMORY_MIB = 1024
 # that is kept.
 PROCESS_MEMORY_BYTES = 4 * 1024**3
 # The most a whole rendering may hold, in the memory of all its processes that they share
-# with no other, and on disk in its work folder; a page that holds more is ended. In a survey
-# of 30 sites, no page held more than 1.1 GiB, or more than 124 MiB on disk.
+# with no other, and on disk in its work folder, both with the files the browser shares its
+# memory through; a page that holds more is ended. itmedia-jp, the page of a survey of 30
+# sites that held the most, held 1.3 GiB, and 344 MiB on disk.
 RENDERING_MEMORY_BYTES = 3 * 1024**3
 RENDERING_DISK_BYTES = 1024**3
 TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
@@ -110,9 +111,8 @@ RENDERER = (sys.executable, RUN_AS_MODULE, __spec__.name)
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
 # How long the process that started the renderer lets pass between two looks at whether it
-# is done, and between two looks at what the rendering holds.
+# is done and at what the rendering holds.
 RENDERER_WATCH_SECONDS = 0.05
-HOLDING_WATCH_SECONDS = 0.2
 # The browser makes the socket that keeps it single in the folder for temporary files, whose
 # path must stay short enough for a socket's address, so that folder is one of its own made
 # where the system keeps temporary files, apart from the work folder.
@@ -504,27 +504,28 @@ def main() -> None:
 def folder_bytes(folder: Path) -> int:
     # What the files of a folder hold, of those that are still there as they are counted.
     held = 0
-    for file in folder.rglob("*"):
-        with suppress(FileNotFoundError):
-            held += file.lstat().st_size
+    for place, _, files in os.walk(folder):
+        for name in files:
+            with suppress(FileNotFoundError):
+                held += os.lstat(os.path.join(place, name)).st_size
     return held
 
 
-def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path) -> None:
+def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path, temporary: Path) -> None:
     # Waits until the renderer has reported or ended; a rendering that takes longer than its
-    # limit, or holds more than its bounds, is ended there.
+    # limit, or holds more than its bounds, is ended there. The browser keeps the memory its
+    # processes share in files under its temporary folder, removed as soon as they are made,
+    # and these count in both bounds.
     began = time.monotonic()
-    next_look = began
     while not (work / RENDERING_REPORT_FILE).exists() and not renderer.has_ended():
-        now = time.monotonic()
-        if now - began > RENDERING_LIMIT_SECONDS:
+        if time.monotonic() - began > RENDERING_LIMIT_SECONDS:
             raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
-        if now >= next_look:
-            if lineage.held_memory(renderer.look()) > RENDERING_MEMORY_BYTES:
-                raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
-            if folder_bytes(work) > RENDERING_DISK_BYTES:
-                raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
-            next_look = now + HOLDING_WATCH_SECONDS
+        processes = renderer.look()
+        shared = lineage.held_files(processes, temporary)
+        if lineage.held_memory(processes) + shared > RENDERING_MEMORY_BYTES:
+            raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
+        if folder_bytes(work) + shared > RENDERING_DISK_BYTES:
+            raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
         time.sleep(RENDERER_WATCH_SECONDS)
 
 
@@ -536,7 +537,7 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     with TemporaryDirectory() as temporary:
         environment = {**os.environ, TEMPORARY_FOLDER_VARIABLE: temporary}
         with lineage.HeldProgram(command, environment) as renderer:
-            watch_rendering(url, renderer, work)
+            watch_rendering(url, renderer, work, Path(temporary))
     # A renderer that ended before it reported has met a fault of its own.
     if not (work / RENDERING_REPORT_FILE).exists():
         raise subprocess.CalledProcessError(renderer.status(), command)
