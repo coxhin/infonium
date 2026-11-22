@@ -143,6 +143,12 @@ HOME_VARIABLES = {
     "XDG_CACHE_HOME": ".cache",
     "XDG_DATA_HOME": ".local/share",
 }
+# The renderer, and the browser it starts, are given an environment of their own: of
+# infonium's, only where programs are found, the language and the time zone; besides these,
+# the home in the work folder and the folder for temporary files. Nothing else of infonium's,
+# its keys least, reaches the processes that run a page.
+PASSED_VARIABLES = frozenset({"PATH", "TZ", "LANG", "LANGUAGE"})
+LOCALE_PREFIX = "LC_"
 # The profile's preferences, written before the browser starts: WebRTC sends nothing over
 # UDP, which the proxy cannot carry.
 PREFERENCES_FILE = Path("Default") / "Preferences"
@@ -254,9 +260,17 @@ RenderingReport = Annotated[CompletedRendering | AbortedRendering, Field(discrim
 RENDERING_REPORT = TypeAdapter(RenderingReport)
 
 
-def browser_environment(work: Path) -> dict[str, str | float | bool]:
+def renderer_environment(work: Path, temporary: Path) -> dict[str, str]:
     home = work / HOME_FOLDER
-    return {**os.environ, **{name: str(home / part) for name, part in HOME_VARIABLES.items()}}
+    return {
+        **{
+            name: value
+            for name, value in os.environ.items()
+            if name in PASSED_VARIABLES or name.startswith(LOCALE_PREFIX)
+        },
+        **{name: str(home / part) for name, part in HOME_VARIABLES.items()},
+        TEMPORARY_FOLDER_VARIABLE: str(temporary),
+    }
 
 
 def wellformed(text: str) -> str:
@@ -491,7 +505,6 @@ class PageRendering:
                         *BROWSER_FLAGS,
                         f"--proxy-server=socks5://{LOOPBACK}:{self.proxy.port()}",
                     ],
-                    env=browser_environment(work),
                     accept_downloads=False,
                     service_workers="block",
                 )
@@ -579,7 +592,7 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     deadline = time.monotonic() + RENDERING_LIMIT_SECONDS - REPORTING_SECONDS
     command = [*RENDERER, url, str(work), program, repr(deadline)]
     with TemporaryDirectory() as temporary:
-        environment = {**os.environ, TEMPORARY_FOLDER_VARIABLE: temporary}
+        environment = renderer_environment(work, Path(temporary))
         with lineage.HeldProgram(command, environment) as renderer:
             watch_rendering(url, renderer, work, Path(temporary))
     # A renderer that ended before it reported has met a fault of its own.
