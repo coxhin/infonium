@@ -18,7 +18,6 @@ from threading import Event, Thread
 from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
-import psutil
 from playwright.sync_api import BrowserContext, Page, Request, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as WaitOverdue
@@ -283,7 +282,7 @@ def browser_processes() -> dict[int, BrowserProcess]:
     # are read.
     found = {}
     for process in lineage.descendants(os.getpid()):
-        with suppress(psutil.NoSuchProcess, FileNotFoundError, ProcessLookupError):
+        with suppress(*lineage.LOOK_REFUSED):
             arguments = process.cmdline()
             status = Path(PROCESS_STATUS.format(pid=process.pid)).read_text().splitlines()
             filters = [int(line.split()[1]) for line in status if line.startswith(SECCOMP_FILTERS)]

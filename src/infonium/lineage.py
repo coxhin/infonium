@@ -36,6 +36,16 @@ CHILDREN_LISTS = "*/children"
 DESCRIPTORS = "/proc/{pid}/fd"
 EVERY_ENTRY = "*"
 BLOCK_BYTES = 512
+# A process that has ended cannot be looked at, nor, for a moment, one that is starting: it
+# refuses a look at what it holds until its new program is in place. Either is passed over,
+# and the next look finds the one that started.
+LOOK_REFUSED = (
+    FileNotFoundError,
+    ProcessLookupError,
+    PermissionError,
+    psutil.NoSuchProcess,
+    psutil.AccessDenied,
+)
 
 
 def hold_data_to(limit: int) -> None:
@@ -65,7 +75,7 @@ def held_memory(processes: list[psutil.Process]) -> int:
     # own, without the files and shared memory they map.
     held = 0
     for process in processes:
-        with suppress(psutil.NoSuchProcess):
+        with suppress(*LOOK_REFUSED):
             memory = process.memory_info()
             held += memory.rss - memory.shared
     return held
@@ -78,7 +88,7 @@ def held_files(processes: list[psutil.Process], folder: Path) -> int:
     blocks: dict[tuple[int, int], int] = {}
     for process in processes:
         for descriptor in glob.glob(os.path.join(DESCRIPTORS.format(pid=process.pid), EVERY_ENTRY)):
-            with suppress(FileNotFoundError, ProcessLookupError):
+            with suppress(*LOOK_REFUSED):
                 if os.readlink(descriptor).startswith(under):
                     held = os.stat(descriptor)
                     blocks[(held.st_dev, held.st_ino)] = held.st_blocks * BLOCK_BYTES
@@ -93,7 +103,7 @@ def descendants(pid: int) -> list[psutil.Process]:
     parents = [pid]
     while parents:
         for listing in Path(TASKS.format(pid=parents.pop())).glob(CHILDREN_LISTS):
-            with suppress(FileNotFoundError, ProcessLookupError, psutil.NoSuchProcess):
+            with suppress(*LOOK_REFUSED):
                 children = [psutil.Process(int(child)) for child in listing.read_text().split()]
                 found += children
                 parents += [child.pid for child in children]
