@@ -25,7 +25,7 @@ import psutil
 from pydantic import BaseModel
 
 from infonium import lineage
-from infonium.document import UnreadableSource, error_text
+from infonium.document import error_text
 
 type Address = IPv4Address | IPv6Address
 type Network = IPv4Network | IPv6Network
@@ -68,6 +68,8 @@ MACHINE_WORD = "=I"
 # process of its own, so that what it refused never reaches the renderer, and connects to
 # the name itself when the hook gives no address.
 SOCKS_VERSION = 5
+# How a browser is told that a proxy speaks it, before the proxy's host and port.
+PROXY_SCHEME = f"socks{SOCKS_VERSION}"
 NO_AUTHENTICATION = 0
 CONNECT = 1
 RESERVED = 0
@@ -109,6 +111,11 @@ class Refusal(BaseModel):
     host: str
     port: int
     reason: str
+
+
+class NotPublicAddress(Exception):
+    # An address the proxy does not connect to, named in what it says.
+    pass
 
 
 class MalformedRequest(Exception):
@@ -203,7 +210,7 @@ def public_connection(host: str, port: int) -> socket.socket:
     networks = own_networks()
     for *_, place in found:
         if not is_public(ip_address(place[0]), networks):
-            raise UnreadableSource(f"{place[0]} is not a public address")
+            raise NotPublicAddress(f"{place[0]} is not a public address")
     family, kind, protocol, _, place = found[0]
     connection = socket.socket(family, kind, protocol)
     connection.settimeout(CONNECTION_LIMIT_SECONDS)
@@ -350,7 +357,7 @@ class SocksConnection(BaseRequestHandler):
         # reason, for the report of a page that could not be opened.
         try:
             upstream = public_connection(host, port)
-        except (OSError, UnreadableSource) as refused:
+        except (OSError, NotPublicAddress) as refused:
             self.server.refused.put(Refusal(host=host, port=port, reason=error_text(refused)))
             client.sendall(socks_reply(SocksReply.NOT_ALLOWED))
             return

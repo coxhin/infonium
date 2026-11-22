@@ -93,7 +93,7 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # leader of a session of its own, with a pipe for its standard input that the process which
 # starts it holds open and writes nothing to: when the pipe closes, the fetcher ends the
 # group it leads. Started with a standard input that is at its end, it ends at once.
-RUN_AS_MODULE = "-m"
+RUN_AS_MODULE = lineage.RUN_AS_MODULE
 FETCHER = [sys.executable, RUN_AS_MODULE, __spec__.name]
 FETCH_REPORT_FILE = "fetch.json"
 # How long the process that started the fetcher lets pass between two looks at whether it

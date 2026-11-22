@@ -33,7 +33,14 @@ from infonium.document import (
     error_status,
     error_text,
 )
-from infonium.egress import EVERY_PORT, LOOPBACK, PublicProxy, Refusal, wildcard_udp_ports
+from infonium.egress import (
+    EVERY_PORT,
+    LOOPBACK,
+    PROXY_SCHEME,
+    PublicProxy,
+    Refusal,
+    wildcard_udp_ports,
+)
 
 RENDERED_FILE = "rendered"
 # A page's scripts can leave half of a UTF-16 pair in its text, which UTF-8 cannot hold. A
@@ -134,8 +141,7 @@ TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 # the browser. It is given the address of the page, a folder for its work, the browser to
 # start and the moment, on the system's monotonic clock, by which it is to be done; it leaves
 # the page in the folder and a report of the rendering beside it, and then waits to be ended.
-RUN_AS_MODULE = "-m"
-RENDERER = (sys.executable, RUN_AS_MODULE, __spec__.name)
+RENDERER = (sys.executable, lineage.RUN_AS_MODULE, __spec__.name)
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
 # How long the process that started the renderer lets pass between two looks at whether it
@@ -194,6 +200,8 @@ BROWSER_FLAGS = (
     f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",
     f"--js-flags=--max-old-space-size={SCRIPT_MEMORY_MIB}",
 )
+# The proxy the browser connects through, named with the port it took as it started.
+PROXY_SERVER_FLAG = "--proxy-server={scheme}://{host}:{port}"
 # The browser's sandbox, seen in what runs rather than in what the browser was told: a process
 # of the browser that runs pages runs under more seccomp filters than the browser's own
 # process, its nearest ancestor that carries no type of process, and stands in none of its
@@ -562,7 +570,9 @@ class PageRendering:
                     chromium_sandbox=True,
                     args=[
                         *BROWSER_FLAGS,
-                        f"--proxy-server=socks5://{LOOPBACK}:{self.proxy.port()}",
+                        PROXY_SERVER_FLAG.format(
+                            scheme=PROXY_SCHEME, host=LOOPBACK, port=self.proxy.port()
+                        ),
                     ],
                     accept_downloads=False,
                     service_workers="block",

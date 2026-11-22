@@ -16,6 +16,9 @@ from typing import Self
 
 import psutil
 
+# How Python is told to run a module as a program, as infonium runs the programs it starts
+# of its own.
+RUN_AS_MODULE = "-m"
 # Linux's option of prctl that makes a process the reaper of the orphans among its
 # descendants, so that whatever they start stays its descendant when its parent dies, a
 # process that leads a session of its own as well.
