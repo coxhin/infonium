@@ -70,16 +70,17 @@ ATTEMPT_LIMIT_SECONDS = (ANSWER_LIMIT_MS + LOAD_LIMIT_MS + QUIET_LIMIT_MS + SETT
 # a script, or a request its scripts made: what fills a page that its scripts build.
 NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED"
 RENDERING_ATTEMPTS = 5
-# Such changes come in bursts: on this machine 23.9 a second on average, yet a stretch of a
-# second or more without any came every 8 s, and held 48.7% of the time. A page is rendered
-# again only once the links and addresses of this machine have held still that long, or when
-# the time left holds one attempt more and no longer. Linux tells of each change on a routing
-# socket, to the groups of the links and of the IPv4 and IPv6 addresses.
+# Such changes come in bursts, and it is a change of an address that Chrome breaks its
+# requests off at: each time it did so here, an address had changed within 0.83 s before, 0.04 s
+# at the median, where a moment taken at random lay 0.33 s after one; the links of this
+# machine change ten times as often. A page is rendered again only once no address has changed
+# for a second, or when the time left holds one attempt more and no longer: under 43 changes a
+# second, such a second came every 9 s, and one without a change of any kind every 25 s. Linux
+# tells of each change on a routing socket, to the groups of the IPv4 and the IPv6 addresses.
 QUIET_NETWORK_SECONDS = 1.0
-LINK_CHANGES = 0x1
 IPV4_ADDRESS_CHANGES = 0x10
 IPV6_ADDRESS_CHANGES = 0x100
-NETWORK_CHANGES = LINK_CHANGES | IPV4_ADDRESS_CHANGES | IPV6_ADDRESS_CHANGES
+ADDRESS_CHANGES = IPV4_ADDRESS_CHANGES | IPV6_ADDRESS_CHANGES
 CHANGE_BYTES = 65536
 DOCUMENT_RESOURCE = "document"
 SCRIPTED_RESOURCES = frozenset({"script", "xhr", "fetch"})
@@ -380,9 +381,9 @@ def runs_pages_sandboxed(processes: dict[int, BrowserProcess]) -> bool:
 
 def wait_for_quiet_network(until: float) -> None:
     # Waits, until the moment given on the monotonic clock at most, for a stretch in which no
-    # link or address of this machine changes.
+    # address of this machine changes.
     with socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, socket.NETLINK_ROUTE) as changes:
-        changes.bind((0, NETWORK_CHANGES))
+        changes.bind((0, ADDRESS_CHANGES))
         while (left := until - time.monotonic()) > 0 and select.select(
             [changes], [], [], min(QUIET_NETWORK_SECONDS, left)
         )[0]:
