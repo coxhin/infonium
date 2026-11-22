@@ -63,6 +63,17 @@ ATTEMPT_LIMIT_SECONDS = (ANSWER_LIMIT_MS + LOAD_LIMIT_MS + QUIET_LIMIT_MS + SETT
 # a script, or a request its scripts made: what fills a page that its scripts build.
 NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED"
 RENDERING_ATTEMPTS = 5
+# Such changes come in bursts: on this machine 23.9 a second on average, yet a stretch of a
+# second or more without any came every 8 s, and held 48.7% of the time. A page is rendered
+# again only once the links and addresses of this machine have held still that long, or when
+# the time left holds one attempt more and no longer. Linux tells of each change on a routing
+# socket, to the groups of the links and of the IPv4 and IPv6 addresses.
+QUIET_NETWORK_SECONDS = 1.0
+LINK_CHANGES = 0x1
+IPV4_ADDRESS_CHANGES = 0x10
+IPV6_ADDRESS_CHANGES = 0x100
+NETWORK_CHANGES = LINK_CHANGES | IPV4_ADDRESS_CHANGES | IPV6_ADDRESS_CHANGES
+CHANGE_BYTES = 65536
 DOCUMENT_RESOURCE = "document"
 SCRIPTED_RESOURCES = frozenset({"script", "xhr", "fetch"})
 # How Chrome names a request the proxy did not connect.
@@ -353,6 +364,17 @@ def runs_pages_sandboxed(processes: dict[int, BrowserProcess]) -> bool:
     )
 
 
+def wait_for_quiet_network(until: float) -> None:
+    # Waits, until the moment given on the monotonic clock at most, for a stretch in which no
+    # link or address of this machine changes.
+    with socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, socket.NETLINK_ROUTE) as changes:
+        changes.bind((0, NETWORK_CHANGES))
+        while (left := until - time.monotonic()) > 0 and select.select(
+            [changes], [], [], min(QUIET_NETWORK_SECONDS, left)
+        )[0]:
+            changes.recv(CHANGE_BYTES)
+
+
 def breaks_page(request: Request) -> bool:
     # A request whose breaking off leaves the page without what fills it.
     is_own_document = (
@@ -494,15 +516,19 @@ class PageRendering:
 
     def taken_page(self, context: BrowserContext, deadline: float) -> TakenPage:
         # The page once it is done. A page whose own document, scripts or the requests of
-        # its scripts were broken off is rendered again, in a page of its own, as long as the
-        # time left holds another attempt; of the attempts that were broken off, the one that
-        # holds the most is kept. An attempt that fails for another reason once another was
-        # taken ends the attempts and leaves what was taken.
+        # its scripts were broken off is rendered again, in a page of its own, once the network
+        # of this machine holds still, as long as the time left holds another attempt; of the
+        # attempts that were broken off, the one that holds the most is kept. An attempt that
+        # fails for another reason once another was taken ends the attempts and leaves what was
+        # taken.
         taken: list[TakenPage] = []
         failures: list[PlaywrightError | UnreadableSource] = []
+        latest_start = deadline - ATTEMPT_LIMIT_SECONDS
         for attempt in range(RENDERING_ATTEMPTS):
-            if attempt and deadline - time.monotonic() < ATTEMPT_LIMIT_SECONDS:
+            if attempt and time.monotonic() > latest_start:
                 break
+            if attempt:
+                wait_for_quiet_network(latest_start)
             try:
                 taken.append(self.attempt(context))
             except (PlaywrightError, UnreadableSource) as failure:
