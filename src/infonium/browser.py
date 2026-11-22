@@ -11,9 +11,10 @@ import traceback
 from codecs import BOM_UTF8
 from contextlib import suppress
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Thread
+from threading import Event
 from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
@@ -99,24 +100,19 @@ RENDERING_MEMORY_BYTES = 3 * 1024**3
 RENDERING_DISK_BYTES = 1024**3
 TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 
-# The browser is driven by a process of its own, this module run as a program, which starts
-# the proxy the browser connects through and Playwright, which starts the browser. It is
-# given the address of the page, a folder for its work, the browser to start and the
-# moment, on the system's monotonic clock, by which it is to be done; it leaves the page in
-# the folder and a report of the rendering beside it, and then waits to be ended. It is to
-# be started with a pipe for its standard input that the process which starts it holds open
-# and writes nothing to: when the pipe closes, the renderer ends all it started, and itself.
+# The browser is driven by a process of its own, this module run as a program and held by
+# lineage, which starts the proxy the browser connects through and Playwright, which starts
+# the browser. It is given the address of the page, a folder for its work, the browser to
+# start and the moment, on the system's monotonic clock, by which it is to be done; it leaves
+# the page in the folder and a report of the rendering beside it, and then waits to be ended.
 RUN_AS_MODULE = "-m"
 RENDERER = (sys.executable, RUN_AS_MODULE, __spec__.name)
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
-ABANDONED_STATUS = 1
 # How long the process that started the renderer lets pass between two looks at whether it
 # is done, and between two looks at what the rendering holds.
 RENDERER_WATCH_SECONDS = 0.05
 HOLDING_WATCH_SECONDS = 0.2
-# A look at whether a process has ended that does not wait, and leaves it unreaped.
-ENDED_UNREAPED = os.WEXITED | os.WNOHANG | os.WNOWAIT
 # The browser makes the socket that keeps it single in the folder for temporary files, whose
 # path must stay short enough for a socket's address, so that folder is one of its own made
 # where the system keeps temporary files, apart from the work folder.
@@ -466,21 +462,14 @@ class PageRendering:
         return taken.address
 
 
-def end_when_abandoned(work: Path, reported: Event) -> None:
-    # The process that started the renderer holds the other end of its standard input open
-    # and writes nothing to it. When that end closes, that process is gone and removes
-    # nothing, so the renderer ends all it started, which ends the rendering under way; lets
-    # it write its report, for a few seconds at most, so that nothing is written into the
-    # folders of the rendering as they are removed; removes them; and ends itself, whatever
-    # of this fails.
-    os.read(sys.stdin.fileno(), 1)
-    try:
-        lineage.end_own_descendants()
-        reported.wait(REPORTING_SECONDS)
-        shutil.rmtree(work)
-        shutil.rmtree(os.environ[TEMPORARY_FOLDER_VARIABLE])
-    finally:
-        os._exit(ABANDONED_STATUS)
+def remove_rendering(work: Path, reported: Event) -> None:
+    # What a renderer whose caller is gone does once it has ended all it started, which ends
+    # the rendering under way: it lets the rendering write its report, for a few seconds at
+    # most, so that nothing is written into the folders of the rendering as they are removed,
+    # and removes them.
+    reported.wait(REPORTING_SECONDS)
+    shutil.rmtree(work)
+    shutil.rmtree(os.environ[TEMPORARY_FOLDER_VARIABLE])
 
 
 def main() -> None:
@@ -489,13 +478,11 @@ def main() -> None:
     # one process to another, so a rendering that failed is reported in one line, and where
     # it arose is written to standard error, which is the starting process's own. Any other
     # exception is a fault of the renderer's own, and ends it without a report. Whatever the
-    # renderer started is ended before it reports or ends, and it is the reaper of their
-    # orphans, so that all of them stay its descendants until then.
+    # renderer started is ended before it reports or ends.
     url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
-    lineage.become_reaper()
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
     reported = Event()
-    Thread(target=end_when_abandoned, args=(work, reported), daemon=True).start()
+    lineage.hold_descendants(partial(remove_rendering, work, reported))
     proxy = PublicProxy()
     proxy.serve_in_background()
     rendering = PageRendering(proxy, program)
@@ -511,7 +498,7 @@ def main() -> None:
     (work / WRITTEN_REPORT_FILE).write_bytes(RENDERING_REPORT.dump_json(report))
     (work / WRITTEN_REPORT_FILE).replace(work / RENDERING_REPORT_FILE)
     reported.set()
-    Event().wait()
+    lineage.wait_to_be_ended()
 
 
 def folder_bytes(folder: Path) -> int:
@@ -523,20 +510,17 @@ def folder_bytes(folder: Path) -> int:
     return held
 
 
-def watch_rendering(url: str, renderer: subprocess.Popen[bytes], work: Path) -> None:
+def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path) -> None:
     # Waits until the renderer has reported or ended; a rendering that takes longer than its
     # limit, or holds more than its bounds, is ended there.
     began = time.monotonic()
     next_look = began
-    while (
-        not (work / RENDERING_REPORT_FILE).exists()
-        and os.waitid(os.P_PID, renderer.pid, ENDED_UNREAPED) is None
-    ):
+    while not (work / RENDERING_REPORT_FILE).exists() and not renderer.has_ended():
         now = time.monotonic()
         if now - began > RENDERING_LIMIT_SECONDS:
             raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
         if now >= next_look:
-            if lineage.held_memory(renderer.pid) > RENDERING_MEMORY_BYTES:
+            if lineage.held_memory(renderer.look()) > RENDERING_MEMORY_BYTES:
                 raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
             if folder_bytes(work) > RENDERING_DISK_BYTES:
                 raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
@@ -551,19 +535,11 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     command = [*RENDERER, url, str(work), program, repr(deadline)]
     with TemporaryDirectory() as temporary:
         environment = {**os.environ, TEMPORARY_FOLDER_VARIABLE: temporary}
-        # The renderer leads a session of its own, so that a signal to this process's group
-        # does not end it before it has ended all it started and removed the rendering's
-        # folders, which it does when its standard input closes.
-        with subprocess.Popen(
-            command, stdin=subprocess.PIPE, env=environment, start_new_session=True
-        ) as renderer:
-            try:
-                watch_rendering(url, renderer, work)
-            finally:
-                lineage.end_process_tree(renderer)
+        with lineage.HeldProgram(command, environment) as renderer:
+            watch_rendering(url, renderer, work)
     # A renderer that ended before it reported has met a fault of its own.
     if not (work / RENDERING_REPORT_FILE).exists():
-        raise subprocess.CalledProcessError(renderer.returncode, command)
+        raise subprocess.CalledProcessError(renderer.status(), command)
     return RENDERING_REPORT.validate_json((work / RENDERING_REPORT_FILE).read_bytes())
 
 

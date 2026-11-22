@@ -3,8 +3,13 @@ import os
 import resource
 import signal
 import subprocess
+import sys
 import time
+from collections.abc import Callable
 from contextlib import suppress
+from threading import Event, Thread
+from types import TracebackType
+from typing import Self
 
 import psutil
 
@@ -12,6 +17,10 @@ import psutil
 # descendants, so that whatever they start stays its descendant when its parent dies, a
 # process that leads a session of its own as well.
 PR_SET_CHILD_SUBREAPER = 36
+# A look at whether a process has ended that does not wait, and leaves it unreaped.
+ENDED_UNREAPED = os.WEXITED | os.WNOHANG | os.WNOWAIT
+# The status a held program ends with when the process that holds it is gone.
+ABANDONED_STATUS = 1
 # How long the ending of a process and all it started may take, and how long passes between
 # two looks at what of it is still alive.
 ENDING_LIMIT_SECONDS = 10.0
@@ -40,11 +49,11 @@ def is_alive(process: psutil.Process) -> bool:
     return False
 
 
-def held_memory(pid: int) -> int:
-    # The memory a process and all it started hold resident and share with no other: what
-    # they make of their own, without the files and shared memory they map.
+def held_memory(processes: list[psutil.Process]) -> int:
+    # The memory processes hold resident and share with no other: what they make of their
+    # own, without the files and shared memory they map.
     held = 0
-    for process in (psutil.Process(pid), *descendants(pid)):
+    for process in processes:
         with suppress(psutil.NoSuchProcess):
             memory = process.memory_info()
             held += memory.rss - memory.shared
@@ -56,51 +65,113 @@ def descendants(pid: int) -> list[psutil.Process]:
     return psutil.Process(pid).children(recursive=True)
 
 
-def descendants_of(pid: int, found: dict[int, psutil.Process]) -> list[psutil.Process]:
-    # The descendants of a process as they stand, noted in `found` with those seen before.
-    standing = descendants(pid)
-    found |= {process.pid: process for process in standing}
-    return standing
-
-
-def ended_descendants(pid: int) -> list[psutil.Process]:
-    # Kills every descendant of a process until none is left alive, and gives all it found.
-    # A process that has not ended by the limit is one this process cannot end.
-    found: dict[int, psutil.Process] = {}
+def end_all(standing: Callable[[], list[psutil.Process]]) -> None:
+    # Kills the processes `standing` gives, asked again after each round, until none of them
+    # is left alive. A process that has not ended by the limit is one this process cannot end.
     began = time.monotonic()
-    while living := [process for process in descendants_of(pid, found) if is_alive(process)]:
+    while living := [process for process in standing() if is_alive(process)]:
         if time.monotonic() - began > ENDING_LIMIT_SECONDS:
             raise TimeoutError(f"processes {[process.pid for process in living]} did not end")
         for process in living:
             with suppress(psutil.NoSuchProcess):
                 process.kill()
         time.sleep(ENDING_WATCH_SECONDS)
-    return list(found.values())
 
 
 def end_own_descendants() -> None:
     # Ends all this process has started, and reaps those it is the parent or the reaper of.
-    ended_descendants(os.getpid())
+    end_all(lambda: descendants(os.getpid()))
     with suppress(ChildProcessError):
         while os.waitpid(-1, os.WNOHANG) != (0, 0):
             pass
 
 
-def end_process_tree(process: subprocess.Popen[bytes]) -> None:
-    # Ends a process that reaps the orphans of all it started, together with all of them. It
-    # is stopped first, so that it can neither end nor let a descendant slip out of its tree,
-    # and ended and reaped last, also when a descendant could not be ended: stopped, it would
-    # never end. Where this process inherits the dead, as process 1 of a container or a
-    # reaper of orphans does, the ended become its children when that process is gone; they
-    # are reaped by their numbers, each known to be the one that was ended, and no other child
-    # of this process is touched.
-    os.kill(process.pid, signal.SIGSTOP)
+def end_when_abandoned(abandoned: Callable[[], None]) -> None:
+    # The process that holds this one keeps the other end of its standard input open and
+    # writes nothing to it; the end closes when that process is gone.
+    os.read(sys.stdin.fileno(), 1)
     try:
-        ended = ended_descendants(process.pid)
+        end_own_descendants()
+        abandoned()
     finally:
-        process.kill()
-        process.wait(timeout=ENDING_LIMIT_SECONDS)
-    for descendant in ended:
-        with suppress(psutil.NoSuchProcess, ChildProcessError):
-            if descendant.is_running() and descendant.ppid() == os.getpid():
-                os.waitpid(descendant.pid, os.WNOHANG)
+        os._exit(ABANDONED_STATUS)
+
+
+def hold_descendants(abandoned: Callable[[], None]) -> None:
+    # What a held program does first. It becomes the reaper of the orphans of all it starts,
+    # so that they stay its descendants until it is ended; and once the process that holds it
+    # is gone, it ends all it started, calls `abandoned`, and ends itself, whatever of this
+    # fails.
+    become_reaper()
+    Thread(target=end_when_abandoned, args=(abandoned,), daemon=True).start()
+
+
+def wait_to_be_ended() -> None:
+    # A held program never ends by itself: the process that holds it stops it first, so that
+    # nothing it started slips out of its descent, and then ends it.
+    Event().wait()
+
+
+class HeldProgram:
+    # A program that is held with all it starts until they are ended: one that calls
+    # hold_descendants first. It leads a session of its own, so that no signal to this
+    # process's group reaches it, and its standard input is a pipe this process holds open.
+    # It is watched without being reaped, so that its number stays its own; each look notes
+    # the processes it has started, with their start times, so that each can be found again
+    # wherever it is reparented.
+    def __init__(self, command: list[str], environment: dict[str, str]) -> None:
+        reading, self.holding = os.pipe()
+        self.process = subprocess.Popen(
+            command, stdin=reading, env=environment, start_new_session=True
+        )
+        os.close(reading)
+        self.seen: set[psutil.Process] = set()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        error: BaseException | None,
+        trace: TracebackType | None,
+    ) -> None:
+        self.end()
+
+    def has_ended(self) -> bool:
+        return os.waitid(os.P_PID, self.process.pid, ENDED_UNREAPED) is not None
+
+    def status(self) -> int:
+        # How the program ended, once it is ended.
+        return self.process.wait(timeout=ENDING_LIMIT_SECONDS)
+
+    def look(self) -> list[psutil.Process]:
+        # The program and its descendants as they stand, the descendants noted. A process
+        # is the same process when its number and its start time are.
+        standing = descendants(self.process.pid)
+        self.seen |= set(standing)
+        return [psutil.Process(self.process.pid), *standing]
+
+    def held(self) -> list[psutil.Process]:
+        # The processes the program started that are still there, wherever they are now.
+        self.look()
+        return [process for process in self.seen if process.is_running()]
+
+    def end(self) -> None:
+        # The program is stopped first, so that it can neither end nor let a descendant slip
+        # out of its descent, and killed and reaped last, also when a descendant could not be
+        # ended: stopped, it would never end. Where this process inherits the dead, as process
+        # 1 of a container or a reaper of orphans does, the ended that became its children are
+        # reaped by their numbers, each known to be the one that was ended, and no other child
+        # of this process is touched.
+        os.kill(self.process.pid, signal.SIGSTOP)
+        try:
+            end_all(self.held)
+        finally:
+            self.process.kill()
+            self.status()
+            os.close(self.holding)
+        for process in self.seen:
+            with suppress(psutil.NoSuchProcess, ChildProcessError):
+                if process.is_running() and process.ppid() == os.getpid():
+                    os.waitpid(process.pid, os.WNOHANG)
