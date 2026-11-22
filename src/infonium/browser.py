@@ -35,6 +35,10 @@ from infonium.document import (
 from infonium.egress import EVERY_PORT, LOOPBACK, PublicProxy, Refusal
 
 RENDERED_FILE = "rendered"
+# A page's scripts can leave half of a UTF-16 pair in its text, which UTF-8 cannot hold. A
+# browser that encodes such text puts U+FFFD in its place, and so does the renderer, with what
+# UTF-16 pairs kept as one character, before anything else touches a string taken from a page.
+SURROGATE_ENCODING = "utf-16-le"
 FIRST_ERROR_STATUS = 400
 WEB_ADDRESS_SCHEMES = frozenset({"http", "https"})
 DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -222,18 +226,22 @@ def browser_environment(work: Path) -> dict[str, str | float | bool]:
     return {**os.environ, **{name: str(home / part) for name, part in HOME_VARIABLES.items()}}
 
 
+def wellformed(text: str) -> str:
+    return text.encode(SURROGATE_ENCODING, "surrogatepass").decode(SURROGATE_ENCODING, "replace")
+
+
 def page_content(page: Page, url: str) -> str:
     # The page once it is done: its server has answered, it has loaded and fallen quiet, or
     # its time for these has passed, and its scripts have had a moment more.
     answer = page.goto(url, wait_until="commit", timeout=ANSWER_LIMIT_MS)
     if answer is not None and answer.status >= FIRST_ERROR_STATUS:
-        raise UnreadableSource(error_status(answer.url, answer.status))
+        raise UnreadableSource(error_status(wellformed(answer.url), answer.status))
     with suppress(WaitOverdue):
         page.wait_for_load_state("load", timeout=LOAD_LIMIT_MS)
     with suppress(WaitOverdue):
         page.wait_for_load_state("networkidle", timeout=QUIET_LIMIT_MS)
     page.wait_for_timeout(SETTLING_MS)
-    return page.content()
+    return wellformed(page.content())
 
 
 def page_process_states() -> list[list[str]]:
@@ -275,10 +283,11 @@ class PageRendering:
         self.broken: list[str] = []
 
     def note_failure(self, request: Request) -> None:
+        url = wellformed(request.url)
         if request.is_navigation_request() and request.frame.parent_frame is None:
-            self.failed_hops.append(FailedHop(url=request.url, failure=request.failure or ""))
+            self.failed_hops.append(FailedHop(url=url, failure=request.failure or ""))
         if breaks_page(request):
-            self.broken.append(request.url)
+            self.broken.append(url)
 
     def proxy_refusals(self) -> list[str]:
         # Why the proxy refused the last address the page itself was asked at, when the
@@ -298,7 +307,7 @@ class PageRendering:
         # was not connected by the proxy; the last line the browser wrote when it ended, or
         # that it wrote none; and otherwise the first line of the error, without the call log
         # that follows an error of Playwright.
-        said = error_text(ending)
+        said = wellformed(error_text(ending))
         refused = self.proxy_refusals() if PROXY_FAILURE in said else []
         logs = said.partition(BROWSER_LOGS)[2].partition(CALL_LOG)[0]
         written = [line["said"] for line in WRITTEN_LINE.finditer(logs)]
@@ -339,11 +348,12 @@ class PageRendering:
         page.on("requestfailed", self.note_failure)
         try:
             content = page_content(page, url)
-            if urlsplit(page.url).scheme not in WEB_ADDRESS_SCHEMES:
+            address = wellformed(page.url)
+            if urlsplit(address).scheme not in WEB_ADDRESS_SCHEMES:
                 raise UnreadableSource(
-                    (self.proxy_refusals() or [f"{url} led the browser to {page.url}"])[0]
+                    (self.proxy_refusals() or [f"{url} led the browser to {address}"])[0]
                 )
-            return TakenPage(content=content, address=urldefrag(page.url).url)
+            return TakenPage(content=content, address=urldefrag(address).url)
         finally:
             page.close()
 
