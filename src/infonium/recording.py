@@ -22,6 +22,7 @@ AAC = "aac"
 # The profiles of AAC that every one of those browsers plays, by the names ffprobe gives
 # them. Of the others, Firefox plays LD as silence and ELD not at all.
 PLAYED_PROFILES = frozenset({"LC", "HE-AAC", "HE-AACv2"})
+VORBIS = "vorbis"
 
 # A file that is taken for a recording may be anything, and ffmpeg and ffprobe do what a
 # file tells them. So they are pointed at one in a single way. The file stands on their
@@ -33,7 +34,8 @@ PLAYED_PROFILES = frozenset({"LC", "HE-AAC", "HE-AACv2"})
 STANDARD_INPUT = "/dev/stdin"
 LOCAL_FILE = "file"
 OGG = "ogg"
-RECORDING_FORMATS = f"aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,{OGG},wav"
+WAV = "wav"
+RECORDING_FORMATS = f"aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,{OGG},{WAV}"
 HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RECORDING_FORMATS]
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
@@ -63,7 +65,7 @@ REPORT_OF = ["-show_error", "-of", "json", "-read_intervals", FIRST_PACKETS, "-s
 UNREADABLE_STATUS = 1
 REPORT_CLOSE = b"}"
 UNDECODED_STREAM = "ffmpeg cannot decode one of its streams"
-SOUND_ENTRIES = "stream=codec_name,profile:packet=size"
+SOUND_ENTRIES = "format=format_name:stream=codec_name,profile:packet=size"
 COPY_ENTRIES = "stream=start_pts,time_base,sample_rate:frame=nb_samples"
 LENGTH_ENTRIES = "format=duration"
 TITLE_ENTRIES = "format=format_name:format_tags=title:stream_tags=title"
@@ -98,7 +100,13 @@ CODED_ANEW = ["-c:a", AAC, "-af", ON_THE_TIMELINE]
 # The sound is decoded and nothing is written. Told so, ffmpeg ends with a failing status
 # at the first packet it cannot decode; otherwise it goes on without the packet.
 DECODED_FOR_NOTHING = ["-xerror", "-f", "null", "-"]
-# The longest ffprobe may take over a file, and ffmpeg over decoding or writing its sound.
+# The first packet of the sound, as ffmpeg's reader for its file cuts it, is written out as
+# it stands.
+FIRST_PACKET = ["-c:a", "copy", "-frames:a", "1", "-f", "data", "-"]
+# The twelve bits with which the ADTS header of an AAC frame begins, in hexadecimal.
+ADTS_SYNCWORD = "fff"
+# The longest a look into a file may take, by ffprobe or ffmpeg, and the longest ffmpeg may
+# take over decoding or writing its sound.
 PROBE_LIMIT_SECONDS = 60.0
 CONVERSION_LIMIT_SECONDS = 1800.0
 
@@ -123,8 +131,15 @@ class SoundPacket(BaseModel):
     size: int
 
 
+class FileKind(BaseModel):
+    # The kind of a file, by the name of ffmpeg's reader for it.
+    format_name: str
+
+
 class SoundProbe(BaseModel):
-    # The first sound of a file and the first packets of that sound, where the file has them.
+    # ffmpeg's reader for a file, the file's first sound, and the first packets of that sound,
+    # where the file has them.
+    format: FileKind
     streams: list[SoundStream]
     packets: list[SoundPacket]
 
@@ -297,6 +312,15 @@ def has_plain_timeline(copy: CopyProbe, times: Iterator[int]) -> bool:
     )
 
 
+def has_adts_headers(file: Path) -> bool:
+    # Whether the AAC of a file begins with an ADTS header, as it does where every frame
+    # carries one and so tells where it ends. A sound with anything before its first frame is
+    # taken for one without headers.
+    first = run_on(file, [*FFMPEG, *FIRST_PACKET], PROBE_LIMIT_SECONDS)
+    first.check_returncode()
+    return first.stdout.hex().startswith(ADTS_SYNCWORD)
+
+
 def audio_track(file: Path, directory: Path) -> AudioTrack:
     probe = probed(file, SOUND_ENTRIES, SoundProbe)
     if not probe.streams or not probe.packets:
@@ -304,6 +328,19 @@ def audio_track(file: Path, directory: Path) -> AudioTrack:
     coded = probe.streams[0]
     if coded.codec_name is None:
         raise UnreadableSource("no sound infonium can read in the recording")
+    # A WAV file gives its sound one size of block, so a coding whose frames differ in size has
+    # to mark where each ends, as MP3 does and AAC with ADTS headers. Vorbis does not, nor does
+    # AAC without those headers, and ffmpeg's reader for WAV then cuts such sound where its
+    # bytes happen to look like the start of a frame: it keeps little or nothing of it, often
+    # without failing.
+    if probe.format.format_name == WAV and (
+        coded.codec_name == VORBIS or (coded.codec_name == AAC and not has_adts_headers(file))
+    ):
+        raise UnreadableSource(
+            "infonium cannot read this WAV file: its compressed sound does not mark where each "
+            "frame ends, and ffmpeg reads such sound only in part; give the recording as M4A, "
+            "as Ogg or as an uncompressed WAV"
+        )
     audio = AudioTrack(file=directory / AUDIO_FILE, media_type=AUDIO_MEDIA_TYPE)
     # Named as a file, the place the sound is written to cannot be read as anything else.
     sound = f"{LOCAL_FILE}:{audio.file}"
