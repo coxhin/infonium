@@ -14,7 +14,7 @@ from enum import StrEnum
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event
+from threading import Event, Thread
 from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
@@ -75,6 +75,23 @@ CALL_LOG = "Call log:"
 WRITTEN_LINE = re.compile(
     r"^\[pid=\d+\]\[(?:err|out)\] (?:\[[^\]]*\] )?(?P<said>.+)$", re.MULTILINE
 )
+# What a person is told of a page that met a limit of infonium's own, or an error that Chrome
+# names: by the mark in Playwright's error, or for another error of Chrome's, its name.
+NO_ANSWER = "{source} did not answer within {seconds:g} s"
+CRASH_MARK = "crashed"
+CRASHED_PAGE = (
+    "{source} crashed its page in the browser, as a page does whose scripts hold more than "
+    "{mib} MiB"
+)
+CHROME_ERRORS = {
+    "net::ERR_NETWORK_CHANGED": "the network of this machine changed while {source} was loading",
+    "net::ERR_UNSAFE_REDIRECT": "{source} led the browser to an address that is not a web page",
+    "net::ERR_ABORTED": "loading {source} was broken off",
+    "Download is starting": "{source} is a file to download, not a page",
+    "has been closed": "the browser {program} ended while {source} was loading",
+}
+CHROME_ERROR = re.compile(r"net::ERR_\w+")
+OTHER_CHROME_ERROR = "the browser could not open {source}: {error}"
 # The longest a rendering may take in all, from the start of the browser to the kept file:
 # the waits above, the start of the browser, and the page's own work while it is read. The
 # renderer begins no attempt that would end later than a few seconds before it, which it
@@ -162,7 +179,12 @@ PROCESS_NAMESPACE = "/proc/{pid}/ns/{kind}"
 SECCOMP_FILTERS = "Seccomp_filters:"
 SANDBOX_NAMESPACES = ("user", "pid", "net")
 # Before the page is asked for, the browser is shown a STUN server on a UDP port the renderer
-# holds, and must gather no candidate for it and send it nothing.
+# holds, and must gather no candidate for it and send it nothing. What a person is told of a
+# browser that fails a proof.
+NOT_SANDBOXED = "the browser {program} runs pages without its sandbox"
+SENDS_WEBRTC = (
+    "the browser {program} sends WebRTC over UDP, which infonium cannot hold to public addresses"
+)
 WEBRTC_PROOF_LIMIT_MS = 2_000
 WEBRTC_PROOF = """async ([server, limit]) => {
   const connection = new RTCPeerConnection({iceServers: [{urls: server}]});
@@ -303,11 +325,6 @@ def runs_pages_sandboxed(processes: dict[int, BrowserProcess]) -> bool:
     )
 
 
-def datagram_waits(listener: socket.socket) -> bool:
-    readable, _, _ = select.select([listener], [], [], 0)
-    return bool(readable)
-
-
 def breaks_page(request: Request) -> bool:
     # A request whose breaking off leaves the page without what fills it.
     is_own_document = (
@@ -319,13 +336,15 @@ def breaks_page(request: Request) -> bool:
 
 
 class PageRendering:
-    # The rendering of a page in the renderer: the proxy the browser connects through, what
-    # the proxy refused, and of the attempt under way, the addresses of the page itself that
-    # the browser could not open and the requests that broke the page off. The browser tells
-    # of these in the thread that drives it, which alone writes them.
-    def __init__(self, proxy: PublicProxy, program: str) -> None:
-        self.proxy = proxy
+    # The rendering of a page in the renderer: its address, the browser, the proxy the
+    # browser connects through, what the proxy refused, and of the attempt under way, the
+    # addresses of the page itself that the browser could not open and the requests that broke
+    # the page off. The browser tells of these in the thread that drives it, which alone
+    # writes them.
+    def __init__(self, url: str, program: str, proxy: PublicProxy) -> None:
+        self.url = url
         self.program = program
+        self.proxy = proxy
         self.refusals: list[Refusal] = []
         self.failed_hops: list[FailedHop] = []
         self.broken: list[str] = []
@@ -351,25 +370,48 @@ class PageRendering:
         ][:1]
 
     def ending_reason(self, ending: PlaywrightError | UnreadableSource) -> str:
-        # Why a rendering ended, in one line: the proxy's reason when the page's own address
-        # was not connected by the proxy; the last line the browser wrote when it ended, or
-        # that it wrote none; and otherwise the first line of the error, without the call log
-        # that follows an error of Playwright.
+        # Why a rendering ended, in one line: the module's own words where it raised; the
+        # proxy's reason when the page's own address was not connected by the proxy; the last
+        # line the browser wrote when it ended, or that it wrote none; infonium's limits and
+        # the errors of Chrome's that a page meets, named; and otherwise the first line of the
+        # error, without the call log that follows an error of Playwright.
         said = wellformed(error_text(ending))
+        first = said.splitlines()[0]
         refused = self.proxy_refusals() if PROXY_FAILURE in said else []
-        logs = said.partition(BROWSER_LOGS)[2].partition(CALL_LOG)[0]
-        written = [line["said"] for line in WRITTEN_LINE.finditer(logs)]
-        if refused:
-            return refused[0]
-        if written:
-            return f"the browser {self.program} ended: {written[-1]}"
-        if BROWSER_LOGS in said:
-            return f"the browser {self.program} ended without saying why"
-        return said.splitlines()[0]
+        written = [
+            line["said"]
+            for line in WRITTEN_LINE.finditer(
+                said.partition(BROWSER_LOGS)[2].partition(CALL_LOG)[0]
+            )
+        ]
+        named = [words for mark, words in CHROME_ERRORS.items() if mark in first]
+        other = CHROME_ERROR.search(first)
+        if isinstance(ending, UnreadableSource) or refused:
+            return (refused or [first])[0]
+        if written or BROWSER_LOGS in said:
+            return (
+                f"the browser {self.program} ended: {written[-1]}"
+                if written
+                else f"the browser {self.program} ended without saying why"
+            )
+        if isinstance(ending, WaitOverdue):
+            return NO_ANSWER.format(source=self.url, seconds=ANSWER_LIMIT_MS / MS_PER_SECOND)
+        if CRASH_MARK in first:
+            return CRASHED_PAGE.format(source=self.url, mib=SCRIPT_MEMORY_MIB)
+        if named:
+            return named[0].format(source=self.url, program=self.program)
+        return OTHER_CHROME_ERROR.format(source=self.url, error=other.group()) if other else first
 
-    def prove_browser(self, context: BrowserContext) -> None:
-        # The browser runs its pages in its sandbox, and its WebRTC sends nothing over UDP,
-        # or no page is asked for.
+    def aborted(self, ending: PlaywrightError | UnreadableSource) -> AbortedRendering:
+        # A rendering that failed, its reason in one line; where it arose goes to standard
+        # error, which is that of the process that started the renderer.
+        traceback.print_exception(ending)
+        return AbortedRendering(reason=self.ending_reason(ending))
+
+    def proof_failures(self, context: BrowserContext) -> list[str]:
+        # Why the browser cannot be given the page, if it cannot: it runs its pages outside
+        # its sandbox, or its WebRTC sends over UDP. A proof that cannot be made is a fault of
+        # the renderer's own, and escapes as what it is.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
             listener.bind((LOOPBACK, EVERY_PORT))
             server = f"stun:{LOOPBACK}:{listener.getsockname()[1]}"
@@ -379,33 +421,32 @@ class PageRendering:
                 processes = browser_processes()
             finally:
                 page.close()
-            sent = datagram_waits(listener)
+            sent = bool(select.select([listener], [], [], 0)[0])
+        failures = []
         if not runs_pages_sandboxed(processes):
-            raise UnreadableSource(f"the browser {self.program} runs pages without its sandbox")
+            failures.append(NOT_SANDBOXED.format(program=self.program))
         if candidates or sent:
-            raise UnreadableSource(
-                f"the browser {self.program} sends WebRTC over UDP, which infonium cannot hold "
-                "to public addresses"
-            )
+            failures.append(SENDS_WEBRTC.format(program=self.program))
+        return failures
 
-    def attempt(self, context: BrowserContext, url: str) -> TakenPage:
+    def attempt(self, context: BrowserContext) -> TakenPage:
         # One attempt at the page, in a page of its own that is closed whatever comes of it.
         self.failed_hops.clear()
         self.broken.clear()
         page = context.new_page()
         page.on("requestfailed", self.note_failure)
         try:
-            content = page_content(page, url)
+            content = page_content(page, self.url)
             address = wellformed(page.url)
             if urlsplit(address).scheme not in WEB_ADDRESS_SCHEMES:
                 raise UnreadableSource(
-                    (self.proxy_refusals() or [f"{url} led the browser to {address}"])[0]
+                    (self.proxy_refusals() or [f"{self.url} led the browser to {address}"])[0]
                 )
             return TakenPage(content=content, address=urldefrag(address).url)
         finally:
             page.close()
 
-    def taken_page(self, context: BrowserContext, url: str, deadline: float) -> TakenPage:
+    def taken_page(self, context: BrowserContext, deadline: float) -> TakenPage:
         # The page once it is done. A page whose own document, scripts or the requests of
         # its scripts were broken off is rendered again, in a page of its own, as long as the
         # time left holds another attempt; of the attempts that were broken off, the one that
@@ -417,7 +458,7 @@ class PageRendering:
             if attempt and deadline - time.monotonic() < ATTEMPT_LIMIT_SECONDS:
                 break
             try:
-                taken.append(self.attempt(context, url))
+                taken.append(self.attempt(context))
             except (PlaywrightError, UnreadableSource) as failure:
                 if self.broken:
                     failures.append(failure)
@@ -431,35 +472,46 @@ class PageRendering:
             raise failures[-1]
         return max(taken, key=lambda page: len(page.content))
 
-    def render(self, url: str, work: Path, deadline: float) -> str:
-        # Renders the page into the work folder and gives the address the browser ended at.
+    def report(self, work: Path, deadline: float) -> RenderingReport:
+        # How the rendering of the page ends: completed, with the page kept in the work
+        # folder, or aborted, with why, where the browser does not start or fails a proof,
+        # or the page cannot be taken or kept. Whatever else arises escapes as what it is.
         profile = work / PROFILE_FOLDER
         (profile / PREFERENCES_FILE).parent.mkdir(parents=True)
         (profile / PREFERENCES_FILE).write_text(json.dumps(PROFILE_PREFERENCES))
         (profile / LOCAL_STATE_FILE).write_text(json.dumps(BROWSER_STATE))
         with sync_playwright() as playwright:
-            # Without being told to keep it, Playwright starts the browser without its sandbox.
-            context = playwright.chromium.launch_persistent_context(
-                profile,
-                executable_path=self.program,
-                chromium_sandbox=True,
-                args=[
-                    *BROWSER_FLAGS,
-                    f"--proxy-server=socks5://{LOOPBACK}:{self.proxy.port()}",
-                ],
-                env=browser_environment(work),
-                accept_downloads=False,
-                service_workers="block",
-            )
-            self.prove_browser(context)
-            taken = self.taken_page(context, url, deadline)
+            try:
+                # Without being told to keep it, Playwright starts the browser without its
+                # sandbox.
+                context = playwright.chromium.launch_persistent_context(
+                    profile,
+                    executable_path=self.program,
+                    chromium_sandbox=True,
+                    args=[
+                        *BROWSER_FLAGS,
+                        f"--proxy-server=socks5://{LOOPBACK}:{self.proxy.port()}",
+                    ],
+                    env=browser_environment(work),
+                    accept_downloads=False,
+                    service_workers="block",
+                )
+            except PlaywrightError as ending:
+                return self.aborted(ending)
+            failures = self.proof_failures(context)
+            if failures:
+                return AbortedRendering(reason=failures[0])
+            try:
+                taken = self.taken_page(context, deadline)
+            except (PlaywrightError, UnreadableSource) as ending:
+                return self.aborted(ending)
         # The page is kept as UTF-8 with its mark in front, which a browser and the extractor
         # both read before any charset the page declares in its head or a server in a header.
         kept = BOM_UTF8 + taken.content.encode()
         if len(kept) > RENDERED_LIMIT_BYTES:
-            raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
+            return AbortedRendering(reason=OVERSIZE_SOURCE.format(source=self.url))
         (work / RENDERED_FILE).write_bytes(kept)
-        return taken.address
+        return CompletedRendering(address=taken.address)
 
 
 def remove_rendering(work: Path, reported: Event) -> None:
@@ -474,25 +526,18 @@ def remove_rendering(work: Path, reported: Event) -> None:
 
 def main() -> None:
     # What this module does when it is run as a program: it renders the page it is given
-    # into the folder it is given, and writes the report. An exception does not cross from
-    # one process to another, so a rendering that failed is reported in one line, and where
-    # it arose is written to standard error, which is the starting process's own. Any other
-    # exception is a fault of the renderer's own, and ends it without a report. Whatever the
-    # renderer started is ended before it reports or ends.
+    # into the folder it is given, and writes the report of how the rendering ended. An
+    # exception does not cross from one process to another: a fault of the renderer's own
+    # ends it without a report. Whatever the renderer started is ended before it reports or
+    # ends.
     url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
     reported = Event()
     lineage.hold_descendants(partial(remove_rendering, work, reported))
     proxy = PublicProxy()
-    proxy.serve_in_background()
-    rendering = PageRendering(proxy, program)
+    Thread(target=proxy.serve_forever, daemon=True).start()
     try:
-        report: RenderingReport = CompletedRendering(
-            address=rendering.render(url, work, float(deadline))
-        )
-    except (PlaywrightError, UnreadableSource) as ending:
-        traceback.print_exc()
-        report = AbortedRendering(reason=rendering.ending_reason(ending))
+        report = PageRendering(url, program, proxy).report(work, float(deadline))
     finally:
         lineage.end_own_descendants()
     (work / WRITTEN_REPORT_FILE).write_bytes(RENDERING_REPORT.dump_json(report))

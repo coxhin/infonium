@@ -247,9 +247,6 @@ class PublicProxy(ThreadingTCPServer):
     def port(self) -> int:
         return int(self.server_address[1])
 
-    def serve_in_background(self) -> None:
-        Thread(target=self.serve_forever, daemon=True).start()
-
     def refusals(self) -> list[Refusal]:
         # What the proxy refused since it was last asked.
         found: list[Refusal] = []
