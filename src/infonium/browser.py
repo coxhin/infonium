@@ -18,6 +18,7 @@ from threading import Event, Thread
 from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
+import psutil
 from playwright.sync_api import BrowserContext, Page, Request, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as WaitOverdue
@@ -32,7 +33,7 @@ from infonium.document import (
     error_status,
     error_text,
 )
-from infonium.egress import EVERY_PORT, LOOPBACK, PublicProxy, Refusal
+from infonium.egress import EVERY_PORT, LOOPBACK, PublicProxy, Refusal, wildcard_udp_ports
 
 RENDERED_FILE = "rendered"
 # A page's scripts can leave half of a UTF-16 pair in its text, which UTF-8 cannot hold. A
@@ -150,10 +151,19 @@ HOME_VARIABLES = {
 PASSED_VARIABLES = frozenset({"PATH", "TZ", "LANG", "LANGUAGE"})
 LOCALE_PREFIX = "LC_"
 # The profile's preferences, written before the browser starts: WebRTC sends nothing over
-# UDP, which the proxy cannot carry.
+# UDP, which the proxy cannot carry, and binds no UDP port but 1, which a process without
+# privilege cannot bind: each WebRTC connection a page opened held a UDP port open on every
+# interface for as long as it lasted. Where every process may bind every port, as in a
+# container, one socket stands on port 1.
 PREFERENCES_FILE = Path("Default") / "Preferences"
 WEBRTC_POLICY = "disable_non_proxied_udp"
-PROFILE_PREFERENCES = {"webrtc": {"ip_handling_policy": WEBRTC_POLICY}}
+WEBRTC_PORT = 1
+PROFILE_PREFERENCES = {
+    "webrtc": {
+        "ip_handling_policy": WEBRTC_POLICY,
+        "udp_port_range": f"{WEBRTC_PORT}-{WEBRTC_PORT}",
+    }
+}
 # The browser's own state, written before it starts: WebRTC puts no names in place of this
 # machine's addresses, names the browser would listen for on the networks of all its
 # interfaces as soon as a page opens a WebRTC connection. It is turned off as chrome://flags
@@ -190,6 +200,7 @@ NOT_SANDBOXED = "the browser {program} runs pages without its sandbox"
 SENDS_WEBRTC = (
     "the browser {program} sends WebRTC over UDP, which infonium cannot hold to public addresses"
 )
+OPENS_UDP_PORTS = "the browser {program} keeps UDP ports {ports} open on every interface"
 WEBRTC_PROOF_LIMIT_MS = 2_000
 WEBRTC_PROOF = """async ([server, limit]) => {
   const connection = new RTCPeerConnection({iceServers: [{urls: server}]});
@@ -204,7 +215,6 @@ WEBRTC_PROOF = """async ([server, limit]) => {
     if (connection.iceGatheringState === "complete") done();
     setTimeout(done, limit);
   });
-  connection.close();
   return candidates;
 }"""
 
@@ -291,11 +301,11 @@ def page_content(page: Page, url: str) -> str:
     return wellformed(page.content())
 
 
-def browser_processes() -> dict[int, BrowserProcess]:
+def browser_processes(started: list[psutil.Process]) -> dict[int, BrowserProcess]:
     # The processes this renderer started, by their numbers, of those still running as they
     # are read.
     found = {}
-    for process in lineage.descendants(os.getpid()):
+    for process in started:
         with suppress(*lineage.LOOK_REFUSED):
             arguments = process.cmdline()
             status = Path(PROCESS_STATUS.format(pid=process.pid)).read_text().splitlines()
@@ -423,15 +433,20 @@ class PageRendering:
 
     def proof_failures(self, context: BrowserContext) -> list[str]:
         # Why the browser cannot be given the page, if it cannot: it runs its pages outside
-        # its sandbox, or its WebRTC sends over UDP. A proof that cannot be made is a fault of
-        # the renderer's own, and escapes as what it is.
+        # its sandbox, its WebRTC sends over UDP, or it holds a UDP port open on every
+        # interface but the one WebRTC is given. A proof that cannot be made is a fault of the
+        # renderer's own, and escapes as what it is.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
             listener.bind((LOOPBACK, EVERY_PORT))
             server = f"stun:{LOOPBACK}:{listener.getsockname()[1]}"
             page = context.new_page()
             try:
+                # The proof's connection stays open until the page is closed, so that the
+                # UDP ports it holds are seen.
                 candidates = page.evaluate(WEBRTC_PROOF, [server, WEBRTC_PROOF_LIMIT_MS])
-                processes = browser_processes()
+                started = lineage.descendants(os.getpid())
+                processes = browser_processes(started)
+                ports = wildcard_udp_ports(lineage.held_sockets(lineage.held_descriptors(started)))
             finally:
                 page.close()
             sent = bool(select.select([listener], [], [], 0)[0])
@@ -440,6 +455,8 @@ class PageRendering:
             failures.append(NOT_SANDBOXED.format(program=self.program))
         if candidates or sent:
             failures.append(SENDS_WEBRTC.format(program=self.program))
+        if ports - {WEBRTC_PORT}:
+            failures.append(OPENS_UDP_PORTS.format(program=self.program, ports=sorted(ports)))
         return failures
 
     def attempt(self, context: BrowserContext) -> TakenPage:
@@ -578,7 +595,7 @@ def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path, tempora
         if time.monotonic() - began > RENDERING_LIMIT_SECONDS:
             raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
         processes = renderer.look()
-        shared = lineage.held_files(processes, temporary)
+        shared = lineage.held_files(lineage.held_descriptors(processes), temporary)
         if lineage.held_memory(processes) + shared > RENDERING_MEMORY_BYTES:
             raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
         if folder_bytes(work) + shared > RENDERING_DISK_BYTES:

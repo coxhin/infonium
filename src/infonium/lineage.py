@@ -1,6 +1,7 @@
 import ctypes
 import glob
 import os
+import re
 import resource
 import signal
 import subprocess
@@ -35,6 +36,7 @@ TASKS = "/proc/{pid}/task"
 CHILDREN_LISTS = "*/children"
 DESCRIPTORS = "/proc/{pid}/fd"
 EVERY_ENTRY = "*"
+SOCKET = re.compile(r"socket:\[(\d+)\]")
 BLOCK_BYTES = 512
 # A process that has ended cannot be looked at, nor, for a moment, one that is starting: it
 # refuses a look at what it holds until its new program is in place. Either is passed over,
@@ -81,18 +83,32 @@ def held_memory(processes: list[psutil.Process]) -> int:
     return held
 
 
-def held_files(processes: list[psutil.Process], folder: Path) -> int:
-    # What the files under a folder that processes hold open take on disk, each file once,
-    # those removed from the folder while held among them, which no walk of the folder finds.
-    under = os.path.join(folder, "")
-    blocks: dict[tuple[int, int], int] = {}
+def held_descriptors(processes: list[psutil.Process]) -> list[tuple[str, str]]:
+    # What processes hold open: each descriptor's place in /proc, and what it leads to.
+    found = []
     for process in processes:
         for descriptor in glob.glob(os.path.join(DESCRIPTORS.format(pid=process.pid), EVERY_ENTRY)):
             with suppress(*LOOK_REFUSED):
-                if os.readlink(descriptor).startswith(under):
-                    held = os.stat(descriptor)
-                    blocks[(held.st_dev, held.st_ino)] = held.st_blocks * BLOCK_BYTES
+                found.append((descriptor, os.readlink(descriptor)))
+    return found
+
+
+def held_files(descriptors: list[tuple[str, str]], folder: Path) -> int:
+    # What the files under a folder that descriptors lead to take on disk, each file once,
+    # those removed from the folder while held among them, which no walk of the folder finds.
+    under = os.path.join(folder, "")
+    blocks: dict[tuple[int, int], int] = {}
+    for descriptor, target in descriptors:
+        if target.startswith(under):
+            with suppress(*LOOK_REFUSED):
+                held = os.stat(descriptor)
+                blocks[(held.st_dev, held.st_ino)] = held.st_blocks * BLOCK_BYTES
     return sum(blocks.values())
+
+
+def held_sockets(descriptors: list[tuple[str, str]]) -> set[int]:
+    # The sockets descriptors lead to, by the numbers Linux gives them.
+    return {int(found[1]) for _, target in descriptors if (found := SOCKET.fullmatch(target))}
 
 
 def descendants(pid: int) -> list[psutil.Process]:
