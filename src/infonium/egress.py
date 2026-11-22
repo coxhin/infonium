@@ -1,5 +1,7 @@
+import os
 import re
 import socket
+import struct
 import sys
 import time
 from collections.abc import Sequence
@@ -22,6 +24,7 @@ from typing import Any
 import psutil
 from pydantic import BaseModel
 
+from infonium import lineage
 from infonium.document import UnreadableSource, error_text
 
 type Address = IPv4Address | IPv6Address
@@ -53,6 +56,11 @@ UDP_TABLES = ("/proc/net/udp", "/proc/net/udp6")
 TABLE_ADDRESS = 1
 TABLE_INODE = 9
 HEXADECIMAL = 16
+# And where it lists the TCP sockets over IPv4, which the proxy is reached by: each line holds
+# a socket's own address and its peer's side by side, an address written as the machine holds
+# it in a word, then its port.
+TCP_TABLE = "/proc/net/tcp"
+MACHINE_WORD = "=I"
 # The proxy speaks SOCKS 5, which carries every connection a browser opens, a WebSocket and a
 # secure connection alike, as a plain connection to a named host and port, and through which
 # Chrome sends the name of a host unresolved. No library proxy embeds in the renderer's own
@@ -144,6 +152,21 @@ def network_of(address: str, netmask: str | None) -> Network:
     host = ip_address(address.split(ZONE_MARK)[0])
     length = host.max_prefixlen if netmask is None else bin(int(ip_address(netmask))).count("1")
     return ip_network((host, length), strict=False)
+
+
+def table_address(host: str, port: int) -> str:
+    return f"{struct.unpack(MACHINE_WORD, socket.inet_aton(host))[0]:08X}:{port:04X}"
+
+
+def connection_sockets(own: tuple[str, int], peer: tuple[str, int]) -> set[int]:
+    # The socket that holds one end of a TCP connection over IPv4, by its number, where the
+    # connection is still there.
+    pair = f"{table_address(*own)} {table_address(*peer)}"
+    return {
+        int(line.split()[TABLE_INODE])
+        for line in Path(TCP_TABLE).read_text().splitlines()
+        if pair in line
+    }
 
 
 def wildcard_udp_ports(sockets: set[int]) -> set[int]:
@@ -254,15 +277,19 @@ def relayed(source: socket.socket, sink: socket.socket) -> None:
 
 
 class PublicProxy(ThreadingTCPServer):
-    # The proxy a browser connects through. It connects only to public addresses, and hands
-    # what it refused to the one who reads them, through a queue that each connection only
-    # writes to.
+    # The proxy a browser connects through. It serves only the processes the renderer it
+    # runs in started, connects only to public addresses, and hands what it refused to the
+    # one who reads them, through a queue that each connection only writes to.
     daemon_threads = True
+    # Connections wait to be looked at, as many as are carried at once, rather than be turned
+    # away while others are.
+    request_queue_size = CONNECTIONS_AT_ONCE
 
     def __init__(self) -> None:
         super().__init__((LOOPBACK, EVERY_PORT), SocksConnection)
         self.refused: SimpleQueue[Refusal] = SimpleQueue()
         self.carried = BoundedSemaphore(CONNECTIONS_AT_ONCE)
+        self.holders: list[psutil.Process] = []
 
     def port(self) -> int:
         return int(self.server_address[1])
@@ -273,6 +300,20 @@ class PublicProxy(ThreadingTCPServer):
         while not self.refused.empty():
             found.append(self.refused.get())
         return found
+
+    def verify_request(self, request: Any, client_address: Any) -> bool:
+        # A connection is taken, before it holds any of the connections carried at once, only
+        # when the process that holds its other end is the one that held those before, the
+        # browser's process for the network, or, while none is known or it has ended, a
+        # process the renderer started. Another process of this machine, of any user, finds
+        # the proxy closed, and a look at one process is all its connection costs.
+        sockets = connection_sockets(client_address, (LOOPBACK, self.port()))
+        holders = [holder for holder in self.holders if holder.is_running()]
+        for process in holders or lineage.descendants(os.getpid()):
+            if sockets & lineage.held_sockets(lineage.held_descriptors([process])):
+                self.holders = [process]
+                return True
+        return False
 
     def process_request(self, request: Any, client_address: Any) -> None:
         # A connection beyond those the proxy carries at once is closed as it comes.
