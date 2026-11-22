@@ -193,16 +193,21 @@ PROCESS_STATUS = "/proc/{pid}/status"
 PROCESS_NAMESPACE = "/proc/{pid}/ns/{kind}"
 SECCOMP_FILTERS = "Seccomp_filters:"
 SANDBOX_NAMESPACES = ("user", "pid", "net")
-# Before the page is asked for, the browser is shown a STUN server on a UDP port the renderer
-# holds, and must gather no candidate for it and send it nothing. What a person is told of a
-# browser that fails a proof.
+# Before the page is asked for, a page of the browser's asks for an address of this machine
+# where the renderer listens, which the listener must not hear of and the proxy must refuse:
+# so every connection goes through the proxy, those to loopback too. And it is shown a STUN
+# server on a UDP port the renderer holds, for which it must gather no candidate and to which
+# it must send nothing. What a person is told of a browser that fails a proof.
 NOT_SANDBOXED = "the browser {program} runs pages without its sandbox"
+BYPASSES_PROXY = "the browser {program} does not send every connection through infonium's proxy"
 SENDS_WEBRTC = (
     "the browser {program} sends WebRTC over UDP, which infonium cannot hold to public addresses"
 )
 OPENS_UDP_PORTS = "the browser {program} keeps UDP ports {ports} open on every interface"
-WEBRTC_PROOF_LIMIT_MS = 2_000
-WEBRTC_PROOF = """async ([server, limit]) => {
+PROOF_LIMIT_MS = 2_000
+PROOF = """async ([address, server, limit]) => {
+  await fetch(address, {mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(limit)})
+    .catch(() => null);
   const connection = new RTCPeerConnection({iceServers: [{urls: server}]});
   let candidates = 0;
   connection.onicecandidate = (event) => { if (event.candidate) candidates += 1; };
@@ -433,27 +438,38 @@ class PageRendering:
 
     def proof_failures(self, context: BrowserContext) -> list[str]:
         # Why the browser cannot be given the page, if it cannot: it runs its pages outside
-        # its sandbox, its WebRTC sends over UDP, or it holds a UDP port open on every
-        # interface but the one WebRTC is given. A proof that cannot be made is a fault of the
-        # renderer's own, and escapes as what it is.
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
-            listener.bind((LOOPBACK, EVERY_PORT))
-            server = f"stun:{LOOPBACK}:{listener.getsockname()[1]}"
+        # its sandbox, it opens a connection without the proxy, its WebRTC sends over UDP, or
+        # it holds a UDP port open on every interface but the one WebRTC is given. A proof that
+        # cannot be made is a fault of the renderer's own, and escapes as what it is.
+        with (
+            socket.create_server((LOOPBACK, EVERY_PORT)) as loopback_listener,
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stun_listener,
+        ):
+            stun_listener.bind((LOOPBACK, EVERY_PORT))
+            loopback_port = loopback_listener.getsockname()[1]
+            asked = f"http://{LOOPBACK}:{loopback_port}/"
+            server = f"stun:{LOOPBACK}:{stun_listener.getsockname()[1]}"
             page = context.new_page()
             try:
-                # The proof's connection stays open until the page is closed, so that the
-                # UDP ports it holds are seen.
-                candidates = page.evaluate(WEBRTC_PROOF, [server, WEBRTC_PROOF_LIMIT_MS])
+                # The proof's WebRTC connection stays open until the page is closed, so that
+                # the UDP ports it holds are seen.
+                candidates = page.evaluate(PROOF, [asked, server, PROOF_LIMIT_MS])
                 started = lineage.descendants(os.getpid())
                 processes = browser_processes(started)
                 ports = wildcard_udp_ports(lineage.held_sockets(lineage.held_descriptors(started)))
             finally:
                 page.close()
-            sent = bool(select.select([listener], [], [], 0)[0])
+            heard = select.select([loopback_listener, stun_listener], [], [], 0)[0]
+        self.refusals.extend(self.proxy.refusals())
+        refused = any(
+            (refusal.host, refusal.port) == (LOOPBACK, loopback_port) for refusal in self.refusals
+        )
         failures = []
         if not runs_pages_sandboxed(processes):
             failures.append(NOT_SANDBOXED.format(program=self.program))
-        if candidates or sent:
+        if loopback_listener in heard or not refused:
+            failures.append(BYPASSES_PROXY.format(program=self.program))
+        if candidates or stun_listener in heard:
             failures.append(SENDS_WEBRTC.format(program=self.program))
         if ports - {WEBRTC_PORT}:
             failures.append(OPENS_UDP_PORTS.format(program=self.program, ports=sorted(ports)))
