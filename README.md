@@ -170,6 +170,7 @@ The blocks of every document the library holds are indexed in the library's file
 ### The chat
 
 - infonium checks that each quote of an answer stands in the block it names, not that the statement follows from it: one answer about a story added a sum that its cited passages do not hold.
+- The model now and then translates a quote instead of copying it, once in five tries of one question. Such a citation is not found, and its statement is marked 出处找不到 although the source holds what it says.
 - Every question about a source sends the source's whole document to the model again: about 9,000 input tokens a question for a Wikipedia article of 165 blocks. A document too long for the model cannot be asked about, just as it cannot be digested.
 - An answer about a source begins to appear after 2.5 to 5 seconds, and after up to 18 seconds when the model reasons first.
 - A question about the library takes 6 to 42 seconds and 4,000 to 53,000 input tokens with the embedding engine running, measured on two libraries of nine and ten sources, and up to 80,000 tokens without it, when the model searches longer. When the endpoint stalls in the middle of an answer, as it did once in ten, it takes longer: 99 seconds that time.
