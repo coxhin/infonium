@@ -8,8 +8,6 @@ from infonium.document import UNSPACED_CODE_POINTS, WORD_GAP
 # are sought there. The index parts its text at spaces and punctuation, folds case and drops
 # accents (FTS5's unicode61 tokenizer with remove_diacritics 2).
 TOKENIZER = "unicode61 remove_diacritics 2"
-# How words are written into the index. Text written in another form is written again.
-TERMS_FORMAT = 1
 # The writings that put no space between words: those of Chinese and Japanese, and Thai, Lao,
 # Burmese and Khmer. A run of letters in them is indexed as the pairs of neighbours it holds,
 # so that any two or more letters side by side in it are found.

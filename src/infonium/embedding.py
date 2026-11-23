@@ -25,18 +25,20 @@ class EmbeddingEngine(BaseModel):
     model: str
 
 
-def embedded(engine: EmbeddingEngine, texts: list[str], timeout: float) -> list[Vector]:
-    # The vectors of texts, in their order, as the engine makes them; each text is cut to what
-    # the engine is given of it.
-    with OpenAI(
-        base_url=engine.base_url,
-        api_key=engine.api_key.get_secret_value(),
-        timeout=timeout,
-        max_retries=0,
-    ) as endpoint:
-        reply = endpoint.embeddings.create(
-            model=engine.model,
+class Embedder:
+    # The client of one engine, made once, so that its connections are kept between requests.
+    def __init__(self, engine: EmbeddingEngine) -> None:
+        self.model = engine.model
+        self.endpoint = OpenAI(
+            base_url=engine.base_url, api_key=engine.api_key.get_secret_value(), max_retries=0
+        )
+
+    def embedded(self, texts: list[str], timeout: float) -> list[Vector]:
+        # The vectors of texts, in their order, as the engine makes them; each text is cut to
+        # what the engine is given of it.
+        reply = self.endpoint.with_options(timeout=timeout).embeddings.create(
+            model=self.model,
             input=[text[:EMBEDDED_CHARACTERS] for text in texts],
             encoding_format=FLOAT_ENCODING,
         )
-    return [row.embedding for row in sorted(reply.data, key=lambda row: row.index)]
+        return [row.embedding for row in sorted(reply.data, key=lambda row: row.index)]

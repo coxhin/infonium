@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from array import array
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import StrEnum
@@ -6,10 +7,10 @@ from threading import Event, Lock
 from typing import Annotated
 
 import sqlalchemy
-from pydantic import BaseModel, Field, validate_call
+from pydantic import AfterValidator, BaseModel, Field, validate_call
 
-from infonium.document import BlockNumber, Document
-from infonium.embedding import ENGINE_AWAY, EmbeddingEngine, Vector, embedded
+from infonium.document import Block, BlockKind, BlockNumber, Document
+from infonium.embedding import ENGINE_AWAY, Embedder, EmbeddingEngine, Vector
 from infonium.intake import failure_reason
 from infonium.library import (
     LibraryStore,
@@ -21,7 +22,6 @@ from infonium.library import (
     metadata,
 )
 from infonium.terms import (
-    TERMS_FORMAT,
     TOKENIZER,
     all_words_expression,
     any_words_expression,
@@ -35,10 +35,15 @@ from infonium.terms import (
 # of one over this number plus its place (reciprocal rank fusion).
 CANDIDATES = 50
 RANK_DAMPING = 60
-# A block of fewer words than this, as a heading, a caption or a line of a list of sources,
-# says too little to be near a question in meaning: such a block is found by its words alone,
-# and is given no vector. A character of Chinese or Japanese counts as a word.
-MEANINGFUL_WORDS = 8
+# How a document's blocks are written into the index: the form of their terms (infonium.terms)
+# and which of them are candidates by meaning. A document indexed in another form is indexed
+# again. Form 1 left blocks of fewer than 8 words out of the candidates by meaning, and sent
+# blocks to the engine without their titles.
+INDEX_FORMAT = 2
+# What says nothing by itself is found by its words alone, and is given no vector: a heading,
+# by its kind, and a block of fewer words than this, as "See also", "muokkaa|" or "comté.". A
+# character of Chinese or Japanese counts as a word.
+MEANINGFUL_WORDS = 3
 # Blocks are sent to the engine this many at a time. A question waits at the engine for the
 # batch before it, so the batch is small.
 EMBEDDING_BATCH = 8
@@ -47,6 +52,10 @@ EMBEDDING_BATCH = 8
 EMBEDDING_TIMEOUT_SECONDS = 120.0
 QUERY_TIMEOUT_SECONDS = 10.0
 FLOATS = "f"
+# A block is sent to the engine under the title of its item, which tells what a short block,
+# such as "Opening hours: 8 to 18", is about: asked when the pond is open, the engine put that
+# block at a distance of 0.06 under its title and of 0.17 without it.
+TITLE_GAP = "\n"
 # How long the worker rests when nothing waits, which is also how soon it notices that an
 # engine that was away is back, and how soon a document read while no one searches is indexed.
 CATCH_UP_SECONDS = 10.0
@@ -114,6 +123,28 @@ MATERIALIZED = "MATERIALIZED"
 logger = logging.getLogger(__name__)
 
 SearchLimit = Annotated[int, Field(ge=1)]
+# What a lone surrogate, which no text can hold, becomes in a query.
+UNREADABLE = "replace"
+UTF16 = "utf-16"
+SURROGATES_KEPT = "surrogatepass"
+# The part of SQLite's code for a failure that says the file was busy; the rest of the code
+# says how.
+PRIMARY_CODE = 0xFF
+
+
+def readable_query(query: str) -> str:
+    # A query that comes as JSON may hold a lone surrogate, which the engine cannot be sent.
+    return query.encode(UTF16, SURROGATES_KEPT).decode(UTF16, UNREADABLE)
+
+
+SearchQuery = Annotated[str, AfterValidator(readable_query)]
+
+
+def is_busy(error: sqlalchemy.exc.OperationalError) -> bool:
+    return (
+        isinstance(error.orig, sqlite3.Error)
+        and error.orig.sqlite_errorcode & PRIMARY_CODE == sqlite3.SQLITE_BUSY
+    )
 
 
 class FoundBy(StrEnum):
@@ -141,6 +172,7 @@ class RankedBlock(BaseModel):
 
 class WaitingBlock(BaseModel):
     id: int
+    title: str
     text: str
 
 
@@ -157,8 +189,8 @@ def create_words(
 sqlalchemy.event.listen(metadata, "after_create", create_words)
 
 
-def is_meaningful(text: str) -> bool:
-    return word_total(text) >= MEANINGFUL_WORDS
+def is_meaningful(block: Block) -> bool:
+    return block.kind != BlockKind.HEADING and word_total(block.text) >= MEANINGFUL_WORDS
 
 
 def found_by(holds_every_word: bool, near_in_meaning: bool) -> FoundBy:
@@ -347,14 +379,14 @@ def take_in(transaction: OwnerTransaction, document_id: str) -> None:
     ).scalar_one()
     document = Document.model_validate_json(body)
     worded = [
-        (number, block.text) for number, block in enumerate(document.blocks) if has_word(block.text)
+        (number, block) for number, block in enumerate(document.blocks) if has_word(block.text)
     ]
     connection.execute(
         sqlalchemy.insert(indexed_document_table).values(
             document_id=document.id,
             owner=owner,
             item_id=document.item_id,
-            format=TERMS_FORMAT,
+            format=INDEX_FORMAT,
             blocks=len(worded),
         )
     )
@@ -371,10 +403,10 @@ def take_in(transaction: OwnerTransaction, document_id: str) -> None:
                     "document_id": document.id,
                     "item_id": document.item_id,
                     "block_number": number,
-                    "text": text,
-                    "meaningful": is_meaningful(text),
+                    "text": block.text,
+                    "meaningful": is_meaningful(block),
                 }
-                for number, text in worded
+                for number, block in worded
             ],
         )
         .scalars()
@@ -383,8 +415,8 @@ def take_in(transaction: OwnerTransaction, document_id: str) -> None:
     connection.execute(
         sqlalchemy.insert(words_table),
         [
-            {"rowid": block_id, WORDS_COLUMN: indexed_words(text), OWNER_COLUMN: owner}
-            for block_id, (_, text) in zip(block_ids, worded, strict=True)
+            {"rowid": block_id, WORDS_COLUMN: indexed_words(block.text), OWNER_COLUMN: owner}
+            for block_id, (_, block) in zip(block_ids, worded, strict=True)
         ],
     )
 
@@ -398,7 +430,7 @@ class BlockIndex:
     # engine answers; it rests when nothing waits.
     def __init__(self, store: LibraryStore, engine: EmbeddingEngine) -> None:
         self.store = store
-        self.engine = engine
+        self.embedder = Embedder(engine)
         # A document is taken into the index, or out of it, by one thread at a time.
         self.turn = Lock()
         self.stopped = Event()
@@ -443,12 +475,23 @@ class BlockIndex:
 
     def work(self) -> None:
         while not self.stopped.is_set():
+            if not self.work_round():
+                self.woken.wait(CATCH_UP_SECONDS)
+                self.woken.clear()
+
+    def work_round(self) -> bool:
+        # One round of catching up and of making vectors; whether vectors were made. A library
+        # file that another writer holds past the wait leaves the work for the next round.
+        try:
             owners = self.store.owners()
             for owner in owners:
                 self.catch_up(owner)
-            if not self.embed_round(owners):
-                self.woken.wait(CATCH_UP_SECONDS)
-                self.woken.clear()
+            return self.embed_round(owners)
+        except sqlalchemy.exc.OperationalError as error:
+            if not is_busy(error):
+                raise
+            logger.warning("the library's file is busy, so indexing waits a round: %s", error.orig)
+            return False
 
     def catch_up(self, owner: str) -> None:
         # The owner's documents that items hold now are indexed, and those that no item holds
@@ -470,10 +513,10 @@ class BlockIndex:
                 )
             }
         for document, format in indexed.items():
-            if document not in held or format != TERMS_FORMAT:
+            if document not in held or format != INDEX_FORMAT:
                 with self.turn, self.store.transaction(owner) as transaction:
                     take_out(transaction, document)
-        missing = [document for document in held if indexed.get(document) != TERMS_FORMAT]
+        missing = [document for document in held if indexed.get(document) != INDEX_FORMAT]
         for document in missing:
             with self.turn, self.store.transaction(owner) as transaction:
                 if not self.is_indexed(transaction, document):
@@ -487,7 +530,7 @@ class BlockIndex:
             transaction.connection.execute(
                 sqlalchemy.select(indexed_document_table.c.format).where(
                     indexed_document_table.c.document_id == document,
-                    indexed_document_table.c.format == TERMS_FORMAT,
+                    indexed_document_table.c.format == INDEX_FORMAT,
                 )
             ).first()
             is not None
@@ -515,21 +558,29 @@ class BlockIndex:
     def embed_batch(self, owner: str) -> bool:
         # The blocks indexed last are given vectors first, so that what was read just now is
         # not kept waiting behind a library that is being caught up.
-        model = self.engine.model
+        model = self.embedder.model
         with self.store.transaction(owner) as transaction:
             waiting = [
-                WaitingBlock(id=block_id, text=text)
-                for block_id, text in transaction.connection.execute(
-                    sqlalchemy.select(indexed_block_table.c.id, indexed_block_table.c.text)
-                    .where(indexed_block_table.c.owner == owner, without_vector(model))
+                WaitingBlock(id=block_id, title=title, text=text)
+                for block_id, title, text in transaction.connection.execute(
+                    sqlalchemy.select(
+                        indexed_block_table.c.id, kept_title, indexed_block_table.c.text
+                    )
+                    .join(item_table, item_table.c.id == indexed_block_table.c.item_id)
+                    .where(
+                        indexed_block_table.c.owner == owner,
+                        item_table.c.owner == owner,
+                        without_vector(model),
+                    )
                     .order_by(indexed_block_table.c.id.desc())
                     .limit(EMBEDDING_BATCH)
                 )
             ]
         if not waiting:
             return False
-        vectors = embedded(
-            self.engine, [block.text for block in waiting], EMBEDDING_TIMEOUT_SECONDS
+        vectors = self.embedder.embedded(
+            [f"{block.title}{TITLE_GAP}{block.text}" for block in waiting],
+            EMBEDDING_TIMEOUT_SECONDS,
         )
         # A vector is kept only for the block whose text was sent: ids are never given again,
         # and the text must be the same still.
@@ -550,13 +601,13 @@ class BlockIndex:
         return True
 
     @validate_call
-    def search(self, owner: str, query: str, limit: SearchLimit) -> list[FoundBlock]:
+    def search(self, owner: str, query: SearchQuery, limit: SearchLimit) -> list[FoundBlock]:
         # The best blocks of the owner's library for a query, best first: those that hold every
         # word of it, then those near it in meaning, where the engine answers, and those without
         # a vector to be near by that hold some of its words.
         self.raise_failure()
         self.catch_up(owner)
-        model = self.engine.model
+        model = self.embedder.model
         with self.store.transaction(owner) as transaction:
             has_vectors = transaction.connection.execute(
                 sqlalchemy.select(indexed_block_table.c.id).where(
@@ -584,7 +635,7 @@ class BlockIndex:
         if not query.strip():
             return []
         try:
-            return embedded(self.engine, [query], QUERY_TIMEOUT_SECONDS)
+            return self.embedder.embedded([query], QUERY_TIMEOUT_SECONDS)
         except ENGINE_AWAY as failure:
             logger.info(
                 "searching without meaning, as the embedding engine is away: %s",
