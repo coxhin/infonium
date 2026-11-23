@@ -12,6 +12,20 @@ export type TimePlace = Schemas["TimePlace"];
 export type Style = Schemas["Style"];
 export type Digest = Schemas["DigestView"];
 export type Anchor = Schemas["Anchor"];
+export type Statement = Schemas["Statement"];
+export type Translation = Schemas["TranslationView"];
+export type TranslatedBlock = Schemas["TranslatedBlock"];
+export type Segment = Schemas["Segment"];
+export type Page = Schemas["PageView"];
+export type Conversation = Schemas["Conversation"];
+export type Turn = Schemas["Turn"];
+// What happens while a question is answered. The protocol lists these as the items of a
+// stream, which the generated types leave out, so the kinds are named here.
+export type ChatEvent =
+  | Schemas["Drafted"]
+  | Schemas["Searched"]
+  | Schemas["Answered"]
+  | Schemas["Unanswered"];
 type Refusal = Schemas["Failure"] | Schemas["HTTPValidationError"];
 
 const SOURCE_PATH = "/api/items/{item_id}/source" satisfies keyof paths;
@@ -38,6 +52,41 @@ async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>)
     throw new Error(refusalText(error));
   }
   return data;
+}
+
+// A request that answers with nothing when it succeeds.
+async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
+  const { error, response } = await request;
+  if (!response.ok) {
+    throw new Error(refusalText(error));
+  }
+}
+
+// The events of one question, read as they arrive: each is one line of JSON.
+async function* eventLines(
+  request: Promise<{ data?: ReadableStream<Uint8Array> | null; error?: Refusal }>,
+): AsyncGenerator<ChatEvent> {
+  const { data, error } = await request;
+  if (data === undefined || data === null) {
+    throw new Error(refusalText(error));
+  }
+  const arriving = data.getReader();
+  const decoder = new TextDecoder();
+  let unfinished = "";
+  for (;;) {
+    const { done: ended, value } = await arriving.read();
+    const lines = `${unfinished}${decoder.decode(value, { stream: !ended })}`.split("\n");
+    // The last piece is a line only once the stream has ended; until then more of it may come.
+    unfinished = ended ? "" : (lines.pop() ?? "");
+    for (const line of lines) {
+      if (line.trim() !== "") {
+        yield JSON.parse(line) as ChatEvent;
+      }
+    }
+    if (ended) {
+      return;
+    }
+  }
 }
 
 export function listItems(): Promise<ItemEntry[]> {
@@ -90,4 +139,69 @@ export function ensureDigest(itemId: string): Promise<Digest> {
     ).finally(() => digestsUnderWay.delete(itemId));
   digestsUnderWay.set(itemId, underWay);
   return underWay;
+}
+
+export function readTranslation(itemId: string): Promise<Translation> {
+  return settled(
+    api.GET("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+// Starts the translation unless it is under way, done or unneeded.
+export function ensureTranslation(itemId: string): Promise<Translation> {
+  return settled(
+    api.PUT("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function translateAnew(itemId: string): Promise<Translation> {
+  return settled(
+    api.POST("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function retranslateBlock(itemId: string, blockNumber: number): Promise<TranslatedBlock> {
+  return settled(
+    api.POST("/api/items/{item_id}/translation/blocks/{block_number}", {
+      params: { path: { item_id: itemId, block_number: blockNumber } },
+    }),
+  );
+}
+
+export function readPage(itemId: string): Promise<Page> {
+  return settled(api.GET("/api/items/{item_id}/page", { params: { path: { item_id: itemId } } }));
+}
+
+export function readItemConversation(itemId: string): Promise<Conversation> {
+  return settled(
+    api.GET("/api/items/{item_id}/conversation", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function askAboutItem(itemId: string, text: string): AsyncGenerator<ChatEvent> {
+  return eventLines(
+    api.POST("/api/items/{item_id}/conversation", {
+      params: { path: { item_id: itemId } },
+      body: { text },
+      parseAs: "stream",
+    }),
+  );
+}
+
+export function forgetItemConversation(itemId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/items/{item_id}/conversation", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function readLibraryConversation(): Promise<Conversation> {
+  return settled(api.GET("/api/conversation"));
+}
+
+export function askAboutLibrary(text: string): AsyncGenerator<ChatEvent> {
+  return eventLines(api.POST("/api/conversation", { body: { text }, parseAs: "stream" }));
+}
+
+export function forgetLibraryConversation(): Promise<void> {
+  return done(api.DELETE("/api/conversation"));
 }

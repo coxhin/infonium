@@ -61,13 +61,18 @@ function segmentsOf(text: string, marks: Mark[]): Segment[] {
 }
 
 function marked(content: ReactNode, mark: Mark): ReactNode {
-  return mark.kind === "link" ? (
-    <a href={mark.target} target="_blank" rel="noreferrer noopener">
-      {content}
-    </a>
-  ) : (
-    createElement(STYLE_ELEMENTS[mark.style], null, content)
-  );
+  switch (mark.kind) {
+    case "link":
+      return (
+        <a href={mark.target} target="_blank" rel="noreferrer noopener">
+          {content}
+        </a>
+      );
+    case "style":
+      return createElement(STYLE_ELEMENTS[mark.style], null, content);
+    case "formula":
+      return <code className="formula">{content}</code>;
+  }
 }
 
 function MarkedText({ text, marks }: { text: string; marks: Mark[] }) {

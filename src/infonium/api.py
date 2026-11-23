@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import cache
@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
+from infonium.chat import ChatEvent, Conversation, Question, Unanswered
 from infonium.digest import (
     Digest,
     DraftDigest,
@@ -21,7 +22,7 @@ from infonium.digest import (
     digest_prompt,
     grounded_sections,
 )
-from infonium.document import Block, error_text
+from infonium.document import Block, BlockNumber, MediaType, error_text
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
@@ -40,6 +41,7 @@ from infonium.library import (
 )
 from infonium.settings import Settings
 from infonium.speech import Recogniser
+from infonium.translation import Progress, TranslatedBlock
 
 JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for
@@ -55,6 +57,7 @@ ORIGIN = "origin"
 HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
+UNBUILT = "this part of infonium is not built yet"
 
 settings = Settings()
 
@@ -117,7 +120,10 @@ class ItemEntry(BaseModel):
 
 
 class DocumentView(BaseModel):
+    # The media type is that of the source kept beside the document, which says what a
+    # reader can show of it: a page, the pages of a file, or a recording.
     id: str
+    media_type: MediaType
     blocks: list[Block]
 
 
@@ -126,6 +132,28 @@ class DigestView(BaseModel):
     input_tokens: int
     output_tokens: int
     sections: list[Section]
+
+
+class TranslationView(BaseModel):
+    # How far the translation of a document into a language has come, and the blocks
+    # translated so far, in the order of the document. A block that is not among them is
+    # shown as its source: one that is not translated yet, and one that never is, such as
+    # a listing or a formula.
+    document: str
+    language: str
+    progress: Progress
+    blocks: list[TranslatedBlock]
+
+
+class PageView(BaseModel):
+    # The web page an item was read from, made ready for a frame that runs none of its
+    # scripts: its addresses are those of the site it came from, and an element that holds
+    # the text of one block, and nothing else, carries that block's number in the
+    # attribute named here. The blocks placed so are listed; any other block has no
+    # element of its own in the page.
+    html: str
+    block_attribute: str
+    placed: list[BlockNumber]
 
 
 def refusal(status: HTTPStatus, detail: str) -> Response:
@@ -243,7 +271,7 @@ def item_entry(item_id: str, owner: Owner) -> ItemEntry:
 def item_document(item_id: str, owner: Owner) -> DocumentView:
     with library_store().library(owner) as library:
         document = library.holding(item_id).document
-    return DocumentView(id=document.id, blocks=document.blocks)
+    return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
 
 
 @app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)
@@ -269,3 +297,77 @@ def ensure_digest(item_id: str, owner: Owner) -> DigestView:
         holding = library.holding(item_id)
         kept = library.kept_digests(holding.document.id)
     return digest_view(kept[0] if kept else written_digest(holding, owner))
+
+
+@app.get("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
+def item_translation(item_id: str, owner: Owner) -> TranslationView:
+    # The translation of the item's document into the language of digests, as far as it has
+    # come; nothing is started.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.put("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
+def ensure_translation(item_id: str, owner: Owner) -> TranslationView:
+    # Starts the translation unless it is under way, done or unneeded. One that stopped goes
+    # on from the blocks it has.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
+def translate_anew(item_id: str, owner: Owner) -> TranslationView:
+    # Starts the translation from its first block, in place of what was translated before.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post(
+    "/api/items/{item_id}/translation/blocks/{block_number}",
+    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED,
+)
+def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> TranslatedBlock:
+    # Translates one block again with the model that writes digests, and keeps the result in
+    # place of the block's earlier translation.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/items/{item_id}/page", responses=NOT_IN_LIBRARY)
+def item_page(item_id: str, owner: Owner) -> PageView:
+    # The page of an item that was read from a web page; any other item has none.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
+def item_conversation(item_id: str, owner: Owner) -> Conversation:
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
+def ask_about_item(item_id: str, question: Question, owner: Owner) -> Iterator[ChatEvent]:
+    # Answers a question about the item's document, after the questions asked of it before.
+    # What happens on the way is sent as it happens, each event a line of JSON.
+    yield Unanswered(reason=UNBUILT)
+
+
+@app.delete(
+    "/api/items/{item_id}/conversation",
+    responses=NOT_IN_LIBRARY,
+    status_code=HTTPStatus.NO_CONTENT,
+)
+def forget_item_conversation(item_id: str, owner: Owner) -> None:
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/conversation")
+def library_conversation(owner: Owner) -> Conversation:
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/conversation")
+def ask_about_library(question: Question, owner: Owner) -> Iterator[ChatEvent]:
+    # Answers a question about everything the library holds, after the questions asked of
+    # the library before, and sends its events the same way.
+    yield Unanswered(reason=UNBUILT)
+
+
+@app.delete("/api/conversation", status_code=HTTPStatus.NO_CONTENT)
+def forget_library_conversation(owner: Owner) -> None:
+    raise NotImplementedError(UNBUILT)

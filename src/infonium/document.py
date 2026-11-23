@@ -90,6 +90,7 @@ class Style(StrEnum):
 class MarkKind(StrEnum):
     STYLE = "style"
     LINK = "link"
+    FORMULA = "formula"
 
 
 class Tagged(BaseModel):
@@ -112,7 +113,15 @@ class LinkMark(Tagged):
     end: Offset
 
 
-Mark = Annotated[StyleMark | LinkMark, Field(discriminator="kind")]
+class FormulaMark(Tagged):
+    # The range holds a formula as LaTeX writes it, not words: a reader may set it as a
+    # formula, and a translation keeps it as it is.
+    kind: Literal[MarkKind.FORMULA] = MarkKind.FORMULA
+    start: Offset
+    end: Offset
+
+
+Mark = Annotated[StyleMark | LinkMark | FormulaMark, Field(discriminator="kind")]
 
 
 class PlaceKind(StrEnum):
