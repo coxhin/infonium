@@ -244,13 +244,16 @@ class TranslationView(BaseModel):
     # translated so far, in the order of the document. A block that is not among them is
     # shown as its source: one that is not translated yet, and one that never is, such as
     # a listing or a formula. The tokens are what the translation has taken of its models so
-    # far, blocks translated again included.
+    # far, blocks translated again included. The blocks to translate are the numbers of the
+    # document's blocks that a translation translates, in order, whatever its progress: the
+    # rest are never translated.
     document: str
     language: str
     progress: Progress
     input_tokens: int
     output_tokens: int
     blocks: list[TranslatedBlock]
+    blocks_to_translate: list[BlockNumber]
 
 
 class PageBlocks(BaseModel):
@@ -421,6 +424,7 @@ def translation_view(standing: TranslationStanding) -> TranslationView:
         input_tokens=standing.input_tokens,
         output_tokens=standing.output_tokens,
         blocks=standing.blocks,
+        blocks_to_translate=standing.blocks_to_translate,
     )
 
 

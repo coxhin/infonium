@@ -784,6 +784,8 @@ export interface components {
         TranslationView: {
             /** Blocks */
             blocks: components["schemas"]["TranslatedBlock"][];
+            /** Blocks To Translate */
+            blocks_to_translate: number[];
             /** Document */
             document: string;
             /** Input Tokens */

@@ -58,13 +58,15 @@ class TranslationNotAsked(Exception):
 
 
 class TranslationStanding(BaseModel):
-    # A translation as far as it has come, and the blocks it has kept, in their order.
+    # A translation as far as it has come, the blocks it has kept, in their order, and the
+    # numbers of the document's blocks that are to be translated.
     document: str
     language: str
     progress: Progress
     input_tokens: int
     output_tokens: int
     blocks: list[TranslatedBlock]
+    blocks_to_translate: list[BlockNumber]
 
 
 def progress_of(record: TranslationRecord, document: Document, kept: int) -> Progress:
@@ -164,6 +166,7 @@ class Translator:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             blocks=blocks,
+            blocks_to_translate=translated_numbers(document),
         )
 
     def new_end(self, owner: str, document_id: str) -> Event:
