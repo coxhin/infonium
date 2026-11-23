@@ -3,13 +3,21 @@ import select
 import socket
 from contextlib import suppress
 from pathlib import Path
+from threading import Event, Thread
 
 import psutil
 from playwright.sync_api import BrowserContext
 from pydantic import BaseModel
 
 from infonium import lineage
-from infonium.egress import EVERY_PORT, LOOPBACK, TABLE_INODE, PublicProxy, Refusal
+from infonium.egress import (
+    EVERY_PORT,
+    LOOPBACK,
+    TABLE_INODE,
+    PublicProxy,
+    Refusal,
+    connection_sockets,
+)
 
 # Whether a browser that has started may be given a page: its sandbox, seen in what runs, and
 # proofs, made in a page of its own before the page is asked for, of where its connections go.
@@ -33,10 +41,13 @@ PROCESS_NAMESPACE = "/proc/{pid}/ns/{kind}"
 SECCOMP_FILTERS = "Seccomp_filters:"
 SANDBOX_NAMESPACES = ("user", "pid", "net")
 # Before the page is asked for, a page of the browser's asks for an address of this machine
-# where the renderer listens, which the listener must not hear of and the proxy must refuse:
-# so every connection goes through the proxy, those to loopback too. And it is shown a STUN
-# server on a UDP port the renderer holds, for which it must gather no candidate and to which
-# it must send nothing. A fetch that a change of this machine's network broke off before it
+# where the renderer listens: the proxy must refuse it, and no process of the rendering may
+# reach the listener. The proof rests on two switches: the proxy, which loopback may not
+# bypass, and the resolver rule, which leaves the browser no address to reach around the
+# proxy but 127.0.0.1. And it is shown a STUN server on a UDP port the renderer holds, for
+# which it must gather no candidate and to which no process of the rendering may send. What
+# reaches either listener from another process of this machine, to which both ports show,
+# counts for nothing. A fetch that a change of this machine's network broke off before it
 # reached the proxy proves nothing either way, and is made again, a few times at most: under
 # 40 changes a second one fetch in seven was broken off so. What a person is told of a browser
 # that fails a proof.
@@ -48,6 +59,10 @@ SENDS_WEBRTC = (
 OPENS_UDP_PORTS = "the browser {program} keeps UDP ports {ports} open on every interface"
 PROOF_LIMIT_MS = 2_000
 LOOPBACK_FETCHES = 5
+# How long the proof's listener waits between two looks at whether the proof is over, and the
+# most a datagram holds.
+LISTENER_WATCH_SECONDS = 0.05
+DATAGRAM_BYTES = 65536
 LOOPBACK_PROOF = """async ([address, limit]) => {
   await fetch(address, {mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(limit)})
     .catch(() => null);
@@ -80,16 +95,30 @@ class BrowserProcess(BaseModel):
     namespaces: list[str]
 
 
-def wildcard_udp_ports(sockets: set[int]) -> set[int]:
-    # The ports of those of `sockets` that are UDP sockets bound on every interface.
-    ports = set()
+def udp_bindings(sockets: set[int]) -> list[tuple[int, int]]:
+    # The address, as Linux writes it, and the port of each of `sockets` that is a UDP socket.
+    bindings = []
     for table in UDP_TABLES:
         for line in Path(table).read_text().splitlines()[1:]:
             fields = line.split()
             address, port = fields[TABLE_ADDRESS].split(":")
-            if int(fields[TABLE_INODE]) in sockets and int(address, HEXADECIMAL) == 0:
-                ports.add(int(port, HEXADECIMAL))
-    return ports
+            if int(fields[TABLE_INODE]) in sockets:
+                bindings.append((int(address, HEXADECIMAL), int(port, HEXADECIMAL)))
+    return bindings
+
+
+def note_rendering_connections(listener: socket.socket, heard: Event, over: Event) -> None:
+    # Takes each connection made to the listener until the proof is over, and notes whether
+    # one came from a process of the rendering, by the socket at its other end.
+    listener.settimeout(LISTENER_WATCH_SECONDS)
+    while not over.is_set():
+        with suppress(TimeoutError):
+            connection, client = listener.accept()
+            with connection:
+                started = lineage.descendants(os.getpid())
+                held = lineage.held_sockets(lineage.held_descriptors(started))
+                if connection_sockets(client, listener.getsockname()) & held:
+                    heard.set()
 
 
 def browser_processes(started: list[psutil.Process]) -> dict[int, BrowserProcess]:
@@ -145,6 +174,7 @@ def proof_failures(context: BrowserContext, proxy: PublicProxy, program: str) ->
     # it holds a UDP port open on every interface but the one WebRTC is given. A proof that
     # cannot be made is a fault of the renderer's own, and escapes as what it is.
     refusals: list[Refusal] = []
+    heard, over = Event(), Event()
     with (
         socket.create_server((LOOPBACK, EVERY_PORT)) as loopback_listener,
         socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stun_listener,
@@ -153,6 +183,10 @@ def proof_failures(context: BrowserContext, proxy: PublicProxy, program: str) ->
         loopback_port = loopback_listener.getsockname()[1]
         asked = f"http://{LOOPBACK}:{loopback_port}/"
         server = f"stun:{LOOPBACK}:{stun_listener.getsockname()[1]}"
+        watch = Thread(
+            target=note_rendering_connections, args=(loopback_listener, heard, over), daemon=True
+        )
+        watch.start()
         page = context.new_page()
         refused = False
         try:
@@ -163,23 +197,28 @@ def proof_failures(context: BrowserContext, proxy: PublicProxy, program: str) ->
                     (refusal.host, refusal.port) == (LOOPBACK, loopback_port)
                     for refusal in refusals
                 )
-                if refused or select.select([loopback_listener], [], [], 0)[0]:
+                if refused or heard.is_set():
                     break
             # The proof's WebRTC connection stays open until the page is closed, so that
             # the UDP ports it holds are seen.
             candidates = page.evaluate(WEBRTC_PROOF, [server, PROOF_LIMIT_MS])
             started = lineage.descendants(os.getpid())
             processes = browser_processes(started)
-            ports = wildcard_udp_ports(lineage.held_sockets(lineage.held_descriptors(started)))
+            bindings = udp_bindings(lineage.held_sockets(lineage.held_descriptors(started)))
         finally:
+            over.set()
             page.close()
-        heard = select.select([loopback_listener, stun_listener], [], [], 0)[0]
+        watch.join()
+        senders = set()
+        while select.select([stun_listener], [], [], 0)[0]:
+            senders.add(stun_listener.recvfrom(DATAGRAM_BYTES)[1][1])
+    ports = {port for address, port in bindings if address == 0}
     failures = []
     if not runs_pages_sandboxed(processes):
         failures.append(NOT_SANDBOXED.format(program=program))
-    if loopback_listener in heard or not refused:
+    if heard.is_set() or not refused:
         failures.append(BYPASSES_PROXY.format(program=program))
-    if candidates or stun_listener in heard:
+    if candidates or senders & {port for _, port in bindings}:
         failures.append(SENDS_WEBRTC.format(program=program))
     if ports - {WEBRTC_PORT}:
         failures.append(OPENS_UDP_PORTS.format(program=program, ports=sorted(ports)))
