@@ -78,6 +78,26 @@
   }
 }
 
+/* Where nothing hovers, the control is pressed with a finger: it takes 40 px each way, all of
+   it in the margin, which is widened for it, and draws only its mark. */
+@media (hover: none) {
+  /* Named by its element too, to win over the reader's own padding in styles.css, which the
+     page loads after this sheet. */
+  article.reader {
+    padding-left: 3rem;
+  }
+
+  .again {
+    top: -0.35rem;
+    right: calc(100% + 0.25rem);
+    width: 2.5rem;
+    height: 2.5rem;
+    border-color: transparent;
+    background: none;
+    font-size: 1rem;
+  }
+}
+
 .again:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent);

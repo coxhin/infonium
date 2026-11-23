@@ -1,8 +1,9 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { sourceLink, type Anchor, type ItemDocument, type ItemEntry, type PagePlace } from "./client";
 import { itemTitle } from "./entry";
 import { reasonOf } from "./loading";
 import { PageViewer } from "./pages";
+import { pagePlaces, placesOf } from "./places";
 import { Reader, showAnchor, usePassageKept, type Playing } from "./reader";
 import type { Setting } from "./setting";
 import type { TranslationState } from "./translation";
@@ -10,8 +11,11 @@ import type { TranslationState } from "./translation";
 const PDF_MEDIA_TYPE = "application/pdf";
 
 // One act of pointing at a passage: made anew at every click, so that pointing at the same
-// passage again leads there again. The boxes are those of the passage on the source's pages.
-export type Pointed = { anchor: Anchor; pages: PagePlace[] };
+// passage again leads there again. Each view works out where the passage lies in what it shows.
+export type Pointed = { anchor: Anchor };
+
+// The views there are. A view to come is named here, given an entry, and offered in viewsOf.
+export type ViewName = "pages" | "text";
 
 // What the reader tells every view: the item and its document, what the switch is set to, the
 // translation as far as it has come, the passage pointed at, the recording's playing where
@@ -30,7 +34,7 @@ export type ViewContext = {
 // A way the reader shows a source: named, called by its label, and drawn by its component.
 // One that shows the translation is the only kind for which a translation is asked for.
 export type View = {
-  name: string;
+  name: ViewName;
   label: string;
   showsTranslation: boolean;
   Draw: (context: ViewContext) => ReactNode;
@@ -38,19 +42,21 @@ export type View = {
 
 const NO_PAGES: PagePlace[] = [];
 
-// A PDF as its pages, with the boxes pointed at outlined. The pages are shown as they are, in
-// the language of the source, whatever the switch says.
-function PagesView({ entry, setting, pointed, onShow }: ViewContext) {
+// A PDF as its pages, with the boxes of the passage pointed at outlined. The pages are shown as
+// they are, in the language of the source, whatever the switch says.
+function PagesView({ entry, itemDocument, setting, pointed, onShow }: ViewContext) {
+  // Worked out anew at every act of pointing, so that the pages turn to the same boxes again.
+  const boxes = useMemo(
+    () =>
+      pointed === undefined ? NO_PAGES : pagePlaces(placesOf(itemDocument.blocks, pointed.anchor)),
+    [pointed, itemDocument],
+  );
   return (
     <>
       {setting !== "source" && (
         <p className="view-note">原件的页面按原文显示，译文在「文本」里。</p>
       )}
-      <PageViewer
-        source={sourceLink(entry.id)}
-        pointed={pointed?.pages ?? NO_PAGES}
-        inView={onShow}
-      />
+      <PageViewer source={sourceLink(entry.id)} pointed={boxes} inView={onShow} />
     </>
   );
 }

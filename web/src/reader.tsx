@@ -11,6 +11,8 @@ import type { TranslationState } from "./translation";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const ANCHOR_HIGHLIGHT = "anchor";
+const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
+const CHANGED = "原文已经变化，找不到这段引文";
 
 // What the text view of a recording needs to show its transcript as lines that follow the
 // playing: the clock of the player, the stretches last played from, and a way to play.
@@ -147,9 +149,30 @@ function blockElementOf(anchor: Anchor): Element {
     `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] [${BLOCK_ATTRIBUTE}="${anchor.block_number}"]`,
   );
   if (blockElement === null) {
-    throw new Error("这段引文所在的原文不在当前页面上");
+    throw new Error(NOT_ON_SHOW);
   }
   return blockElement;
+}
+
+// Refuses an anchor that does not point into the document on show, or whose range no longer
+// holds the quoted text, against the document itself: the text view, where the passage is
+// highlighted, may not have been drawn yet.
+export function checkAnchor(itemDocument: ItemDocument, anchor: Anchor): void {
+  if (anchor.document_id !== itemDocument.id) {
+    throw new Error(NOT_ON_SHOW);
+  }
+  const text = itemDocument.blocks[anchor.block_number]?.text;
+  if (text === undefined) {
+    throw new Error(CHANGED);
+  }
+  const offsets = unitOffsets(text);
+  if (anchor.end >= offsets.length || anchor.start > anchor.end) {
+    throw new Error(CHANGED);
+  }
+  const quoted = text.slice(unitOffset(offsets, anchor.start), unitOffset(offsets, anchor.end));
+  if (quoted !== anchor.quote) {
+    throw new Error(CHANGED);
+  }
 }
 
 // Highlights an anchor's passage, and refuses when the page does not hold the document the
@@ -164,7 +187,7 @@ export function highlightAnchor(anchor: Anchor): Range {
     unitOffset(offsets, anchor.end),
   );
   if (passage.toString() !== anchor.quote) {
-    throw new Error("原文已经变化，找不到这段引文");
+    throw new Error(CHANGED);
   }
   CSS.highlights.set(ANCHOR_HIGHLIGHT, new Highlight(passage));
   return passage;

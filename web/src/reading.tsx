@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { sourceLink, type Anchor, type ItemDocument, type ItemEntry, type TimePlace } from "./client";
 import type { Pointer } from "./digest";
 import { reasonOf } from "./loading";
-import { pagePlaces, placesOf, surfaceOf, timePlaces } from "./places";
+import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
-import { hideAnchor, highlightAnchor } from "./reader";
+import { checkAnchor, hideAnchor } from "./reader";
 import { SettingSwitch, useSetting } from "./setting";
 import { SidePanel } from "./side";
 import { TranslationNote } from "./translated";
 import { useTranslation } from "./translation";
-import { viewsOf, type Pointed, type ViewContext } from "./views";
+import { viewsOf, type Pointed, type ViewContext, type ViewName } from "./views";
 import "./reading.css";
 
 export type ReadEntry = ItemEntry & { reading: { kind: "read" } };
@@ -48,6 +48,15 @@ export function ReadItem({
   const views = viewsOf(itemDocument);
   const [viewName, setViewName] = useState(views[0]?.name);
   const shown = views.find((view) => view.name === viewName) ?? views[0];
+  // A view is made the first time it is on show, and kept from then on, so that what it
+  // loads is loaded only for a reader who looks at it, and only once.
+  const [made, setMade] = useState<ReadonlySet<ViewName>>(
+    () => new Set(shown === undefined ? [] : [shown.name]),
+  );
+  function showView(name: ViewName) {
+    setViewName(name);
+    setMade((before) => (before.has(name) ? before : new Set(before).add(name)));
+  }
   const setting = useSetting();
   const translation = useTranslation(
     entry.id,
@@ -61,12 +70,12 @@ export function ReadItem({
 
   const pointer: Pointer = {
     show(anchor) {
-      // Refuses at once an anchor whose passage the page does not hold; each view brings it
-      // into view where it shows it.
-      highlightAnchor(anchor);
-      const places = placesOf(itemDocument.blocks, anchor);
-      setPointed({ anchor, pages: pagePlaces(places) });
-      setPlayed(timePlaces(places));
+      // Refuses at once an anchor whose passage the document does not hold. Each view works
+      // out where the passage lies in what it shows, and brings it into view there; the
+      // recording, which is not a view, plays from it.
+      checkAnchor(itemDocument, anchor);
+      setPointed({ anchor });
+      setPlayed(timePlaces(placesOf(itemDocument.blocks, anchor)));
     },
     hide() {
       hideAnchor();
@@ -107,7 +116,7 @@ export function ReadItem({
                     key={view.name}
                     role="tab"
                     aria-selected={view === shown}
-                    onClick={() => setViewName(view.name)}
+                    onClick={() => showView(view.name)}
                   >
                     {view.label}
                   </button>
@@ -121,11 +130,13 @@ export function ReadItem({
             <Player source={sourceLink(entry.id)} pointed={played} clock={clock} />
           )}
         </div>
-        {views.map((view) => (
-          <div key={view.name} hidden={view !== shown}>
-            <view.Draw {...context} onShow={view === shown} />
-          </div>
-        ))}
+        {views
+          .filter((view) => made.has(view.name))
+          .map((view) => (
+            <div key={view.name} hidden={view !== shown}>
+              <view.Draw {...context} onShow={view === shown} />
+            </div>
+          ))}
       </main>
       <SidePanel itemId={entry.id} documentId={itemDocument.id} pointer={pointer} />
     </>
