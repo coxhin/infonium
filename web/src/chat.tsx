@@ -166,7 +166,15 @@ function Thread({
   });
 
   return (
-    <div className="thread" ref={scroller} onScroll={scrolled} tabIndex={0}>
+    // The thread takes the focus so that it can be scrolled from the keyboard.
+    <div
+      className="thread"
+      ref={scroller}
+      onScroll={scrolled}
+      tabIndex={0}
+      role="region"
+      aria-label={`对话：${SCOPE_NAMES[kind]}`}
+    >
       {conversation.state === "loading" && <p className="status">正在读取对话…</p>}
       {conversation.state === "failed" && (
         <p className="status failed">
