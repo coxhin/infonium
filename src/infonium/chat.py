@@ -34,6 +34,10 @@ TURNS_LEFT_OUT = (
     "{turns} earlier questions of this conversation, with their answers, are left out here; "
     "the questions that follow are the latest."
 )
+TURN_LEFT_OUT = (
+    "1 earlier question of this conversation, with its answer, is left out here; the "
+    "questions that follow are the latest."
+)
 # The rules of an answer's grounding, for the instructions of either conversation: what it
 # rests on, and the rules of citing that its citations keep.
 ANSWER_RULES = """\
@@ -267,7 +271,12 @@ def earlier_messages(turns: list[Turn], given_again: Callable[[Answer], str]) ->
     left_out = len(pairs) - len(kept)
     return [
         *(
-            [Message(side=Side.ASKER, text=TURNS_LEFT_OUT.format(turns=left_out))]
+            [
+                Message(
+                    side=Side.ASKER,
+                    text=TURN_LEFT_OUT if left_out == 1 else TURNS_LEFT_OUT.format(turns=left_out),
+                )
+            ]
             if left_out
             else []
         ),

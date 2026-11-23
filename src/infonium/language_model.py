@@ -70,12 +70,16 @@ REQUEST_NAME = "request {request} of a reply from {model}"
 REQUEST_BEGAN = "%s began"
 REQUEST_OPENED = "%s: the endpoint answered after %.1f s"
 REQUEST_FIRST_EVENT = "%s: its first event came after %.1f s"
+OPENED_STEP = "answered after {seconds:.1f} s"
+FIRST_EVENT_STEP = "first event after {seconds:.1f} s"
+UNANSWERED_STEP = "no answer from the endpoint"
+STEPS_GAP = ", "
 REQUEST_ENDED = (
-    "%s ended after %.1f s and %d events, the longest silence between two of them %.1f s: "
+    "%s ended after %.1f s (%s), %d events, the longest silence between two of them %.1f s: "
     "%s, %d input and %d output tokens"
 )
 REQUEST_FAILED = (
-    "%s ended after %.1f s and %d events, the longest silence between two of them %.1f s, "
+    "%s ended after %.1f s (%s), %d events, the longest silence between two of them %.1f s, "
     "without a reply: %s"
 )
 REPLY_CAME = "the reply"
@@ -265,29 +269,36 @@ def tool_results(
 
 
 class RequestClock:
-    # What one request of a reply took, told to the log as it goes: when it began, when the
-    # endpoint answered and when its first event came, and when it ended, with how many events
-    # came, the longest silence between two of them, and the tokens it used or the failure it
-    # ended with. The openai client's own retries are told to the log by the client.
+    # What one request of a reply took, told to the log in one line when it ends: when the
+    # endpoint answered and when its first event came, how long it took, how many events came
+    # and the longest silence between two of them, and the tokens it used or the failure it
+    # ended with. Its beginning and its first steps are told as they come at DEBUG. The openai
+    # client's own retries are told to the log by the client.
     def __init__(self, model: str, request: int) -> None:
         self.request = REQUEST_NAME.format(request=request, model=model)
         self.began = time.monotonic()
         self.events = 0
         self.last_event = self.began
         self.longest_silence = 0.0
-        logger.info(REQUEST_BEGAN, self.request)
+        self.steps: list[str] = []
+        logger.debug(REQUEST_BEGAN, self.request)
 
     def since(self) -> float:
         return time.monotonic() - self.began
 
     def opened(self) -> None:
-        logger.info(REQUEST_OPENED, self.request, self.since())
+        self.steps.append(OPENED_STEP.format(seconds=self.since()))
+        logger.debug(REQUEST_OPENED, self.request, self.since())
+
+    def summary(self) -> str:
+        return STEPS_GAP.join(self.steps) or UNANSWERED_STEP
 
     def came(self) -> None:
         now = time.monotonic()
         self.events += 1
         if self.events == 1:
-            logger.info(REQUEST_FIRST_EVENT, self.request, now - self.began)
+            self.steps.append(FIRST_EVENT_STEP.format(seconds=now - self.began))
+            logger.debug(REQUEST_FIRST_EVENT, self.request, now - self.began)
         else:
             self.longest_silence = max(self.longest_silence, now - self.last_event)
         self.last_event = now
@@ -302,6 +313,7 @@ class RequestClock:
                 REQUEST_FAILED,
                 self.request,
                 self.since(),
+                self.summary(),
                 self.events,
                 self.longest_silence,
                 type(failure).__name__,
@@ -316,6 +328,7 @@ class RequestClock:
             REQUEST_ENDED,
             self.request,
             self.since(),
+            self.summary(),
             self.events,
             self.longest_silence,
             outcome,
