@@ -62,6 +62,7 @@ export function PagesView({
       <PageViewer
         source={sourceLink(entry.id)}
         pointed={boxes}
+        pointedBlock={pointed?.anchor.block_number}
         inView={onShow}
         overlays={overlays}
         pairing={setting === "both"}

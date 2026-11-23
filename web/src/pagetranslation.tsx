@@ -186,14 +186,25 @@ function TranslatedArea({
   colours,
   revealing,
   width,
+  pointed,
+  onMarked,
 }: {
   text: AreaText;
   shape: number;
   colours: Colours | undefined;
   revealing: boolean;
   width: number;
+  // Whether the area holds the translation of the block a passage pointed at lies in: it is
+  // then marked whole, as the text view marks the translated block.
+  pointed: boolean;
+  onMarked: (area: HTMLElement) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (pointed && element.current !== null) {
+      onMarked(element.current);
+    }
+  }, [pointed, onMarked]);
   const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
   const [open, setOpen] = useState(false);
   const { area, piece } = text;
@@ -253,7 +264,7 @@ function TranslatedArea({
     "--size": `${size * 100}cqw`,
     "--fit": fit.ratio,
     lineHeight: spacing,
-    background: colours?.paper,
+    backgroundColor: colours?.paper,
     "--paper": colours?.paper,
     color: colours?.ink,
   } as CSSProperties;
@@ -261,7 +272,9 @@ function TranslatedArea({
   return (
     <div
       ref={element}
-      className={area.vertical ? "area vertical" : "area"}
+      className={["area", area.vertical ? "vertical" : "", pointed ? "pointed" : ""]
+        .filter(Boolean)
+        .join(" ")}
       style={style}
       data-fit={fit.ratio.toFixed(2)}
       data-cut={fit.cut ? "" : undefined}
@@ -299,12 +312,17 @@ export function PageTranslation({
   drawn,
   revealing,
   width,
+  pointedBlock,
+  onMarked,
 }: {
   texts: AreaText[];
   shape: number;
   drawn: Drawn;
   revealing: boolean;
   width: number;
+  pointedBlock: number | undefined;
+  // Told of each area that comes to be marked.
+  onMarked: (area: HTMLElement) => void;
 }) {
   const [read, setRead] = useState<ReadonlyMap<string, Colours>>(new Map());
   useEffect(() => {
@@ -332,6 +350,8 @@ export function PageTranslation({
           colours={colours.get(text.key)}
           revealing={revealing}
           width={width}
+          pointed={text.blockNumber === pointedBlock}
+          onMarked={onMarked}
         />
       ))}
     </div>

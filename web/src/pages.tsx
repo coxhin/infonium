@@ -7,7 +7,7 @@ import {
   type RenderTask,
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AreaText } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
@@ -29,9 +29,20 @@ const LEAST_SHARPNESS = 2;
 // size takes about 2 million, which this leaves whole.
 const MOST_FLOOR_PIXELS = 4_000_000;
 const BOX_CLASS = "page-box";
+const UNDER_CLASS = "under";
+const POINTED_AREA = "area.pointed";
 
 function percent(fraction: number): string {
   return `${fraction * 100}%`;
+}
+
+function overlaps(one: DOMRect, other: DOMRect): boolean {
+  return (
+    one.left < other.right &&
+    other.left < one.right &&
+    one.top < other.bottom &&
+    other.top < one.bottom
+  );
 }
 
 // Hands a result or a failure on only while the view that asked is still the current one. A
@@ -86,11 +97,15 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
 // it, or over the page with each area letting the source through when pressed.
 export type Overlay = { texts: AreaText[]; paired: boolean; revealing: boolean };
 
-function Boxes({ boxes }: { boxes: PagePlace[] }) {
+// The outline of the lines pointed at. On a page that shows the translation it lies under the
+// translation: an area that holds the cited block's translation is marked itself, and covers the
+// outline until it is pressed to show the source under it; where the block has no area there,
+// the outline is what the page shows of it.
+function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   return boxes.map((box, index) => (
     <div
       key={index}
-      className={BOX_CLASS}
+      className={under ? `${BOX_CLASS} ${UNDER_CLASS}` : BOX_CLASS}
       style={{
         left: percent(box.left),
         top: percent(box.top),
@@ -106,12 +121,16 @@ function Page({
   number,
   shape,
   boxes,
+  pointedBlock,
+  onMarked,
   overlay,
 }: {
   file: PDFDocumentProxy;
   number: number;
   shape: number;
   boxes: PagePlace[];
+  pointedBlock: number | undefined;
+  onMarked: (area: HTMLElement) => void;
   overlay: Overlay | undefined;
 }) {
   const frame = useRef<HTMLDivElement>(null);
@@ -225,7 +244,7 @@ function Page({
         aria-label="原文的这一页"
       >
         <canvas ref={copy} />
-        <Boxes boxes={boxes} />
+        <Boxes boxes={boxes} under={false} />
       </div>
       <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
         <canvas ref={canvas} />
@@ -237,9 +256,11 @@ function Page({
             drawn={drawn}
             revealing={overlay.revealing}
             width={width}
+            pointedBlock={pointedBlock}
+            onMarked={onMarked}
           />
         )}
-        <Boxes boxes={boxes} />
+        <Boxes boxes={boxes} under={overlay !== undefined} />
       </div>
     </div>
   );
@@ -256,12 +277,14 @@ const NO_TEXTS: AreaText[] = [];
 function Pages({
   file,
   pointed,
+  pointedBlock,
   inView,
   overlays,
   pairing,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
+  pointedBlock: number | undefined;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
@@ -269,6 +292,20 @@ function Pages({
   const viewer = useRef<HTMLDivElement>(null);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
+  // The outline turned to under the translation before the area over it was set: the area is
+  // turned to when it comes.
+  const awaited = useRef<Element>(undefined);
+  const marked = useCallback((area: HTMLElement) => {
+    const box = awaited.current;
+    if (
+      box !== undefined &&
+      box.isConnected &&
+      overlaps(area.getBoundingClientRect(), box.getBoundingClientRect())
+    ) {
+      awaited.current = undefined;
+      area.scrollIntoView({ block: "center" });
+    }
+  }, []);
 
   // Pages of one file may differ in shape, so the file is asked for the shape of every page,
   // once. A page that cannot be opened says why when it is drawn.
@@ -305,12 +342,22 @@ function Pages({
   // One pointed at before the shapes were known, or while the pages were out of view, is
   // turned to when the shapes come or the pages come back.
   // The boxes of the source page kept beside each page for 对照 stand in the page while it is
-  // hidden, so the box turned to is the first that is on show.
+  // hidden, so what is turned to is the first outline on show; where it lies under the
+  // translation, the marked area over it. A block's areas can lie apart, the cited lines in one
+  // of them.
   useEffect(() => {
     if (shapes !== undefined) {
-      [...(viewer.current?.querySelectorAll(`.${BOX_CLASS}`) ?? [])]
-        .find((box) => box.checkVisibility())
-        ?.scrollIntoView({ block: "center" });
+      const box = [...(viewer.current?.querySelectorAll(`.${BOX_CLASS}`) ?? [])].find((each) =>
+        each.checkVisibility(),
+      );
+      const under = box?.classList.contains(UNDER_CLASS) === true;
+      const over = under
+        ? [...(box.parentElement?.querySelectorAll(`.${POINTED_AREA}`) ?? [])].find((area) =>
+            overlaps(area.getBoundingClientRect(), box.getBoundingClientRect()),
+          )
+        : undefined;
+      awaited.current = under && over === undefined ? box : undefined;
+      (over ?? box)?.scrollIntoView({ block: "center" });
     }
   }, [pointed, inView, shapes, pairing, wide]);
 
@@ -323,6 +370,8 @@ function Pages({
           number={number}
           shape={shapes?.[number] ?? LETTER_SHAPE}
           boxes={pointed.filter((place) => place.page === number)}
+          pointedBlock={pointed.some((place) => place.page === number) ? pointedBlock : undefined}
+          onMarked={marked}
           overlay={
             overlays === undefined
               ? undefined
@@ -344,12 +393,15 @@ function Pages({
 export function PageViewer({
   source,
   pointed,
+  pointedBlock,
   inView,
   overlays,
   pairing,
 }: {
   source: string;
   pointed: PagePlace[];
+  // The block the passage pointed at lies in, whose translation is marked where it is set.
+  pointedBlock: number | undefined;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
@@ -363,6 +415,7 @@ export function PageViewer({
         <Pages
           file={file.value}
           pointed={pointed}
+          pointedBlock={pointedBlock}
           inView={inView}
           overlays={overlays}
           pairing={pairing}
