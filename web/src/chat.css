@@ -4,10 +4,13 @@
   height: 100%;
 }
 
+/* The scope stands above the thread, on a ruled edge of its own: the thread scrolls under that
+   edge, so a line cut by it never seems to run beside or between the pills. */
 .chat .scopes {
   display: flex;
   gap: 0.4rem;
-  padding: 0.6rem 1.2rem 0.2rem;
+  padding: 0.6rem 1.2rem 0.5rem;
+  border-bottom: 1px solid var(--line);
 }
 
 .chat .scopes button {

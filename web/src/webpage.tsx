@@ -6,6 +6,7 @@ import {
   keepingPlace,
   placeToKeep,
   useFrameHeight,
+  usePassageFollowed,
 } from "./frameroom";
 import { useLoaded } from "./loading";
 import {
@@ -102,10 +103,10 @@ function UnplacedNote({
 }) {
   const unplaced = total - placed;
   if (unplaced === 0) {
-    return <p className="view-note">本文 {total} 段在原件里都有自己的位置。</p>;
+    return <p className="webpage-note">本文 {total} 段在原件里都有自己的位置。</p>;
   }
   return (
-    <p className="view-note">
+    <p className="webpage-note">
       本文 {total} 段中有 {unplaced} 段在原件里没有单独的位置，按网页原样显示
       {setting !== "source" && "，不换成译文"}；「文本」里有全部 {total} 段。
     </p>
@@ -131,6 +132,7 @@ export function WebpageView({
   const [framed, setFramed] = useState<FramedPage>();
   const [failure, setFailure] = useState<string>();
   const height = useFrameHeight(frame, onShow && pageBlocks.state === "ready");
+  const following = usePassageFollowed(frame, framed?.view, onShow);
   const blocks = itemDocument.blocks;
   const ready = pageBlocks.state === "ready" ? pageBlocks.value : undefined;
   const failed = pageBlocks.state === "failed" ? pageBlocks.reason : failure;
@@ -215,6 +217,7 @@ export function WebpageView({
     const first = shownPointing.current !== pointed;
     if (!onShow || pointed === undefined) {
       framed?.unmark();
+      following.follow(undefined);
       shownPointing.current = undefined;
       return;
     }
@@ -231,6 +234,7 @@ export function WebpageView({
     const lookup = pointedPlaceOf(framed, ready, blocks, pointed.anchor);
     if (!lookup.found) {
       framed.unmark();
+      following.follow(undefined);
       if (first) {
         onLost(lookup.reason);
       }
@@ -238,6 +242,9 @@ export function WebpageView({
       framed.mark(lookup.place);
       if (first) {
         bringIntoFrame(frame.current, framed.view, lookup.place.passage);
+        following.follow(lookup.place.passage);
+      } else {
+        following.renew(lookup.place.passage);
       }
     }
     shownPointing.current = pointed;

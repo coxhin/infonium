@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MarkedText } from "./blocks";
-import { unitOffset, unitOffsets } from "./blocktext";
+import { isToBeTranslated, unitOffset, unitOffsets } from "./blocktext";
 import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./client";
 import type { Clock } from "./player";
 import { inView, scrollerOf } from "./scrolling";
@@ -132,6 +132,7 @@ const BlockLines = memo(function BlockLines({
   spoken,
   setting,
   translated,
+  missing,
   again,
   pointed,
   onAgain,
@@ -143,6 +144,8 @@ const BlockLines = memo(function BlockLines({
   spoken: number | undefined;
   setting: Setting;
   translated: boolean;
+  // Left in its source by a translation that stopped, though it is one to translate.
+  missing: boolean;
   again: Again | undefined;
   pointed: Anchor | undefined;
   onAgain: (blockNumber: number) => void;
@@ -188,7 +191,9 @@ const BlockLines = memo(function BlockLines({
           </div>
         );
       })}
-      {translated && <AgainControl number={number} again={again} onAgain={onAgain} />}
+      {(translated || missing) && (
+        <AgainControl number={number} again={again} onAgain={onAgain} missing={missing} />
+      )}
     </div>
   );
 });
@@ -205,6 +210,7 @@ export function Transcript({
   again,
   pointed,
   played,
+  stopped,
   clock,
   onAgain,
   onPlay,
@@ -216,6 +222,7 @@ export function Transcript({
   again: ReadonlyMap<number, Again>;
   pointed: Anchor | undefined;
   played: TimePlace[];
+  stopped: boolean;
   clock: Clock;
   onAgain: (blockNumber: number) => void;
   onPlay: (place: TimePlace) => void;
@@ -225,7 +232,7 @@ export function Transcript({
     let first = 0;
     return blocks.map((block, number) => {
       const lines = keptLines(block, translations.get(number));
-      const group = { number, lines, first };
+      const group = { block, number, lines, first };
       first += lines.length;
       return group;
     });
@@ -305,7 +312,7 @@ export function Transcript({
 
   return (
     <div className="transcript" ref={transcript}>
-      {groups.map(({ number, lines, first }) => {
+      {groups.map(({ block, number, lines, first }) => {
         const here = spoken !== undefined && spoken >= first && spoken < first + lines.length;
         const isPointed =
           pointed !== undefined &&
@@ -320,6 +327,7 @@ export function Transcript({
             spoken={here ? spoken - first : undefined}
             setting={setting}
             translated={translations.has(number)}
+            missing={stopped && !translations.has(number) && isToBeTranslated(block)}
             again={again.get(number)}
             pointed={isPointed ? pointed : undefined}
             onAgain={onAgain}

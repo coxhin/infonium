@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { scrollerOf, scrolls } from "./scrolling";
 
 // The reader around the frame: what scrolls in one column, where the window scrolls itself.
@@ -169,4 +169,108 @@ export function useFrameHeight(
     };
   }, [frame, onShow]);
   return height;
+}
+
+// What the reader does to move the page or to point elsewhere: after it, the place is theirs.
+const READER_INPUT = ["wheel", "touchmove", "keydown", "pointerdown"];
+// A scroll position this many pixels from the one infonium left is taken for another's.
+const MOVED = 1;
+
+// A passage brought into view is kept in view while the page's layout settles under it: the
+// page is parsed before its stylesheets, pictures and fonts arrive, and each of them moves
+// what follows it. The passage is brought into view again whenever the page changes its size
+// or something in it loads, until the reader scrolls, presses a key or points anywhere, in
+// the page or in the app around it, or anything else than infonium scrolls the page.
+export type Following = {
+  // Begins to follow a passage, or stops; called right after it is brought into view.
+  follow: (passage: Range | undefined) => void;
+  // Puts a passage in the place of the one followed, as when the page's content is written
+  // again and its place kept, while one is followed.
+  renew: (passage: Range) => void;
+};
+
+function scrollTopOf(view: Window | undefined): number | undefined {
+  return view?.document.scrollingElement?.scrollTop;
+}
+
+export function usePassageFollowed(
+  frame: RefObject<HTMLIFrameElement | null>,
+  view: Window | undefined,
+  onShow: boolean,
+): Following {
+  const followed = useRef<Range>(undefined);
+  // Where infonium last left the page's scroll.
+  const left = useRef<number>(undefined);
+  const shownView = useRef<Window>(undefined);
+  shownView.current = view;
+  useEffect(() => {
+    const element = frame.current;
+    if (view === undefined || element === null || !onShow) {
+      return;
+    }
+    const shown = view;
+    const page = shown.document;
+    let pending = 0;
+    function bringAgain() {
+      if (followed.current === undefined || pending !== 0) {
+        return;
+      }
+      pending = requestAnimationFrame(() => {
+        pending = 0;
+        if (followed.current !== undefined && element !== null && element.isConnected) {
+          bringIntoFrame(element, shown, followed.current);
+          left.current = scrollTopOf(shown);
+        }
+      });
+    }
+    function leave() {
+      followed.current = undefined;
+    }
+    function scrolled() {
+      const top = scrollTopOf(shown);
+      if (top !== undefined && left.current !== undefined && Math.abs(top - left.current) > MOVED) {
+        leave();
+      }
+    }
+    const resized = new ResizeObserver(bringAgain);
+    resized.observe(page.documentElement);
+    if (page.body !== null) {
+      resized.observe(page.body);
+    }
+    resized.observe(element);
+    page.addEventListener("load", bringAgain, true);
+    page.fonts.addEventListener("loadingdone", bringAgain);
+    const input = { capture: true, passive: true };
+    for (const kind of READER_INPUT) {
+      page.addEventListener(kind, leave, input);
+      addEventListener(kind, leave, input);
+    }
+    shown.addEventListener("scroll", scrolled, { passive: true });
+    return () => {
+      cancelAnimationFrame(pending);
+      resized.disconnect();
+      page.removeEventListener("load", bringAgain, true);
+      page.fonts.removeEventListener("loadingdone", bringAgain);
+      for (const kind of READER_INPUT) {
+        page.removeEventListener(kind, leave, input);
+        removeEventListener(kind, leave, input);
+      }
+      shown.removeEventListener("scroll", scrolled);
+    };
+  }, [frame, view, onShow]);
+  return useMemo(
+    () => ({
+      follow: (passage) => {
+        followed.current = passage;
+        left.current = scrollTopOf(shownView.current);
+      },
+      renew: (passage) => {
+        if (followed.current !== undefined) {
+          followed.current = passage;
+          left.current = scrollTopOf(shownView.current);
+        }
+      },
+    }),
+    [],
+  );
 }

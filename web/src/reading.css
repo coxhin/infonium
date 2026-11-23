@@ -90,3 +90,11 @@
 .translation-note .interrupted {
   color: var(--failure);
 }
+
+.translation-note .anew-asking {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  color: var(--failure);
+}

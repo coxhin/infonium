@@ -1,4 +1,4 @@
-import { Fragment, memo } from "react";
+import { Fragment, memo, useState } from "react";
 import { BlockForm, MarkedText, SourceBlock } from "./blocks";
 import type { Anchor, Block, Segment, TranslatedBlock } from "./client";
 import type { Setting } from "./setting";
@@ -37,23 +37,31 @@ export function AgainControl({
   number,
   again,
   onAgain,
+  missing = false,
 }: {
   number: number;
   again: Again | undefined;
   onAgain: (blockNumber: number) => void;
+  missing?: boolean;
 }) {
   return (
     <>
       <button
         className="again"
         disabled={again?.state === "underway"}
-        title="用写摘要的模型重新翻译这一段"
-        aria-label="重新翻译这一段"
+        title={
+          missing
+            ? "这一段没能译出，用写摘要的模型单独翻译这一段"
+            : "用写摘要的模型重新翻译这一段"
+        }
+        aria-label={missing ? "单独翻译这一段" : "重新翻译这一段"}
         onClick={() => onAgain(number)}
       >
         {AGAIN_MARK}
       </button>
-      {again?.state === "underway" && <p className="again-note">正在重新翻译这一段…</p>}
+      {again?.state === "underway" && (
+        <p className="again-note">{missing ? "正在单独翻译这一段…" : "正在重新翻译这一段…"}</p>
+      )}
       {again?.state === "failed" && (
         <p className="again-note failed">重新翻译没有成功：{again.reason}</p>
       )}
@@ -117,6 +125,7 @@ export const Row = memo(function Row({
   again,
   pointed,
   onAgain,
+  missing,
 }: {
   block: Block;
   number: number;
@@ -125,7 +134,18 @@ export const Row = memo(function Row({
   again: Again | undefined;
   pointed: Anchor | undefined;
   onAgain: (blockNumber: number) => void;
+  // Whether the block is left in its source by a translation that stopped, though it is one to
+  // translate: it can then be translated by itself.
+  missing: boolean;
 }) {
+  if (setting !== "source" && translated === undefined && missing) {
+    return (
+      <div className="untranslated">
+        <SourceBlock block={block} number={number} hidden={false} />
+        <AgainControl number={number} again={again} onAgain={onAgain} missing />
+      </div>
+    );
+  }
   if (setting === "source" || translated === undefined) {
     return <SourceBlock block={block} number={number} hidden={false} />;
   }
@@ -226,10 +246,37 @@ export function TranslationNote({ translation }: { translation: TranslationState
           <span>
             已译完 · 输入 {input.toLocaleString()} · 输出 {output.toLocaleString()} tokens
           </span>
-          <button className="quiet" onClick={translation.anew}>
-            全部重新翻译
-          </button>
+          <AnewControl translation={translation} kept={translation.blocks.size} />
         </p>
       );
   }
+}
+
+// Translating anew throws away every block translated so far, so it is asked for twice: the
+// first press says what is lost, and only the second translates anew.
+function AnewControl({ translation, kept }: { translation: TranslationState; kept: number }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) {
+    return (
+      <button className="quiet" onClick={() => setAsking(true)}>
+        全部重新翻译
+      </button>
+    );
+  }
+  return (
+    <span className="anew-asking" role="group" aria-label="确认全部重新翻译">
+      <span>重新翻译会丢掉现有的 {kept} 段译文，要等新的译文从头译出。</span>
+      <button
+        onClick={() => {
+          setAsking(false);
+          translation.anew();
+        }}
+      >
+        丢掉并重新翻译
+      </button>
+      <button className="quiet" autoFocus onClick={() => setAsking(false)}>
+        取消
+      </button>
+    </span>
+  );
 }

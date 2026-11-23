@@ -245,8 +245,12 @@ function Page({
   );
 }
 
-// Two pages stand side by side where the viewer is at least this wide.
-const PAIRED_WIDTH = 720;
+// Two pages stand side by side only where each can be read: a page 600 px wide sets the 10 pt
+// body text of a letter page, 612 points across, at 9.8 px, about the smallest a reader reads
+// without leaning in. The pair holds two such pages and the gap between them.
+const READABLE_PAGE_WIDTH = 600;
+const PAIR_GAP = 10;
+const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
 const NO_TEXTS: AreaText[] = [];
 
 function Pages({
@@ -300,11 +304,15 @@ function Pages({
   // page that took its shape afterwards would move the box out of where it was turned to.
   // One pointed at before the shapes were known, or while the pages were out of view, is
   // turned to when the shapes come or the pages come back.
+  // The boxes of the source page kept beside each page for 对照 stand in the page while it is
+  // hidden, so the box turned to is the first that is on show.
   useEffect(() => {
     if (shapes !== undefined) {
-      viewer.current?.querySelector(`.${BOX_CLASS}`)?.scrollIntoView({ block: "center" });
+      [...(viewer.current?.querySelectorAll(`.${BOX_CLASS}`) ?? [])]
+        .find((box) => box.checkVisibility())
+        ?.scrollIntoView({ block: "center" });
     }
-  }, [pointed, inView, shapes]);
+  }, [pointed, inView, shapes, pairing, wide]);
 
   return (
     <div className="pages" ref={viewer}>
