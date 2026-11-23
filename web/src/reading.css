@@ -90,12 +90,3 @@
 .translation-note .interrupted {
   color: var(--failure);
 }
-
-.view-note {
-  margin: 0;
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
-  color: var(--muted);
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
+import { FORMULA_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";
 import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
@@ -50,7 +51,10 @@ export function Reader({
   // is opened for stays.
   useEffect(() => hideAnchor, []);
   return (
-    <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}>
+    <article
+      className="reader"
+      {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
+    >
       <header>
         {entry.origin.kind === "link" ? (
           <a href={entry.origin.url} target="_blank" rel="noreferrer noopener">
@@ -98,19 +102,72 @@ export function Reader({
   );
 }
 
+// One piece of a block's text as its element holds it: a text node, or a formula, whose text is
+// the LaTeX it says of itself and whose every offset lies at the element that draws it.
+type TextPiece = { node: Text; text: string } | { formula: Element; text: string };
+
+// The pieces of a block's element that hold its text, in their order.
+function piecesOf(blockElement: Element): TextPiece[] {
+  const pieces: TextPiece[] = [];
+  const walker = document.createTreeWalker(
+    blockElement,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+  );
+  let node = walker.nextNode();
+  while (node !== null) {
+    if (node instanceof Element && node.hasAttribute(FORMULA_ATTRIBUTE)) {
+      pieces.push({ formula: node, text: node.getAttribute(FORMULA_ATTRIBUTE) ?? "" });
+      node = walker.nextSibling() ?? nextOutside(walker);
+      continue;
+    }
+    if (node instanceof Text) {
+      pieces.push({ node, text: node.data });
+    }
+    node = walker.nextNode();
+  }
+  return pieces;
+}
+
+// The node after the walker's current one and all it holds, or none at the end of the walk.
+function nextOutside(walker: TreeWalker): Node | null {
+  while (walker.parentNode() !== null) {
+    const after = walker.nextSibling();
+    if (after !== null) {
+      return after;
+    }
+  }
+  return null;
+}
+
+// The text a block's element holds, as anchors are resolved against it.
+export function textOf(blockElement: Element): string {
+  return piecesOf(blockElement)
+    .map((piece) => piece.text)
+    .join("");
+}
+
+// The range of the page that shows characters start to end of a block's text. A range that
+// begins or ends inside a formula takes in the whole of its drawing.
 function rangeIn(blockElement: Element, start: number, end: number): Range {
   const range = document.createRange();
-  const texts = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
   let passed = 0;
   let startSet = false;
-  for (let text = texts.nextNode(); text !== null; text = texts.nextNode()) {
-    const length = text.textContent?.length ?? 0;
+  for (const piece of piecesOf(blockElement)) {
+    const length = piece.text.length;
     if (!startSet && start < passed + length) {
-      range.setStart(text, start - passed);
+      if ("node" in piece) {
+        range.setStart(piece.node, start - passed);
+      } else {
+        range.setStartBefore(piece.formula);
+      }
       startSet = true;
     }
     if (startSet && end <= passed + length) {
-      range.setEnd(text, end - passed);
+      if ("node" in piece) {
+        range.setEnd(piece.node, end - passed);
+      } else {
+        range.setEndAfter(piece.formula);
+      }
       return range;
     }
     passed += length;
@@ -190,15 +247,15 @@ export function checkAnchor(itemDocument: ItemDocument, anchor: Anchor): void {
 // highlighted in the source block whether or not that block is on show.
 export function highlightAnchor(anchor: Anchor): Range {
   const blockElement = blockElementOf(anchor);
-  const offsets = unitOffsets(blockElement.textContent ?? "");
-  const passage = rangeIn(
-    blockElement,
-    unitOffset(offsets, anchor.start),
-    unitOffset(offsets, anchor.end),
-  );
-  if (passage.toString() !== anchor.quote) {
+  const text = textOf(blockElement);
+  const offsets = unitOffsets(text);
+  const start = unitOffset(offsets, anchor.start);
+  const end = unitOffset(offsets, anchor.end);
+  // The range may hold a formula's drawing as well, so the quote is checked against the text.
+  if (text.slice(start, end) !== anchor.quote) {
     throw new Error(CHANGED);
   }
+  const passage = rangeIn(blockElement, start, end);
   CSS.highlights.set(ANCHOR_HIGHLIGHT, new Highlight(passage));
   return passage;
 }

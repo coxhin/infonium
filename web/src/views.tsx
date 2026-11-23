@@ -1,9 +1,8 @@
-import { useEffect, useMemo, type ReactNode } from "react";
-import { sourceLink, type Anchor, type ItemDocument, type ItemEntry, type PagePlace } from "./client";
+import { useEffect, type ReactNode } from "react";
+import type { Anchor, ItemDocument, ItemEntry } from "./client";
 import { itemTitle } from "./entry";
 import { reasonOf } from "./loading";
-import { PageViewer } from "./pages";
-import { pagePlaces, placesOf } from "./places";
+import { PagesView } from "./pagesview";
 import { Reader, showAnchor, usePassageKept, type Playing } from "./reader";
 import type { Setting } from "./setting";
 import type { TranslationState } from "./translation";
@@ -41,27 +40,6 @@ export type View = {
   showsTranslation: boolean;
   Draw: (context: ViewContext) => ReactNode;
 };
-
-const NO_PAGES: PagePlace[] = [];
-
-// A PDF as its pages, with the boxes of the passage pointed at outlined. The pages are shown as
-// they are, in the language of the source, whatever the switch says.
-function PagesView({ entry, itemDocument, setting, pointed, onShow }: ViewContext) {
-  // Worked out anew at every act of pointing, so that the pages turn to the same boxes again.
-  const boxes = useMemo(
-    () =>
-      pointed === undefined ? NO_PAGES : pagePlaces(placesOf(itemDocument.blocks, pointed.anchor)),
-    [pointed, itemDocument],
-  );
-  return (
-    <>
-      {setting !== "source" && (
-        <p className="view-note">原件的页面按原文显示，译文在「文本」里。</p>
-      )}
-      <PageViewer source={sourceLink(entry.id)} pointed={boxes} inView={onShow} />
-    </>
-  );
-}
 
 // The document read from the source, in the words the switch asks for. A passage pointed at
 // is brought into view where it is on show once this view is on show, and is kept there while
@@ -101,7 +79,7 @@ function TextView({
   );
 }
 
-const PAGES: View = { name: "pages", label: "原件", showsTranslation: false, Draw: PagesView };
+const PAGES: View = { name: "pages", label: "原件", showsTranslation: true, Draw: PagesView };
 const TEXT: View = { name: "text", label: "文本", showsTranslation: true, Draw: TextView };
 const WEBPAGE: View = { name: "webpage", label: "原件", showsTranslation: true, Draw: WebpageView };
 

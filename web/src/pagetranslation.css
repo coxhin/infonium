@@ -1,0 +1,125 @@
+/* A translation set over a drawn page. Each area lies over the lines it translates, in the
+   page's colours, at the size of the source's text times the part it had to be made smaller
+   by to fit (--fit). Sizes are parts of the page's width, so the text scales with the page. */
+
+.page {
+  container-type: inline-size;
+}
+
+.page-translation {
+  position: absolute;
+  inset: 0;
+}
+
+.page-translation .area {
+  position: absolute;
+  overflow: hidden;
+  font-size: calc(var(--size) * var(--fit));
+  font-family:
+    "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "Noto Sans CJK SC", serif;
+  text-align: justify;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  padding: 0 0.05em;
+  /* The source's letters reach a little past the boxes of their lines; the paper is laid a
+     little past the area to cover them, without taking room from the text. */
+  box-shadow: 0 0 0 max(2px, 0.2em) var(--paper, transparent);
+}
+
+.page-translation .area.vertical {
+  writing-mode: vertical-rl;
+  text-align: start;
+}
+
+.page-translation .area .marker {
+  margin-right: 0.5em;
+}
+
+.page-translation .area a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+}
+
+.page-translation .area code {
+  font-size: 0.9em;
+}
+
+/* Text cut at the floor of its size ends in a mark, over the paper of its area. */
+.page-translation .area[data-cut]::after {
+  content: "…▾";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 0 0.15em;
+  font-size: max(0.7em, 9px);
+  line-height: 1.2;
+  background: inherit;
+  color: #a8481f;
+}
+
+.page-translation .area[role="button"] {
+  cursor: pointer;
+}
+
+/* Pressed or focused, cut text is shown whole: the area grows below its lines, over the page,
+   at a size that can be read. */
+.page-translation:not(.revealing) .area[data-cut]:is([data-open], :focus-visible),
+.page-translation.revealing .area[data-cut]:focus-visible:not([data-open]) {
+  z-index: 2;
+  height: auto !important;
+  min-height: auto;
+  overflow: visible;
+  font-size: max(calc(var(--size) * var(--fit)), 12px);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
+  outline: 2px solid #a8481f;
+}
+
+.page-translation .area[data-cut]:is([data-open], :focus-visible)::after {
+  content: none;
+}
+
+/* Where the source is to be seen under the translation, an area pressed lets it through. */
+.page-translation.revealing .area[data-open] {
+  opacity: 0;
+}
+
+.page-translation .area:focus-visible {
+  outline: 2px solid #a8481f;
+  outline-offset: 1px;
+}
+
+/* The outline of a passage pointed at stands above the translation. */
+.page .page-box {
+  z-index: 3;
+}
+
+.page-pair {
+  display: flex;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 125rem;
+  justify-content: center;
+}
+
+.page-pair > .page {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.page-pair > .page .page-label {
+  position: absolute;
+  top: -1.3rem;
+  left: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.pages-note {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}

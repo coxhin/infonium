@@ -1,5 +1,6 @@
 import { createElement, Fragment, type CSSProperties, type ReactNode } from "react";
 import type { Block, Mark, Style } from "./client";
+import { Formula } from "./formula";
 
 const STYLE_ELEMENTS: Record<Style, string> = {
   strong: "strong",
@@ -68,14 +69,28 @@ function marked(content: ReactNode, mark: Mark): ReactNode {
     case "style":
       return createElement(STYLE_ELEMENTS[mark.style], null, content);
     case "formula":
-      return <code className="formula">{content}</code>;
+      // A formula is set from its text, below, before any other mark wraps it.
+      return content;
   }
 }
 
+// A text with its marks drawn: links, styles, and formulas set as formulas. A text that one
+// formula covers whole is set as a formula of its own, apart from the lines around it.
 export function MarkedText({ text, marks }: { text: string; marks: Mark[] }) {
-  return piecesOf(text, marks).map((piece, index) => (
-    <Fragment key={index}>{piece.marks.reduce(marked, piece.text as ReactNode)}</Fragment>
-  ));
+  const display =
+    marks.length === 1 &&
+    marks[0]?.kind === "formula" &&
+    marks[0].start === 0 &&
+    marks[0].end === [...text].length;
+  return piecesOf(text, marks).map((piece, index) => {
+    const formula = piece.marks.some((mark) => mark.kind === "formula");
+    const drawn: ReactNode = formula ? (
+      <Formula latex={piece.text} display={display} />
+    ) : (
+      piece.text
+    );
+    return <Fragment key={index}>{piece.marks.reduce(marked, drawn)}</Fragment>;
+  });
 }
 
 // What tells the element that holds a block's words apart from every other: the number of the

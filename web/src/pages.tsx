@@ -8,8 +8,10 @@ import {
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
+import type { AreaText } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
+import { PageTranslation, type Drawn } from "./pagetranslation";
 import { scrollerOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
@@ -76,21 +78,48 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
   return file;
 }
 
+// How a page's translation is shown: over the page alone, over the page and the source beside
+// it, or over the page with each area letting the source through when pressed.
+export type Overlay = { texts: AreaText[]; paired: boolean; revealing: boolean };
+
+function Boxes({ boxes }: { boxes: PagePlace[] }) {
+  return boxes.map((box, index) => (
+    <div
+      key={index}
+      className={BOX_CLASS}
+      style={{
+        left: percent(box.left),
+        top: percent(box.top),
+        width: percent(box.width),
+        height: percent(box.height),
+      }}
+    />
+  ));
+}
+
 function Page({
   file,
   number,
   shape,
   boxes,
+  overlay,
 }: {
   file: PDFDocumentProxy;
   number: number;
   shape: number;
   boxes: PagePlace[];
+  overlay: Overlay | undefined;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const copy = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
   const [failure, setFailure] = useState<string>();
+  // The canvas of the page's latest drawing that has ended, and how many have, so that what is
+  // read from a drawing is read again from the next. Nothing is set over the page without it.
+  const [drawn, setDrawn] = useState<Drawn>();
+  const [width, setWidth] = useState(0);
+  const paired = overlay?.paired ?? false;
 
   useEffect(() => {
     if (frame.current === null) {
@@ -101,7 +130,15 @@ function Page({
       { root: scrollerOf(frame.current), rootMargin: DRAWING_MARGIN },
     );
     watcher.observe(frame.current);
-    return () => watcher.disconnect();
+    // A page made narrower or wider has its translation fitted again.
+    const resized = new ResizeObserver((entries) =>
+      setWidth(Math.round(entries.at(-1)?.contentRect.width ?? 0)),
+    );
+    resized.observe(frame.current);
+    return () => {
+      watcher.disconnect();
+      resized.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -109,74 +146,113 @@ function Page({
       return;
     }
     let current = true;
-    let drawn: PDFPageProxy | undefined;
+    let drawnPage: PDFPageProxy | undefined;
     let drawing: RenderTask | undefined;
     function draw(page: PDFPageProxy) {
-      if (canvas.current === null || frame.current === null) {
+      const target = canvas.current;
+      if (target === null || frame.current === null) {
         return;
       }
-      drawn = page;
+      drawnPage = page;
       setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
       const sharpness = (frame.current.clientWidth / natural.width) * devicePixelRatio;
       const viewport = page.getViewport({ scale: sharpness });
-      canvas.current.width = viewport.width;
-      canvas.current.height = viewport.height;
-      drawing = page.render({ canvas: canvas.current, viewport });
+      target.width = viewport.width;
+      target.height = viewport.height;
+      drawing = page.render({ canvas: target, viewport });
       // Leaving the page cancels its drawing, which is no failure; anything else is one.
-      drawing.promise.catch((error: unknown) => {
-        if (!(error instanceof RenderingCancelledException)) {
-          setFailure(reasonOf(error));
-        }
-      });
+      drawing.promise.then(
+        () =>
+          current &&
+          setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 })),
+        (error: unknown) => {
+          if (!(error instanceof RenderingCancelledException)) {
+            setFailure(reasonOf(error));
+          }
+        },
+      );
     }
     void whileCurrent(file.getPage(number + 1), () => current, draw, setFailure);
     return () => {
       current = false;
       drawing?.cancel();
+      setDrawn(undefined);
       // A page that has gone far gives up its drawing, which is as large as a photograph,
       // and once the drawing has ended, what the file keeps of the page's pictures; it is
       // drawn again when it comes near.
-      if (canvas.current !== null) {
-        canvas.current.width = 0;
-        canvas.current.height = 0;
+      for (const drawnCanvas of [canvas.current, copy.current]) {
+        if (drawnCanvas !== null) {
+          drawnCanvas.width = 0;
+          drawnCanvas.height = 0;
+        }
       }
-      const release = () => void drawn?.cleanup();
+      const release = () => void drawnPage?.cleanup();
       void drawing?.promise.then(release, release);
     };
   }, [near, file, number]);
 
+  // The source beside the translated page is the same drawing, copied.
+  useEffect(() => {
+    const beside = copy.current;
+    if (paired && drawn !== undefined && beside !== null) {
+      beside.width = drawn.canvas.width;
+      beside.height = drawn.canvas.height;
+      beside.getContext("2d")?.drawImage(drawn.canvas, 0, 0);
+    }
+  }, [paired, drawn]);
+
+  // One shape of tree whether or not the source stands beside the page, so that the page's
+  // canvas, and its drawing, stay when the pairing changes.
   return (
-    <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
-      <canvas ref={canvas} />
-      {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
-      {boxes.map((box, index) => (
-        <div
-          key={index}
-          className={BOX_CLASS}
-          style={{
-            left: percent(box.left),
-            top: percent(box.top),
-            width: percent(box.width),
-            height: percent(box.height),
-          }}
-        />
-      ))}
+    <div className="page-pair">
+      <div
+        className="page"
+        hidden={!paired}
+        style={{ aspectRatio: `1 / ${shape}` }}
+        aria-label="原文的这一页"
+      >
+        <canvas ref={copy} />
+        <Boxes boxes={boxes} />
+      </div>
+      <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
+        <canvas ref={canvas} />
+        {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
+        {overlay !== undefined && near && drawn !== undefined && (
+          <PageTranslation
+            texts={overlay.texts}
+            shape={shape}
+            drawn={drawn}
+            revealing={overlay.revealing}
+            width={width}
+          />
+        )}
+        <Boxes boxes={boxes} />
+      </div>
     </div>
   );
 }
+
+// Two pages stand side by side where the viewer is at least this wide.
+const PAIRED_WIDTH = 720;
+const NO_TEXTS: AreaText[] = [];
 
 function Pages({
   file,
   pointed,
   inView,
+  overlays,
+  pairing,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
   inView: boolean;
+  overlays: Map<number, AreaText[]> | undefined;
+  pairing: boolean;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
   const [shapes, setShapes] = useState<number[]>();
+  const [wide, setWide] = useState(false);
 
   // Pages of one file may differ in shape, so the file is asked for the shape of every page,
   // once. A page that cannot be opened says why when it is drawn.
@@ -197,6 +273,17 @@ function Pages({
     };
   }, [file]);
 
+  useEffect(() => {
+    if (viewer.current === null) {
+      return;
+    }
+    const resized = new ResizeObserver((entries) =>
+      setWide((entries.at(-1)?.contentRect.width ?? 0) >= PAIRED_WIDTH),
+    );
+    resized.observe(viewer.current);
+    return () => resized.disconnect();
+  }, []);
+
   // Turns to the first of the boxes that were pointed at, once the pages have their shapes: a
   // page that took its shape afterwards would move the box out of where it was turned to.
   // One pointed at before the shapes were known, or while the pages were out of view, is
@@ -216,28 +303,52 @@ function Pages({
           number={number}
           shape={shapes?.[number] ?? LETTER_SHAPE}
           boxes={pointed.filter((place) => place.page === number)}
+          overlay={
+            overlays === undefined
+              ? undefined
+              : {
+                  texts: overlays.get(number) ?? NO_TEXTS,
+                  paired: pairing && wide,
+                  revealing: pairing && !wide,
+                }
+          }
         />
       ))}
     </div>
   );
 }
 
-// Shows a PDF page by page, and outlines the boxes that were pointed at.
+// Shows a PDF page by page, outlines the boxes that were pointed at, and sets a translation
+// over the pages where one is given, by page; with the source beside each page, or under each
+// area, where pairing is asked for.
 export function PageViewer({
   source,
   pointed,
   inView,
+  overlays,
+  pairing,
 }: {
   source: string;
   pointed: PagePlace[];
   inView: boolean;
+  overlays: Map<number, AreaText[]> | undefined;
+  pairing: boolean;
 }) {
   const file = useFile(source);
   return (
     <>
       {file.state === "loading" && <p className="status">正在打开原件…</p>}
       {file.state === "failed" && <p className="status failed">原件打不开：{file.reason}</p>}
-      {file.state === "ready" && <Pages file={file.value} pointed={pointed} inView={inView} />}
+      {file.state === "ready" && (
+        <Pages
+          file={file.value}
+          pointed={pointed}
+          inView={inView}
+          overlays={overlays}
+          pairing={pairing}
+        />
+      )}
     </>
   );
 }
+

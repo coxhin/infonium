@@ -10,7 +10,7 @@ import "./translated.css";
 export const TRANSLATION_ATTRIBUTE = "data-translation";
 export const POINTED_CLASS = "pointed";
 // Segments of one block follow each other as sentences of one paragraph do.
-const SEGMENT_GAP = " ";
+export const SEGMENT_GAP = " ";
 // The control to translate a block again stands in the narrow margin beside the block, where
 // a word would not fit.
 const AGAIN_MARK = "↻";
@@ -146,6 +146,13 @@ export const Row = memo(function Row({
   );
 });
 
+// Every stop is said the same way, with the service's own words for why: the protocol tells
+// the kinds of stop apart by no tag, and words matched against the service's sentences would
+// fall silent as soon as one of them is put otherwise.
+function stoppedReason(reason: string): string {
+  return `翻译停在了半路：已译的段落照常显示，没译的段落显示原文。服务给出的原因：${reason}`;
+}
+
 // How far the translation has come, and what can be done about it from there.
 export function TranslationNote({ translation }: { translation: TranslationState }) {
   const loaded = translation.loaded;
@@ -177,7 +184,16 @@ export function TranslationNote({ translation }: { translation: TranslationState
         </p>
       );
     case "translating":
-      return (
+      // The first blocks come only after some tens of seconds, for a translation that first
+      // reads the document through and for one that goes on alike; until then there is
+      // nothing to count.
+      return progress.translated === 0 ? (
+        <p className="translation-note">
+          <span>正在翻译，第一批译文还没有到，通常要等几十秒</span>
+          <progress />
+          {interrupted}
+        </p>
+      ) : (
         <p className="translation-note">
           <span>
             正在翻译：已译 {progress.translated} / {progress.total} 段
@@ -189,12 +205,21 @@ export function TranslationNote({ translation }: { translation: TranslationState
     case "stopped":
       return (
         <p className="translation-note failed">
-          翻译停在了半路：{progress.reason}
+          {stoppedReason(progress.reason)}
           <button onClick={translation.goOn}>继续翻译</button>
         </p>
       );
     case "unneeded":
-      return <p className="translation-note">原文已是{language}，不用翻译，下面是原文。</p>;
+      // The service judges the language from a sample; a reader who finds passages in another
+      // language may have the document translated all the same.
+      return (
+        <p className="translation-note">
+          原文已是{language}，不用翻译，下面是原文。
+          <button className="quiet" onClick={translation.anew}>
+            仍然翻译
+          </button>
+        </p>
+      );
     case "translated":
       return (
         <p className="translation-note">
