@@ -50,7 +50,7 @@ from infonium.library import (
     metadata,
     replacing_insert,
 )
-from infonium.rendition import Passages, Rendered, Term, Wording, renditions
+from infonium.rendition import Passages, Rendered, Term, Wording, keeps_marks, renditions
 from infonium.transcript import ends_sentence
 
 
@@ -433,15 +433,18 @@ def translate_blocks(
 ) -> None:
     # Asks for the blocks, then again for those that did not come back usable, until each
     # has or as many requests are made as a translation makes. A request that fails is made
-    # again the same way.
+    # again the same way. A block that lost most of the marks of one of its passages is
+    # asked for again too, but kept as it came from the last request.
     pending = work.numbers
     for attempt in range(1, ATTEMPTS + 1):
         if closing.is_set():
             return
         wordings = [block_wordings(work.document.blocks[number]) for number in pending]
         asked = work.model_copy(update={"numbers": pending})
+        logger.info("asking %s for blocks %s of document %s", model.name, pending, work.document.id)
+        passages = passages_of(asked, wordings)
         try:
-            replied = renditions(model, language, passages_of(asked, wordings))
+            replied = renditions(model, language, passages)
         except (
             openai.OpenAIError,
             UnstructuredCompletion,
@@ -457,7 +460,12 @@ def translate_blocks(
         missing: list[BlockNumber] = []
         for number, first, last in zip(pending, ends, ends[1:], strict=False):
             rendered = [replied.rendered[at] for at in range(first, last) if at in replied.rendered]
-            if len(rendered) == last - first:
+            complete = len(rendered) == last - first
+            faithful = attempt == ATTEMPTS or all(
+                keeps_marks(wording, done)
+                for wording, done in zip(passages.wordings[first:last], rendered, strict=False)
+            )
+            if complete and faithful:
                 block = work.document.blocks[number]
                 done.append(translated_block(number, block, model.name, rendered))
             else:

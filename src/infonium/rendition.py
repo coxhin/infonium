@@ -53,8 +53,11 @@ or add anything that the passage does not say.
 passage goes on with. Translate what the passage says, and nothing of the passages around \
 it.
 - Keep each name of a person, a product, a place or a work, and each technical term, the \
-same in every passage. Where the request lists terms, translate each as it is listed, \
-wherever it stands. Keep numbers and units as they are written.
+same in every passage. Where the request lists terms, translate a listed term as it is \
+listed wherever a passage uses it in that sense; words that only look like a listed term \
+are translated for what they say.
+- Keep the value of every number, and write numbers and units the way {language} writes \
+them.
 - Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \
 Put each pair of tags, with the same name and number, around the words of your translation \
 that translate the words it encloses. Add no tags of your own.
@@ -221,9 +224,9 @@ def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
 
 def rendered(wording: Wording, number: int, reply: str) -> Rendered:
     # The reply to one passage, without its tags, and with each mark of the source whose
-    # tags it keeps. A mark whose tags the reply lost or garbled is left out, but a formula
-    # comes back as it was: where its tags are lost, it is found by its text, and a reply
-    # that lost the text as well is of no use.
+    # tags it keeps, in the order they stand in it. A mark whose tags the reply lost or
+    # garbled is left out, but a formula comes back as it was: where its tags are lost, it
+    # is found by its text, and a reply that lost the text as well is of no use.
     text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply)
     if not text:
         raise UnusableReply(NO_WORDS.format(number=number))
@@ -239,7 +242,14 @@ def rendered(wording: Wording, number: int, reply: str) -> Rendered:
                 end = start + len(formula)
         if start < end:
             marks.append(kept_mark(mark, start, end))
-    return Rendered(text=text, marks=marks)
+    return Rendered(text=text, marks=sorted(marks, key=lambda mark: (mark.start, mark.end)))
+
+
+def keeps_marks(wording: Wording, done: Rendered) -> bool:
+    # Whether a passage came back with more than half of its marks, or with all of them
+    # where it had none or one.
+    lost = len(wording.marks) - len(done.marks)
+    return lost == 0 or 2 * lost < len(wording.marks)
 
 
 def renditions(model: LanguageModel, language: str, passages: Passages) -> Renditions:
