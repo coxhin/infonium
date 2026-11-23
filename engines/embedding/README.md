@@ -10,7 +10,7 @@ docker compose up -d
 
 This starts the engine at <http://127.0.0.1:8751/v1>, where infonium looks for it. The first start fetches the weights, 0.4 GB, and keeps them in a Docker volume; the engine answers once it has them. The image weighs 0.9 GB, and the running engine holds about 2 GB of memory.
 
-Without the engine, infonium finds blocks by their words alone. Once it answers, the blocks of the library get their vectors in the background: on 24 cores, a document of 300 blocks took about 9 seconds.
+Without the engine, infonium finds blocks by their words alone. Once it answers, the blocks of the library get their vectors in the background: on a machine of 24 cores, the engine took about 9 seconds over 300 blocks and kept about 16 cores busy meanwhile.
 
 To use another port, name it: `EMBEDDING_PORT=8761 docker compose up -d`. A port other than 8751 goes into `INFONIUM_EMBEDDING_BASE_URL` too.
 
