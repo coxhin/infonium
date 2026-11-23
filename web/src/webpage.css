@@ -1,0 +1,17 @@
+/* The page a web article was read from, in a frame. The page keeps the colours it was made in
+   on any theme of the app: it is drawn light, on white where it sets no background, as a
+   browser draws a page that says nothing of dark schemes, and a border sets it apart from the
+   app around it. */
+
+.webpage-frame {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color-scheme: light;
+}
+
+.webpage-loading,
+.webpage-failed {
+  padding: 0 1rem;
+}
