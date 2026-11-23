@@ -46,10 +46,11 @@ TAG = re.compile(
     rf"{OPENS}\s*(/?)\s*({NAMES})(?![a-z])\s*(\d*)(?:\s[^<>]{{0,80}}?)?\s*/?\s*{CLOSES}",
     re.IGNORECASE,
 )
-# A passage's own key left in a reply's text as a word, in the text as Unicode's
-# compatibility form writes it, where a full-width letter or digit is a plain one: written
-# close, as "b1", "/b1" or "b-1", or with spaces where something other than a letter or a
-# digit stands before it, as a bracket does.
+# A key as a word of a text, in the text as Unicode's compatibility form writes it, where a
+# full-width letter or digit is a plain one: written close, as "b1", "/b1" or "b-1", or with
+# spaces where something other than a letter or a digit stands before it, as a bracket does.
+# It is looked for alike in a passage's own text, whose keys it holds are not given to its
+# tags, and in a reply, where it is left of a tag.
 KEY_LEFT = (
     r"(?<![0-9a-z])/?{name}[-_]?0*{number}(?![0-9])"
     r"|(?<=[^\w\s])\s*/?\s*{name}\s*[-_]?\s*0*{number}(?![0-9])"
@@ -57,9 +58,10 @@ KEY_LEFT = (
 # The brackets of HTML, which the source does not hold where a tag was cut.
 LONE_BRACKETS = ("<", ">", "&lt;", "&gt;")
 COMPATIBILITY_FORM: Final = "NFKC"
+DIGITS = "0123456789"
 CLOSING_SLASH = "/"
-OPENING = "<{name}{number}>"
-CLOSING = f"<{CLOSING_SLASH}{{name}}{{number}}>"
+OPENING = "<{key}>"
+CLOSING = f"<{CLOSING_SLASH}{{key}}>"
 # Whether each tag of a pair closes, in the order a usable pair stands.
 OPENED_THEN_CLOSED = [False, True]
 # An answer is out of proportion with its passage when the share of its length in its
@@ -80,7 +82,6 @@ ALIKE_SOURCES = 0.8
 NO_WORDS = "the reply has no words for passage {number}"
 REMNANT_LEFT = "the reply to passage {number} holds what is left of a tag: {remnant!r}"
 LOST_FORMULA = "the reply to passage {number} does not hold the formula {formula!r} in its tags"
-BARE_FORMULA = "passage {number} is sent without tags, so its formulas cannot come back in them"
 WRONG_BLOCK = "the reply's answers to block {block} are not those of its passages"
 OUT_OF_PROPORTION = (
     "the answer to passage {number} is {share:.2f} times as long, against its source, as the "
@@ -198,32 +199,46 @@ def tag_name(mark: Mark) -> str:
             return STYLE_TAGS[style]
 
 
+def compatible(text: str) -> str:
+    # A text as Unicode's compatibility form writes it, where a full-width letter or digit is
+    # a plain one, in one case.
+    return unicodedata.normalize(COMPATIBILITY_FORM, text).casefold()
+
+
+def key_found(key: str, text: str) -> list[str]:
+    # Where a key stands in a text made compatible, in any form the reading takes for it.
+    name, number = key.rstrip(DIGITS), int(key[len(key.rstrip(DIGITS)) :])
+    found = re.finditer(KEY_LEFT.format(name=re.escape(name), number=number), text)
+    return [place.group().strip() for place in found]
+
+
 def keys_of(wording: Wording) -> list[str]:
-    # The keys of a passage's own tags, one for each mark: its tag's name and its number.
-    return [f"{tag_name(mark)}{number}" for number, mark in enumerate(wording.marks, start=1)]
+    # The keys of a passage's own tags, one for each mark: its tag's name and a number, which
+    # counts on past any key that the passage's own text holds in any form the reading takes
+    # for a key. So whatever of a key stands in a reply is left of a tag, and nothing of the
+    # source can pass for one.
+    held = compatible(wording.text)
+    keys: list[str] = []
+    number = 1
+    for mark in wording.marks:
+        while key_found(f"{tag_name(mark)}{number}", held):
+            number += 1
+        keys.append(f"{tag_name(mark)}{number}")
+        number += 1
+    return keys
 
 
 def tag_key(tag: re.Match[str]) -> str:
     return f"{tag.group(2).lower()}{int(tag.group(3))}" if tag.group(3) else ""
 
 
-def is_bare(wording: Wording) -> bool:
-    # A text that holds what reads as one of its own tags is sent without tags and read back
-    # as it comes, since a tag in the reply could then be either.
-    keys = set(keys_of(wording))
-    return any(tag_key(tag) in keys for tag in TAG.finditer(wording.text))
-
-
 def markup(wording: Wording) -> str:
     # The text with a tag at each end of each mark. Where tags meet, the closing ones come
     # first, and of the ones that open together the one that closes last opens first.
-    if is_bare(wording):
-        return wording.text
     tags: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
-    for number, mark in enumerate(wording.marks, start=1):
-        name = tag_name(mark)
-        tags[mark.end].append((0, -mark.start, CLOSING.format(name=name, number=number)))
-        tags[mark.start].append((1, -mark.end, OPENING.format(name=name, number=number)))
+    for key, mark in zip(keys_of(wording), wording.marks, strict=True):
+        tags[mark.end].append((0, -mark.start, CLOSING.format(key=key)))
+        tags[mark.start].append((1, -mark.end, OPENING.format(key=key)))
     pieces: list[str] = []
     for at in range(len(wording.text) + 1):
         pieces.extend(tag for _, _, tag in sorted(tags[at]))
@@ -323,42 +338,35 @@ def tag_ranges(reply: str, keys: list[str]) -> tuple[str, dict[str, tuple[int, i
 
 def remnant(text: str, source: str, keys: list[str]) -> str:
     # What is left of the passage's own tags in a reply's text once its pairs are taken out,
-    # or nothing: one of its keys, or the closing form of one, standing as a word the source
-    # does not hold; or a bracket of HTML that the source does not hold.
-    compatible = unicodedata.normalize(COMPATIBILITY_FORM, text).casefold()
-    compatible_source = unicodedata.normalize(COMPATIBILITY_FORM, source).casefold()
-    for key in keys:
-        name, number = key.rstrip("0123456789"), int(key[len(key.rstrip("0123456789")) :])
-        pattern = KEY_LEFT.format(name=re.escape(name), number=number)
-        for left in re.finditer(pattern, compatible):
-            if left.group().strip() not in compatible_source:
-                return left.group().strip()
+    # or nothing: one of its keys, or the closing form of one, standing as a word, which the
+    # source cannot hold, since a passage's keys are none its text holds; or a bracket of
+    # HTML that the source does not hold.
+    reply = compatible(text)
+    left = [found for key in keys for found in key_found(key, reply)]
+    if left:
+        return left[0]
+    held = compatible(source)
     return "".join(
-        bracket
-        for bracket in LONE_BRACKETS
-        if compatible.count(bracket) > compatible_source.count(bracket)
+        bracket for bracket in LONE_BRACKETS if reply.count(bracket) > held.count(bracket)
     )
 
 
 def rendered(wording: Wording, number: int, reply: str) -> Rendered:
     # The reply to one passage, without its tags, and with each mark of the source whose
-    # tags it keeps, in the order they stand in it. A passage sent without tags is read back
-    # as it is. A mark whose tags the reply lost or garbled is left out; a reply that holds
-    # what is left of a tag, or does not hold a formula inside its own tags with exactly its
-    # text, is of no use.
+    # tags it keeps, in the order they stand in it. A mark whose tags the reply lost or
+    # garbled is left out; a reply that holds what is left of a tag, or does not hold a
+    # formula inside its own tags with exactly its text, is of no use.
     keys = keys_of(wording)
-    text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply, keys)
+    text, ranges = tag_ranges(reply, keys)
     if not text:
         raise UnusableReply(NO_WORDS.format(number=number))
-    left = "" if is_bare(wording) else remnant(text, wording.text, keys)
+    left = remnant(text, wording.text, keys)
     if left:
         raise UnusableReply(REMNANT_LEFT.format(number=number, remnant=left))
     marks: list[Mark] = []
-    for mark_number, mark in enumerate(wording.marks, start=1):
-        start, end = trimmed(*ranges.get(f"{tag_name(mark)}{mark_number}", (0, 0)), text)
+    for key, mark in zip(keys, wording.marks, strict=True):
+        start, end = trimmed(*ranges.get(key, (0, 0)), text)
         formula = wording.text[mark.start : mark.end]
-        if isinstance(mark, FormulaMark) and is_bare(wording):
-            raise UnusableReply(BARE_FORMULA.format(number=number))
         if isinstance(mark, FormulaMark) and text[start:end] != formula:
             raise UnusableReply(LOST_FORMULA.format(number=number, formula=formula))
         if start < end:
@@ -432,12 +440,10 @@ def out_of_proportion(passages: Passages, kept: dict[int, Rendered]) -> dict[int
 
 
 def keeps_marks(wording: Wording, done: Rendered) -> bool:
-    # Whether a passage came back with more than half of the marks sent with it, or with all
-    # of them where it was sent with none or one. A passage sent without tags keeps what it
-    # was sent with.
-    sent = 0 if is_bare(wording) else len(wording.marks)
-    lost = sent - len(done.marks)
-    return lost <= 0 or 2 * lost < sent
+    # Whether a passage came back with more than half of its marks, or with all of them
+    # where it had none or one.
+    lost = len(wording.marks) - len(done.marks)
+    return lost == 0 or 2 * lost < len(wording.marks)
 
 
 def renditions(model: LanguageModel, language: str, passages: Passages) -> Renditions:
