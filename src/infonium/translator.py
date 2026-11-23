@@ -70,10 +70,14 @@ class TranslationStanding(BaseModel):
 
 
 def progress_of(record: TranslationRecord, document: Document, kept: int) -> Progress:
+    # A stopped translation whose every block was kept since, as one translated by itself, is
+    # translated: the progress is told from the kept blocks, so it holds after a restart.
     total = len(translated_numbers(document))
     match record.course:
         case Running():
             return Translating(translated=kept, total=total)
+        case Halted() if kept == total:
+            return Translated()
         case Halted(reason=reason):
             return Stopped(translated=kept, total=total, reason=reason)
         case course:
