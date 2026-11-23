@@ -207,10 +207,13 @@ class RenderedPage(BaseModel):
     # A page as a browser built it: its HTML once its scripts have run, kept as a file, the
     # address the browser ended at, and whether a change of this machine's network broke off
     # the attempt that was kept, as it broke off every attempt that was taken. Such a page may
-    # hold less than the page does, or nothing to read.
+    # hold less than the page does, or nothing to read. And how many attempts were made at the
+    # page, and how many of them such a change broke off.
     file: Path
     address: str
     broken_off_by_network: bool
+    attempts: int
+    broken_off_attempts: int
 
 
 class TakenPage(BaseModel):
@@ -219,6 +222,13 @@ class TakenPage(BaseModel):
     content: str
     address: str
     broken_off_by_network: bool
+
+
+class AttemptedPage(BaseModel):
+    # What the attempts at a page leave: the page that is kept, and of each attempt that was
+    # made, in turn, whether a change of this machine's network broke it off.
+    page: TakenPage
+    broken_off: list[bool]
 
 
 class FailedHop(BaseModel):
@@ -236,6 +246,8 @@ class CompletedRendering(Tagged):
     kind: Literal[RenderingReportKind.COMPLETED] = RenderingReportKind.COMPLETED
     address: str
     broken_off_by_network: bool
+    attempts: int
+    broken_off_attempts: int
 
 
 class AbortedRendering(Tagged):
@@ -394,15 +406,16 @@ class PageRendering:
         finally:
             page.close()
 
-    def taken_page(self, context: BrowserContext, deadline: float) -> TakenPage:
+    def attempted_page(self, context: BrowserContext, deadline: float) -> AttemptedPage:
         # The page once it is done. A page whose own document, scripts or the requests of
         # its scripts were broken off is rendered again, in a page of its own, once the network
         # of this machine holds still, as long as the time left holds another attempt; of the
         # attempts that were broken off, the one that holds the most is kept. An attempt that
         # fails for another reason once another was taken ends the attempts and leaves what was
-        # taken.
+        # taken. Each attempt made is noted with whether the network broke it off.
         taken: list[TakenPage] = []
         failures: list[PlaywrightError | UnreadableSource] = []
+        broken_off: list[bool] = []
         latest_start = deadline - ATTEMPT_LIMIT_SECONDS
         for attempt in range(RENDERING_ATTEMPTS):
             if attempt and time.monotonic() > latest_start:
@@ -412,17 +425,21 @@ class PageRendering:
             try:
                 taken.append(self.attempt(context))
             except (PlaywrightError, UnreadableSource) as failure:
+                broken_off.append(bool(self.broken))
                 if self.broken:
                     failures.append(failure)
                     continue
                 if taken:
                     break
                 raise
+            broken_off.append(taken[-1].broken_off_by_network)
             if not taken[-1].broken_off_by_network:
-                return taken[-1]
+                return AttemptedPage(page=taken[-1], broken_off=broken_off)
         if not taken:
             raise failures[-1]
-        return max(taken, key=lambda page: len(page.content))
+        return AttemptedPage(
+            page=max(taken, key=lambda page: len(page.content)), broken_off=broken_off
+        )
 
     def report(self, work: Path, deadline: float) -> RenderingReport:
         # How the rendering of the page ends: completed, with the page kept in the work
@@ -455,17 +472,20 @@ class PageRendering:
             if failures:
                 return AbortedRendering(reason=failures[0])
             try:
-                taken = self.taken_page(context, deadline)
+                attempted = self.attempted_page(context, deadline)
             except (PlaywrightError, UnreadableSource) as ending:
                 return self.aborted(ending)
         # The page is kept as UTF-8 with its mark in front, which a browser and the extractor
         # both read before any charset the page declares in its head or a server in a header.
-        kept = BOM_UTF8 + taken.content.encode()
+        kept = BOM_UTF8 + attempted.page.content.encode()
         if len(kept) > RENDERED_LIMIT_BYTES:
             return AbortedRendering(reason=OVERSIZE_SOURCE.format(source=self.url))
         (work / RENDERED_FILE).write_bytes(kept)
         return CompletedRendering(
-            address=taken.address, broken_off_by_network=taken.broken_off_by_network
+            address=attempted.page.address,
+            broken_off_by_network=attempted.page.broken_off_by_network,
+            attempts=len(attempted.broken_off),
+            broken_off_attempts=sum(attempted.broken_off),
         )
 
 
@@ -570,11 +590,17 @@ def rendered_page(url: str, directory: Path, browser: Path) -> RenderedPage:
     file = directory / RENDERED_FILE
     with TemporaryDirectory(dir=directory) as work:
         match reported_rendering(url, Path(work), program):
-            case CompletedRendering(address=address, broken_off_by_network=broken):
+            case CompletedRendering() as completed:
                 (Path(work) / RENDERED_FILE).replace(file)
             case AbortedRendering(reason=reason):
                 raise UnreadableSource(reason)
-    return RenderedPage(file=file, address=address, broken_off_by_network=broken)
+    return RenderedPage(
+        file=file,
+        address=completed.address,
+        broken_off_by_network=completed.broken_off_by_network,
+        attempts=completed.attempts,
+        broken_off_attempts=completed.broken_off_attempts,
+    )
 
 
 if __name__ == "__main__":
