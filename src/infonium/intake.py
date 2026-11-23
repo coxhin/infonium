@@ -242,13 +242,13 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
         return copy_readout(plain)
     try:
         rendered = browser.rendered_page(source.reference, directory, engines.browser)
-        if rendered.attempts > 1:
+        if len(rendered.broken_off) > 1:
             logger.info(
                 "rendering %s took %d attempts, %d of them broken off by changes of this "
                 "machine's network",
                 source.reference,
-                rendered.attempts,
-                rendered.broken_off_attempts,
+                len(rendered.broken_off),
+                sum(rendered.broken_off),
             )
         built = page_copy(url, rendered.file, rendered.address)
     except UnreadableSource:

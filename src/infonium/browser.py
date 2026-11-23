@@ -203,17 +203,21 @@ BROWSER_FLAGS = (
 PROXY_SERVER_FLAG = "--proxy-server={scheme}://{host}:{port}"
 
 
+# Of each attempt made at a page, in turn, whether a change of this machine's network broke it
+# off. A rendering that keeps a page made one attempt at least.
+AttemptsBrokenOff = Annotated[list[bool], Field(min_length=1)]
+
+
 class RenderedPage(BaseModel):
     # A page as a browser built it: its HTML once its scripts have run, kept as a file, the
     # address the browser ended at, and whether a change of this machine's network broke off
     # the attempt that was kept, as it broke off every attempt that was taken. Such a page may
-    # hold less than the page does, or nothing to read. And how many attempts were made at the
-    # page, and how many of them such a change broke off.
+    # hold less than the page does, or nothing to read. And of each attempt made at the page,
+    # whether such a change broke it off.
     file: Path
     address: str
     broken_off_by_network: bool
-    attempts: int
-    broken_off_attempts: int
+    broken_off: AttemptsBrokenOff
 
 
 class TakenPage(BaseModel):
@@ -228,7 +232,7 @@ class AttemptedPage(BaseModel):
     # What the attempts at a page leave: the page that is kept, and of each attempt that was
     # made, in turn, whether a change of this machine's network broke it off.
     page: TakenPage
-    broken_off: list[bool]
+    broken_off: AttemptsBrokenOff
 
 
 class FailedHop(BaseModel):
@@ -246,8 +250,7 @@ class CompletedRendering(Tagged):
     kind: Literal[RenderingReportKind.COMPLETED] = RenderingReportKind.COMPLETED
     address: str
     broken_off_by_network: bool
-    attempts: int
-    broken_off_attempts: int
+    broken_off: AttemptsBrokenOff
 
 
 class AbortedRendering(Tagged):
@@ -484,8 +487,7 @@ class PageRendering:
         return CompletedRendering(
             address=attempted.page.address,
             broken_off_by_network=attempted.page.broken_off_by_network,
-            attempts=len(attempted.broken_off),
-            broken_off_attempts=sum(attempted.broken_off),
+            broken_off=attempted.broken_off,
         )
 
 
@@ -598,8 +600,7 @@ def rendered_page(url: str, directory: Path, browser: Path) -> RenderedPage:
         file=file,
         address=completed.address,
         broken_off_by_network=completed.broken_off_by_network,
-        attempts=completed.attempts,
-        broken_off_attempts=completed.broken_off_attempts,
+        broken_off=completed.broken_off,
     )
 
 
