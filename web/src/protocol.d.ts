@@ -146,6 +146,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/page/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Page Blocks */
+        get: operations["item_page_blocks_api_items__item_id__page_blocks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/source": {
         parameters: {
             query?: never;
@@ -465,6 +482,24 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** PageBlocks */
+        PageBlocks: {
+            /**
+             * Block Attribute
+             * @description The name of the attribute that marks, in the served page, the element that holds the whole text of one block that is not a table, and nothing else a reader or the rest of the page needs. Its value is the block's number, and one element at most carries a number. The element's content may be replaced by the block's translation, and the element may be scrolled to. It holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The links, emphasis and line breaks inside it are part of the block's text, and the translation's marks and line breaks stand for them; a line break in the text or the translation is written into the page as a br element. Words that the page shows struck out are not part of the block's text, and go when the content is replaced, as they are left out of the text a reader reads. A place inside the element that the page's own links lead to, an element with an id, goes too: those links then lead nowhere. Where a block's text is only part of an element, the marked element is an infonium-run element added around that text, laid out inline.
+             */
+            block_attribute: string;
+            /**
+             * Cell Attribute
+             * @description The name of the attribute that marks, in the served page, each cell of a table (a td, th or caption element) that holds one cell of a table block's text. Its value is three numbers parted by commas: the block's number, then the row and the cell within the row, counted from 0 as the block's text gives them when it is split at its row separator and each row at its cell separator. A cell of the block's text that says nothing has no element. A marked cell's content may be replaced by the translation of that cell of the block's text; it holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The translation of a table block is one text, which is split at the block's own row and cell separators into the cells that the marks name. The table itself carries no mark: a table block is scrolled to by its first marked cell.
+             */
+            cell_attribute: string;
+            /**
+             * Placed
+             * @description The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.
+             */
+            placed: number[];
+        };
         /** PagePlace */
         PagePlace: {
             /**
@@ -507,15 +542,6 @@ export interface components {
              * @description A distance across or down a page, as a part of its size.
              */
             width: number;
-        };
-        /** PageView */
-        PageView: {
-            /** Block Attribute */
-            block_attribute: string;
-            /** Html */
-            html: string;
-            /** Placed */
-            placed: number[];
         };
         /** Paragraph */
         Paragraph: {
@@ -616,6 +642,11 @@ export interface components {
         Statement: {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
+            /**
+             * Lost Citations
+             * @default 0
+             */
+            lost_citations: number;
             /** Text */
             text: string;
         };
@@ -881,6 +912,15 @@ export interface operations {
                     "application/jsonl": unknown;
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -907,6 +947,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
             };
         };
     };
@@ -1340,7 +1389,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PageView"];
+                    "text/html": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_page_blocks_api_items__item_id__page_blocks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageBlocks"];
                 };
             };
             /** @description Not Found */

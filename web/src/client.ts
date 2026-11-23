@@ -17,7 +17,7 @@ export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
 export type TranslatedBlock = Schemas["TranslatedBlock"];
 export type Segment = Schemas["Segment"];
-export type Page = Schemas["PageView"];
+export type PageBlocks = Schemas["PageBlocks"];
 export type Conversation = Schemas["Conversation"];
 export type Turn = Schemas["Turn"];
 // What happens while a question is answered. The protocol lists these as the items of a
@@ -30,6 +30,7 @@ export type ChatEvent =
 type Refusal = Schemas["Failure"] | Schemas["HTTPValidationError"];
 
 const SOURCE_PATH = "/api/items/{item_id}/source" satisfies keyof paths;
+const PAGE_PATH = "/api/items/{item_id}/page" satisfies keyof paths;
 const ITEM_PLACE = "{item_id}";
 
 const api = createClient<paths>();
@@ -37,6 +38,11 @@ const api = createClient<paths>();
 // Where the file an item's document was read from is served: the PDF, or the recording.
 export function sourceLink(itemId: string): string {
   return SOURCE_PATH.replace(ITEM_PLACE, itemId);
+}
+
+// Where the web page an item was read from is served, inert, for a frame to show.
+export function pageLink(itemId: string): string {
+  return PAGE_PATH.replace(ITEM_PLACE, itemId);
 }
 
 function refusalText(refusal: Refusal | undefined): string {
@@ -47,10 +53,23 @@ function refusalText(refusal: Refusal | undefined): string {
   return detail?.map((problem) => problem.msg).join("；") ?? "请求没有成功";
 }
 
-async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>): Promise<Data> {
-  const { data, error } = await request;
+// The service answered a request with a status other than success, so it did nothing of what
+// was asked. The status tells the kinds of refusal apart where a reader is told them apart.
+export class Refused extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function settled<Data>(
+  request: Promise<{ data?: Data; error?: Refusal; response: Response }>,
+): Promise<Data> {
+  const { data, error, response } = await request;
   if (data === undefined) {
-    throw new Error(refusalText(error));
+    throw new Refused(refusalText(error), response.status);
   }
   return data;
 }
@@ -59,17 +78,7 @@ async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>)
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;
   if (!response.ok) {
-    throw new Error(refusalText(error));
-  }
-}
-
-// The service answered a question with a status other than success, so it began no answer.
-export class RefusedQuestion extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+    throw new Refused(refusalText(error), response.status);
   }
 }
 
@@ -94,7 +103,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new RefusedQuestion(refusalText(error), response.status);
+    throw new Refused(refusalText(error), response.status);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");
@@ -215,8 +224,10 @@ export async function retranslateBlock(
   return data;
 }
 
-export function readPage(itemId: string): Promise<Page> {
-  return settled(api.GET("/api/items/{item_id}/page", { params: { path: { item_id: itemId } } }));
+export function readPageBlocks(itemId: string): Promise<PageBlocks> {
+  return settled(
+    api.GET("/api/items/{item_id}/page/blocks", { params: { path: { item_id: itemId } } }),
+  );
 }
 
 export function readItemConversation(itemId: string): Promise<Conversation> {

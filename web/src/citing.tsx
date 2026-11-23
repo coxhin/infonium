@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Anchor } from "./client";
+import type { Anchor, Statement } from "./client";
 import { reasonOf } from "./loading";
 import type { Seat, Unshown } from "./seat";
 import "./citing.css";
@@ -112,6 +112,45 @@ export function useCiting(
     },
     lost: current.state === "lost" ? current.reason : undefined,
   };
+}
+
+// What a statement's chips do not tell: that citations the model gave it were not found in
+// their sources. A statement whose every citation was lost is a claim whose sources are not
+// there, marked plainly. One that kept some says quietly how many more it was given. One that
+// has none and lost none is marked only where every statement is meant to cite, as in a
+// digest; an answer may rightly say what its sources do not cover. That mark does not say that
+// the model gave no citation: a statement kept before the count of lost citations was kept
+// reads as having lost none.
+export function LostCitations({
+  statement,
+  citesAll,
+}: {
+  statement: Statement;
+  citesAll: boolean;
+}) {
+  const lost = statement.lost_citations;
+  if (statement.anchors.length === 0 && lost > 0) {
+    return (
+      <span className="unsourced unfound" title={`模型给出的 ${lost} 处引文在原文里都找不到`}>
+        出处找不到
+      </span>
+    );
+  }
+  if (statement.anchors.length === 0 && citesAll) {
+    return (
+      <span className="unsourced" title="这句话没有可以打开的出处">
+        无出处
+      </span>
+    );
+  }
+  if (lost > 0) {
+    return (
+      <span className="also-lost" title={`模型还给了 ${lost} 处引文，在原文里找不到`}>
+        另 {lost} 处未找到
+      </span>
+    );
+  }
+  return null;
 }
 
 // A statement's citations as numbered chips, each titled with its quote.

@@ -12,9 +12,10 @@ from urllib.parse import urldefrag, urlsplit
 import openai
 from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 from infonium.asking import UnusableTranslation
+from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE
 from infonium.chat import (
     Answered,
     Answering,
@@ -22,13 +23,11 @@ from infonium.chat import (
     Conversation,
     ConversationBusy,
     Drafted,
-    ItemConversation,
-    ItemConversations,
+    KeptTurns,
     Question,
-    Questioned,
+    Searched,
     Turn,
     Unanswered,
-    answer_progress,
 )
 from infonium.citing import numbered_blocks
 from infonium.digest import (
@@ -38,9 +37,17 @@ from infonium.digest import (
     digest_instructions,
     grounded_sections,
 )
-from infonium.document import Block, BlockNumber, MediaType, error_text
+from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
+from infonium.framedpage import FramedPage, KeptPages
 from infonium.intake import Engines, Intake, failure_reason
+from infonium.item_conversation import (
+    ITEM_BUSY,
+    ItemConversation,
+    Questioned,
+    answer_progress,
+    item_turns,
+)
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -56,10 +63,19 @@ from infonium.library import (
     LibraryStore,
     NotInLibrary,
     Origin,
+    OwnerTransaction,
     Reading,
 )
+from infonium.library_conversation import (
+    LIBRARY_BUSY,
+    SEARCH_FAILED,
+    LibraryConversation,
+    library_answer_progress,
+    library_shelf,
+    library_turns,
+)
 from infonium.model_connection import Ending
-from infonium.search import BlockIndex
+from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
@@ -72,6 +88,22 @@ READERS = 2
 # A source is another site's bytes served from this origin; a browser that opens one treats
 # it as inert and as the kind of bytes it is said to be.
 SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
+# A web page an item was read from, served as a document of its own, is inert and quiet
+# whoever opens its address, a frame or a tab: these headers are the first line of defence,
+# and what framedpage removes from the page the second. The page keeps infonium's origin so
+# that the reader's code can reach into it, but no script, plugin or frame runs in it, no
+# form is sent from it, and a click on a link does not ping an address.
+PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "sandbox allow-same-origin; script-src 'none'; object-src 'none'; frame-src 'none';"
+        " form-action 'none'; connect-src 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+# How many pages built for documents are kept, those asked for last; a page of a megabyte
+# takes a fifth of a second to build.
+PAGES_KEPT = 8
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 FETCH_SITE = "sec-fetch-site"
 OWN_SITES = frozenset({"same-origin", "none"})
@@ -215,15 +247,54 @@ class TranslationView(BaseModel):
     blocks: list[TranslatedBlock]
 
 
-class PageView(BaseModel):
-    # The web page an item was read from, made ready for a frame that runs none of its
-    # scripts: its addresses are those of the site it came from, and an element that holds
-    # the text of one block, and nothing else, carries that block's number in the
-    # attribute named here. The blocks placed so are listed; any other block has no
-    # element of its own in the page.
-    html: str
-    block_attribute: str
-    placed: list[BlockNumber]
+class PageBlocks(BaseModel):
+    # Where the blocks of an item's document stand in the web page it was read from, as the
+    # page is served at the item's page address.
+    block_attribute: str = Field(
+        description=(
+            "The name of the attribute that marks, in the served page, the element that holds"
+            " the whole text of one block that is not a table, and nothing else a reader or the"
+            " rest of the page needs. Its value is the block's number, and one element at most"
+            " carries a number. The element's content may be replaced by the block's"
+            " translation, and the element may be scrolled to. It holds no picture, control,"
+            " formula, image map or stylesheet, and no words for a browser without scripts."
+            " The links, emphasis and line breaks inside it are part of the block's text, and"
+            " the translation's marks and line breaks stand for them; a line break in the text"
+            " or the translation is written into the page as a br element. Words that the page"
+            " shows struck out are not part of the block's text, and go when the content is"
+            " replaced, as they are left out of the text a reader reads. A place inside the"
+            " element that the page's own links lead to, an element with an id, goes too: those"
+            " links then lead nowhere. Where a block's text is only part of an element, the"
+            " marked element is an infonium-run element added around that text, laid out"
+            " inline."
+        )
+    )
+    cell_attribute: str = Field(
+        description=(
+            "The name of the attribute that marks, in the served page, each cell of a table"
+            " (a td, th or caption element) that holds one cell of a table block's text. Its"
+            " value is three numbers parted by commas: the block's number, then the row and"
+            " the cell within the row, counted from 0 as the block's text gives them when it is"
+            " split at its row separator and each row at its cell separator. A cell of the"
+            " block's text that says nothing has no element. A marked cell's content may be"
+            " replaced by the translation of that cell of the block's text; it holds no"
+            " picture, control, formula, image map or stylesheet, and no words for a browser"
+            " without scripts. The translation of a table block is one text, which is split at"
+            " the block's own row and cell separators into the cells that the marks name. The"
+            " table itself carries no mark: a table block is scrolled to by its first marked"
+            " cell."
+        )
+    )
+    placed: list[BlockNumber] = Field(
+        description=(
+            "The numbers of the blocks that the page shows in elements of their own: for a"
+            " block that is not a table, the element that carries the block attribute; for a"
+            " table, every cell of its text that says something, each in an element that"
+            " carries the cell attribute. A block not listed has no element of its own in the"
+            " page; a figure never has, since the words that describe a picture are not shown"
+            " in a page."
+        )
+    )
 
 
 def refusal(status: HTTPStatus, detail: str) -> Response:
@@ -250,6 +321,9 @@ app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
+SERVED_PAGE: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.OK: {"content": {HTML_MEDIA_TYPE: {"schema": {"type": "string"}}}}
+}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
@@ -287,11 +361,11 @@ def questioned_item(item_id: str, owner: Owner) -> Iterator[Questioned]:
     # The item's conversation, held for a question until the question's response has been
     # sent, with what the question is asked of. A conversation that is answering, or an item
     # without a document, is refused before a line of the answer is sent.
-    with answering().claimed(ItemConversation(owner=owner, item_id=item_id)):
+    with answering().claimed(ItemConversation(owner=owner, item_id=item_id), ITEM_BUSY):
         with library_store().transaction(owner) as transaction:
             questioned = Questioned(
                 holding=Library(transaction).holding(item_id),
-                turns=ItemConversations(transaction).turns(item_id),
+                turns=item_turns(transaction, item_id).turns(),
             )
         yield questioned
 
@@ -457,10 +531,64 @@ def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> 
     return translator().retranslated(owner, item_id, block_number)
 
 
-@app.get("/api/items/{item_id}/page", responses=NOT_IN_LIBRARY)
-def item_page(item_id: str, owner: Owner) -> PageView:
-    # The page of an item that was read from a web page; any other item has none.
-    raise NotImplementedError(UNBUILT)
+@cache
+def kept_pages() -> KeptPages:
+    return KeptPages(room=PAGES_KEPT)
+
+
+def framed_item_page(item_id: str, owner: str) -> FramedPage:
+    # The page of an item that was read from a web page; any other item has none. The page is
+    # built from the very document read here, and kept under that document's name.
+    store = library_store()
+    with store.library(owner) as library:
+        origin = library.item(item_id).origin
+        document = library.holding(item_id).document
+    if document.media_type != HTML_MEDIA_TYPE:
+        raise NotInLibrary(f"item {item_id} was not read from a web page")
+    return kept_pages().page(owner, document, origin, store.snapshot(document.snapshot))
+
+
+@app.get(
+    "/api/items/{item_id}/page",
+    responses=NOT_IN_LIBRARY | SERVED_PAGE,
+    response_class=Response,
+)
+def item_page(item_id: str, owner: Owner) -> Response:
+    page = framed_item_page(item_id, owner).html
+    return Response(content=page, media_type=HTML_MEDIA_TYPE, headers=PAGE_HEADERS)
+
+
+@app.get("/api/items/{item_id}/page/blocks", responses=NOT_IN_LIBRARY)
+def item_page_blocks(item_id: str, owner: Owner) -> PageBlocks:
+    return PageBlocks(
+        block_attribute=BLOCK_ATTRIBUTE,
+        cell_attribute=CELL_ATTRIBUTE,
+        placed=framed_item_page(item_id, owner).placed,
+    )
+
+
+def told(
+    progress: Iterator[Searched | Drafted | Turn],
+    owner: str,
+    kept: Callable[[OwnerTransaction], KeptTurns],
+) -> Iterator[ChatEvent]:
+    # What an answer sends as it is written, and last the turn, kept before it is sent, or
+    # why no answer came: the model's failure, or a search of the library that failed with
+    # the index. A reader who leaves before then leaves nothing kept. Any other failure of
+    # infonium's own is not told as an answer: it ends the lines without a last event.
+    try:
+        for step in progress:
+            match step:
+                case Searched() | Drafted():
+                    yield step
+                case Turn():
+                    with library_store().transaction(owner) as transaction:
+                        kept(transaction).keep_turn(step)
+                    yield Answered(turn=step)
+    except MODEL_FAILURES as failure:
+        yield Unanswered(reason=failure_reason(failure))
+    except IndexFailed:
+        yield Unanswered(reason=SEARCH_FAILED)
 
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
@@ -468,7 +596,7 @@ def item_conversation(item_id: str, owner: Owner) -> Conversation:
     # An item without a document has no conversation.
     with library_store().transaction(owner) as transaction:
         Library(transaction).holding(item_id)
-        return Conversation(turns=ItemConversations(transaction).turns(item_id))
+        return Conversation(turns=item_turns(transaction, item_id).turns())
 
 
 @app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
@@ -480,23 +608,14 @@ def ask_about_item(
     ending: AnswerEnding,
 ) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON. The turn is
-    # kept before it is sent; a reader who leaves before then leaves nothing kept. A failure
-    # of infonium's own is not told as an answer: it ends the lines without a last event.
-    progress = answer_progress(
-        answering_model(), questioned.holding, questioned.turns, question.text, ending
+    # What happens on the way is sent as it happens, each event a line of JSON.
+    yield from told(
+        answer_progress(
+            answering_model(), questioned.holding, questioned.turns, question.text, ending
+        ),
+        owner,
+        lambda transaction: item_turns(transaction, item_id),
     )
-    try:
-        for step in progress:
-            match step:
-                case Drafted():
-                    yield step
-                case Turn():
-                    with library_store().transaction(owner) as transaction:
-                        ItemConversations(transaction).keep_turn(item_id, step)
-                    yield Answered(turn=step)
-    except MODEL_FAILURES as failure:
-        yield Unanswered(reason=failure_reason(failure))
 
 
 @app.delete(
@@ -507,25 +626,52 @@ def ask_about_item(
 def forget_item_conversation(item_id: str, owner: Owner) -> None:
     # A conversation that is answering is not forgotten: the answer would be kept after it.
     with (
-        answering().claimed(ItemConversation(owner=owner, item_id=item_id)),
+        answering().claimed(ItemConversation(owner=owner, item_id=item_id), ITEM_BUSY),
         library_store().transaction(owner) as transaction,
     ):
         Library(transaction).holding(item_id)
-        ItemConversations(transaction).forget(item_id)
+        item_turns(transaction, item_id).forget()
+
+
+def questioned_library(owner: Owner) -> Iterator[list[Turn]]:
+    # The owner's conversation about the library, held for a question until the question's
+    # response has been sent, with its turns before the question. A conversation that is
+    # answering is refused before a line of the answer is sent.
+    with answering().claimed(LibraryConversation(owner=owner), LIBRARY_BUSY):
+        with library_store().transaction(owner) as transaction:
+            turns = library_turns(transaction).turns()
+        yield turns
+
+
+QuestionedLibrary = Annotated[list[Turn], Depends(questioned_library)]
 
 
 @app.get("/api/conversation")
 def library_conversation(owner: Owner) -> Conversation:
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        return Conversation(turns=library_turns(transaction).turns())
 
 
-@app.post("/api/conversation")
-def ask_about_library(question: Question, owner: Owner) -> Iterator[ChatEvent]:
+@app.post("/api/conversation", responses=ANSWERING)
+def ask_about_library(
+    question: Question, owner: Owner, turns: QuestionedLibrary, ending: AnswerEnding
+) -> Iterator[ChatEvent]:
     # Answers a question about everything the library holds, after the questions asked of
-    # the library before, and sends its events the same way.
-    yield Unanswered(reason=UNBUILT)
+    # the library before, and sends its events the same way. The model searches and reads
+    # the library's blocks with tools that change nothing.
+    shelf = library_shelf(library_store(), block_index(), owner)
+    yield from told(
+        library_answer_progress(answering_model(), shelf, turns, question.text, ending),
+        owner,
+        library_turns,
+    )
 
 
-@app.delete("/api/conversation", status_code=HTTPStatus.NO_CONTENT)
+@app.delete("/api/conversation", responses=ANSWERING, status_code=HTTPStatus.NO_CONTENT)
 def forget_library_conversation(owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    # A conversation that is answering is not forgotten: the answer would be kept after it.
+    with (
+        answering().claimed(LibraryConversation(owner=owner), LIBRARY_BUSY),
+        library_store().transaction(owner) as transaction,
+    ):
+        library_turns(transaction).forget()

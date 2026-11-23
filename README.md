@@ -66,6 +66,8 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 
 ## Limits
 
+### Web pages
+
 - A site that turns programs away is not read. When it answers with anything but success, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
 - A page of fewer than 200 words is taken for a check when its title is one that guards give their checks, or when the address it ends at names a captcha and carries another address to go on to, so a short page that happens to look like that is refused.
 - A page whose HTML holds 200 words or more, menus and links included, is read from its HTML and never opened in a browser.
@@ -77,23 +79,32 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 - Nothing but its 90 seconds bounds the processor time a page takes in the browser, on every core the browser uses, and watching it costs infonium about an eighth of a core.
 - A page in the browser reaches only public addresses, not this machine, a network one of its interfaces stands in, or the ranges set aside for special uses, but it can have this machine's resolver look up any name.
 - Of public addresses, infonium cannot tell those that lead back into your own networks, so a page still reaches your router's public address and the ports it forwards, a company or campus network with public addresses, the networks a VPN routes to, a network's own NAT64 prefix, and services that trust this machine's address.
-- The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
-- The other programs infonium starts are given none of them either, nor any variable named like a key, a token, a password or a secret: FFmpeg only `PATH`; the fetcher of video and podcast pages `PATH`, the locale, the proxies and yt-dlp's `YTDLP_` settings; MinerU `PATH`, the locale, the proxies, `HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH`, its own `MINERU_` settings, the GPU's `CUDA_` settings and the `HF_`, `HUGGINGFACE_` and `MODELSCOPE_` settings of the hubs it fetches its models from. Only `file` is given all of infonium's environment: when infonium loads yt-dlp, once each time infonium starts and each time `--reload` restarts it, Python runs `file` on its own executable, and `file` reads that executable and its magic database and nothing else.
 - A rendering does not go through a proxy set with `HTTP_PROXY` or `HTTPS_PROXY`, so where every connection must take such a proxy, a page that scripts build cannot be rendered and is read from its HTML alone; this comes from reading the code and has not been tried.
 - If infonium is killed while a page is in the browser, the browser is ended and its folders are removed within half a second. If the program that drives the browser is killed with it, the browser's work folder stays until infonium starts again, and a small folder stays in the system's temporary folder.
 - Each time an address of this machine changes, as when a container starts or stops beside it, the browser breaks off what a page is loading, and the page is opened anew once a second passes without a change, in at most five attempts, each begun within its first 25.5 seconds.
 - When the network changed through every attempt, the fullest attempt is kept, which may hold only part of the page, and when neither it nor the page's HTML holds text, the reading fails saying that the network changed.
+
+### PDFs
+
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.
 - How well a page read as pictures comes out depends on its writing, and that has been tried on no more than a paragraph of each. Latin, Cyrillic and Greek writing, Chinese and Japanese came out right or nearly, and Korean, Arabic, Thai, Hindi, Tamil, Bengali and Tibetan with a few wrong characters. In writing the engine does not know, Hebrew, Georgian, Armenian, Amharic and Khmer among what was tried, it writes words that are not on the page, and may take so long that the reading is given up.
 - MinerU's models want a GPU. On the machine infonium was built on, a PDF of up to ten pages took about 4 to 5.5 GB of its memory, and a scan of 40 pages about 10 GB.
 - MinerU reaches a server of its own on 127.0.0.1 through a proxy set with `HTTP_PROXY`, so where one is set, `NO_PROXY` must name 127.0.0.1. Behind a proxy that refused connections, a PDF failed once MinerU had waited for its server as long as `MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS` allows (300 seconds unless set; 30 in the run), and with 127.0.0.1 named in `NO_PROXY` it was read in 16 seconds. That `ALL_PROXY` and a lowercase `http_proxy` do the same comes from reading the code.
+
+### Recordings
+
 - Of a video only the sound is kept. The reader plays it and does not show the picture.
 - A WAV file of Vorbis sound, or of AAC sound without ADTS frame headers, is refused, since FFmpeg reads only part of such sound. FFmpeg writes both kinds when told to keep the sound of an Ogg or M4A file in a WAV. An M4A, an Ogg or an uncompressed WAV of the same recording is read.
-- An address is fetched for up to ten minutes and up to 2 GiB. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
 - Speech is recognised in pieces of up to 16 seconds. A citation in a recognised recording plays from the start of the piece that holds the quote. A word at the edge of a piece is lost now and then, and each piece is punctuated by itself.
 - The default speech model is less accurate in Chinese than in English.
+
+### In general
+
+- An address is fetched for up to ten minutes and up to 2 GiB. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
+- The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
+- The other programs infonium starts are given none of them either, nor any variable named like a key, a token, a password or a secret: FFmpeg only `PATH`; the fetcher of video and podcast pages `PATH`, the locale, the proxies and yt-dlp's `YTDLP_` settings; MinerU `PATH`, the locale, the proxies, `HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH`, its own `MINERU_` settings, the GPU's `CUDA_` settings and the `HF_`, `HUGGINGFACE_` and `MODELSCOPE_` settings of the hubs it fetches its models from. Only `file` is given all of infonium's environment: when infonium loads yt-dlp, once each time infonium starts and each time `--reload` restarts it, Python runs `file` on its own executable, and `file` reads that executable and its magic database and nothing else.
 - infonium serves one person on one machine. It has no accounts and no authentication, so keep its ports off the network.
 
 ## Development

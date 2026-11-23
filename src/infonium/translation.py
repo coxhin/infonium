@@ -134,6 +134,10 @@ def segment_ranges(block: Block) -> list[TextRange]:
     return ranges or [TextRange(start=0, end=len(block.text))]
 
 
+def is_cut_into_segments(block: Block) -> bool:
+    return len(segment_ranges(block)) > 1
+
+
 def table_cells(table: Table) -> list[list[str]]:
     return [row.split(table.cell_separator) for row in table.text.split(table.row_separator)]
 
