@@ -2,7 +2,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 
 import sqlalchemy
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from infonium.chat import (
     Answer,
@@ -34,9 +34,12 @@ from infonium.language_model import (
 )
 from infonium.library import Library, LibraryStore, OwnerTransaction, metadata
 from infonium.library_tools import (
+    TITLE_CHARACTERS,
     Outline,
+    OutlineSource,
     SearchArguments,
     Shelf,
+    cut,
     library_outline,
     outline_material,
 )
@@ -44,25 +47,30 @@ from infonium.model_connection import Ending
 from infonium.search import BlockIndex
 
 LIBRARY_BUSY = "a question about the library is being answered already"
-# What a reader is told when the search of the library fails with the index, which the
-# library's conversation cannot answer without until infonium starts again.
-SEARCH_FAILED = (
-    "The search of the library has failed, so no question about the library can be answered "
-    "until infonium is started again."
-)
+# What a reader is told when the search of the library fails with the index: whether one query
+# was refused or the index has stopped, this question has no answer.
+SEARCH_FAILED = "The search of the library failed, so this question could not be answered."
 # How many sources the outline lists; of a larger library the model is told how many more
 # there are, which it finds by searching.
 OUTLINE_TITLES = 80
 OUTLINE_HEAD = "The outline of the library, as JSON:\n"
-EARLIER_SOURCES = "Sources cited: {sources}"
+EARLIER_SOURCES = "Sources cited, as JSON: "
+CITED_SOURCES = TypeAdapter(list[OutlineSource])
 INSTRUCTIONS = """\
 You answer a reader's questions about everything the reader's library holds. The reader \
 checks every claim against the sources.
 
+The reader calls the library "the library", "my library" and the like, in the language of \
+the question. In Chinese, 库, 库里, 库中, 我的库, 资料库 and 图书馆 name the reader's library \
+and nothing else: 库里关于X的内容 asks what the library holds about X. 读者说的“库”“库里”“库中”\
+“我的库”都是指读者的资料库\N{FULLWIDTH COMMA}不是人名或别的东西。
+
 The first message is the outline of the library, as JSON: how many items it holds, how many \
 of them have not been read into a source, and each source by its handle ("document") and its \
-title, as far as the list goes. The questions asked before follow, each with the statements \
-you answered it with, and last the question to answer now.
+title, as far as the list goes. The questions asked before follow, each with the sources \
+your answer cited, as JSON, and the statements you answered it with, as far as they fit (a \
+note says how many are left out, and an answer cut short says so), and last the question to \
+answer now.
 
 You do not see the sources. You find and read them with two tools: search_blocks finds the \
 blocks of the library that best fit a query, and read_blocks reads a run of a source's \
@@ -144,17 +152,18 @@ def library_instructions() -> str:
 
 
 def earlier_answer(answer: Answer, outline: Outline) -> str:
-    # An earlier answer as the model is given it again: its statements, and the sources they
-    # cite by the handles the sources go by now. What its searches found is not given again.
+    # An earlier answer as the model is given it again: the sources it cites, by the handles
+    # they go by now and as JSON, since their titles are text of the sources, and then its
+    # statements. What its searches found is not given again.
     cited = [
-        f"{held.handle} ({held.title})"
+        OutlineSource(document=held.handle, title=cut(held.title, TITLE_CHARACTERS))
         for source in answer.sources
         for held in outline.of_document(source.document)
     ]
     return "\n".join(
         [
+            *([EARLIER_SOURCES + CITED_SOURCES.dump_json(cited).decode()] if cited else []),
             answered_text(answer),
-            *([EARLIER_SOURCES.format(sources="; ".join(cited))] if cited else []),
         ]
     )
 
