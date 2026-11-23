@@ -315,28 +315,29 @@ def engine_results(to_parse: FileToParse, page_count: int) -> Path:
     how = [ENGINE_BACKEND, HYBRID_BACKEND, ENGINE_METHOD, OWN_CHOICE]
     told = {ENGINE_PATIENCE: str(patience), TEMPORARY_FILES: str(to_parse.folder)}
     log = to_parse.folder / ENGINE_LOG
-    with log.open("wb") as logged:
-        ended = subprocess.run(
+    environment = lineage.program_environment(os.environ, ENGINE_TAKES, told)
+    with (
+        log.open("wb") as logged,
+        lineage.started(
             [to_parse.engine, *where, *how],
-            check=False,
+            environment,
+            stdin=None,
             stdout=logged,
             stderr=subprocess.STDOUT,
-            env=lineage.program_environment(os.environ, ENGINE_TAKES, told),
-            timeout=patience + SPARE_SECONDS,
-        )
+        ) as engine,
+    ):
+        status = engine.wait(timeout=patience + SPARE_SECONDS)
     results = [*output.rglob(ENGINE_RESULTS)]
-    if ended.returncode < 0:
+    if status < 0:
         # A signal stops the engine in the middle of its work, where the last line it wrote
         # says only how far it had come. A program stopped so leaves with the signal's number
         # as its status, below zero.
-        stopped_by = -ended.returncode
+        stopped_by = -status
         raise UnparsedFile(STOPPED_ENGINE.format(signal=SIGNAL_NAMES.get(stopped_by, stopped_by)))
-    if ended.returncode or not results:
+    if status or not results:
         stripped = [line.strip() for line in log.read_text("utf-8", "replace").splitlines()]
         log_lines = [line for line in stripped if line]
-        raise UnparsedFile(
-            log_lines[-1] if log_lines else SILENT_ENGINE.format(status=ended.returncode)
-        )
+        raise UnparsedFile(log_lines[-1] if log_lines else SILENT_ENGINE.format(status=status))
     [kept] = results
     return kept
 

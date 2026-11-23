@@ -212,18 +212,15 @@ def started_on(
 ) -> Iterator[subprocess.Popen[bytes]]:
     # One of the programs at work on a recording, which is handed to it as its standard
     # input. Started in any other way, it would read whatever this process has for a
-    # standard input. The program is ended when its user is done with it.
+    # standard input.
     environment = lineage.program_environment(os.environ, PROGRAMS_TAKE, {})
     with (
         file.open("rb") as recording,
-        subprocess.Popen(
-            command, stdin=recording, stdout=stdout, stderr=stderr, env=environment
+        lineage.started(
+            command, environment, stdin=recording, stdout=stdout, stderr=stderr
         ) as program,
     ):
-        try:
-            yield program
-        finally:
-            program.kill()
+        yield program
 
 
 @contextmanager

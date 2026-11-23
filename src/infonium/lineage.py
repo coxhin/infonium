@@ -7,12 +7,12 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from threading import Event, Thread
 from types import TracebackType
-from typing import Self
+from typing import IO, Self
 
 import psutil
 
@@ -76,7 +76,9 @@ def program_environment(
     environment: Mapping[str, str], taken: re.Pattern[str], given: Mapping[str, str]
 ) -> dict[str, str]:
     # The environment a program is started with: of infonium's, the variables its rule takes
-    # and none withheld, and what infonium gives the program, in place of any of these.
+    # and none withheld, and what infonium gives the program, in place of any of these. One
+    # program escapes it: loading yt-dlp has Python run file with all of infonium's environment,
+    # on Python's own executable alone, so that no page or file reaches the keys through it.
     return {
         **{
             name: value
@@ -85,6 +87,44 @@ def program_environment(
         },
         **given,
     }
+
+
+@contextmanager
+def started(
+    command: Sequence[str | Path],
+    environment: Mapping[str, str],
+    *,
+    stdin: int | IO[bytes] | None,
+    stdout: int | IO[bytes] | None,
+    stderr: int | IO[bytes] | None,
+) -> Iterator[subprocess.Popen[bytes]]:
+    # A program started with the environment built for it, and ended when its user is done
+    # with it. Given None for its standard input, it reads this process's own.
+    with subprocess.Popen(
+        command, stdin=stdin, stdout=stdout, stderr=stderr, env=environment
+    ) as program:
+        try:
+            yield program
+        finally:
+            program.kill()
+
+
+@contextmanager
+def started_in_own_session(
+    command: Sequence[str], environment: Mapping[str, str]
+) -> Iterator[subprocess.Popen[bytes]]:
+    # A program started with the environment built for it, as the leader of a session of its
+    # own, so that all it starts is ended with it, and with a standard input that this process
+    # holds open and writes nothing to, which closes when this process is gone. A program
+    # still running when its user is done with it is ended with all its session.
+    with subprocess.Popen(
+        command, stdin=subprocess.PIPE, start_new_session=True, env=environment
+    ) as program:
+        try:
+            yield program
+        finally:
+            if program.returncode is None:
+                os.killpg(program.pid, signal.SIGKILL)
 
 
 def hold_data_to(limit: int) -> None:

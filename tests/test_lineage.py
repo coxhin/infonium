@@ -1,8 +1,25 @@
+import ast
+import re
+from pathlib import Path
+
 from hypothesis import given
 from hypothesis import strategies as st
 
 from infonium import browser, lineage, media, mineru, recording
 from infonium.settings import Settings
+
+# The ways the standard library starts a program, by module. Outside lineage no module of
+# infonium names one, but in a type annotation, which starts nothing.
+PROGRAM_STARTERS = {
+    "subprocess": re.compile(r"Popen|run|call|check_call|check_output|getoutput|getstatusoutput"),
+    "os": re.compile(r"exec\w*|spawn\w*|posix_spawnp?|system|popen"),
+    "asyncio": re.compile(r"create_subprocess_\w+"),
+    "pty": re.compile(r"spawn"),
+}
+EVERY_NAME = "*"
+# The fields in which Python's syntax tree holds the annotations of names and of what
+# functions return.
+ANNOTATION_FIELDS = frozenset({"annotation", "returns"})
 
 # Each program infonium starts, by the rule of what it takes of infonium's environment; and of
 # the variables a person may set, those each program takes and some it does not.
@@ -131,3 +148,61 @@ def test_no_key_and_no_setting_of_infoniums_reaches_any_program(
         reached = sorted(set(received) - {"PATH"})
         assert not reached, f"{program} was given {reached} of infonium's environment"
         assert "PATH" in received, f"{program} was not given the PATH it is found on"
+
+
+class ProgramStarts(ast.NodeVisitor):
+    # The places where a module names a way to start a program, by line and as module.name,
+    # leaving out its type annotations.
+    def __init__(self) -> None:
+        self.modules: dict[str, str] = {}
+        self.found: list[tuple[int, str]] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            module = alias.name if alias.asname else alias.name.partition(".")[0]
+            if module in PROGRAM_STARTERS:
+                self.modules[alias.asname or module] = module
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        starters = PROGRAM_STARTERS.get(node.module or "")
+        for alias in node.names:
+            if starters and (alias.name == EVERY_NAME or starters.fullmatch(alias.name)):
+                self.found.append((node.lineno, f"{node.module}.{alias.name}"))
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        module = self.modules.get(node.value.id) if isinstance(node.value, ast.Name) else None
+        if module is not None and PROGRAM_STARTERS[module].fullmatch(node.attr):
+            self.found.append((node.lineno, f"{module}.{node.attr}"))
+        self.generic_visit(node)
+
+    def generic_visit(self, node: ast.AST) -> None:
+        for field, value in ast.iter_fields(node):
+            if field not in ANNOTATION_FIELDS:
+                for child in value if isinstance(value, list) else [value]:
+                    if isinstance(child, ast.AST):
+                        self.visit(child)
+
+
+def program_starts(module: Path) -> list[str]:
+    starts = ProgramStarts()
+    starts.visit(ast.parse(module.read_text("utf-8")))
+    return [f"{module.name}:{line} names {name}" for line, name in starts.found]
+
+
+def test_only_lineage_starts_a_program() -> None:
+    lineage_module = Path(lineage.__file__)
+    assert program_starts(lineage_module), (
+        "the test finds no start of a program in lineage, which starts them all: it cannot tell "
+        "where a program is started"
+    )
+    elsewhere = [
+        start
+        for module in sorted(lineage_module.parent.rglob("*.py"))
+        if module != lineage_module
+        for start in program_starts(module)
+    ]
+    assert not elsewhere, (
+        f"{elsewhere}: a program is started outside lineage; start it with lineage.started, "
+        "lineage.started_in_own_session or lineage.HeldProgram, given the environment that "
+        "lineage.program_environment builds for it"
+    )

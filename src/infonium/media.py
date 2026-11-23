@@ -371,20 +371,12 @@ def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
     # The fetch of a page as the fetcher reports it.
     command = [*FETCHER, url, str(downloads)]
     began = time.monotonic()
-    # The fetcher leads a session of its own, so that all it has started is ended with it,
-    # and its standard input is a pipe that closes when this process is gone.
     environment = lineage.program_environment(os.environ, FETCHER_TAKES, {})
-    with subprocess.Popen(
-        command, stdin=subprocess.PIPE, start_new_session=True, env=environment
-    ) as fetcher:
-        try:
-            while fetcher.poll() is None:
-                if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
-                    raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
-                time.sleep(FETCHER_WATCH_SECONDS)
-        finally:
-            if fetcher.returncode is None:
-                os.killpg(fetcher.pid, signal.SIGKILL)
+    with lineage.started_in_own_session(command, environment) as fetcher:
+        while fetcher.poll() is None:
+            if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
+                raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
+            time.sleep(FETCHER_WATCH_SECONDS)
     # A fetcher that ends with a failing status has written no report.
     if fetcher.returncode != 0:
         raise subprocess.CalledProcessError(fetcher.returncode, command)
