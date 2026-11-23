@@ -15,9 +15,8 @@ from infonium.language_model import LanguageModel
 
 # A passage is written into a request with its marks as tags around the words they mark, each
 # tag named for what its mark is and numbered, so that the model can carry it over to the
-# words that translate them and the reply tells which mark it is. Names a reader knows from
-# HTML keep the model's handling of them close to what it knows: it keeps code and formulas
-# as they are.
+# words that translate them and the reply tells which mark it is. The names are those of
+# HTML, which the model knows, so that it treats the words inside as HTML does.
 LINK_TAG = "a"
 FORMULA_TAG = "f"
 STYLE_TAGS = {
@@ -31,9 +30,8 @@ STYLE_TAGS = {
 TAG_NAMES = sorted([LINK_TAG, FORMULA_TAG, *STYLE_TAGS.values()], key=len, reverse=True)
 TAG = re.compile(rf"<(/?)({'|'.join(TAG_NAMES)})(\d+)>")
 CLOSING_SLASH = "/"
-logger = logging.getLogger(__name__)
 OPENING = "<{name}{number}>"
-CLOSING = "<" + CLOSING_SLASH + "{name}{number}>"
+CLOSING = f"<{CLOSING_SLASH}{{name}}{{number}}>"
 # Whether each tag of a pair closes, in the order a usable pair stands.
 OPENED_THEN_CLOSED = [False, True]
 NO_WORDS = "the reply has no words for passage {number}"
@@ -73,6 +71,8 @@ PASSAGES = "Passages to translate:"
 PASSAGE = "[{number}] {markup}"
 AFTER = "Text after the passages:\n{text}"
 PARTS_BETWEEN = "\n\n"
+
+logger = logging.getLogger(__name__)
 
 
 class Wording(BaseModel):

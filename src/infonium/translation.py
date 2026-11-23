@@ -121,12 +121,15 @@ Progress = Annotated[
 SEGMENT_LIMIT_SECONDS = 10.0
 # The most text of the source one request asks to have translated, in characters, and how
 # much of the text around it the request carries. A block longer than the bound is asked for
-# in a request of its own.
+# in a request of its own. Measured with gpt-6-luna on 152 blocks, four requests at once:
+# requests of 2,000 characters took 172 seconds in all and their median 33, of 4,000 124 and
+# 57, of 8,000 104 and 90. The middle one serves the first blocks within a minute.
 REQUEST_CHARACTERS = 4000
 CONTEXT_CHARACTERS = 600
 # How many requests of one translation run at once, how many translations run at once, and
-# how many times a request is made before the translation stops.
-REQUESTS_AT_ONCE = 4
+# how many times a request is made before the translation stops. Eight requests at once took
+# 288 seconds over 608 blocks where four took 540, and the endpoint refused none.
+REQUESTS_AT_ONCE = 8
 TRANSLATIONS_AT_ONCE = 2
 ATTEMPTS = 3
 # The sample of a document by which its language is judged and its terms are found: the
