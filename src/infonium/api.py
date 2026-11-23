@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -72,6 +73,7 @@ def intake() -> Intake:
             api_key=settings.speech_api_key,
             model=settings.speech_model,
         ),
+        browser=settings.browser,
     )
     return Intake(store=library_store(), readers=READERS, engines=engines)
 
@@ -83,6 +85,11 @@ def language_model() -> LanguageModel:
 
 @asynccontextmanager
 async def running(service: FastAPI) -> AsyncIterator[None]:
+    # infonium's own records are kept from INFO up, and written by the root logger to standard
+    # error. The server sets up only its own loggers, which pass nothing on to the root, so
+    # none of its lines is written twice.
+    logging.basicConfig()
+    logging.getLogger(__package__).setLevel(logging.INFO)
     intake().resume()
     yield
     intake().close()

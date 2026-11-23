@@ -8,7 +8,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.message import Message
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from threading import Lock
@@ -19,9 +19,11 @@ import httpx
 import openai
 from pydantic import BaseModel
 
-from infonium import captions, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, lineage, media, pdf, recording, speech, webpage
 from infonium.document import (
+    BROKEN_OFF_SOURCE,
     HTML_MEDIA_TYPE,
+    LITTLE_TEXT_WORDS,
     MEDIA_TYPE_PATTERN,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
@@ -31,7 +33,10 @@ from infonium.document import (
     MediaType,
     UnreadableSource,
     document_of,
+    error_status,
     error_text,
+    turned_away,
+    word_count,
 )
 from infonium.library import (
     FIRST_READING,
@@ -86,9 +91,23 @@ class Source(BaseModel):
 
 
 class Engines(BaseModel):
-    # Where the programs and services that read sources other than web pages are found.
+    # Where the programs and services that read sources are found: the browser renders a web
+    # page that scripts build.
     pdf: Path
     recogniser: speech.Recogniser
+    browser: Path
+
+
+class PageCopy(BaseModel):
+    # A copy of a page read from an address: its file, the address that served it, and what
+    # the extractor found in it.
+    file: Path
+    served: str
+    text: webpage.PageText
+
+    @cached_property
+    def words(self) -> int:
+        return word_count(self.text.blocks)
 
 
 class Readout(BaseModel):
@@ -136,7 +155,10 @@ def fetched(url: str, directory: Path) -> Source:
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": USER_AGENT},
     ) as response:
-        response.raise_for_status()
+        if not response.is_success:
+            raise UnreadableSource(error_status(str(response.url), response.status_code))
+        if guard.is_guarded(response.headers):
+            raise UnreadableSource(turned_away(url))
         with file.open("wb") as kept:
             # Bytes are taken as they arrive, so that a source that only trickles is still
             # held to the time a fetch may take.
@@ -187,6 +209,67 @@ def media_page_readout(url: str, directory: Path, engines: Engines) -> Readout:
             return recognised_readout(title, audio, engines.recogniser)
 
 
+def page_copy(asked: str, file: Path, served: str) -> PageCopy:
+    # A page read from an address is first asked whether it is the page asked for or one that
+    # a guard answered with in its place.
+    content = file.read_bytes()
+    copy = PageCopy(file=file, served=served, text=webpage.page_text(content, served))
+    if guard.is_check_page(
+        guard.ServedPage(asked=asked, served=served, content=content, words=copy.words)
+    ):
+        raise UnreadableSource(turned_away(asked))
+    return copy
+
+
+def copy_readout(copy: PageCopy) -> Readout:
+    return Readout(
+        extractor=webpage.EXTRACTOR,
+        extracted=webpage.extracted_text(copy.text, copy.served),
+        file=copy.file,
+        media_type=HTML_MEDIA_TYPE,
+    )
+
+
+def page_readout(url: str, source: Source, directory: Path, engines: Engines) -> Readout:
+    # A page that holds little text may be one that its scripts build, and is rendered in a
+    # browser and read again. What a rendering reads is kept when it holds more. A check that
+    # the site answers the browser with is a rendering that failed, as an error status is.
+    # Where changes of this machine's network broke off the attempt that was kept, what is read
+    # may be only part of the page, which is logged; where nothing is left to read, those
+    # changes are the reason.
+    plain = page_copy(url, source.file, source.reference)
+    if plain.words >= LITTLE_TEXT_WORDS:
+        return copy_readout(plain)
+    try:
+        rendered = browser.rendered_page(source.reference, directory, engines.browser)
+        if len(rendered.broken_off) > 1:
+            logger.info(
+                "rendering %s took %d attempts, %d of them broken off by changes of this "
+                "machine's network",
+                source.reference,
+                len(rendered.broken_off),
+                sum(rendered.broken_off),
+            )
+        built = page_copy(url, rendered.file, rendered.address)
+    except UnreadableSource as failure:
+        if not plain.text.blocks:
+            raise
+        logger.warning(
+            "rendering %s failed: %s; its plain reading is kept", source.reference, failure
+        )
+        return copy_readout(plain)
+    kept = built if built.words > plain.words else plain
+    if rendered.broken_off_by_network:
+        if not kept.text.blocks:
+            raise UnreadableSource(BROKEN_OFF_SOURCE.format(source=source.reference))
+        logger.warning(
+            "rendering %s was broken off by changes of this machine's network; its reading may "
+            "hold only part of the page",
+            source.reference,
+        )
+    return copy_readout(kept)
+
+
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
@@ -194,6 +277,8 @@ def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
+    if source.media_type == HTML_MEDIA_TYPE:
+        return page_readout(url, source, directory, engines)
     return readout_of(source, directory, engines)
 
 
@@ -239,7 +324,7 @@ def program_name(command: object) -> str:
     # of the work folder, which say nothing to a person. Where Python runs a module, the
     # module is the program.
     match command:
-        case [sys.executable, media.RUN_AS_MODULE, module, *_]:
+        case [sys.executable, lineage.RUN_AS_MODULE, module, *_]:
             return str(module)
         case [first, *_]:
             return PurePosixPath(str(first)).name

@@ -1,14 +1,16 @@
-import re
 import string
 from enum import StrEnum
 from itertools import takewhile
 
 import trafilatura
-from lxml import etree, html
+from lxml import etree
+from pydantic import BaseModel
 from trafilatura.settings import Document as Extraction
 
 from infonium.document import (
     LINE_BREAK,
+    NO_TEXT,
+    WEB_SCHEMES,
     Block,
     Code,
     Extracted,
@@ -25,21 +27,10 @@ from infonium.document import (
     UnreadableSource,
     tabled,
 )
+from infonium.htmlpage import HEADING_LEVELS, WHITESPACE, prepared_page
 
 EXTRACTOR = "webpage/1"
-WEB_SCHEMES = ("http://", "https://")
-WHITESPACE = re.compile(r"\s+")
-OPENING_QUOTATION_MARK = "\N{LEFT DOUBLE QUOTATION MARK}"
-CLOSING_QUOTATION_MARK = "\N{RIGHT DOUBLE QUOTATION MARK}"
 LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
-
-INLINE_QUOTATION = "q"
-CODE_ELEMENT = "code"
-# Preformatted text that holds an image is left alone, so that the image stays a figure.
-BARE_PREFORMATTED = "//pre[not(.//code) and not(.//img)]"
-CODE_IN_TEXT = "//code[not(ancestor::pre) and not(.//pre)]"
-# The characters HTML collapses; a no-break space is not one of them.
-HTML_SPACE = re.compile(r"[ \t\n\f\r]+")
 
 
 class Tag(StrEnum):
@@ -68,7 +59,6 @@ SOURCE = "src"
 DESCRIPTION = "alt"
 ORDERED_LIST = "ol"
 DEFINITION_LIST = "dl"
-HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 DEFAULT_HEADING_LEVEL = 2
 CROWDED_CELL_BLOCKS = 5
 CELL_PART_SEPARATOR = "; "
@@ -97,39 +87,6 @@ FLOW_TAGS = frozenset(
 WRAPPER_TAGS = frozenset({Tag.HEAD, Tag.QUOTE})
 
 
-def prepared_page(content: bytes, url: str) -> html.HtmlElement:
-    # The extractor turns a short inline quotation and a block quotation into the same
-    # element, and so with preformatted text and code, and with code in a sentence and code on
-    # lines of its own. The page is rewritten first so that each pair stays apart: an inline
-    # quotation becomes its words inside quotation marks, preformatted text is wrapped as
-    # code, and code in a sentence loses its line breaks.
-    page = trafilatura.load_html(content)
-    if page is None:
-        raise UnreadableSource(f"no readable text at {url}")
-    for quotation in list(page.iter(INLINE_QUOTATION)):
-        quotation.text = OPENING_QUOTATION_MARK + (quotation.text or "")
-        if len(quotation):
-            quotation[-1].tail = (quotation[-1].tail or "") + CLOSING_QUOTATION_MARK
-        else:
-            quotation.text += CLOSING_QUOTATION_MARK
-        quotation.drop_tag()
-    for preformatted in page.xpath(BARE_PREFORMATTED):
-        code = html.Element(CODE_ELEMENT)
-        code.text, preformatted.text = preformatted.text, None
-        code.extend(list(preformatted))
-        preformatted.append(code)
-    for code in page.xpath(CODE_IN_TEXT):
-        for piece in code.iter():
-            # The extractor reads an element with empty text differently from one with none,
-            # and drops the first together with the words after it, so text that is absent
-            # is left absent.
-            if piece.text is not None:
-                piece.text = HTML_SPACE.sub(" ", piece.text)
-            if piece is not code and piece.tail is not None:
-                piece.tail = HTML_SPACE.sub(" ", piece.tail)
-    return page
-
-
 class Run:
     def __init__(self) -> None:
         self.text = ""
@@ -154,7 +111,13 @@ class Run:
             for child in element:
                 self.write_inline(child)
                 self.write(child.tail)
-            self.spans.append((element, start, len(self.text)))
+            end = len(self.text)
+            # A mark covers words; a space before or after them belongs to the sentence.
+            if self.text[start:end].startswith(" "):
+                start += 1
+            if self.text[start:end].endswith(" "):
+                end -= 1
+            self.spans.append((element, start, end))
 
     def trimmed_text(self) -> str:
         return self.text.rstrip()
@@ -350,7 +313,13 @@ def is_leftover(block: Block) -> bool:
     )
 
 
-def extract_page(content: bytes, url: str) -> Extracted:
+class PageText(BaseModel):
+    # What the extractor finds in a page, which may be nothing.
+    title: str
+    blocks: list[Block]
+
+
+def page_text(content: bytes, url: str) -> PageText:
     extraction = trafilatura.bare_extraction(
         prepared_page(content, url),
         url=url,
@@ -361,8 +330,16 @@ def extract_page(content: bytes, url: str) -> Extracted:
         with_metadata=True,
     )
     if not isinstance(extraction, Extraction):
-        raise UnreadableSource(f"no readable text at {url}")
+        return PageText(title=url, blocks=[])
     blocks = [block for block in flowed_blocks(extraction.body) if not is_leftover(block)]
-    if not blocks:
-        raise UnreadableSource(f"no readable text at {url}")
-    return Extracted(title=extraction.title or url, blocks=blocks)
+    return PageText(title=extraction.title or url, blocks=blocks)
+
+
+def extracted_text(text: PageText, url: str) -> Extracted:
+    if not text.blocks:
+        raise UnreadableSource(NO_TEXT.format(source=url))
+    return Extracted(title=text.title, blocks=text.blocks)
+
+
+def extract_page(content: bytes, url: str) -> Extracted:
+    return extracted_text(page_text(content, url), url)

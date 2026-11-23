@@ -6,7 +6,7 @@ infonium digests what you read, watch and listen to into a summary and takeaways
 
 | Source | Add it by | Read through |
 | --- | --- | --- |
-| Web article | pasting its address | the page's HTML |
+| Web article | pasting its address | the page's HTML, and the page as a browser builds it when its HTML holds little text |
 | PDF, with a text layer or scanned | uploading the file or pasting its address | [MinerU](https://github.com/opendatalab/MinerU), which also recognises the text of scanned pages |
 | Video or podcast page, such as YouTube, Bilibili, TED, Apple Podcasts and SoundCloud | pasting its address | the page's own captions, or speech recognition when it has none |
 | Audio or video file | uploading the file or pasting its address | speech recognition |
@@ -27,10 +27,11 @@ Open <http://localhost:5173>. Paste an address or upload a file. The source open
 
 The API listens on port 8710 and the UI on 5173. When one is taken, pass another: `make dev API_PORT=8720 UI_PORT=5180`.
 
-Web articles need nothing more. Each other kind of source needs one more program:
+Each kind of source needs one more program:
 
 | To read | Install |
 | --- | --- |
+| Web pages that scripts build | [Google Chrome](https://www.google.com/chrome/), as the `google-chrome` command, or Chromium, on Linux 5.9 or later; `playwright install` is not needed. The browser must start with its sandbox, which infonium checks before each page and never turns off: on Ubuntu 23.10 and later only a packaged Chrome with an AppArmor profile does, and in a container the seccomp profile must allow user namespaces (not tried). A page whose HTML holds little text is opened in it and read again. Without it, such a page is read from its HTML alone, and one with no text there is not read. Set `INFONIUM_BROWSER` when the command is another or not on the `PATH`. |
 | PDFs | [MinerU](https://github.com/opendatalab/MinerU) 3.4.2 with its `core` extra (`mineru[core]==3.4.2`), as the `mineru` command. infonium reads what this version writes, and with another version every PDF fails. Set `INFONIUM_PDF_ENGINE` when the command is not on the `PATH`. |
 | Recordings | [FFmpeg](https://ffmpeg.org/), as the `ffmpeg` and `ffprobe` commands on the `PATH`. |
 | Recordings without captions | A speech recogniser. [`engines/speech`](engines/speech) starts one on your machine with two commands. |
@@ -48,6 +49,7 @@ Settings are environment variables, read from `.env` by `make dev`.
 | `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and the snapshots of its sources are stored |
 | `INFONIUM_PDF_ENGINE` | `mineru` | MinerU command that parses PDFs |
+| `INFONIUM_BROWSER` | `google-chrome` | Chrome command, or its path, that renders web pages |
 | `INFONIUM_SPEECH_BASE_URL` | `http://127.0.0.1:8750/v1` | Endpoint of the speech recogniser; the default is the one that `engines/speech` starts |
 | `INFONIUM_SPEECH_API_KEY` | `unused` | Key for that endpoint; the local recogniser asks for none |
 | `INFONIUM_SPEECH_MODEL` | `Systran/faster-whisper-large-v3` | Model the recogniser transcribes with |
@@ -64,7 +66,22 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 
 ## Limits
 
-- A web page that scripts build in the browser, or that turns programs away, is not read.
+- A site that turns programs away is not read. When it answers with anything but success, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
+- A page of fewer than 200 words is taken for a check when its title is one that guards give their checks, or when the address it ends at names a captcha and carries another address to go on to, so a short page that happens to look like that is refused.
+- A page whose HTML holds 200 words or more, menus and links included, is read from its HTML and never opened in a browser.
+- A page of fewer than 200 words waits while it is opened in a browser, 90 seconds at most: the three such pages of a survey of 30 sites took 5 to 26 seconds.
+- Of the HTML and the page the browser builds, the one with more words is kept, even when those words are menus and links.
+- When the browser is missing or cannot render a page, the page is read from its HTML alone, and one with no text there fails with the browser's reason.
+- A page whose HTML only asks for JavaScript may then be read as that one line.
+- A page in the browser may take 3 GiB of memory, counted over the browser and the programs that drive it, and 1 GiB of disk. It may pass the memory bound by about 1.5 GiB, and the disk bound by what it writes in about 2 seconds, before it is ended.
+- Nothing but its 90 seconds bounds the processor time a page takes in the browser, on every core the browser uses, and watching it costs infonium about an eighth of a core.
+- A page in the browser reaches only public addresses, not this machine, a network one of its interfaces stands in, or the ranges set aside for special uses, but it can have this machine's resolver look up any name.
+- Of public addresses, infonium cannot tell those that lead back into your own networks, so a page still reaches your router's public address and the ports it forwards, a company or campus network with public addresses, the networks a VPN routes to, a network's own NAT64 prefix, and services that trust this machine's address.
+- The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
+- A rendering does not go through a proxy set with `HTTP_PROXY` or `HTTPS_PROXY`, so where every connection must take such a proxy, a page that scripts build cannot be rendered and is read from its HTML alone; this comes from reading the code and has not been tried.
+- If infonium is killed while a page is in the browser, the browser is ended and its folders are removed within half a second. If the program that drives the browser is killed with it, the browser's work folder stays until infonium starts again, and a small folder stays in the system's temporary folder.
+- Each time an address of this machine changes, as when a container starts or stops beside it, the browser breaks off what a page is loading, and the page is opened anew once a second passes without a change, in at most five attempts, each begun within its first 25.5 seconds.
+- When the network changed through every attempt, the fullest attempt is kept, which may hold only part of the page, and when neither it nor the page's HTML holds text, the reading fails saying that the network changed.
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.
