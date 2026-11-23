@@ -291,8 +291,8 @@ def turned_away(asked: str) -> str:
 
 
 def error_text(error: BaseException) -> str:
-    # What an error says, and the name of its kind where it says nothing, not even a word
-    # between spaces and line breaks.
+    # What an error says, and the name of its kind where it says nothing but spaces and line
+    # breaks.
     said = str(error)
     return said if said.strip() else type(error).__name__
 
