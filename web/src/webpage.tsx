@@ -73,8 +73,7 @@ const SHORTEST_FRAME = 320;
 // the whole frame is taken instead.
 const LEAST_ROOM = 48;
 
-const UNPLACED =
-  "这段引文所在的段落在原件里没有单独的位置，标不出来；请到「文本」里看这段引文。";
+const UNPLACED = "这段引文所在的段落在原件里没有单独的位置，标不出来；请到「文本」里看。";
 const PAGE_UNREADABLE = "原件的页面没有打开";
 
 // The page in the frame, as it was served and as far as infonium has changed it: the elements
@@ -104,7 +103,12 @@ class FramedPage {
 
   // Puts in an element the content the setting asks for: the nodes it was served with, these
   // nodes in their place, or these nodes after them.
-  write(element: Element, setting: Setting, translated: TranslatedBlock | undefined, nodes: () => Node[]): void {
+  write(
+    element: Element,
+    setting: Setting,
+    translated: TranslatedBlock | undefined,
+    nodes: () => Node[],
+  ): void {
     const before = this.written.get(element);
     const wanted = setting === "source" ? undefined : translated;
     if (before?.translated === wanted && (wanted === undefined || before?.setting === setting)) {
@@ -188,7 +192,11 @@ function openLinksElsewhere(page: Document): void {
     }
   }
   page.addEventListener("click", open, true);
-  page.addEventListener("auxclick", (event) => event.button === MIDDLE_BUTTON && open(event), true);
+  page.addEventListener(
+    "auxclick",
+    (event) => event.button === MIDDLE_BUTTON && open(event),
+    true,
+  );
 }
 
 function linesOf(page: Document, text: string): Node[] {
@@ -300,46 +308,69 @@ function writeBlocks(
         : translatedText(translated)
             .split(block.row_separator)
             .map((row) => row.split(block.cell_separator));
-    const sources = block.text.split(block.row_separator).map((row) => row.split(block.cell_separator));
+    const sources = block.text
+      .split(block.row_separator)
+      .map((row) => row.split(block.cell_separator));
     for (const { element, row, cell } of cellsOf(page, pageBlocks, number)) {
       const text = rows[row]?.[cell];
       // A cell that its translation leaves as it is, such as a number, is not said twice
       // beside itself; nor is one that the translation does not hold.
-      const unchanged = text === undefined || (setting === "both" && text.trim() === sources[row]?.[cell]?.trim());
-      framed.write(element, setting, unchanged ? undefined : translated, () => linesOf(page, text ?? ""));
+      const unchanged =
+        text === undefined ||
+        (setting === "both" && text.trim() === sources[row]?.[cell]?.trim());
+      framed.write(element, setting, unchanged ? undefined : translated, () =>
+        linesOf(page, text ?? ""),
+      );
     }
   }
 }
 
-// The first element that holds a block, in the page's order, that reaches down into what the
-// frame shows, and where it stands. Only the content of such elements changes, so where one
-// stands moves only with the elements before it.
+// An element that holds a block, and where it stands in what the frame shows. Only the
+// content of such elements changes, so where one stands moves only with the elements before
+// it and with its own height.
 type Place = { element: Element; top: number; height: number };
 
-function placeAtTop(framed: FramedPage, pageBlocks: PageBlocks): Place | undefined {
+function placeOf(element: Element): Place {
+  const place = element.getBoundingClientRect();
+  return { element, top: place.top, height: place.height };
+}
+
+// The place to keep: that of the passage pointed at, while it is in what the frame shows, and
+// otherwise that of the first element that holds a block, in the page's order, that reaches
+// down into it.
+function placeToKeep(
+  framed: FramedPage,
+  pageBlocks: PageBlocks,
+  pointed: Element | null,
+): Place | undefined {
+  const shown = framed.document.documentElement.clientHeight;
+  const place = pointed === null ? undefined : placeOf(pointed);
+  const inView = place !== undefined && place.top + place.height > 0 && place.top < shown;
+  if (inView && place.height > 0) {
+    return place;
+  }
   const holders = framed.document.querySelectorAll(
     `[${pageBlocks.block_attribute}], [${pageBlocks.cell_attribute}]`,
   );
   for (const element of holders) {
-    const place = element.getBoundingClientRect();
-    if (place.height > 0 && place.bottom > 0) {
-      return { element, top: place.top, height: place.height };
+    const held = placeOf(element);
+    if (held.height > 0 && held.top + held.height > 0) {
+      return held;
     }
   }
   return undefined;
 }
 
-// Changes the page and keeps the reader where they were: the element that was at the top of
-// the frame is put back there, as large a share of it above the top as before, as near as its
-// changed height allows.
-function keepingPlace(framed: FramedPage, pageBlocks: PageBlocks, change: () => void): void {
-  const before = placeAtTop(framed, pageBlocks);
+// Changes the page and keeps the reader where they were: the element whose place is kept is
+// put back where it stood, as large a share of it above the frame's top as before, as near as
+// its changed height allows.
+function keepingPlace(before: Place | undefined, framed: FramedPage, change: () => void): void {
   change();
   if (before === undefined || !before.element.isConnected) {
     return;
   }
   const share = before.height > 0 ? Math.min(1, Math.max(0, -before.top / before.height)) : 0;
-  const after = before.element.getBoundingClientRect();
+  const after = placeOf(before.element);
   const shift = after.top + share * after.height - (before.top + share * before.height);
   if (Math.abs(shift) >= 1) {
     framed.view.scrollBy({ top: shift, behavior: "instant" });
@@ -418,7 +449,12 @@ function shownCharacters(framed: FramedPage, element: Element): Shown[] {
 // The quoted words in an element that holds its block's text as the page shows it: of the
 // places in it that compare equal to the quote, the one nearest where the quote stands in the
 // block. None where the page's words differ from the quote's.
-function quotedWords(framed: FramedPage, element: Element, anchor: Anchor, block: Block): Range | null {
+function quotedWords(
+  framed: FramedPage,
+  element: Element,
+  anchor: Anchor,
+  block: Block,
+): Range | null {
   const quote = comparable([...anchor.quote]).text.trim();
   if (quote === "") {
     return null;
@@ -447,42 +483,52 @@ function quotedWords(framed: FramedPage, element: Element, anchor: Anchor, block
   return range;
 }
 
-type Target =
-  | { found: true; element: Element; selector: string; passage: Range }
-  | { found: false; reason: string };
+// The element that stands for a block in the page: its own, or a table's first marked cell.
+function holderOf(
+  page: Document,
+  pageBlocks: PageBlocks,
+  blocks: Block[],
+  number: number,
+): Element | null {
+  if (!pageBlocks.placed.includes(number)) {
+    return null;
+  }
+  return blocks[number]?.kind === "table"
+    ? (cellsOf(page, pageBlocks, number)[0]?.element ?? null)
+    : blockElementOf(page, pageBlocks, number);
+}
 
-// Where a passage stands in the page: the element of its block, or a table's first cell, with
-// the quoted words where the element holds the block's text and they are found in it.
-function targetOf(framed: FramedPage, pageBlocks: PageBlocks, blocks: Block[], anchor: Anchor): Target {
+// What marks a holder: the attribute and value that name it alone.
+function selectorOf(pageBlocks: PageBlocks, holder: Element): string {
+  const attribute = holder.hasAttribute(pageBlocks.cell_attribute)
+    ? pageBlocks.cell_attribute
+    : pageBlocks.block_attribute;
+  return `[${attribute}="${holder.getAttribute(attribute) ?? ""}"]`;
+}
+
+type Target = { found: true; selector: string; passage: Range } | { found: false; reason: string };
+
+// Where a passage stands in the page: the element that stands for its block, whole, or the
+// quoted words where the element holds the block's text and they are found in it.
+function targetOf(
+  framed: FramedPage,
+  pageBlocks: PageBlocks,
+  blocks: Block[],
+  anchor: Anchor,
+): Target {
   const page = framed.document;
-  const number = anchor.block_number;
-  const block = blocks[number];
-  if (block === undefined || !pageBlocks.placed.includes(number)) {
+  const block = blocks[anchor.block_number];
+  const holder = holderOf(page, pageBlocks, blocks, anchor.block_number);
+  if (block === undefined || holder === null) {
     return { found: false, reason: UNPLACED };
   }
-  if (block.kind === "table") {
-    const cell = cellsOf(page, pageBlocks, number)[0]?.element;
-    if (cell === undefined) {
-      return { found: false, reason: UNPLACED };
-    }
-    const whole = page.createRange();
-    whole.selectNodeContents(cell);
-    const value = cell.getAttribute(pageBlocks.cell_attribute) ?? "";
-    return { found: true, element: cell, selector: `[${pageBlocks.cell_attribute}="${value}"]`, passage: whole };
-  }
-  const element = blockElementOf(page, pageBlocks, number);
-  if (element === null) {
-    return { found: false, reason: UNPLACED };
-  }
-  const words = framed.holdsSource(element) ? quotedWords(framed, element, anchor, block) : null;
+  const words =
+    block.kind !== "table" && framed.holdsSource(holder)
+      ? quotedWords(framed, holder, anchor, block)
+      : null;
   const whole = page.createRange();
-  whole.selectNodeContents(element);
-  return {
-    found: true,
-    element,
-    selector: `[${pageBlocks.block_attribute}="${number}"]`,
-    passage: words ?? whole,
-  };
+  whole.selectNodeContents(holder);
+  return { found: true, selector: selectorOf(pageBlocks, holder), passage: words ?? whole };
 }
 
 function paddingOf(computed: string): number {
@@ -543,21 +589,26 @@ function bringIntoFrame(frame: HTMLIFrameElement, framed: FramedPage, passage: R
 
 // The frame as tall as what the reader has of the window below what stands above the frame in
 // the reader, measured again whenever any of it changes size.
-function useFrameHeight(frame: RefObject<HTMLIFrameElement | null>, onShow: boolean): number | undefined {
+function useFrameHeight(
+  frame: RefObject<HTMLIFrameElement | null>,
+  onShow: boolean,
+): number | undefined {
   const [height, setHeight] = useState<number>();
   useLayoutEffect(() => {
     const element = frame.current;
-    const main = element?.closest("main");
-    if (!onShow || element === null || element === undefined || main === null || main === undefined) {
+    const main = element?.closest("main") ?? null;
+    if (!onShow || element === null || main === null) {
       return;
     }
     function measure() {
-      if (element === null || main === null || main === undefined) {
+      if (element === null || main === null) {
         return;
       }
       const scrolled = scrolls(getComputedStyle(main).overflowY);
       const above =
-        element.getBoundingClientRect().top - main.getBoundingClientRect().top + (scrolled ? main.scrollTop : 0);
+        element.getBoundingClientRect().top -
+        main.getBoundingClientRect().top +
+        (scrolled ? main.scrollTop : 0);
       const view = scrolled ? main.clientHeight : innerHeight;
       const border = element.offsetHeight - element.clientHeight;
       setHeight(Math.max(SHORTEST_FRAME, Math.floor(view - above - border)));
@@ -577,7 +628,15 @@ function useFrameHeight(frame: RefObject<HTMLIFrameElement | null>, onShow: bool
   return height;
 }
 
-function UnplacedNote({ total, placed, setting }: { total: number; placed: number; setting: Setting }) {
+function UnplacedNote({
+  total,
+  placed,
+  setting,
+}: {
+  total: number;
+  placed: number;
+  setting: Setting;
+}) {
   const unplaced = total - placed;
   if (unplaced === 0) {
     return <p className="view-note">本文 {total} 段在原件里都有自己的位置。</p>;
@@ -616,14 +675,14 @@ export function WebpageView({
 
   function loaded() {
     const element = frame.current;
-    const page = element?.contentDocument;
-    const view = element?.contentWindow;
-    if (element === null || element === undefined) {
+    if (element === null) {
       return;
     }
+    const page = element.contentDocument;
+    const view = element.contentWindow;
     // Nothing in the page may put another in its place; were it ever to, the page is put
     // back.
-    if (page === null || page === undefined || view === null || view === undefined || page.location.pathname !== link) {
+    if (page === null || view === null || page.location.pathname !== link) {
       setFramed(undefined);
       element.src = link;
       return;
@@ -641,11 +700,15 @@ export function WebpageView({
 
   useLayoutEffect(() => {
     if (framed !== undefined && ready !== undefined && onShow) {
-      keepingPlace(framed, ready, () =>
+      const holder =
+        pointed === undefined
+          ? null
+          : holderOf(framed.document, ready, blocks, pointed.anchor.block_number);
+      keepingPlace(placeToKeep(framed, ready, holder), framed, () =>
         writeBlocks(framed, ready, blocks, setting, translation.blocks),
       );
     }
-  }, [framed, ready, blocks, setting, translation.blocks, onShow]);
+  }, [framed, ready, blocks, setting, translation.blocks, onShow, pointed]);
 
   useLayoutEffect(() => {
     const first = shownPointing.current !== pointed;
@@ -680,7 +743,11 @@ export function WebpageView({
   }, [framed, ready, failed, blocks, pointed, onShow, setting, translation.blocks]);
 
   if (failed !== undefined) {
-    return <p className="status failed webpage-failed">原件打不开：{failed}。「文本」里有这一篇的全部内容。</p>;
+    return (
+      <p className="status failed webpage-failed">
+        原件打不开：{failed}。「文本」里有这一篇的全部内容。
+      </p>
+    );
   }
   if (ready === undefined) {
     return <p className="status webpage-loading">正在打开原件…</p>;
