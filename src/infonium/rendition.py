@@ -10,6 +10,7 @@ from infonium.document import (
     Mark,
     Style,
     StyleMark,
+    is_unspaced,
 )
 from infonium.language_model import LanguageModel
 
@@ -28,14 +29,26 @@ STYLE_TAGS = {
     Style.SUPERSCRIPT: "sup",
 }
 TAG_NAMES = sorted([LINK_TAG, FORMULA_TAG, *STYLE_TAGS.values()], key=len, reverse=True)
-TAG = re.compile(rf"<(/?)({'|'.join(TAG_NAMES)})(\d+)>")
+# Whatever reads as one of these tags, as the model may write it: in any case, with spaces,
+# with or without a number, with attributes, closing itself, or written as HTML entities.
+TAG = re.compile(
+    rf"(?:<|&lt;)\s*(/?)\s*({'|'.join(TAG_NAMES)})(?![a-z])\s*(\d*)(?:\s[^<>]{{0,80}}?)?\s*/?\s*"
+    r"(?:>|&gt;)",
+    re.IGNORECASE,
+)
 CLOSING_SLASH = "/"
 OPENING = "<{name}{number}>"
 CLOSING = f"<{CLOSING_SLASH}{{name}}{{number}}>"
 # Whether each tag of a pair closes, in the order a usable pair stands.
 OPENED_THEN_CLOSED = [False, True]
+# How a term lists several forms of itself, and the part of a form that may be left out.
+TERM_FORMS = re.compile(r"\s*/\s*")
+OPTIONAL_PART = re.compile(r"\([^)]*\)")
 NO_WORDS = "the reply has no words for passage {number}"
-LOST_FORMULA = "the reply lost the formula {formula!r} of passage {number}"
+LOST_FORMULA = (
+    "the reply to passage {number} holds the formula {formula!r} {found} times as a token of "
+    "its own, where the source holds it {asked} times"
+)
 INSTRUCTIONS = """\
 You translate passages of a document into {language}, for a reader who reads the \
 document in that language.
@@ -159,7 +172,20 @@ def markup(wording: Wording) -> str:
     return "".join(pieces)
 
 
+def term_forms(term: Term) -> list[str]:
+    forms = [OPTIONAL_PART.sub("", form).strip() for form in TERM_FORMS.split(term.source)]
+    return [form.casefold() for form in forms if form]
+
+
+def occurring_terms(terms: list[Term], wordings: list[Wording]) -> list[Term]:
+    # The terms that one of their forms names in the passages.
+    said = "\n".join(wording.text for wording in wordings).casefold()
+    return [term for term in terms if any(form in said for form in term_forms(term))]
+
+
 def prompt(passages: Passages) -> str:
+    # The request carries, of the document's terms, those its passages name.
+    terms = occurring_terms(passages.terms, passages.wordings)
     numbered = [
         PASSAGE.format(number=number, markup=markup(wording))
         for number, wording in enumerate(passages.wordings, start=1)
@@ -173,12 +199,12 @@ def prompt(passages: Passages) -> str:
                         TERMS,
                         *(
                             TERM.format(source=term.source, translation=term.translation)
-                            for term in passages.terms
+                            for term in terms
                         ),
                     ]
                 )
             ]
-            if passages.terms
+            if terms
             else []
         ),
         *([BEFORE.format(text=passages.before)] if passages.before else []),
@@ -202,9 +228,10 @@ def kept_mark(mark: Mark, start: int, end: int) -> Mark:
 
 
 def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
-    # The reply without its tags and its spaces at either end, and the range each pair of
-    # tags encloses in what is left, by the tag's name and number. A tag that stands other
-    # than once opening and then once closing encloses nothing.
+    # The reply without anything that reads as a tag and without its spaces at either end,
+    # and the range each pair of numbered tags encloses in what is left, by the tag's name
+    # and number. A tag that stands other than once opening and then once closing, or has no
+    # number, encloses nothing; it is taken out all the same.
     untagged = TAG.sub("", reply)
     lead = len(untagged) - len(untagged.lstrip())
     text = untagged.strip()
@@ -212,7 +239,9 @@ def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
     removed = 0
     for tag in TAG.finditer(reply):
         at = min(max(tag.start() - removed - lead, 0), len(text))
-        ends[f"{tag.group(2)}{tag.group(3)}"].append((tag.group(1) == CLOSING_SLASH, at))
+        if tag.group(3):
+            key = f"{tag.group(2).lower()}{int(tag.group(3))}"
+            ends[key].append((tag.group(1) == CLOSING_SLASH, at))
         removed += len(tag.group())
     paired = {
         key: tag_ends
@@ -222,34 +251,90 @@ def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
     return text, {key: (tag_ends[0][1], tag_ends[1][1]) for key, tag_ends in paired.items()}
 
 
+def runs_on(character: str) -> bool:
+    # A letter or a digit of a script written with spaces between words runs on into the
+    # letter or digit beside it, as one word or number.
+    return character.isalnum() and not is_unspaced(character)
+
+
+def stands_alone(text: str, start: int, end: int) -> bool:
+    # Whether a range of a text is a token of its own: no word or number runs on into it.
+    before, after = text[start - 1 : start] if start else "", text[end : end + 1]
+    return not (runs_on(before) and runs_on(text[start])) and not (
+        runs_on(after) and runs_on(text[end - 1])
+    )
+
+
+def token_starts(text: str, part: str) -> list[int]:
+    return [
+        found.start()
+        for found in re.finditer(re.escape(part), text)
+        if stands_alone(text, found.start(), found.end())
+    ]
+
+
+def formulas_by_text(
+    wording: Wording, number: int, text: str, lost: list[FormulaMark], taken: set[int]
+) -> list[Mark]:
+    # Formulas whose tags the reply lost, found by their text: where it stands as a token of
+    # its own, as often as the source holds the formula, at the places no tag has taken.
+    found: list[Mark] = []
+    for formula in dict.fromkeys(wording.text[mark.start : mark.end] for mark in lost):
+        starts = token_starts(text, formula)
+        asked = [
+            mark
+            for mark in wording.marks
+            if isinstance(mark, FormulaMark) and wording.text[mark.start : mark.end] == formula
+        ]
+        if len(starts) != len(asked):
+            raise UnusableReply(
+                LOST_FORMULA.format(
+                    number=number, formula=formula, found=len(starts), asked=len(asked)
+                )
+            )
+        missing = [mark for mark in lost if wording.text[mark.start : mark.end] == formula]
+        free = [start for start in starts if start not in taken]
+        found.extend(
+            kept_mark(mark, start, start + len(formula))
+            for mark, start in zip(missing, free, strict=True)
+        )
+    return found
+
+
 def rendered(wording: Wording, number: int, reply: str) -> Rendered:
-    # The reply to one passage, without its tags, and with each mark of the source whose
-    # tags it keeps, in the order they stand in it. A mark whose tags the reply lost or
-    # garbled is left out, but a formula comes back as it was: where its tags are lost, it
-    # is found by its text, and a reply that lost the text as well is of no use.
+    # The reply to one passage, without anything that reads as a tag, and with each mark of
+    # the source whose tags it keeps, in the order they stand in it. A passage sent without
+    # tags is read back as it is. A mark whose tags the reply lost or garbled is left out,
+    # but a formula comes back as it was: where its tags are lost, it is found by its text,
+    # and a reply in which that fails is of no use. A formula is never marked inside a word
+    # or a number.
     text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply)
     if not text:
         raise UnusableReply(NO_WORDS.format(number=number))
     marks: list[Mark] = []
+    lost: list[FormulaMark] = []
     for mark_number, mark in enumerate(wording.marks, start=1):
         start, end = trimmed(*ranges.get(f"{tag_name(mark)}{mark_number}", (0, 0)), text)
         if isinstance(mark, FormulaMark):
             formula = wording.text[mark.start : mark.end]
-            if text[start:end] != formula:
-                start = text.find(formula)
-                if start < 0:
-                    raise UnusableReply(LOST_FORMULA.format(formula=formula, number=number))
-                end = start + len(formula)
-        if start < end:
+            if text[start:end] == formula and stands_alone(text, start, end):
+                marks.append(kept_mark(mark, start, end))
+            else:
+                lost.append(mark)
+        elif start < end:
             marks.append(kept_mark(mark, start, end))
+    taken = {mark.start for mark in marks if isinstance(mark, FormulaMark)}
+    marks.extend(formulas_by_text(wording, number, text, lost, taken))
     return Rendered(text=text, marks=sorted(marks, key=lambda mark: (mark.start, mark.end)))
 
 
 def keeps_marks(wording: Wording, done: Rendered) -> bool:
-    # Whether a passage came back with more than half of its marks, or with all of them
-    # where it had none or one.
-    lost = len(wording.marks) - len(done.marks)
-    return lost == 0 or 2 * lost < len(wording.marks)
+    # Whether a passage came back with more than half of the marks sent with it, or with all
+    # of them where it was sent with none or one. A passage sent without tags keeps what it
+    # was sent with.
+    sent = 0 if is_bare(wording) else len(wording.marks)
+    lost = sent - len(done.marks)
+    return lost <= 0 or 2 * lost < sent
 
 
 def renditions(model: LanguageModel, language: str, passages: Passages) -> Renditions:
