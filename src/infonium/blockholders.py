@@ -40,6 +40,8 @@ OWN_ELEMENT_PREFIX = "infonium-"
 # laid out inline, so it changes no layout around the inline content it holds.
 BLOCK_ATTRIBUTE = f"{OWN_ATTRIBUTE_PREFIX}block"
 RUN_ELEMENT = f"{OWN_ELEMENT_PREFIX}run"
+# The attribute by which the served page's root element names the item it is the page of.
+PAGE_ATTRIBUTE = f"{OWN_ATTRIBUTE_PREFIX}page"
 # The attribute that a cell of a table carries when it holds a cell of a table block's text:
 # the block's number, the row and the cell within the row, counted from 0 as the block's
 # text gives them, parted by the separator.

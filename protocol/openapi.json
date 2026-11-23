@@ -739,6 +739,11 @@
             "title": "Cell Attribute",
             "type": "string"
           },
+          "page_attribute": {
+            "description": "The name of the attribute that the root element of the served page carries, with the item's id as its value. By it the reader knows that a frame holds this item's page and nothing else, such as an error page that a proxy sent in its place, or another item's page. The page's own use of the attribute is removed.",
+            "title": "Page Attribute",
+            "type": "string"
+          },
           "placed": {
             "description": "The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.",
             "items": {
@@ -751,6 +756,7 @@
           }
         },
         "required": [
+          "page_attribute",
           "block_attribute",
           "cell_attribute",
           "placed"

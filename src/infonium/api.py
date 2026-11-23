@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from infonium.asking import UnusableTranslation
-from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE
+from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE, PAGE_ATTRIBUTE
 from infonium.chat import (
     Answered,
     Answering,
@@ -250,6 +250,14 @@ class TranslationView(BaseModel):
 class PageBlocks(BaseModel):
     # Where the blocks of an item's document stand in the web page it was read from, as the
     # page is served at the item's page address.
+    page_attribute: str = Field(
+        description=(
+            "The name of the attribute that the root element of the served page carries, with"
+            " the item's id as its value. By it the reader knows that a frame holds this item's"
+            " page and nothing else, such as an error page that a proxy sent in its place, or"
+            " another item's page. The page's own use of the attribute is removed."
+        )
+    )
     block_attribute: str = Field(
         description=(
             "The name of the attribute that marks, in the served page, the element that holds"
@@ -561,6 +569,7 @@ def item_page(item_id: str, owner: Owner) -> Response:
 @app.get("/api/items/{item_id}/page/blocks", responses=NOT_IN_LIBRARY)
 def item_page_blocks(item_id: str, owner: Owner) -> PageBlocks:
     return PageBlocks(
+        page_attribute=PAGE_ATTRIBUTE,
         block_attribute=BLOCK_ATTRIBUTE,
         cell_attribute=CELL_ATTRIBUTE,
         placed=framed_item_page(item_id, owner).placed,
