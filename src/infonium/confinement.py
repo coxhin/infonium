@@ -60,9 +60,13 @@ OPENS_UDP_PORTS = "the browser {program} keeps UDP ports {ports} open on every i
 PROOF_LIMIT_MS = 2_000
 LOOPBACK_FETCHES = 5
 # How long the proof's listener waits between two looks at whether the proof is over, and the
-# most a datagram holds.
+# most a datagram holds. The proof reads at most 1,024 datagrams from its STUN listener, some
+# four times what its buffer holds (221 of one byte here), so that another process of this
+# machine that floods it cannot hold the proof; a datagram of the browser's that such a flood
+# crowds out goes unseen, and the proof then rests on the candidates the browser gathered.
 LISTENER_WATCH_SECONDS = 0.05
 DATAGRAM_BYTES = 65536
+DATAGRAMS_READ = 1024
 LOOPBACK_PROOF = """async ([address, limit]) => {
   await fetch(address, {mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(limit)})
     .catch(() => null);
@@ -210,7 +214,9 @@ def proof_failures(context: BrowserContext, proxy: PublicProxy, program: str) ->
             page.close()
         watch.join()
         senders = set()
-        while select.select([stun_listener], [], [], 0)[0]:
+        for _ in range(DATAGRAMS_READ):
+            if not select.select([stun_listener], [], [], 0)[0]:
+                break
             senders.add(stun_listener.recvfrom(DATAGRAM_BYTES)[1][1])
     ports = {port for address, port in bindings if address == 0}
     failures = []
