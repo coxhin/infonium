@@ -17,9 +17,15 @@ import { reasonOf, type Loaded } from "./loading";
 // What a conversation is about: the open item, or the whole library.
 export type Scope = { kind: "item"; itemId: string } | { kind: "library" };
 
-// A question on its way to an answer: what was searched for, and the statements of the
-// answer as far as they are written.
-export type Pending = { question: string; searches: string[]; statements: string[] };
+// A question on its way to an answer: whether it has been sent, what was searched for, and
+// the statements of the answer as far as they are written. A question asked while its
+// conversation is being read waits, unsent, until the reading is in.
+export type Pending = {
+  question: string;
+  sent: boolean;
+  searches: string[];
+  statements: string[];
+};
 
 export type Forgetting = "idle" | "confirming" | "underway";
 
@@ -50,6 +56,14 @@ const UNREAD: Chat = {
   heard: "",
 };
 const CUT_OFF = "连接中断，回答没有写完";
+// A reading after a broken connection is tried this many times, this far apart, since the
+// connection may break when this machine's network changes, which settles within a second.
+const REREADS = 3;
+const REREAD_PAUSE_MS = 1500;
+
+function paused(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 export function scopeKey(scope: Scope): string {
   // An item's id is hexadecimal, so it never reads as the library's key.
@@ -97,9 +111,14 @@ export type Conversations = {
   forget: (scope: Scope) => void;
 };
 
+// A question may be asked while its conversation is being read, and is sent once it is read;
+// not while the conversation cannot be read, nor while it is being cleared.
 export function canAsk(chat: Chat): boolean {
   return (
-    chat.conversation.state === "ready" && chat.pending === undefined && chat.typed.trim() !== ""
+    chat.conversation.state !== "failed" &&
+    chat.forgetting !== "underway" &&
+    chat.pending === undefined &&
+    chat.typed.trim() !== ""
   );
 }
 
@@ -110,6 +129,26 @@ export function useConversations(): Conversations {
   // A conversation is read once, when it is first shown, and again only when asked to.
   const requested = useRef(new Set<string>());
   const places = useRef(new Map<string, Place>());
+  // The conversations being read, and the questions that wait for their reading. A reading
+  // never comes in after a question was sent, so it never takes the place of an answer.
+  const reading = useRef(new Set<string>());
+  const waiting = useRef(new Map<string, string>());
+  // How often each conversation was cleared. A reading that began before a clearing brings
+  // what was cleared, and is not shown.
+  const clearings = useRef(new Map<string, number>());
+
+  function clearingsOf(scope: Scope): number {
+    return clearings.current.get(scopeKey(scope)) ?? 0;
+  }
+
+  // A reading comes in: it takes the place of the conversation on show unless the
+  // conversation was cleared since the reading began.
+  function readIn(scope: Scope, conversation: Conversation, begun: number) {
+    if (clearingsOf(scope) === begun) {
+      update(scope, (chat) => withTurns(chat, conversation));
+    }
+    readingDone(scope, undefined);
+  }
 
   function update(scope: Scope, change: (chat: Chat) => Chat) {
     const key = scopeKey(scope);
@@ -128,22 +167,49 @@ export function useConversations(): Conversations {
     places.current.set(scopeKey(scope), place);
   }
 
+  // The reading is in, or has failed: a question that waited for it is sent now, or given
+  // back when there is no conversation to ask in.
+  function readingDone(scope: Scope, given: string | undefined) {
+    const key = scopeKey(scope);
+    reading.current.delete(key);
+    const question = waiting.current.get(key);
+    waiting.current.delete(key);
+    if (question === undefined) {
+      return;
+    }
+    if (given === undefined) {
+      update(scope, (chat) => withPending(chat, (pending) => ({ ...pending, sent: true })));
+      void answer(scope, question);
+    } else {
+      update(scope, (chat) => givenBack(chat, question, given));
+    }
+  }
+
   // After a connection broke, the service may still have kept the answer, so the
   // conversation is read again. The one on show stays when it cannot be.
-  function reread(scope: Scope) {
-    readConversation(scope).then(
-      (conversation) => update(scope, (chat) => withTurns(chat, conversation)),
-      (error: unknown) =>
-        update(scope, (chat) => ({
-          ...chat,
-          problem: `${chat.problem ?? ""}对话也没能重新读取：${reasonOf(error)}`,
-        })),
-    );
+  async function reread(scope: Scope) {
+    reading.current.add(scopeKey(scope));
+    const begun = clearingsOf(scope);
+    let reason = "";
+    for (let attempt = 0; attempt < REREADS; attempt += 1) {
+      try {
+        readIn(scope, await readConversation(scope), begun);
+        return;
+      } catch (error) {
+        reason = reasonOf(error);
+        await paused(REREAD_PAUSE_MS);
+      }
+    }
+    update(scope, (chat) => ({
+      ...chat,
+      problem: `${chat.problem ?? ""}对话也没能重新读取：${reason}`,
+    }));
+    readingDone(scope, undefined);
   }
 
   function cutOff(scope: Scope, question: string, reason: string) {
     update(scope, (chat) => givenBack(chat, question, `${CUT_OFF}${reason}。`));
-    reread(scope);
+    void reread(scope);
   }
 
   function read(scope: Scope) {
@@ -152,14 +218,18 @@ export function useConversations(): Conversations {
       return;
     }
     requested.current.add(key);
+    reading.current.add(key);
+    const begun = clearingsOf(scope);
     update(scope, (chat) => ({ ...chat, conversation: { state: "loading" } }));
     readConversation(scope).then(
-      (conversation) => update(scope, (chat) => withTurns(chat, conversation)),
-      (error: unknown) =>
+      (conversation) => readIn(scope, conversation, begun),
+      (error: unknown) => {
         update(scope, (chat) => ({
           ...chat,
           conversation: { state: "failed", reason: reasonOf(error) },
-        })),
+        }));
+        readingDone(scope, "对话没有读到，问题没有发出。");
+      },
     );
   }
 
@@ -215,21 +285,29 @@ export function useConversations(): Conversations {
       return;
     }
     const question = chat.typed.trim();
+    const key = scopeKey(scope);
+    const sent = !reading.current.has(key);
     update(scope, (held) => ({
       ...held,
       typed: "",
       problem: undefined,
       forgetting: "idle",
-      pending: { question, searches: [], statements: [] },
+      pending: { question, sent, searches: [], statements: [] },
     }));
-    void answer(scope, question);
+    if (sent) {
+      void answer(scope, question);
+    } else {
+      waiting.current.set(key, question);
+    }
   }
 
   function forget(scope: Scope) {
     update(scope, (chat) => ({ ...chat, forgetting: "underway", problem: undefined }));
     forgotten(scope).then(
-      () =>
-        update(scope, (chat) => ({ ...withTurns(chat, { turns: [] }), forgetting: "idle" })),
+      () => {
+        clearings.current.set(scopeKey(scope), clearingsOf(scope) + 1);
+        update(scope, (chat) => ({ ...withTurns(chat, { turns: [] }), forgetting: "idle" }));
+      },
       (error: unknown) =>
         update(scope, (chat) => ({
           ...chat,

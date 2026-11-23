@@ -105,6 +105,13 @@ function Answer({
   );
 }
 
+function writingNote(pending: Pending): string {
+  if (!pending.sent) {
+    return "对话读完后发出…";
+  }
+  return pending.statements.length === 0 ? "正在回答…" : "正在写…";
+}
+
 function Draft({ pending }: { pending: Pending }) {
   return (
     <div className="answer draft" aria-busy="true">
@@ -116,7 +123,7 @@ function Draft({ pending }: { pending: Pending }) {
       {pending.statements.map((statement, statementIndex) => (
         <p key={statementIndex}>{statement}</p>
       ))}
-      <p className="writing">{pending.statements.length === 0 ? "正在回答…" : "正在写…"}</p>
+      <p className="writing">{writingNote(pending)}</p>
     </div>
   );
 }
