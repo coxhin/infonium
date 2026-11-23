@@ -177,14 +177,6 @@ function StoppedNote({
   onGoOn: () => void;
 }) {
   const left = progress.total - progress.translated;
-  if (left <= 0) {
-    // Every block that stopped the translation has since been translated by itself.
-    return (
-      <p className="translation-note">
-        <span>全部 {progress.total} 段都已译出：翻译曾停在半路，没译的段落已单独译好。</span>
-      </p>
-    );
-  }
   return (
     <p className="translation-note failed">
       <span>
