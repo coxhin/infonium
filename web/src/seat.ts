@@ -2,3 +2,7 @@
 // the app began it is. An item opened again gets a reader of a new life, even when it shows
 // the same document.
 export type Seat = { itemId: string; documentId: string; life: number };
+
+// An item the reader cannot show, as it is selected: its reading failed or is under way, or it
+// could not be opened. A citation that opens it is told why instead of waiting.
+export type Unshown = { itemId: string; reason: string };

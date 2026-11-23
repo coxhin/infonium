@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
-import { sourceLink, type Anchor, type ItemDocument, type ItemEntry, type TimePlace } from "./client";
+import { useCallback, useState } from "react";
+import { sourceLink, type ItemDocument, type ItemEntry, type TimePlace } from "./client";
 import type { Pointer } from "./citing";
-import { reasonOf } from "./loading";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
 import { checkAnchor, hideAnchor } from "./reader";
 import { SettingSwitch, useSetting } from "./setting";
-import { SidePanel } from "./side";
+import { SidePanel, useLosing } from "./side";
 import { TranslationNote } from "./translated";
 import { useTranslation } from "./translation";
 import { viewsOf, type Pointed, type ViewContext, type ViewName } from "./views";
@@ -32,17 +31,15 @@ function RereadingNote({ entry }: { entry: ReadEntry }) {
 }
 
 // An item that has been read: its source in the reader, and beside it what infonium wrote
-// about it. The item may be opened for one passage, which is then shown at once. The reader
-// offers the views its source has, draws each, and shows one; the translation is asked for
+// about it. A passage is shown through the pointer the reader hands the column, which says
+// itself when the passage cannot be found. The reader offers the views its source has, draws each, and shows one; the translation is asked for
 // only while a view that shows it is on show with a translation set.
 export function ReadItem({
   entry,
   itemDocument,
-  opening,
 }: {
   entry: ReadEntry;
   itemDocument: ItemDocument;
-  opening: Anchor | undefined;
 }) {
   const surface = surfaceOf(itemDocument.blocks);
   const views = viewsOf(itemDocument);
@@ -65,7 +62,7 @@ export function ReadItem({
   const [pointed, setPointed] = useState<Pointed>();
   const [played, setPlayed] = useState<TimePlace[]>([]);
   const [clock] = useState(() => new Clock());
-  const [lost, setLost] = useState<string>();
+  const lose = useLosing();
   const playFrom = useCallback((place: TimePlace) => setPlayed([place]), []);
 
   const pointer: Pointer = {
@@ -83,16 +80,6 @@ export function ReadItem({
     },
   };
 
-  useEffect(() => {
-    if (opening !== undefined) {
-      try {
-        pointer.show(opening);
-      } catch (error) {
-        setLost(reasonOf(error));
-      }
-    }
-  }, []);
-
   const context: Omit<ViewContext, "onShow"> = {
     entry,
     itemDocument,
@@ -100,13 +87,12 @@ export function ReadItem({
     translation,
     pointed,
     playing: surface === "time" ? { clock, played, onPlay: playFrom } : undefined,
-    onLost: setLost,
+    onLost: lose,
   };
   return (
     <>
       <main>
         <RereadingNote entry={entry} />
-        {lost !== undefined && <p className="rereading failed">{lost}</p>}
         <div className="reading-head">
           <div className="reading-bar">
             {views.length > 1 && (

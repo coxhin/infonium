@@ -29,7 +29,7 @@ export function unitOffsets(text: string): number[] {
 export function unitOffset(offsets: number[], offset: number): number {
   const units = offsets[offset];
   if (units === undefined) {
-    throw new Error(`offset ${offset} lies outside the text`);
+    throw new Error("这段文字的位置超出了原文的长度，原文可能已经变化。");
   }
   return units;
 }

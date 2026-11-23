@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -9,10 +10,10 @@ import {
   type RefObject,
 } from "react";
 import type { Anchor } from "./client";
-import { ChatPanel, type Opener, type ScopeKind } from "./chat";
+import { ChatPanel, type ScopeKind } from "./chat";
 import { useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
-import type { Seat } from "./seat";
+import type { Seat, Unshown } from "./seat";
 import "./side.css";
 
 // What the reader tells of itself: its item and the document it shows.
@@ -22,6 +23,11 @@ type Seating = {
   seat: (shown: Shown) => Seat;
   unseat: (seat: Seat) => void;
   pointer: RefObject<Pointer | undefined>;
+  cannotShow: (unshown: Unshown) => void;
+  canShow: (unshown: Unshown) => void;
+  // How the reader says that a passage pointed at cannot be shown in the view that came on
+  // show after it was pointed at; the column says it where it says every lost passage.
+  lose: RefObject<((reason: string) => void) | undefined>;
 };
 
 const SeatingContext = createContext<Seating | undefined>(undefined);
@@ -32,9 +38,16 @@ const NOT_ON_SHOW = "原文还没有打开";
 // The column lives as long as the app, so that what it holds outlasts the reader of any one
 // item: the tab on show, the conversations and their places. The reader tells it, through
 // SidePanel, which document is on show and how to point into it.
-export function useSeating(): { seating: Seating; seated: Seat | undefined; pointer: Pointer } {
+export function useSeating(): {
+  seating: Seating;
+  seated: Seat | undefined;
+  unshown: Unshown | undefined;
+  pointer: Pointer;
+} {
   const [seated, setSeated] = useState<Seat>();
+  const [unshown, setUnshown] = useState<Unshown>();
   const current = useRef<Pointer>(undefined);
+  const lose = useRef<(reason: string) => void>(undefined);
   const lives = useRef(0);
   const seating = useMemo<Seating>(
     () => ({
@@ -49,6 +62,9 @@ export function useSeating(): { seating: Seating; seated: Seat | undefined; poin
         setSeated((held) => (held?.life === left.life ? undefined : held));
       },
       pointer: current,
+      cannotShow: setUnshown,
+      canShow: (left) => setUnshown((held) => (held === left ? undefined : held)),
+      lose,
     }),
     [],
   );
@@ -66,7 +82,34 @@ export function useSeating(): { seating: Seating; seated: Seat | undefined; poin
     }),
     [],
   );
-  return { seating, seated, pointer };
+  return { seating, seated, unshown, pointer };
+}
+
+function useSeatingContext(): Seating {
+  const seating = useContext(SeatingContext);
+  if (seating === undefined) {
+    throw new Error("the reader is drawn outside the app's SeatingProvider");
+  }
+  return seating;
+}
+
+// Tells the column, while an item is selected and cannot be shown, why not.
+export function useCannotShow(itemId: string, reason: string | undefined): void {
+  const seating = useSeatingContext();
+  useEffect(() => {
+    if (reason === undefined) {
+      return undefined;
+    }
+    const unshown = { itemId, reason };
+    seating.cannotShow(unshown);
+    return () => seating.canShow(unshown);
+  }, [itemId, reason]);
+}
+
+// How a view of the reader says that the passage pointed at cannot be shown in it.
+export function useLosing(): (reason: string) => void {
+  const seating = useSeatingContext();
+  return useCallback((reason) => seating.lose.current?.(reason), [seating]);
 }
 
 // Where the reader of an item meets the column beside it: the column itself is drawn by the
@@ -80,10 +123,7 @@ export function SidePanel({
   documentId: string;
   pointer: Pointer;
 }) {
-  const seating = useContext(SeatingContext);
-  if (seating === undefined) {
-    throw new Error("SidePanel is used outside the app's SeatingProvider");
-  }
+  const seating = useSeatingContext();
   // The reader's pointer is made anew at every render and knows what is in view then.
   useLayoutEffect(() => {
     seating.pointer.current = pointer;
@@ -112,14 +152,17 @@ function panelId(tab: Tab): string {
 export function SideColumn({
   selected,
   seated,
+  unshown,
   pointer,
   onOpen,
 }: {
   selected: string | undefined;
   seated: Seat | undefined;
+  unshown: Unshown | undefined;
   pointer: Pointer;
-  onOpen: Opener;
+  onOpen: (itemId: string) => void;
 }) {
+  const seating = useSeatingContext();
   // What the reader chose. With no item open, the library's chat is on show without being
   // chosen, so that an item opened from the list shows what was chosen before.
   const [chosen, setChosen] = useState<Tab>("digest");
@@ -127,7 +170,10 @@ export function SideColumn({
   const tab: Tab = selected === undefined ? "chat" : chosen;
   // Until the reader shows the selected item, the column points at nothing.
   const seat = seated?.itemId === selected ? seated : undefined;
-  const citing = useCiting(pointer, seat);
+  const citing = useCiting(pointer, selected, seat, unshown);
+  useLayoutEffect(() => {
+    seating.lose.current = citing.fail;
+  });
 
   // A citation that opens another item leaves the reader in the conversation it was pressed
   // in: only the library's can cite another item. A citation into the selected item, whose
@@ -138,7 +184,7 @@ export function SideColumn({
       setChosenScope("library");
     }
     citing.awaitOpening(anchor, itemId);
-    onOpen(itemId, anchor);
+    onOpen(itemId);
   }
 
   // A digest may take a model call to write, so it is asked for only once its tab is shown,

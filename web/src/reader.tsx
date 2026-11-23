@@ -115,7 +115,7 @@ function rangeIn(blockElement: Element, start: number, end: number): Range {
     }
     passed += length;
   }
-  throw new Error(`characters ${start}–${end} lie outside the block's text`);
+  throw new Error("页面上的这一段比引文的位置短，找不到这段引文。");
 }
 
 // Puts the passage in the middle of everything around it that has room to scroll, innermost
