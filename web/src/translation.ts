@@ -18,8 +18,7 @@ type Asking = "ensure" | "anew";
 type Round = { asking: Asking; count: number };
 
 export type TranslationState = {
-  // Nothing is asked for an item until its translation is first wanted.
-  asked: boolean;
+  // Nothing is loaded for an item until its translation is first wanted.
   loaded: Loaded<Translation> | undefined;
   interrupted: boolean;
   // The blocks translated so far by number. A block keeps its object for as long as its
@@ -92,8 +91,8 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
   }
   const watched = useWatched(load, key, isUnderway);
 
-  // While a new round begins, the translation of the last one stays on show, unless the new
-  // round starts the translation again.
+  // While a new round begins, the translation on show stays until the round's first answer
+  // takes its place; that of a translation started again holds none of the earlier blocks.
   const shown = useRef<Translation | null>(null);
   if (watched.loaded.state === "ready") {
     shown.current = watched.loaded.value;
@@ -139,14 +138,12 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
   }
 
   return {
-    asked,
     loaded,
     interrupted: watched.interrupted,
     blocks,
     again,
     goOn: () => setRound({ asking: "ensure", count: round.count + 1 }),
     anew: () => {
-      shown.current = null;
       setTranslatedAgain(new Map());
       setAgain(new Map());
       setRound({ asking: "anew", count: round.count + 1 });
