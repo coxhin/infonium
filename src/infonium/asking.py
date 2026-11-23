@@ -2,13 +2,15 @@ import logging
 from collections.abc import Callable
 from itertools import accumulate
 
-import openai
 from pydantic import BaseModel
 
 from infonium.document import BlockNumber, Document
 from infonium.glossary import Term
 from infonium.intake import failure_reason
-from infonium.language_model import LanguageModel, UnmeteredCompletion, UnstructuredCompletion
+from infonium.language_model import (
+    MODEL_FAILURES,
+    LanguageModel,
+)
 from infonium.rendition import (
     PassageBlock,
     Passages,
@@ -37,8 +39,6 @@ CONTEXT_CHARACTERS = 600
 # How many times a request is made before its blocks are given up.
 ATTEMPTS = 3
 BLOCKS_BETWEEN = "\n"
-# The failures of a request to the model after which it is made again.
-MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 UNUSABLE = "the model's replies could not be used in {attempts} attempts"
 
 logger = logging.getLogger(__name__)

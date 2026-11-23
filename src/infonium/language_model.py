@@ -1,7 +1,10 @@
+import logging
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
+from json import JSONDecodeError
 from typing import Any, Final, Literal
 
 from openai import (
@@ -9,6 +12,7 @@ from openai import (
     APIError,
     APIStatusError,
     OpenAI,
+    OpenAIError,
     omit,
     pydantic_function_tool,
     pydantic_responses_function_tool,
@@ -34,6 +38,8 @@ from pydantic import BaseModel, ValidationError
 
 from infonium.model_connection import Ending, endable_http_client
 
+logger = logging.getLogger(__name__)
+
 # The longest silence the endpoint is allowed: before a whole reply that is not streamed, and
 # between two events of one that is.
 MODEL_TIMEOUT_SECONDS = 180.0
@@ -44,6 +50,7 @@ NO_PARSED_OUTPUT = "the model returned no parsed output"
 NO_TOKEN_USAGE = "the endpoint reported no token usage"
 INCOMPLETE_REPLY = "the endpoint cut the reply short: {reason}"
 UNEXPECTED_REPLY = "the model's reply is not of the form asked for: {error}"
+UNREADABLE_EVENT = "the endpoint sent a part of the reply that is not JSON: {error}"
 # The most calls of tools run in one round; the model is told so of the calls beyond.
 MOST_CALLS_PER_ROUND = 4
 ENDLESS_TOOL_USE = "the model gave no answer within the {rounds} requests a reply may take"
@@ -59,6 +66,20 @@ LAST_REQUEST = (
 )
 TOOLS_OFFERED: Final = "auto"
 NO_TOOLS: Final = "none"
+REQUEST_NAME = "request {request} of a reply from {model}"
+REQUEST_BEGAN = "%s began"
+REQUEST_OPENED = "%s: the endpoint answered after %.1f s"
+REQUEST_FIRST_EVENT = "%s: its first event came after %.1f s"
+REQUEST_ENDED = (
+    "%s ended after %.1f s and %d events, the longest silence between two of them %.1f s: "
+    "%s, %d input and %d output tokens"
+)
+REQUEST_FAILED = (
+    "%s ended after %.1f s and %d events, the longest silence between two of them %.1f s, "
+    "without a reply: %s"
+)
+REPLY_CAME = "the reply"
+CALLS_CAME = "{calls} calls of tools"
 NO_SUCH_TOOL = "There is no tool named {name}. The tools are: {names}."
 WRONG_ARGUMENTS = "The arguments do not fit the tool {name}: {error}"
 # The finishes of a Chat Completions reply that mean it was not written whole.
@@ -91,6 +112,13 @@ class UnstructuredCompletion(Exception):
 
 class UnmeteredCompletion(Exception):
     pass
+
+
+# What a call of the model raises when the model or its endpoint fails it: a request that
+# failed, as the openai package raises it, and a reply that was refused, cut short, failed,
+# not of the form asked for, not readable, or not metered. Anything else that a call raises is
+# a failure of infonium's own.
+MODEL_FAILURES = (OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
 
 class Message(BaseModel):
@@ -236,6 +264,67 @@ def tool_results(
     return [*results, *(not_run for _ in calls[MOST_CALLS_PER_ROUND:])]
 
 
+class RequestClock:
+    # What one request of a reply took, told to the log as it goes: when it began, when the
+    # endpoint answered and when its first event came, and when it ended, with how many events
+    # came, the longest silence between two of them, and the tokens it used or the failure it
+    # ended with. The openai client's own retries are told to the log by the client.
+    def __init__(self, model: str, request: int) -> None:
+        self.request = REQUEST_NAME.format(request=request, model=model)
+        self.began = time.monotonic()
+        self.events = 0
+        self.last_event = self.began
+        self.longest_silence = 0.0
+        logger.info(REQUEST_BEGAN, self.request)
+
+    def since(self) -> float:
+        return time.monotonic() - self.began
+
+    def opened(self) -> None:
+        logger.info(REQUEST_OPENED, self.request, self.since())
+
+    def came(self) -> None:
+        now = time.monotonic()
+        self.events += 1
+        if self.events == 1:
+            logger.info(REQUEST_FIRST_EVENT, self.request, now - self.began)
+        else:
+            self.longest_silence = max(self.longest_silence, now - self.last_event)
+        self.last_event = now
+
+    def timed[Output: BaseModel](
+        self, steps: Generator[Written, None, Answered[Output]]
+    ) -> Generator[Written, None, Answered[Output]]:
+        try:
+            answered = yield from steps
+        except BaseException as failure:
+            logger.info(
+                REQUEST_FAILED,
+                self.request,
+                self.since(),
+                self.events,
+                self.longest_silence,
+                type(failure).__name__,
+            )
+            raise
+        match answered.reply:
+            case Spoke():
+                outcome = REPLY_CAME
+            case CalledTools(calls=calls):
+                outcome = CALLS_CAME.format(calls=len(calls))
+        logger.info(
+            REQUEST_ENDED,
+            self.request,
+            self.since(),
+            self.events,
+            self.longest_silence,
+            outcome,
+            answered.input_tokens,
+            answered.output_tokens,
+        )
+        return answered
+
+
 def is_last_request(request: int, tools: Sequence[Tool[Any]]) -> bool:
     return bool(tools) and request == REPLY_ROUNDS - 1
 
@@ -309,14 +398,19 @@ class ChatCompletionsLanguageModel(LanguageModel):
             last = is_last_request(request, tools)
             if last:
                 sent.append(chat_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
-            answered = yield from self.round(
-                request, sent, output, tools, NO_TOOLS if last else TOOLS_OFFERED, ending
+            clock = RequestClock(self.name, request)
+            answered = yield from clock.timed(
+                self.round(
+                    request, sent, output, tools, NO_TOOLS if last else TOOLS_OFFERED, ending, clock
+                )
             )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
                 case Spoke(output=parsed):
                     yield replied(parsed, spent)
                     return
+                case CalledTools() if last:
+                    raise UnstructuredCompletion(ENDLESS_TOOL_USE.format(rounds=REPLY_ROUNDS))
                 case CalledTools(calls=calls):
                     sent.append(
                         {
@@ -346,6 +440,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
         tools: Sequence[Tool[Any]],
         offered: Literal["auto", "none"],
         ending: Ending,
+        clock: RequestClock,
     ) -> Generator[Written, None, Answered[Output]]:
         content = ""
         refusal = ""
@@ -377,13 +472,16 @@ class ChatCompletionsLanguageModel(LanguageModel):
                 stream=True,
                 stream_options={"include_usage": True},
             )
+        clock.opened()
         # An endpoint that fails the reply in the middle of its stream says so in a data line
         # that holds an error object, which the openai package raises as its bare APIError:
         # the model's failure, as a failed event of the Responses API is. Its subclasses are
-        # failures of the request, and stay what they are.
+        # failures of the request, and stay what they are. A data line that is not JSON at all,
+        # which the package raises as the decoding error, is the endpoint's failure too.
         try:
             with stream:
                 for chunk in stream:
+                    clock.came()
                     usage = chunk.usage or usage
                     for choice in chunk.choices[:1]:
                         refusal += choice.delta.refusal or ""
@@ -397,6 +495,8 @@ class ChatCompletionsLanguageModel(LanguageModel):
             raise
         except APIError as failed:
             raise UnstructuredCompletion(failed.message) from failed
+        except JSONDecodeError as failed:
+            raise UnstructuredCompletion(UNREADABLE_EVENT.format(error=failed)) from failed
         if refusal:
             raise UnstructuredCompletion(refusal)
         if finish in CUT_FINISHES:
@@ -442,20 +542,26 @@ class ResponsesLanguageModel(LanguageModel):
             last = is_last_request(request, tools)
             if last:
                 sent.append(responses_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
-            answered = yield from self.round(
-                request,
-                instructions,
-                sent,
-                output,
-                tools,
-                NO_TOOLS if last else TOOLS_OFFERED,
-                ending,
+            clock = RequestClock(self.name, request)
+            answered = yield from clock.timed(
+                self.round(
+                    request,
+                    instructions,
+                    sent,
+                    output,
+                    tools,
+                    NO_TOOLS if last else TOOLS_OFFERED,
+                    ending,
+                    clock,
+                )
             )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
                 case Spoke(output=parsed):
                     yield replied(parsed, spent)
                     return
+                case CalledTools() if last:
+                    raise UnstructuredCompletion(ENDLESS_TOOL_USE.format(rounds=REPLY_ROUNDS))
                 case CalledTools(calls=calls):
                     results = yield from tool_results(tools, calls)
                     for call, result in zip(calls, results, strict=True):
@@ -485,6 +591,7 @@ class ResponsesLanguageModel(LanguageModel):
         tools: Sequence[Tool[Any]],
         offered: Literal["auto", "none"],
         ending: Ending,
+        clock: RequestClock,
     ) -> Generator[Written, None, Answered[Output]]:
         texts: dict[str, str] = defaultdict(str)
         done: list[str] = []
@@ -519,36 +626,46 @@ class ResponsesLanguageModel(LanguageModel):
                 store=False,
                 stream=True,
             )
-        with stream:
-            # The reply is read from the events that deliver it: such a backend may end the
-            # stream with a response whose output is empty.
-            for event in stream:
-                match event:
-                    case ResponseTextDeltaEvent(item_id=item, delta=delta):
-                        texts[item] += delta
-                        yield Written(request=request, text=texts[item])
-                    case ResponseTextDoneEvent(text=text):
-                        done.append(text)
-                    case ResponseOutputItemDoneEvent(item=ResponseFunctionToolCall() as call):
-                        calls.append(
-                            ToolCall(call_id=call.call_id, name=call.name, arguments=call.arguments)
-                        )
-                    case ResponseCompletedEvent():
-                        usage = event.response.usage
-                    case ResponseRefusalDoneEvent():
-                        raise UnstructuredCompletion(event.refusal)
-                    case ResponseErrorEvent():
-                        raise UnstructuredCompletion(event.message)
-                    case ResponseFailedEvent(
-                        response=Response(error=ResponseError(message=reason))
-                    ):
-                        raise UnstructuredCompletion(reason)
-                    case ResponseIncompleteEvent(
-                        response=Response(incomplete_details=IncompleteDetails(reason=str(reason)))
-                    ):
-                        raise UnstructuredCompletion(INCOMPLETE_REPLY.format(reason=reason))
-                    case ResponseFailedEvent() | ResponseIncompleteEvent():
-                        raise UnstructuredCompletion(NO_PARSED_OUTPUT)
+        clock.opened()
+        # A data line that the openai package cannot read as JSON is the endpoint's failure.
+        try:
+            with stream:
+                # The reply is read from the events that deliver it: such a backend may end the
+                # stream with a response whose output is empty.
+                for event in stream:
+                    clock.came()
+                    match event:
+                        case ResponseTextDeltaEvent(item_id=item, delta=delta):
+                            texts[item] += delta
+                            yield Written(request=request, text=texts[item])
+                        case ResponseTextDoneEvent(text=text):
+                            done.append(text)
+                        case ResponseOutputItemDoneEvent(item=ResponseFunctionToolCall() as call):
+                            calls.append(
+                                ToolCall(
+                                    call_id=call.call_id, name=call.name, arguments=call.arguments
+                                )
+                            )
+                        case ResponseCompletedEvent():
+                            usage = event.response.usage
+                        case ResponseRefusalDoneEvent():
+                            raise UnstructuredCompletion(event.refusal)
+                        case ResponseErrorEvent():
+                            raise UnstructuredCompletion(event.message)
+                        case ResponseFailedEvent(
+                            response=Response(error=ResponseError(message=reason))
+                        ):
+                            raise UnstructuredCompletion(reason)
+                        case ResponseIncompleteEvent(
+                            response=Response(
+                                incomplete_details=IncompleteDetails(reason=str(reason))
+                            )
+                        ):
+                            raise UnstructuredCompletion(INCOMPLETE_REPLY.format(reason=reason))
+                        case ResponseFailedEvent() | ResponseIncompleteEvent():
+                            raise UnstructuredCompletion(NO_PARSED_OUTPUT)
+        except JSONDecodeError as failed:
+            raise UnstructuredCompletion(UNREADABLE_EVENT.format(error=failed)) from failed
         if not calls and not done:
             raise UnstructuredCompletion(NO_PARSED_OUTPUT)
         # The text a reply ends with is the reply; a message written before it, as a model

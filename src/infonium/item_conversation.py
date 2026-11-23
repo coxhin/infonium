@@ -39,7 +39,8 @@ the source.
 
 {blocks_explained}\
 The document comes in the first message. The questions asked before follow, each with the \
-statements you answered it with, and last the question to answer now.
+statements you answered it with, as far as they fit (a note says how many are left out, and \
+an answer cut short says so), and last the question to answer now.
 
 Write the answer in the language the question is asked in.
 
