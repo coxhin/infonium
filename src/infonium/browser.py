@@ -216,7 +216,7 @@ class TakenPage(BaseModel):
     # whether a change of this machine's network broke the attempt off.
     content: str
     address: str
-    broken_off_by_network: bool = False
+    broken_off_by_network: bool
 
 
 class FailedHop(BaseModel):
@@ -384,7 +384,11 @@ class PageRendering:
                 raise UnreadableSource(
                     (self.proxy_refusals() or [f"{self.url} led the browser to {address}"])[0]
                 )
-            return TakenPage(content=content, address=urldefrag(address).url)
+            return TakenPage(
+                content=content,
+                address=urldefrag(address).url,
+                broken_off_by_network=bool(self.broken),
+            )
         finally:
             page.close()
 
@@ -412,12 +416,11 @@ class PageRendering:
                 if taken:
                     break
                 raise
-            if not self.broken:
+            if not taken[-1].broken_off_by_network:
                 return taken[-1]
         if not taken:
             raise failures[-1]
-        fullest = max(taken, key=lambda page: len(page.content))
-        return fullest.model_copy(update={"broken_off_by_network": True})
+        return max(taken, key=lambda page: len(page.content))
 
     def report(self, work: Path, deadline: float) -> RenderingReport:
         # How the rendering of the page ends: completed, with the page kept in the work
