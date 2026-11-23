@@ -38,8 +38,10 @@ export function unitOffset(offsets: number[], offset: number): number {
 
 export type Piece = { text: string; marks: Mark[] };
 
-// Cuts the text wherever a mark starts or ends, so each piece lies wholly inside or outside
-// every mark and the pieces together are the text, character for character.
+// Cuts the text wherever a mark starts or ends, so the pieces together are the text, character
+// for character, and each lies wholly inside or outside every mark, save one: a formula is set
+// whole, so no cut falls inside it, and a mark that ends or begins within a formula holds no
+// part of it.
 export function cutAtMarks(text: string, marks: Mark[]): Piece[] {
   const offsets = unitOffsets(text);
   const spans = marks.map((mark) => ({
@@ -47,9 +49,14 @@ export function cutAtMarks(text: string, marks: Mark[]): Piece[] {
     start: unitOffset(offsets, mark.start),
     end: unitOffset(offsets, mark.end),
   }));
+  const formulas = spans.filter((span) => span.mark.kind === "formula");
+  const insideFormula = (at: number) =>
+    formulas.some((formula) => formula.start < at && at < formula.end);
   const cuts = [
     ...new Set([0, text.length, ...spans.flatMap((span) => [span.start, span.end])]),
-  ].sort((first, second) => first - second);
+  ]
+    .filter((at) => !insideFormula(at))
+    .sort((first, second) => first - second);
   return cuts.slice(0, -1).map((start, index) => {
     const end = cuts[index + 1] ?? text.length;
     return {

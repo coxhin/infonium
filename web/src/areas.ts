@@ -29,9 +29,9 @@ export type Typeset = { size: number; pitch: number | undefined };
 // A part of a translation's text, with its marks counted in that part.
 export type Piece = { text: string; marks: Mark[] };
 
-// A line much taller than the block's others, as a first letter set over several lines, does
-// not tell the size of the text.
-const TALL_LINE = 1.8;
+// A line much taller than a block's smallest, as a first letter set over several lines or a
+// line holding a sum with its limits, does not tell the size of the text.
+const TALL_LINE = 1.5;
 // A line taller than this many times its width runs downwards.
 const DOWNWARD = 2;
 // Lines whose boxes overlap by no more than this, as a part of the smaller box, are side by side.
@@ -47,6 +47,10 @@ const MOST_STEP = 3;
 // Boxes in whole points put a 10 point text anywhere from 9 to 11 points, a tenth either way;
 // a footnote of 8 points under 10 point paragraphs is a fifth smaller and keeps its own size.
 const SAME_TYPE = 0.15;
+// A block whose size is told by its boxes alone, with no pitch, is set apart from its kind only
+// beyond this, as one box in whole points may stand a third off its print: the two one-line
+// footnotes of arXiv page 1, in one print, have boxes of 11 and 13 points over a 10 point body.
+const BOX_ALONE = 0.4;
 const PLAIN_SPACING = 1.25;
 // The line spacing of the source is kept between these, as a part of the size of its text.
 const SPACING_BOUNDS = [1, 2.4] as const;
@@ -187,15 +191,16 @@ export function areasOf(
   });
 }
 
-// The sizes and the steps between lines that a set of lines shows, a line much taller than
-// the rest left out.
+// The sizes and the steps between lines that a set of lines shows, measured against its
+// smallest line: a line much taller than that is left out, and so is a step that is no line's
+// pitch beside it.
 type Measures = { sizes: number[]; pitches: number[] };
 
 function measuresOf(places: PagePlace[]): Measures {
   const lines = [...places].sort((first, second) => first.start - second.start);
   const downward = isDownward(lines);
   const extent = (line: PagePlace) => (downward ? line.width : line.height);
-  const ordinary = median(lines.map(extent)) ?? 0;
+  const ordinary = Math.min(...lines.map(extent));
   const sizes = lines.map(extent).filter((size) => size <= TALL_LINE * ordinary);
   const pitches: number[] = [];
   lines.slice(1).forEach((line, index) => {
@@ -230,17 +235,32 @@ function typesetOf(measures: Measures): Typeset | undefined {
 }
 
 // Where every block's lines stand on each page, so that each block's areas keep off the
-// others', and how each kind of text runs on each page, from the lines of every block of that
-// kind there. The engine gives the boxes of lines in whole points, so the boxes of one
-// paragraph may run a point or two taller or shorter than those of the next in the same type;
-// what all of a page's paragraphs show together is their type.
+// others', and how each type of text runs on each page. A type is a kind of block, and for a
+// heading its level too. The engine gives the boxes of lines in whole points, so the boxes of
+// one paragraph, or of one page's paragraphs, may run a point or two taller or shorter than
+// those of the next in the same print; what all of a document's lines of a type show together
+// is its print, and a page keeps its own only where it clearly differs.
 export type Layout = {
   boxes: Map<number, { blockNumber: number; box: Box }[]>;
   kinds: Map<string, Typeset>;
 };
 
-function kindOnPage(page: number, kind: Block["kind"]): string {
-  return `${page}|${kind}`;
+function typeOf(block: Block): string {
+  return block.kind === "heading" ? `${block.kind}${block.level}` : block.kind;
+}
+
+const KEY_PARTS = "|";
+
+function kindOnPage(page: number, block: Block): string {
+  return `${page}${KEY_PARTS}${typeOf(block)}`;
+}
+
+function gathered(into: Map<string, Measures>, key: string, measures: Measures): void {
+  const kept = into.get(key) ?? { sizes: [], pitches: [] };
+  into.set(key, {
+    sizes: [...kept.sizes, ...measures.sizes],
+    pitches: [...kept.pitches, ...measures.pitches],
+  });
 }
 
 function pagePlacesOf(block: Block): PagePlace[] {
@@ -250,6 +270,7 @@ function pagePlacesOf(block: Block): PagePlace[] {
 export function layoutOf(blocks: Block[]): Layout {
   const boxes = new Map<number, { blockNumber: number; box: Box }[]>();
   const measured = new Map<string, Measures>();
+  const throughout = new Map<string, Measures>();
   blocks.forEach((block, blockNumber) => {
     const byPage = new Map<number, PagePlace[]>();
     for (const place of pagePlacesOf(block)) {
@@ -262,17 +283,17 @@ export function layoutOf(blocks: Block[]): Layout {
     }
     byPage.forEach((places, page) => {
       const own = measuresOf(textLinesOf(block, places));
-      const key = kindOnPage(page, block.kind);
-      const kept = measured.get(key) ?? { sizes: [], pitches: [] };
-      measured.set(key, {
-        sizes: [...kept.sizes, ...own.sizes],
-        pitches: [...kept.pitches, ...own.pitches],
-      });
+      gathered(measured, kindOnPage(page, block), own);
+      gathered(throughout, typeOf(block), own);
     });
   });
   const kinds = new Map<string, Typeset>();
   measured.forEach((measures, key) => {
-    const typeset = typesetOf(measures);
+    const onPage = typesetOf(measures);
+    const type = key.slice(key.indexOf(KEY_PARTS) + 1);
+    const whole = typesetOf(throughout.get(type) ?? { sizes: [], pitches: [] });
+    const own = onPage !== undefined && whole !== undefined && Math.abs(onPage.size / whole.size - 1) > SAME_TYPE;
+    const typeset = own || whole === undefined ? onPage : whole;
     if (typeset !== undefined) {
       kinds.set(key, typeset);
     }
@@ -286,11 +307,12 @@ function scaledPitch(kind: Typeset, size: number): number | undefined {
   return kind.pitch === undefined ? undefined : (kind.pitch * size) / kind.size;
 }
 
-// A block is set in the type of its kind on its page, unless its lines show it clearly larger
-// or smaller. It is larger, as a title among headings, only where even its smallest line is.
-// It is smaller, as a footnote among paragraphs, where its size is: told by its pitch against
-// its kind's where both are known, as boxes in whole points tell a size less surely than the
-// steps between lines do, and by its lines otherwise.
+// A block is set in the type of its kind, unless its lines show it clearly larger or smaller.
+// Where the block and its kind both have a pitch, the pitch tells the size, as the steps
+// between lines are surer than boxes in whole points: a footnote among paragraphs is smaller
+// by as much as its lines are closer, and a block is larger only where its smallest line is
+// too. A block of one line has no pitch, and its box alone tells it different only where it
+// differs by a third or more.
 function blockTypeset(own: Measures, kind: Typeset | undefined): Typeset {
   const ownTypeset = typesetOf(own);
   if (kind === undefined) {
@@ -299,14 +321,14 @@ function blockTypeset(own: Measures, kind: Typeset | undefined): Typeset {
   if (ownTypeset === undefined) {
     return kind;
   }
-  if (Math.min(...own.sizes) > kind.size * (1 + SAME_TYPE)) {
+  const smallest = Math.min(...own.sizes);
+  const byPitch = ownTypeset.pitch !== undefined && kind.pitch !== undefined;
+  const told = byPitch ? (kind.size * (ownTypeset.pitch ?? 0)) / (kind.pitch ?? 1) : ownTypeset.size;
+  const margin = byPitch ? SAME_TYPE : BOX_ALONE;
+  if (told > kind.size * (1 + margin) && smallest > kind.size * (1 + margin)) {
     return { size: ownTypeset.size, pitch: ownTypeset.pitch ?? scaledPitch(kind, ownTypeset.size) };
   }
-  const told =
-    ownTypeset.pitch !== undefined && kind.pitch !== undefined
-      ? (kind.size * ownTypeset.pitch) / kind.pitch
-      : ownTypeset.size;
-  if (told < kind.size * (1 - SAME_TYPE)) {
+  if (told < kind.size * (1 - margin)) {
     return { size: told, pitch: ownTypeset.pitch ?? scaledPitch(kind, told) };
   }
   return kind;
@@ -433,7 +455,7 @@ export function placedOf(
   const typesetOn = (page: number) =>
     blockTypeset(
       measuresOf(textLinesOf(block, places.filter((place) => place.page === page))),
-      layout.kinds.get(kindOnPage(page, block.kind)),
+      layout.kinds.get(kindOnPage(page, block)),
     );
   const areas = areasOf(places, othersOn, typesetOn);
   const whole = translatedText(translated, gap);
