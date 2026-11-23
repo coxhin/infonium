@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from hypothesis import assume, given
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from infonium import browser
 from infonium.document import UnreadableSource
-from infonium.egress import LOOPBACK, Refusal
+from infonium.egress import LOOPBACK, PublicProxy, Refusal
 
 URL = "https://example.test/app"
 PROGRAM = "/opt/google/chrome/chrome"
@@ -46,18 +46,11 @@ addresses = st.builds(
 )
 
 
-class NoRefusals:
-    # A proxy that refused nothing.
-    def refusals(self) -> list[Refusal]:
-        return []
-
-
-class Refusals:
-    def __init__(self, refused: list[Refusal]) -> None:
-        self.refused = refused
-
-    def refusals(self) -> list[Refusal]:
-        return self.refused
+def proxy_that_refused(refused: list[Refusal]) -> Mock:
+    # The proxy of a rendering, which refused these connections and no others.
+    proxy = Mock(spec=PublicProxy)
+    proxy.refusals.return_value = refused
+    return proxy
 
 
 def code_units(text: str) -> str:
@@ -69,7 +62,7 @@ def code_units(text: str) -> str:
 
 
 def ending_reason(ending: PlaywrightError | UnreadableSource) -> str:
-    return browser.PageRendering(URL, PROGRAM, NoRefusals()).ending_reason(ending)
+    return browser.PageRendering(URL, PROGRAM, proxy_that_refused([])).ending_reason(ending)
 
 
 @given(text=texts_with_surrogates)
@@ -175,7 +168,7 @@ def test_a_page_the_proxy_refused_is_given_the_proxys_reason(
 ) -> None:
     refused = Refusal(host=host, port=port, reason=f"{host} is not a public address")
     other = Refusal(host="elsewhere.test", port=port, reason="elsewhere.test did not answer")
-    rendering = browser.PageRendering(URL, PROGRAM, Refusals([refused, other]))
+    rendering = browser.PageRendering(URL, PROGRAM, proxy_that_refused([refused, other]))
     rendering.failed_hops.append(browser.FailedHop(url=hop, failure=browser.PROXY_FAILURE))
     error = PlaywrightError(
         f"Page.goto: {browser.PROXY_FAILURE} at {hop}" + CALL_LOG.format(address=hop)
@@ -196,7 +189,7 @@ class Attempt(BaseModel):
 class ScriptedRendering(browser.PageRendering):
     # A rendering whose attempts come out as scripted, in place of a browser's.
     def __init__(self, attempts: list[Attempt]) -> None:
-        super().__init__(URL, PROGRAM, NoRefusals())
+        super().__init__(URL, PROGRAM, proxy_that_refused([]))
         self.attempts = attempts
         # Of each attempt made, what it raises when it fails.
         self.made: list[PlaywrightError] = []
@@ -220,8 +213,9 @@ attempts = st.lists(
 
 
 def attempted(rendering: ScriptedRendering, deadline: float) -> browser.AttemptedPage:
+    # The browser's context is asked for nothing: the scripted attempts stand in for its pages.
     with patch.object(browser, "wait_for_quiet_network", lambda until: None):
-        return rendering.attempted_page(None, deadline)
+        return rendering.attempted_page(Mock(spec=BrowserContext), deadline)
 
 
 @given(scripted=attempts)

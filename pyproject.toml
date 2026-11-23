@@ -46,7 +46,7 @@ ban-relative-imports = "all"
 
 [tool.mypy]
 strict = true
-files = ["src"]
+files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]

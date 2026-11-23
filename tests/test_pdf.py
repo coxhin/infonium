@@ -9,7 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from infonium import pdf
-from infonium.document import Extracted, put_together
+from infonium.document import Extracted, PagePlace, put_together
 from infonium.mineru import Line, ParsedPage, RegionType, SpanType, Text, TextSpan, UnparsedFile
 from tests.pdf_engine_standin import PDF_DATA
 
@@ -79,10 +79,11 @@ def test_a_pdf_reads_as_the_reference_from_the_engines_stored_results(
     extracted = reading_of(sample, standin_pdf_engine(sample), tmp_path)
     pages = page_count(sample)
     unplaced = [number for number, block in enumerate(extracted.blocks) if not block.places]
-    off_pages = {place.page for block in extracted.blocks for place in block.places} - set(
-        range(pages)
-    )
+    places = [place for block in extracted.blocks for place in block.places]
+    on_pages = [place.page for place in places if isinstance(place, PagePlace)]
+    off_pages = set(on_pages) - set(range(pages))
     assert not unplaced, f"blocks {unplaced} of {sample} were read without a place in the file"
+    assert len(on_pages) == len(places), f"blocks of {sample} were placed elsewhere than on pages"
     assert not off_pages, f"{sample} has {pages} pages, and places were put on pages {off_pages}"
     expected = json.loads((PDF_DATA / "readings" / f"{sample}.json").read_text("utf-8"))
     read = as_stored(extracted)

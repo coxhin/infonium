@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 from hypothesis import assume, given
@@ -267,8 +267,8 @@ def test_a_program_that_fails_without_a_word_is_named_with_how_it_ended(
     )
 
 
-def unanswered(request: httpx.Request) -> httpx.Response:
-    raise httpx.ConnectError("connection refused", request=request)
+def unanswered(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectError("connection refused", request=request)
 
 
 # A key a service is reached with, which neither a page of the service nor its address holds.
@@ -280,14 +280,14 @@ def test_a_service_that_failed_is_given_without_the_secrets_of_its_address(
     secret: str, status: int
 ) -> None:
     page = "<html><body>" + "<p>The upstream did not answer in time.</p>\n" * 400 + "</body></html>"
-    answered = httpx.MockTransport(lambda request: httpx.Response(status, html=page))
-    for transport in (answered, httpx.MockTransport(unanswered)):
+    answered = httpx2.MockTransport(lambda request: httpx2.Response(status, html=page))
+    for transport in (answered, httpx2.MockTransport(unanswered)):
         client = openai.OpenAI(
             base_url=f"https://reader:{secret}@speech.test/v1",
             default_query={"key": secret},
             api_key="unused",
             max_retries=0,
-            http_client=httpx.Client(transport=transport),
+            http_client=httpx2.Client(transport=transport),
         )
         with pytest.raises(openai.APIError) as raised:
             client.audio.transcriptions.create(file=("a.wav", b"RIFF", "audio/wav"), model="m")

@@ -11,6 +11,7 @@ from typing import Any
 
 import filelock
 import httpx
+import httpx2
 import openai
 import pytest
 from fastapi.testclient import TestClient
@@ -123,7 +124,7 @@ class StubModel:
     def __init__(self) -> None:
         self.calls = 0
 
-    def answer(self, request: httpx.Request) -> httpx.Response:
+    def answer(self, request: httpx2.Request) -> httpx2.Response:
         self.calls += 1
         asked = json.loads(request.content)
         blocks = [
@@ -138,7 +139,7 @@ class StubModel:
             {"text": "Made up.", "citations": [{"block_number": number, "quote": MADE_UP_QUOTE}]},
         ]
         content = json.dumps({"sections": [{"title": "Summary", "statements": statements}]})
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "id": "chatcmpl-stub",
@@ -160,7 +161,7 @@ class StubModel:
         client = openai.OpenAI(
             api_key="stub",
             base_url="https://model.test/v1",
-            http_client=httpx.Client(transport=httpx.MockTransport(self.answer)),
+            http_client=httpx2.Client(transport=httpx2.MockTransport(self.answer)),
             max_retries=0,
         )
         return ChatCompletionsLanguageModel(client=client, name=STUB_MODEL)
@@ -175,10 +176,10 @@ class App:
         self.site = site
         self.model = model
 
-    def link(self, url: str, **headers: str) -> httpx.Response:
+    def link(self, url: str, **headers: str) -> httpx2.Response:
         return self.client.post("/api/items", json={"url": url}, headers=headers)
 
-    def upload(self, name: str, content: bytes, **headers: str) -> httpx.Response:
+    def upload(self, name: str, content: bytes, **headers: str) -> httpx2.Response:
         files = {"file": (name, content, "application/octet-stream")}
         return self.client.post("/api/items/upload", files=files, headers=headers)
 
