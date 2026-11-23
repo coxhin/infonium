@@ -746,8 +746,12 @@ export interface components {
             blocks: components["schemas"]["TranslatedBlock"][];
             /** Document */
             document: string;
+            /** Input Tokens */
+            input_tokens: number;
             /** Language */
             language: string;
+            /** Output Tokens */
+            output_tokens: number;
             /** Progress */
             progress: components["schemas"]["Unasked"] | components["schemas"]["Translating"] | components["schemas"]["Stopped"] | components["schemas"]["Translated"] | components["schemas"]["Unneeded"];
         };

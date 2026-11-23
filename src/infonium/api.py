@@ -138,10 +138,13 @@ class TranslationView(BaseModel):
     # How far the translation of a document into a language has come, and the blocks
     # translated so far, in the order of the document. A block that is not among them is
     # shown as its source: one that is not translated yet, and one that never is, such as
-    # a listing or a formula.
+    # a listing or a formula. The tokens are what the translation has taken of its models so
+    # far, blocks translated again included.
     document: str
     language: str
     progress: Progress
+    input_tokens: int
+    output_tokens: int
     blocks: list[TranslatedBlock]
 
 

@@ -1401,9 +1401,17 @@
             "title": "Document",
             "type": "string"
           },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
           "language": {
             "title": "Language",
             "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
           },
           "progress": {
             "discriminator": {
@@ -1440,6 +1448,8 @@
           "document",
           "language",
           "progress",
+          "input_tokens",
+          "output_tokens",
           "blocks"
         ],
         "title": "TranslationView",
