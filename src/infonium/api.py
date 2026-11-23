@@ -68,13 +68,14 @@ from infonium.library import (
 )
 from infonium.library_conversation import (
     LIBRARY_BUSY,
+    SEARCH_FAILED,
     LibraryConversation,
     library_answer_progress,
     library_shelf,
     library_turns,
 )
 from infonium.model_connection import Ending
-from infonium.search import BlockIndex
+from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
@@ -572,7 +573,8 @@ def told(
     kept: Callable[[OwnerTransaction], KeptTurns],
 ) -> Iterator[ChatEvent]:
     # What an answer sends as it is written, and last the turn, kept before it is sent, or
-    # why no answer came. A reader who leaves before then leaves nothing kept. A failure of
+    # why no answer came: the model's failure, or a search of the library that failed with
+    # the index. A reader who leaves before then leaves nothing kept. Any other failure of
     # infonium's own is not told as an answer: it ends the lines without a last event.
     try:
         for step in progress:
@@ -585,6 +587,8 @@ def told(
                     yield Answered(turn=step)
     except MODEL_FAILURES as failure:
         yield Unanswered(reason=failure_reason(failure))
+    except IndexFailed:
+        yield Unanswered(reason=SEARCH_FAILED)
 
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)

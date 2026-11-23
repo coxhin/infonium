@@ -44,6 +44,12 @@ from infonium.model_connection import Ending
 from infonium.search import BlockIndex
 
 LIBRARY_BUSY = "a question about the library is being answered already"
+# What a reader is told when the search of the library fails with the index, which the
+# library's conversation cannot answer without until infonium starts again.
+SEARCH_FAILED = (
+    "The search of the library has failed, so no question about the library can be answered "
+    "until infonium is started again."
+)
 # How many sources the outline lists; of a larger library the model is told how many more
 # there are, which it finds by searching.
 OUTLINE_TITLES = 80
