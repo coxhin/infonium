@@ -89,17 +89,24 @@ def in_part(address: Address, parts: list[Network]) -> bool:
     return any(address.version == part.version and address in part for part in parts)
 
 
-def carrying_forms(inner: IPv4Address, suffix: int) -> list[IPv6Address]:
-    # The IPv6 addresses that carry `inner` for a host or a gateway to connect to: mapped,
-    # compatible, NAT64's, 6to4's and Teredo's, the last with the client's bits inverted.
+def carrying_forms(inner: IPv4Address, suffix: int) -> dict[str, IPv6Address]:
+    # The IPv6 addresses that carry `inner` for a host or a gateway to connect to, by the name
+    # of their form; Teredo's carries the client with its bits inverted.
     value = int(inner)
-    return [
-        IPv6Address(f"::ffff:{inner}"),
-        IPv6Address(value),
-        IPv6Address(int(IPv6Address("64:ff9b::")) | value),
-        IPv6Address(SIX_TO_FOUR_PREFIX | value << 80 | suffix % 2**80),
-        IPv6Address(TEREDO_PREFIX | (suffix % 2**64) << IPV4_BITS | (~value & 0xFFFF_FFFF)),
-    ]
+    return {
+        "mapped": IPv6Address(f"::ffff:{inner}"),
+        "compatible": IPv6Address(value),
+        "NAT64": IPv6Address(int(IPv6Address("64:ff9b::")) | value),
+        "6to4": IPv6Address(SIX_TO_FOUR_PREFIX | value << 80 | suffix % 2**80),
+        "Teredo": IPv6Address(
+            TEREDO_PREFIX | (suffix % 2**64) << IPV4_BITS | (~value & 0xFFFF_FFFF)
+        ),
+    }
+
+
+# The forms judged by the address they carry alone. Python counts every address of 6to4's and
+# Teredo's blocks as not global, so an address of those is refused whatever it carries.
+JUDGED_BY_CARRIED = ("mapped", "compatible", "NAT64")
 
 
 @pytest.mark.parametrize("block", NOT_GLOBALLY_REACHABLE)
@@ -159,8 +166,24 @@ def test_an_ipv6_address_carrying_an_address_that_is_not_public_is_not_public(
     inner: IPv4Address, own: list[Network], suffix: int
 ) -> None:
     assume(not is_public(inner, own))
-    for carrying in carrying_forms(inner, suffix):
+    for carrying in carrying_forms(inner, suffix).values():
         assert not is_public(carrying, own), f"{carrying} was admitted, carrying {inner}"
+
+
+@given(
+    inner=st.ip_addresses(v=4),
+    own=own_networks,
+    form=st.sampled_from(JUDGED_BY_CARRIED),
+)
+def test_an_ipv6_address_carrying_a_public_address_is_public(
+    inner: IPv4Address, own: list[Network], form: str
+) -> None:
+    carrying = carrying_forms(inner, 0)[form]
+    assume(is_public(inner, own) and not in_part(carrying, own))
+    assert is_public(carrying, own), (
+        f"the {form} address {carrying}, outside this machine's networks, was refused though "
+        f"the {inner} it carries is public"
+    )
 
 
 def interface_entry(network: Network, address: Address, zone: str, peer: Address | None) -> object:
