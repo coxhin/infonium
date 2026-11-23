@@ -4,7 +4,7 @@ from urllib.parse import parse_qsl, urlsplit
 import trafilatura
 from pydantic import BaseModel
 
-from infonium.document import LITTLE_TEXT_WORDS, WORD_GAP
+from infonium.document import LITTLE_TEXT_WORDS, WEB_SCHEMES, WORD_GAP
 
 # A guard is a service that stands before a site and answers a program with a page of its own
 # in place of the one asked for: a check for a person, or a notice that the reader is held
@@ -16,7 +16,6 @@ GUARD_HEADERS = ("x-amzn-waf-action", "bxpunish")
 # Words that the address of a guard's check holds, as the address of Tencent's check of WeChat
 # pages and that of Baidu's check do.
 CHECK_ADDRESS_WORDS = ("captcha",)
-WEB_SCHEMES = ("http://", "https://")
 # Whole titles that guards give their checks: PerimeterX's, Anubis's and Fastly's. A title is
 # matched whole, as a short page may begin its own title with the same words. Reddit's is that
 # site's own, and stays until a single site's checks are told apart by a reader of that site:

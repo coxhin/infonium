@@ -29,6 +29,7 @@ from infonium.document import (
     BROKEN_OFF_SOURCE,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
+    WEB_SCHEMES,
     Tagged,
     UnreadableSource,
     error_status,
@@ -42,7 +43,6 @@ RENDERED_FILE = "rendered"
 # UTF-16 pairs kept as one character, before anything else touches a string taken from a page.
 SURROGATE_ENCODING = "utf-16-le"
 FIRST_ERROR_STATUS = 400
-WEB_ADDRESS_SCHEMES = frozenset({"http", "https"})
 DEFAULT_PORTS = {"http": 80, "https": 443}
 # How long a server is given to answer for the page, how long the page is then given to load
 # and after that to fall quiet, and how long what its scripts still do after that is waited
@@ -394,7 +394,7 @@ class PageRendering:
         try:
             content = page_content(page, self.url)
             address = wellformed(page.url)
-            if urlsplit(address).scheme not in WEB_ADDRESS_SCHEMES:
+            if not address.startswith(WEB_SCHEMES):
                 raise UnreadableSource(
                     (self.proxy_refusals() or [f"{self.url} led the browser to {address}"])[0]
                 )
@@ -582,7 +582,7 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
 
 
 def rendered_page(url: str, directory: Path, browser: Path) -> RenderedPage:
-    if urlsplit(url).scheme not in WEB_ADDRESS_SCHEMES:
+    if not url.startswith(WEB_SCHEMES):
         raise UnreadableSource(f"infonium renders only web pages, and {url} is not one")
     program = shutil.which(browser)
     if program is None:

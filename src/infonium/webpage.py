@@ -10,6 +10,7 @@ from trafilatura.settings import Document as Extraction
 from infonium.document import (
     LINE_BREAK,
     NO_TEXT,
+    WEB_SCHEMES,
     Block,
     Code,
     Extracted,
@@ -29,7 +30,6 @@ from infonium.document import (
 from infonium.htmlpage import HEADING_LEVELS, WHITESPACE, prepared_page
 
 EXTRACTOR = "webpage/1"
-WEB_SCHEMES = ("http://", "https://")
 LEFTOVER_CHARACTERS = frozenset(string.punctuation + string.whitespace)
 
 

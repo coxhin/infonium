@@ -48,6 +48,9 @@ MediaType = Annotated[str, StringConstraints(pattern=MEDIA_TYPE_PATTERN)]
 
 HTML_MEDIA_TYPE = "text/html"
 PDF_MEDIA_TYPE = "application/pdf"
+# How the address of a web page begins. An address is told by its beginning, not parsed: one
+# taken from a page may be malformed past it.
+WEB_SCHEMES = ("http://", "https://")
 
 RowSeparator = Literal["\n"]
 CellSeparator = Literal["\t"]
