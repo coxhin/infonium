@@ -166,11 +166,35 @@ export const Row = memo(function Row({
   );
 });
 
-// Every stop is said the same way, with the service's own words for why: the protocol tells
-// the kinds of stop apart by no tag, and words matched against the service's sentences would
-// fall silent as soon as one of them is put otherwise.
-function stoppedReason(reason: string): string {
-  return `翻译停在了半路：已译的段落照常显示，没译的段落显示原文。服务给出的原因：${reason}`;
+// A stop is said from the counts the service gives, with where a block left out can be
+// translated by itself; why it stopped follows as the service puts it, a detail read as it
+// stands.
+function StoppedNote({
+  progress,
+  onGoOn,
+}: {
+  progress: { translated: number; total: number; reason: string };
+  onGoOn: () => void;
+}) {
+  const left = progress.total - progress.translated;
+  if (left <= 0) {
+    // Every block that stopped the translation has since been translated by itself.
+    return (
+      <p className="translation-note">
+        <span>全部 {progress.total} 段都已译出：翻译曾停在半路，没译的段落已单独译好。</span>
+      </p>
+    );
+  }
+  return (
+    <p className="translation-note failed">
+      <span>
+        翻译停在了半路：{progress.total} 段中已译 {progress.translated} 段，其余 {left}{" "}
+        段先显示原文。在「文本」里，没译的段落旁有 ↻，可以单独翻译它。
+      </span>
+      <button onClick={onGoOn}>继续翻译</button>
+      <span className="stopped-reason">原因：{progress.reason}</span>
+    </p>
+  );
 }
 
 // How far the translation has come, and what can be done about it from there.
@@ -223,12 +247,7 @@ export function TranslationNote({ translation }: { translation: TranslationState
         </p>
       );
     case "stopped":
-      return (
-        <p className="translation-note failed">
-          {stoppedReason(progress.reason)}
-          <button onClick={translation.goOn}>继续翻译</button>
-        </p>
-      );
+      return <StoppedNote progress={progress} onGoOn={translation.goOn} />;
     case "unneeded":
       // The service judges the language from a sample; a reader who finds passages in another
       // language may have the document translated all the same.
