@@ -19,7 +19,7 @@ A column beside the reader holds three tabs: the digest (摘要), a chat (对话
 
 ### Translation
 
-A switch above the reader shows the source (原文), its translation (译文), or both (对照). A translation is made when you first ask for it, into the language of digests, and arrives block by block. It keeps the form of its source:
+A switch above the reader shows the source (原文), its translation (译文), or both (对照). A translation is made when a source is first shown with the switch on 译文 or 对照, into the language of digests, and arrives block by block. It keeps the form of its source:
 
 | Source | Its translation |
 | --- | --- |
@@ -112,6 +112,7 @@ The blocks of every document the library holds are indexed in the library's file
 - Of the HTML and the page the browser builds, the one with more words is kept, even when those words are menus and links.
 - When the browser is missing or cannot render a page, the page is read from its HTML alone, and one with no text there fails with the browser's reason.
 - A page whose HTML only asks for JavaScript may then be read as that one line.
+- A formula in a web page is read as the characters the page shows for it, without their places: 1/k set as a fraction came out as 1k, in the document and in everything written from it.
 - A page in the browser may take 3 GiB of memory, counted over the browser and the programs that drive it, and 1 GiB of disk. It may pass the memory bound by about 1.5 GiB, and the disk bound by what it writes in about 2 seconds, before it is ended.
 - Nothing but its 90 seconds bounds the processor time a page takes in the browser, on every core the browser uses, and watching it costs infonium about an eighth of a core.
 - A page in the browser reaches only public addresses, not this machine, a network one of its interfaces stands in, or the ranges set aside for special uses, but it can have this machine's resolver look up any name.
@@ -134,6 +135,7 @@ The blocks of every document the library holds are indexed in the library's file
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
 - A PDF with a text layer whose lines are written downwards is read badly: in the one page tried, halves of lines came out interleaved, characters were lost, and nearly all the text was marked as superscript or subscript. The same page as a scan was read well.
+- In a line set in a typewriter face, letters that reach below the line may be read as subscripts: an address at google.com came out with both of its g's set low.
 - A scan of typewritten pages with wide line spacing was read a line a block: 101 of its 108 paragraphs were single lines. Such a document is translated a line at a time, which reads poorly.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.
 - How well a page read as pictures comes out depends on its writing, and that has been tried on no more than a paragraph of each. Latin, Cyrillic and Greek writing, Chinese and Japanese came out right or nearly, and Korean, Arabic, Thai, Hindi, Tamil, Bengali and Tibetan with a few wrong characters. In writing the engine does not know, Hebrew, Georgian, Armenian, Amharic and Khmer among what was tried, it writes words that are not on the page, and may take so long that the reading is given up.
@@ -152,6 +154,7 @@ The blocks of every document the library holds are indexed in the library's file
 - Whether a document is in the language of digests already is judged by the translating model from up to 12,000 characters spread over it, by the language most of that sample is in. A document mostly in the reader's language is not translated, and its passages in other languages stay as written, unless the reader asks for it all the same (仍然翻译). A document mostly in another language is translated whole, and its passages already in the reader's language go to the model as well.
 - A long document takes minutes. The 20,840 words of a Wikipedia article took 288 seconds, and a paper of 15 pages 26,000 input and 17,000 output tokens. The first blocks appear after about a minute.
 - The translating model decides once for a document how its recurring names and terms are translated, and a wrong choice repeats wherever the term stands: in one Japanese article a shark was misnamed in every block that named it.
+- A digest and a translation are written by different models and may give one name two translations: 吉普夫定律 in a digest, 齐普夫定律 in the translation of the same article.
 - The translating model can misplace words: in a paper it swapped two formulas in one sentence. One block can be translated again by the model that writes digests.
 - A link or a style is kept only where the model puts its tags back around the words that translate it. In the articles tried, 97 to 100 percent of links were kept, after asking again for any passage that lost half its marks or more.
 - A block whose replies hold what is left of a tag, lose a formula or, in a recording, answer a sentence with the words of another is asked for again. After three attempts it stays in its source's language, and the translation shows as stopped, with how many blocks could not be translated and why the last failed. Asking for the translation again goes on with those blocks.
@@ -161,10 +164,12 @@ The blocks of every document the library holds are indexed in the library's file
 - On a PDF's pages, tables, listings and blocks that are one formula stay as the page has them; a table's translation is read under 文本. Small leftovers of the source's letters may show between the translated areas of a dense or scanned page.
 - A formula that uses more of LaTeX than infonium's reader of it knows (fractions, roots, sums, scripts, Greek letters, common operators and names, matrices and aligned lines) is shown as its LaTeX. All 59 formulas of the paper tried were set. A selection across a formula copies its drawn characters, one a line, not its LaTeX.
 - With a translation on show, a citation marks the translated block, or the lines of a recording, that hold the quote, not the quoted words themselves.
+- The switch keeps its place from one source to the next, so a source opened while it stands on 译文 or 对照 is translated without another word from the reader.
 - If infonium is killed during a translation, the requests in flight are made again when it starts; blocks already kept are not. A document whose item is read again meanwhile is not translated further.
 
 ### The chat
 
+- infonium checks that each quote of an answer stands in the block it names, not that the statement follows from it: one answer about a story added a sum that its cited passages do not hold.
 - Every question about a source sends the source's whole document to the model again: about 9,000 input tokens a question for a Wikipedia article of 165 blocks. A document too long for the model cannot be asked about, just as it cannot be digested.
 - An answer about a source begins to appear after 2.5 to 5 seconds, and after up to 18 seconds when the model reasons first.
 - A question about the library takes 6 to 42 seconds and 4,000 to 53,000 input tokens with the embedding engine running, measured on two libraries of nine and ten sources, and up to 80,000 tokens without it, when the model searches longer. When the endpoint stalls in the middle of an answer, as it did once in ten, it takes longer: 99 seconds that time.
