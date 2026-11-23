@@ -49,17 +49,11 @@ ZONE_MARK = "%"
 
 LOOPBACK = "127.0.0.1"
 EVERY_PORT = 0
-# Where Linux lists the UDP sockets of this machine's network, IPv4 and IPv6: a socket's own
-# address and port in hexadecimal, and its number among the inodes. A socket bound on every
-# interface has the address of all zeros.
-UDP_TABLES = ("/proc/net/udp", "/proc/net/udp6")
-TABLE_ADDRESS = 1
-TABLE_INODE = 9
-HEXADECIMAL = 16
-# And where it lists the TCP sockets over IPv4, which the proxy is reached by: each line holds
-# a socket's own address and its peer's side by side, an address written as the machine holds
-# it in a word, then its port.
+# Where Linux lists the TCP sockets of this machine over IPv4, which the proxy is reached by:
+# each line holds a socket's own address and its peer's side by side, an address written as
+# the machine holds it in a word, then its port, and the socket's number among the inodes.
 TCP_TABLE = "/proc/net/tcp"
+TABLE_INODE = 9
 MACHINE_WORD = "=I"
 # The proxy speaks SOCKS 5, which carries every connection a browser opens, a WebSocket and a
 # secure connection alike, as a plain connection to a named host and port, and through which
@@ -174,18 +168,6 @@ def connection_sockets(own: tuple[str, int], peer: tuple[str, int]) -> set[int]:
         for line in Path(TCP_TABLE).read_text().splitlines()
         if pair in line
     }
-
-
-def wildcard_udp_ports(sockets: set[int]) -> set[int]:
-    # The ports of those of `sockets` that are UDP sockets bound on every interface.
-    ports = set()
-    for table in UDP_TABLES:
-        for line in Path(table).read_text().splitlines()[1:]:
-            fields = line.split()
-            address, port = fields[TABLE_ADDRESS].split(":")
-            if int(fields[TABLE_INODE]) in sockets and int(address, HEXADECIMAL) == 0:
-                ports.add(int(port, HEXADECIMAL))
-    return ports
 
 
 def own_networks() -> list[Network]:

@@ -18,13 +18,12 @@ from threading import Event, Thread
 from typing import Annotated, Literal
 from urllib.parse import urldefrag, urlsplit
 
-import psutil
 from playwright.sync_api import BrowserContext, Page, Request, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as WaitOverdue
 from pydantic import BaseModel, Field, TypeAdapter
 
-from infonium import lineage
+from infonium import confinement, lineage
 from infonium.document import (
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
@@ -33,14 +32,7 @@ from infonium.document import (
     error_status,
     error_text,
 )
-from infonium.egress import (
-    EVERY_PORT,
-    LOOPBACK,
-    PROXY_SCHEME,
-    PublicProxy,
-    Refusal,
-    wildcard_udp_ports,
-)
+from infonium.egress import LOOPBACK, PROXY_SCHEME, PublicProxy, Refusal
 
 RENDERED_FILE = "rendered"
 # A page's scripts can leave half of a UTF-16 pair in its text, which UTF-8 cannot hold. A
@@ -175,11 +167,10 @@ LOCALE_PREFIX = "LC_"
 # container, one socket stands on port 1.
 PREFERENCES_FILE = Path("Default") / "Preferences"
 WEBRTC_POLICY = "disable_non_proxied_udp"
-WEBRTC_PORT = 1
 PROFILE_PREFERENCES = {
     "webrtc": {
         "ip_handling_policy": WEBRTC_POLICY,
-        "udp_port_range": f"{WEBRTC_PORT}-{WEBRTC_PORT}",
+        "udp_port_range": f"{confinement.WEBRTC_PORT}-{confinement.WEBRTC_PORT}",
     }
 }
 # The browser's own state, written before it starts: WebRTC puts no names in place of this
@@ -203,51 +194,6 @@ BROWSER_FLAGS = (
 )
 # The proxy the browser connects through, named with the port it took as it started.
 PROXY_SERVER_FLAG = "--proxy-server={scheme}://{host}:{port}"
-# The browser's sandbox, seen in what runs rather than in what the browser was told: a process
-# of the browser that runs pages runs under more seccomp filters than the browser's own
-# process, its nearest ancestor that carries no type of process, and stands in none of its
-# namespaces. Linux shows the filters of a process in its status, from Linux 5.9 on.
-PROCESS_TYPE = "--type="
-PAGE_PROCESS = "--type=renderer"
-PROCESS_STATUS = "/proc/{pid}/status"
-PROCESS_NAMESPACE = "/proc/{pid}/ns/{kind}"
-SECCOMP_FILTERS = "Seccomp_filters:"
-SANDBOX_NAMESPACES = ("user", "pid", "net")
-# Before the page is asked for, a page of the browser's asks for an address of this machine
-# where the renderer listens, which the listener must not hear of and the proxy must refuse:
-# so every connection goes through the proxy, those to loopback too. And it is shown a STUN
-# server on a UDP port the renderer holds, for which it must gather no candidate and to which
-# it must send nothing. A fetch that a change of this machine's network broke off before it
-# reached the proxy proves nothing either way, and is made again, a few times at most: under
-# 40 changes a second one fetch in seven was broken off so. What a person is told of a browser
-# that fails a proof.
-NOT_SANDBOXED = "the browser {program} runs pages without its sandbox"
-BYPASSES_PROXY = "the browser {program} does not send every connection through infonium's proxy"
-SENDS_WEBRTC = (
-    "the browser {program} sends WebRTC over UDP, which infonium cannot hold to public addresses"
-)
-OPENS_UDP_PORTS = "the browser {program} keeps UDP ports {ports} open on every interface"
-PROOF_LIMIT_MS = 2_000
-LOOPBACK_FETCHES = 5
-LOOPBACK_PROOF = """async ([address, limit]) => {
-  await fetch(address, {mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(limit)})
-    .catch(() => null);
-}"""
-WEBRTC_PROOF = """async ([server, limit]) => {
-  const connection = new RTCPeerConnection({iceServers: [{urls: server}]});
-  let candidates = 0;
-  connection.onicecandidate = (event) => { if (event.candidate) candidates += 1; };
-  connection.createDataChannel("proof");
-  await connection.setLocalDescription(await connection.createOffer());
-  await new Promise((done) => {
-    connection.onicegatheringstatechange = () => {
-      if (connection.iceGatheringState === "complete") done();
-    };
-    if (connection.iceGatheringState === "complete") done();
-    setTimeout(done, limit);
-  });
-  return candidates;
-}"""
 
 
 class RenderedPage(BaseModel):
@@ -267,17 +213,6 @@ class FailedHop(BaseModel):
     # An address the page itself was asked at that the browser could not open, and why.
     url: str
     failure: str
-
-
-class BrowserProcess(BaseModel):
-    # A process of the rendering as Linux shows it: its parent, whether it runs pages or
-    # carries any type of the browser's processes, the seccomp filters it runs under, none
-    # where Linux does not show them, and the namespaces it stands in.
-    parent: int
-    runs_pages: bool
-    typed: bool
-    filters: int | None
-    namespaces: list[str]
 
 
 class RenderingReportKind(StrEnum):
@@ -330,53 +265,6 @@ def page_content(page: Page, url: str) -> str:
         page.wait_for_load_state("networkidle", timeout=QUIET_LIMIT_MS)
     page.wait_for_timeout(SETTLING_MS)
     return wellformed(page.content())
-
-
-def browser_processes(started: list[psutil.Process]) -> dict[int, BrowserProcess]:
-    # The processes this renderer started, by their numbers, of those still running as they
-    # are read.
-    found = {}
-    for process in started:
-        with suppress(*lineage.LOOK_REFUSED):
-            arguments = process.cmdline()
-            status = Path(PROCESS_STATUS.format(pid=process.pid)).read_text().splitlines()
-            filters = [int(line.split()[1]) for line in status if line.startswith(SECCOMP_FILTERS)]
-            found[process.pid] = BrowserProcess(
-                parent=process.ppid(),
-                runs_pages=PAGE_PROCESS in arguments,
-                typed=any(argument.startswith(PROCESS_TYPE) for argument in arguments),
-                filters=filters[0] if filters else None,
-                namespaces=[
-                    os.readlink(PROCESS_NAMESPACE.format(pid=process.pid, kind=kind))
-                    for kind in SANDBOX_NAMESPACES
-                ],
-            )
-    return found
-
-
-def browser_of(
-    process: BrowserProcess, processes: dict[int, BrowserProcess]
-) -> BrowserProcess | None:
-    # The browser's own process for a process it started, where it is among `processes`.
-    ancestor = processes.get(process.parent)
-    while ancestor is not None and ancestor.typed:
-        ancestor = processes.get(ancestor.parent)
-    return ancestor
-
-
-def runs_pages_sandboxed(processes: dict[int, BrowserProcess]) -> bool:
-    # There is a process that runs pages, and every such process runs under more seccomp
-    # filters than the browser's own process and stands in none of its namespaces.
-    pages = [process for process in processes.values() if process.runs_pages]
-    browsers = [browser_of(page, processes) for page in pages]
-    return bool(pages) and all(
-        browser is not None
-        and page.filters is not None
-        and browser.filters is not None
-        and page.filters > browser.filters
-        and set(page.namespaces).isdisjoint(browser.namespaces)
-        for page, browser in zip(pages, browsers, strict=True)
-    )
 
 
 def wait_for_quiet_network(until: float) -> None:
@@ -473,51 +361,6 @@ class PageRendering:
         traceback.print_exception(ending)
         return AbortedRendering(reason=self.ending_reason(ending))
 
-    def proof_failures(self, context: BrowserContext) -> list[str]:
-        # Why the browser cannot be given the page, if it cannot: it runs its pages outside
-        # its sandbox, it opens a connection without the proxy, its WebRTC sends over UDP, or
-        # it holds a UDP port open on every interface but the one WebRTC is given. A proof that
-        # cannot be made is a fault of the renderer's own, and escapes as what it is.
-        with (
-            socket.create_server((LOOPBACK, EVERY_PORT)) as loopback_listener,
-            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stun_listener,
-        ):
-            stun_listener.bind((LOOPBACK, EVERY_PORT))
-            loopback_port = loopback_listener.getsockname()[1]
-            asked = f"http://{LOOPBACK}:{loopback_port}/"
-            server = f"stun:{LOOPBACK}:{stun_listener.getsockname()[1]}"
-            page = context.new_page()
-            refused = False
-            try:
-                for _ in range(LOOPBACK_FETCHES):
-                    page.evaluate(LOOPBACK_PROOF, [asked, PROOF_LIMIT_MS])
-                    self.refusals.extend(self.proxy.refusals())
-                    refused = any(
-                        (refusal.host, refusal.port) == (LOOPBACK, loopback_port)
-                        for refusal in self.refusals
-                    )
-                    if refused or select.select([loopback_listener], [], [], 0)[0]:
-                        break
-                # The proof's WebRTC connection stays open until the page is closed, so that
-                # the UDP ports it holds are seen.
-                candidates = page.evaluate(WEBRTC_PROOF, [server, PROOF_LIMIT_MS])
-                started = lineage.descendants(os.getpid())
-                processes = browser_processes(started)
-                ports = wildcard_udp_ports(lineage.held_sockets(lineage.held_descriptors(started)))
-            finally:
-                page.close()
-            heard = select.select([loopback_listener, stun_listener], [], [], 0)[0]
-        failures = []
-        if not runs_pages_sandboxed(processes):
-            failures.append(NOT_SANDBOXED.format(program=self.program))
-        if loopback_listener in heard or not refused:
-            failures.append(BYPASSES_PROXY.format(program=self.program))
-        if candidates or stun_listener in heard:
-            failures.append(SENDS_WEBRTC.format(program=self.program))
-        if ports - {WEBRTC_PORT}:
-            failures.append(OPENS_UDP_PORTS.format(program=self.program, ports=sorted(ports)))
-        return failures
-
     def attempt(self, context: BrowserContext) -> TakenPage:
         # One attempt at the page, in a page of its own that is closed whatever comes of it.
         self.failed_hops.clear()
@@ -592,7 +435,7 @@ class PageRendering:
                 )
             except PlaywrightError as ending:
                 return self.aborted(ending)
-            failures = self.proof_failures(context)
+            failures = confinement.proof_failures(context, self.proxy, self.program)
             if failures:
                 return AbortedRendering(reason=failures[0])
             try:
