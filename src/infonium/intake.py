@@ -20,7 +20,7 @@ import openai
 from playwright.sync_api import Error as BrowserError
 from pydantic import BaseModel
 
-from infonium import browser, captions, guard, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, lineage, media, pdf, recording, speech, webpage
 from infonium.document import (
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
@@ -307,7 +307,7 @@ def program_name(command: object) -> str:
     # of the work folder, which say nothing to a person. Where Python runs a module, the
     # module is the program.
     match command:
-        case [sys.executable, media.RUN_AS_MODULE, module, *_]:
+        case [sys.executable, lineage.RUN_AS_MODULE, module, *_]:
             return str(module)
         case [first, *_]:
             return PurePosixPath(str(first)).name
