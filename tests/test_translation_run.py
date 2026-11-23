@@ -689,6 +689,62 @@ def test_a_translation_asked_for_many_times_at_once_is_started_once(app: App) ->
     )
 
 
+def refusing_the_run(asked: Asked) -> Reply | Rejection:
+    # The translating model refuses every passage; the survey, and a block translated again
+    # by the model that writes digests, are answered.
+    if asks_passages(asked) and by_translating_model(asked):
+        return REFUSED_REQUEST
+    return translating()(asked)
+
+
+def test_a_translation_whose_every_block_is_kept_one_by_one_is_translated(
+    start_app: Callable[..., App],
+) -> None:
+    first = start_app()
+    first.model.reset(refusing_the_run)
+    blocks = long_paragraphs(3)
+    document = kept(first, blocks)
+    asked_for(first, document.item_id)
+    stopped = settled(first, document.item_id)
+    assert stopped["progress"]["kind"] == "stopped" and stopped["blocks"] == [], (
+        f"a translation whose every passage was refused did not stop with nothing kept: "
+        f"{stopped['progress']}"
+    )
+    for number in range(len(blocks)):
+        again = first.client.post(block_path(document.item_id, number))
+        assert again.status_code == HTTPStatus.OK, f"block {number} again failed: {again.text}"
+        progress = translation(first, document.item_id)["progress"]
+        if number < len(blocks) - 1:
+            assert progress == {
+                "kind": "stopped",
+                "translated": number + 1,
+                "total": len(blocks),
+                "reason": stopped["progress"]["reason"],
+            }, (
+                f"with {len(blocks) - number - 1} blocks still left out, the translation does not "
+                f"answer stopped with the counts of what is translated: {progress}"
+            )
+    done = translation(first, document.item_id)
+    assert done["progress"] == {"kind": "translated"}, (
+        f"a translation whose last block left out was translated by itself is not translated: "
+        f"{done['progress']}"
+    )
+    first.stop()
+    first.model.reset(translating())
+    restarted = start_app()
+    assert translation(restarted, document.item_id) == done, (
+        "a translation whose blocks were each translated by themselves is not translated after "
+        "the service started again"
+    )
+    asked_for(restarted, document.item_id)
+    view = settled(restarted, document.item_id)
+    quiet(restarted)
+    assert view == done and restarted.model.asked() == [], (
+        "PUT on a translation that holds every block did not end translated without asking the "
+        "model"
+    )
+
+
 # R9: a service that stops.
 
 
