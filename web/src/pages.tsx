@@ -24,6 +24,7 @@ const LETTER_SHAPE = 792 / 612;
 // A page is drawn once it comes this close to what its scroller shows, as a part of that
 // height.
 const DRAWING_MARGIN = "150% 0px";
+const LEAST_SHARPNESS = 2;
 const BOX_CLASS = "page-box";
 
 function percent(fraction: number): string {
@@ -156,7 +157,13 @@ function Page({
       drawnPage = page;
       setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
-      const sharpness = (frame.current.clientWidth / natural.width) * devicePixelRatio;
+      // A page is drawn no smaller than at its printed size twice over, however small it is on
+      // show: the colours of a translation are read off the drawing, and drawn smaller, a thin
+      // stroke covers no pixel whole and black print reads grey.
+      const sharpness = Math.max(
+        (frame.current.clientWidth / natural.width) * devicePixelRatio,
+        LEAST_SHARPNESS,
+      );
       const viewport = page.getViewport({ scale: sharpness });
       target.width = viewport.width;
       target.height = viewport.height;
