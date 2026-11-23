@@ -188,8 +188,9 @@ export function SideColumn({
   }
 
   // Where the app is one column, the column is a drawer at the foot of the window, which folds
-  // to its tabs; choosing a tab opens it, and choosing the open tab again folds it.
-  const [folded, setFolded] = useState(false);
+  // to its tabs; choosing a tab opens it, and choosing the open tab again folds it. It starts
+  // folded, so that the first screen of a source shows the source, not the drawer over it.
+  const [folded, setFolded] = useState(true);
   function choose(name: Tab) {
     setFolded(name === tab && !folded);
     setChosen(name);
