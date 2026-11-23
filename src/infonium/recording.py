@@ -1,4 +1,3 @@
-import os
 import re
 import subprocess
 import time
@@ -42,7 +41,7 @@ HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RE
 # ffmpeg and ffprobe take, of infonium's environment, only the PATH they are found on. What
 # else they read colours their log, writes a report of their run, or serves fonts, presets and
 # protocols that these commands do not use.
-PROGRAMS_TAKE = re.compile(lineage.SEARCH_PATH)
+FFMPEG_TAKES = re.compile(lineage.SEARCH_PATH)
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
 # ffprobe reading the first sound of the recording on its standard input; what it is asked
@@ -213,11 +212,10 @@ def started_on(
     # One of the programs at work on a recording, which is handed to it as its standard
     # input. Started in any other way, it would read whatever this process has for a
     # standard input.
-    environment = lineage.program_environment(os.environ, PROGRAMS_TAKE, {})
     with (
         file.open("rb") as recording,
         lineage.started(
-            command, environment, stdin=recording, stdout=stdout, stderr=stderr
+            command, FFMPEG_TAKES, {}, stdin=recording, stdout=stdout, stderr=stderr
         ) as program,
     ):
         yield program

@@ -371,8 +371,7 @@ def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
     # The fetch of a page as the fetcher reports it.
     command = [*FETCHER, url, str(downloads)]
     began = time.monotonic()
-    environment = lineage.program_environment(os.environ, FETCHER_TAKES, {})
-    with lineage.started_in_own_session(command, environment) as fetcher:
+    with lineage.started_in_own_session(command, FETCHER_TAKES, {}) as fetcher:
         while fetcher.poll() is None:
             if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:
                 raise UnreadableSource(OVERDUE_SOURCE.format(source=url))

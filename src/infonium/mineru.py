@@ -1,4 +1,3 @@
-import os
 import re
 import signal
 import subprocess
@@ -315,12 +314,12 @@ def engine_results(to_parse: FileToParse, page_count: int) -> Path:
     how = [ENGINE_BACKEND, HYBRID_BACKEND, ENGINE_METHOD, OWN_CHOICE]
     told = {ENGINE_PATIENCE: str(patience), TEMPORARY_FILES: str(to_parse.folder)}
     log = to_parse.folder / ENGINE_LOG
-    environment = lineage.program_environment(os.environ, ENGINE_TAKES, told)
     with (
         log.open("wb") as logged,
         lineage.started(
             [to_parse.engine, *where, *how],
-            environment,
+            ENGINE_TAKES,
+            told,
             stdin=None,
             stdout=logged,
             stderr=subprocess.STDOUT,

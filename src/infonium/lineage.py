@@ -76,9 +76,7 @@ def program_environment(
     environment: Mapping[str, str], taken: re.Pattern[str], given: Mapping[str, str]
 ) -> dict[str, str]:
     # The environment a program is started with: of infonium's, the variables its rule takes
-    # and none withheld, and what infonium gives the program, in place of any of these. One
-    # program escapes it: loading yt-dlp has Python run file with all of infonium's environment,
-    # on Python's own executable alone, so that no page or file reaches the keys through it.
+    # and none withheld, and what infonium gives the program, in place of any of these.
     return {
         **{
             name: value
@@ -92,14 +90,17 @@ def program_environment(
 @contextmanager
 def started(
     command: Sequence[str | Path],
-    environment: Mapping[str, str],
+    taken: re.Pattern[str],
+    given: Mapping[str, str],
     *,
     stdin: int | IO[bytes] | None,
     stdout: int | IO[bytes] | None,
     stderr: int | IO[bytes] | None,
 ) -> Iterator[subprocess.Popen[bytes]]:
-    # A program started with the environment built for it, and ended when its user is done
-    # with it. Given None for its standard input, it reads this process's own.
+    # A program started with the environment built for it by its rule and what infonium gives
+    # it, and ended when its user is done with it. Given None for its standard input, it reads
+    # this process's own.
+    environment = program_environment(os.environ, taken, given)
     with subprocess.Popen(
         command, stdin=stdin, stdout=stdout, stderr=stderr, env=environment
     ) as program:
@@ -111,12 +112,14 @@ def started(
 
 @contextmanager
 def started_in_own_session(
-    command: Sequence[str], environment: Mapping[str, str]
+    command: Sequence[str], taken: re.Pattern[str], given: Mapping[str, str]
 ) -> Iterator[subprocess.Popen[bytes]]:
-    # A program started with the environment built for it, as the leader of a session of its
-    # own, so that all it starts is ended with it, and with a standard input that this process
-    # holds open and writes nothing to, which closes when this process is gone. A program
-    # still running when its user is done with it is ended with all its session.
+    # A program started with the environment built for it by its rule and what infonium gives
+    # it, as the leader of a session of its own, so that all it starts is ended with it, and
+    # with a standard input that this process holds open and writes nothing to, which closes
+    # when this process is gone. A program still running when its user is done with it is
+    # ended with all its session.
+    environment = program_environment(os.environ, taken, given)
     with subprocess.Popen(
         command, stdin=subprocess.PIPE, start_new_session=True, env=environment
     ) as program:
@@ -258,8 +261,12 @@ class HeldProgram:
     # process's group reaches it, and its standard input is a pipe this process holds open.
     # It is watched without being reaped, so that its number stays its own; each look notes
     # the processes it has started, with their start times, so that each can be found again
-    # wherever it is reparented.
-    def __init__(self, command: list[str], environment: dict[str, str]) -> None:
+    # wherever it is reparented. It is started with the environment built for it by its rule
+    # and what infonium gives it.
+    def __init__(
+        self, command: list[str], taken: re.Pattern[str], given: Mapping[str, str]
+    ) -> None:
+        environment = program_environment(os.environ, taken, given)
         reading, self.holding = os.pipe()
         try:
             self.process = subprocess.Popen(

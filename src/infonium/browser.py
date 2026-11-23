@@ -165,7 +165,7 @@ HOME_VARIABLES = {
 # infonium's, only where programs are found, the language and the time zone; besides these,
 # the home in the work folder and the folder for temporary files. Nothing else of infonium's,
 # its keys least, reaches the processes that run a page.
-RENDERER_TAKES = re.compile(f"{lineage.SEARCH_PATH}|{lineage.LOCALE}")
+RENDERER_TAKES = re.compile("|".join((lineage.SEARCH_PATH, lineage.LOCALE)))
 # The profile's preferences, written before the browser starts: WebRTC sends nothing over
 # UDP, which the proxy cannot carry, and binds no UDP port but 1, which a process without
 # privilege cannot bind: each WebRTC connection a page opened held a UDP port open on every
@@ -261,18 +261,6 @@ class AbortedRendering(Tagged):
 # What the renderer tells the process that started it of how the rendering ended.
 RenderingReport = Annotated[CompletedRendering | AbortedRendering, Field(discriminator="kind")]
 RENDERING_REPORT = TypeAdapter(RenderingReport)
-
-
-def renderer_environment(work: Path, temporary: Path) -> dict[str, str]:
-    home = work / HOME_FOLDER
-    return lineage.program_environment(
-        os.environ,
-        RENDERER_TAKES,
-        {
-            **{name: str(home / part) for name, part in HOME_VARIABLES.items()},
-            TEMPORARY_FOLDER_VARIABLE: str(temporary),
-        },
-    )
 
 
 def wellformed(text: str) -> str:
@@ -572,8 +560,12 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     command = [*RENDERER, str(work), program, repr(deadline)]
     (work / ADDRESS_FILE).write_text(url, encoding=ADDRESS_ENCODING)
     with TemporaryDirectory() as temporary:
-        environment = renderer_environment(work, Path(temporary))
-        with lineage.HeldProgram(command, environment) as renderer:
+        home = work / HOME_FOLDER
+        given = {
+            **{name: str(home / part) for name, part in HOME_VARIABLES.items()},
+            TEMPORARY_FOLDER_VARIABLE: temporary,
+        }
+        with lineage.HeldProgram(command, RENDERER_TAKES, given) as renderer:
             watch_rendering(url, renderer, work, Path(temporary))
     # A renderer that ended before it reported has met a fault of its own.
     if not (work / RENDERING_REPORT_FILE).exists():

@@ -1,25 +1,42 @@
 import ast
+import json
 import re
+import subprocess
+import sys
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from infonium import browser, lineage, media, mineru, recording
 from infonium.settings import Settings
 
-# The ways the standard library starts a program, by module. Outside lineage no module of
-# infonium names one, but in a type annotation, which starts nothing.
+# The ways the standard library starts a program, by the module that offers them, and the
+# methods of an event loop that do, whatever they are called on. Outside lineage no module of
+# infonium calls one. The check reads calls by the names a module imports, so it does not see
+# a program started through a starter kept in a variable or handed to another function
+# (functools.partial, a callback), reached by getattr or importlib, or started by a library
+# (yt-dlp, Playwright, Python's platform module), nor the processes multiprocessing starts.
 PROGRAM_STARTERS = {
     "subprocess": re.compile(r"Popen|run|call|check_call|check_output|getoutput|getstatusoutput"),
     "os": re.compile(r"exec\w*|spawn\w*|posix_spawnp?|system|popen"),
     "asyncio": re.compile(r"create_subprocess_\w+"),
+    "asyncio.subprocess": re.compile(r"create_subprocess_\w+"),
     "pty": re.compile(r"spawn"),
 }
+LOOP_STARTERS = re.compile(r"subprocess_exec|subprocess_shell")
 EVERY_NAME = "*"
-# The fields in which Python's syntax tree holds the annotations of names and of what
-# functions return.
-ANNOTATION_FIELDS = frozenset({"annotation", "returns"})
+# A program the starters' test starts: it writes the environment it was started with, whole,
+# to the file it is given.
+WRITES_ITS_ENVIRONMENT = (
+    "import json, os, sys; json.dump(dict(os.environ), open(sys.argv[1] + '.part', 'w')); "
+    "os.replace(sys.argv[1] + '.part', sys.argv[1])"
+)
+STARTER_LIMIT_SECONDS = 30.0
+STARTER_WATCH_SECONDS = 0.01
 
 # Each program infonium starts, by the rule of what it takes of infonium's environment; and of
 # the variables a person may set, those each program takes and some it does not.
@@ -27,7 +44,7 @@ RULES = {
     "the renderer": browser.RENDERER_TAKES,
     "the media fetcher": media.FETCHER_TAKES,
     "MinerU": mineru.ENGINE_TAKES,
-    "FFmpeg": recording.PROGRAMS_TAKE,
+    "FFmpeg": recording.FFMPEG_TAKES,
 }
 LOCALE = ("LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES", "TZ")
 PROXIES = ("HTTP_PROXY", "https_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
@@ -151,42 +168,47 @@ def test_no_key_and_no_setting_of_infoniums_reaches_any_program(
 
 
 class ProgramStarts(ast.NodeVisitor):
-    # The places where a module names a way to start a program, by line and as module.name,
-    # leaving out its type annotations.
+    # The places where a module calls a way to start a program, by line and by the dotted name
+    # of what it calls, as the module's imports name it.
     def __init__(self) -> None:
-        self.modules: dict[str, str] = {}
+        self.bound: dict[str, str] = {}
         self.found: list[tuple[int, str]] = []
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            module = alias.name if alias.asname else alias.name.partition(".")[0]
-            if module in PROGRAM_STARTERS:
-                self.modules[alias.asname or module] = module
+            top = alias.name.partition(".")[0]
+            self.bound[alias.asname or top] = alias.name if alias.asname else top
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        starters = PROGRAM_STARTERS.get(node.module or "")
         for alias in node.names:
-            if starters and (alias.name == EVERY_NAME or starters.fullmatch(alias.name)):
-                self.found.append((node.lineno, f"{node.module}.{alias.name}"))
+            if alias.name == EVERY_NAME and node.module in PROGRAM_STARTERS:
+                self.found.append((node.lineno, f"{node.module}.{EVERY_NAME}"))
+            self.bound[alias.asname or alias.name] = f"{node.module}.{alias.name}"
 
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        module = self.modules.get(node.value.id) if isinstance(node.value, ast.Name) else None
-        if module is not None and PROGRAM_STARTERS[module].fullmatch(node.attr):
-            self.found.append((node.lineno, f"{module}.{node.attr}"))
+    def visit_Call(self, node: ast.Call) -> None:
+        called = self.dotted(node.func) or ""
+        module, _, name = called.rpartition(".")
+        starters = PROGRAM_STARTERS.get(module)
+        on_a_loop = isinstance(node.func, ast.Attribute) and LOOP_STARTERS.fullmatch(node.func.attr)
+        if (starters and starters.fullmatch(name)) or on_a_loop:
+            self.found.append((node.lineno, called or ast.unparse(node.func)))
         self.generic_visit(node)
 
-    def generic_visit(self, node: ast.AST) -> None:
-        for field, value in ast.iter_fields(node):
-            if field not in ANNOTATION_FIELDS:
-                for child in value if isinstance(value, list) else [value]:
-                    if isinstance(child, ast.AST):
-                        self.visit(child)
+    def dotted(self, node: ast.expr) -> str | None:
+        match node:
+            case ast.Name(id=name):
+                return self.bound.get(name)
+            case ast.Attribute(value=value, attr=attr):
+                base = self.dotted(value)
+                return f"{base}.{attr}" if base else None
+            case _:
+                return None
 
 
 def program_starts(module: Path) -> list[str]:
     starts = ProgramStarts()
     starts.visit(ast.parse(module.read_text("utf-8")))
-    return [f"{module.name}:{line} names {name}" for line, name in starts.found]
+    return [f"{module.name}:{line} calls {name}" for line, name in starts.found]
 
 
 def test_only_lineage_starts_a_program() -> None:
@@ -203,6 +225,53 @@ def test_only_lineage_starts_a_program() -> None:
     ]
     assert not elsewhere, (
         f"{elsewhere}: a program is started outside lineage; start it with lineage.started, "
-        "lineage.started_in_own_session or lineage.HeldProgram, given the environment that "
-        "lineage.program_environment builds for it"
+        "lineage.started_in_own_session or lineage.HeldProgram, given its rule"
     )
+
+
+def environments_received(
+    written: Path, taken: re.Pattern[str], given: dict[str, str]
+) -> Iterator[tuple[str, dict[str, str]]]:
+    # The environment that each starter of lineage gives a program, as the program wrote it.
+    command = [sys.executable, "-c", WRITES_ITS_ENVIRONMENT]
+    with lineage.started(
+        [*command, str(written / "started")],
+        taken,
+        given,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=None,
+    ) as program:
+        program.wait(timeout=STARTER_LIMIT_SECONDS)
+    yield "lineage.started", json.loads((written / "started").read_text())
+    session_command = [*command, str(written / "session")]
+    with lineage.started_in_own_session(session_command, taken, given) as program:
+        program.wait(timeout=STARTER_LIMIT_SECONDS)
+    yield "lineage.started_in_own_session", json.loads((written / "session").read_text())
+    with lineage.HeldProgram([*command, str(written / "held")], taken, given) as held:
+        began = time.monotonic()
+        while not held.has_ended():
+            if time.monotonic() - began > STARTER_LIMIT_SECONDS:
+                pytest.fail("a program started by lineage.HeldProgram did not end")
+            time.sleep(STARTER_WATCH_SECONDS)
+    yield "lineage.HeldProgram", json.loads((written / "held").read_text())
+
+
+def test_a_started_program_is_given_only_the_environment_built_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "standin-key-7f3a91"
+    monkeypatch.setenv("OPENAI_API_KEY", key)
+    monkeypatch.setenv("ZZ_UNTAKEN", key)
+    monkeypatch.setenv("ZZ_TAKEN", "taken")
+    taken = re.compile("PATH|ZZ_TAKEN|OPENAI_API_KEY")
+    given_by_infonium = {"ZZ_GIVEN": "given"}
+    received = dict(environments_received(tmp_path, taken, given_by_infonium))
+    assert len(received) == 3, f"not every starter started its program: {sorted(received)}"
+    for starter, environment in received.items():
+        leaked = sorted(name for name, value in environment.items() if key in value)
+        assert not leaked, f"{starter} gave its program {leaked} of infonium's environment"
+        assert environment.get("ZZ_TAKEN") == "taken", f"{starter} left out what its rule takes"
+        assert environment.get("ZZ_GIVEN") == "given", (
+            f"{starter} left out what infonium gives its program"
+        )
