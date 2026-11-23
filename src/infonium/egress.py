@@ -77,9 +77,9 @@ IPV6_BYTES = 16
 # some names carry, or an IPv6 address, which it sends as a name too, in brackets or bare.
 HOST_NAME = re.compile(r"\[?(?P<host>[A-Za-z0-9._:-]+)\]?")
 # How long the browser is given for the whole handshake in which it says where it wants to
-# go, and a host to take a connection; how many connections the proxy carries at once, which
-# is more than Chrome opens through one proxy (32); and how much of a connection is passed on
-# at a time.
+# go, and a host to take a connection at any of its addresses; how many connections the proxy
+# carries at once, which is more than Chrome opens through one proxy (32); and how much of a
+# connection is passed on at a time.
 HANDSHAKE_LIMIT_SECONDS = 10.0
 CONNECTION_LIMIT_SECONDS = 15.0
 CONNECTIONS_AT_ONCE = 64
@@ -186,19 +186,29 @@ def own_networks() -> list[Network]:
 
 
 def public_connection(host: str, port: int) -> socket.socket:
-    # A connection to a host, made to the address that was judged: the name is looked up once,
-    # and the networks of this machine are read at each connection, since they change.
+    # A connection to a host, made to an address that was judged: the name is looked up once,
+    # and the networks of this machine are read at each connection, since they change. The
+    # addresses are tried in the order the lookup gives them, each with an equal share of the
+    # time left, as a browser goes on to the next address of a host it cannot reach at one.
     found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
     networks = own_networks()
     for *_, place in found:
         if not is_public(ip_address(place[0]), networks):
             raise NotPublicAddress(f"{place[0]} is not a public address")
-    family, kind, protocol, _, place = found[0]
-    connection = socket.socket(family, kind, protocol)
-    connection.settimeout(CONNECTION_LIMIT_SECONDS)
-    connection.connect(place)
-    connection.settimeout(None)
-    return connection
+    deadline = time.monotonic() + CONNECTION_LIMIT_SECONDS
+    failures: list[OSError] = []
+    for tried, (family, kind, protocol, _, place) in enumerate(found):
+        connection = socket.socket(family, kind, protocol)
+        connection.settimeout((deadline - time.monotonic()) / (len(found) - tried))
+        try:
+            connection.connect(place)
+        except OSError as failure:
+            connection.close()
+            failures.append(failure)
+            continue
+        connection.settimeout(None)
+        return connection
+    raise failures[-1]
 
 
 def socks_reply(reply: SocksReply) -> bytes:
