@@ -13,7 +13,7 @@ from typing import ClassVar
 from urllib.parse import urljoin, urlsplit
 
 import pytest
-from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import HealthCheck, assume, example, given, settings
 from hypothesis import strategies as st
 from lxml import html
 from playwright.sync_api import Browser, sync_playwright
@@ -57,6 +57,8 @@ INLINE_TAGS = frozenset(
         "infonium-run",
     }
 )  # fmt: skip
+TABLE_CELL_TAGS = ("td", "th", "caption")
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 HEADING_TAGS = frozenset({f"h{level}" for level in range(1, 7)})
 # What a reader would lose if the content of a placed element were replaced: pictures,
 # controls, formulas, image maps and stylesheets.
@@ -552,7 +554,7 @@ def test_every_marked_cell_holds_its_cell_of_the_tables_text(app: App, page: str
         assert row < len(cells) and cell < len(cells[row]), (
             f"a cell is marked {number},{row},{cell}, which the table's text does not have"
         )
-        assert element.tag in ("td", "th", "caption"), f"a {element.tag!r} is marked as a cell"
+        assert element.tag in TABLE_CELL_TAGS, f"a {element.tag!r} is marked as a cell"
         assert same_text(shown_text(element)) == same_text(cells[row][cell]), (
             f"the cell marked {number},{row},{cell} holds other text than that cell of the "
             f"table: {shown_text(element)!r} in place of {cells[row][cell]!r}"
@@ -729,9 +731,60 @@ def test_no_script_address_is_left_among_the_addresses_of_a_picture(app: App, pi
     assert not found, f"the served page still holds what could run: {found}"
 
 
+def untrue_marks(page: ServedPage, element: html.HtmlElement) -> list[str]:
+    # The marks an element carries that infonium would not give it: a block's number on an
+    # element that does not hold exactly that block's text, which no table or figure is, and
+    # a cell's place on an element that is not that cell of its table.
+    untrue = []
+    number = element.get(page.block_attribute)
+    if number is not None:
+        block = (
+            page.blocks[int(number)]
+            if number.isdigit() and int(number) < len(page.blocks)
+            else None
+        )
+        if (
+            block is None
+            or isinstance(block, Table | Figure)
+            or same_text(shown_text(element)) != same_text(block.text)
+        ):
+            untrue.append(f"{page.block_attribute}={number!r}")
+    place = element.get(page.cell_attribute)
+    if place is not None:
+        parts = place.split(",")
+        cell_text = None
+        if len(parts) == 3 and all(part.isdigit() for part in parts):
+            table_number, row, cell = (int(part) for part in parts)
+            table = page.blocks[table_number] if table_number < len(page.blocks) else None
+            cells = table_cells(table) if isinstance(table, Table) else []
+            if row < len(cells) and cell < len(cells[row]):
+                cell_text = cells[row][cell]
+        if (
+            cell_text is None
+            or element.tag not in TABLE_CELL_TAGS
+            or same_text(shown_text(element)) != same_text(cell_text)
+        ):
+            untrue.append(f"{page.cell_attribute}={place!r}")
+    return untrue
+
+
+FORGED_MARK_ON_A_BLOCK = (FIXTURES / "page" / "forged_mark_on_a_block.html").read_text("utf-8")
+# Every forgery a made-up page may hold, at once: the property draws each of them seldom.
+EVERY_FORGERY = (
+    article_page(f"<p>River {FORGED_RUN} valley.</p>{''.join(FORGED_PARTS)}")
+    .replace("<html>", "<html data-infonium-page='forged'>", 1)
+    .replace("<body>", "<body DATA-INFONIUM-PAGE=''>", 1)
+)
+
+
 @EXAMPLES
 @given(page=made_up_pages())
+@example(page=FORGED_MARK_ON_A_BLOCK)
+@example(page=EVERY_FORGERY)
 def test_nothing_the_page_wrote_in_infoniums_names_is_left(app: App, page: str) -> None:
+    # An element the page marked itself may hold a block's whole text, and then carries
+    # infonium's own mark of that block; any mark it carries must be such a true one, so that
+    # what the page wrote, a mark of another block, is not what is served.
     served_page = read_made_up(app, page)
     own = (served_page.block_attribute, served_page.cell_attribute)
     for tag, attributes in tag_views(served_page.markup):
@@ -746,19 +799,25 @@ def test_nothing_the_page_wrote_in_infoniums_names_is_left(app: App, page: str) 
             and not (names_item and name == served_page.page_attribute)
         ]
         assert not foreign, f"the page's own attributes {foreign} in infonium's names are left"
-        assert "forged" not in named.get("class", "").split() or not set(own) & set(named), (
-            f"a mark the page wrote itself on a {tag} element is left: {named}"
-        )
         assert not tag.startswith(INFONIUM_PREFIX) or "forged" not in named.get("class", ""), (
             f"an element the page wrote in infonium's names is left: {tag} {named}"
         )
-        assert not tag.startswith(INFONIUM_PREFIX) or served_page.block_attribute in named, (
-            f"an {tag} element is not a block's mark: {named}"
+    for element in served_page.root().iter():
+        forged = "forged" in element.get("class", "").split()
+        named_ours = isinstance(element.tag, str) and element.tag.startswith(INFONIUM_PREFIX)
+        if forged or named_ours:
+            untrue = untrue_marks(served_page, element)
+            assert not untrue, (
+                f"a mark the page wrote itself on a {element.tag!r} element is left: {untrue}"
+            )
+        assert not named_ours or element.get(served_page.block_attribute) is not None, (
+            f"an {element.tag!r} element is not a block's mark: {dict(element.attrib)}"
         )
 
 
 @EXAMPLES
 @given(page=made_up_pages())
+@example(page=EVERY_FORGERY)
 def test_the_served_page_names_its_item_on_its_root_and_nowhere_else(app: App, page: str) -> None:
     served_page = read_made_up(app, page)
     root = served_page.root()
