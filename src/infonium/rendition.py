@@ -81,7 +81,9 @@ MOST_PROPORTION = 5.0
 ALIKE_SOURCES = 0.8
 NO_WORDS = "the reply has no words for passage {number}"
 REMNANT_LEFT = "the reply to passage {number} holds what is left of a tag: {remnant!r}"
-LOST_FORMULA = "the reply to passage {number} does not hold the formula {formula!r} in its tags"
+LOST_FORMULA = (
+    "the reply to passage {number} does not hold the formula {formula!r} alone in its tags"
+)
 WRONG_BLOCK = "the reply's answers to block {block} are not those of its passages"
 OUT_OF_PROPORTION = (
     "the answer to passage {number} is {share:.2f} times as long, against its source, as the "
@@ -304,20 +306,46 @@ def kept_mark(mark: Mark, start: int, end: int) -> Mark:
     return mark.model_copy(update={"start": start, "end": end})
 
 
-def tag_ranges(reply: str, keys: list[str]) -> tuple[str, dict[str, tuple[int, int]]]:
-    # The reply without the passage's own tags that pair, and without its spaces at either
-    # end, and the range each such pair encloses in what is left, by its key. Only a key's
-    # tag that stands once opening and then once closing is a pair; anything else in
-    # brackets stays in the text, as a title such as 《F1》 does.
+def tag_pairs(reply: str, keys: list[str]) -> dict[str, list[re.Match[str]]]:
+    # The passage's own tags in a reply that pair, by their key. Only a key's tag that stands
+    # once opening and then once closing is a pair; anything else in brackets stays in the
+    # text, as a title such as 《F1》 does.
     found: dict[str, list[re.Match[str]]] = defaultdict(list)
     for tag in TAG.finditer(reply):
         if tag_key(tag) in keys:
             found[tag_key(tag)].append(tag)
-    pairs = {
+    return {
         key: tags
         for key, tags in found.items()
         if [tag.group(1) == CLOSING_SLASH for tag in tags] == OPENED_THEN_CLOSED
     }
+
+
+def with_formulas(wording: Wording, number: int, reply: str) -> str:
+    # The reply with each formula's own text between the formula's tags, whatever the reply
+    # held there: a formula is not translated, and a model alters its LaTeX in copying it,
+    # as in writing its backslashes. A formula whose tags the reply lost, or between whose
+    # tags it holds a letter the formula does not hold, as words of the sentence put inside
+    # them, makes the reply of no use.
+    pairs = tag_pairs(reply, keys_of(wording))
+    formulas = [
+        (pairs.get(key, []), wording.text[mark.start : mark.end])
+        for key, mark in zip(keys_of(wording), wording.marks, strict=True)
+        if isinstance(mark, FormulaMark)
+    ]
+    for tags, formula in formulas:
+        held = "" if not tags else reply[tags[0].end() : tags[1].start()]
+        if not tags or set(filter(str.isalpha, held)) - set(formula):
+            raise UnusableReply(LOST_FORMULA.format(number=number, formula=formula))
+    for tags, formula in sorted(formulas, key=lambda pair: -pair[0][0].start()):
+        reply = f"{reply[: tags[0].end()]}{formula}{reply[tags[1].start() :]}"
+    return reply
+
+
+def tag_ranges(reply: str, keys: list[str]) -> tuple[str, dict[str, tuple[int, int]]]:
+    # The reply without the passage's own tags that pair, and without its spaces at either
+    # end, and the range each such pair encloses in what is left, by its key.
+    pairs = tag_pairs(reply, keys)
     taken = sorted((tag for tags in pairs.values() for tag in tags), key=lambda tag: tag.start())
     pieces: list[str] = []
     ends: dict[str, list[int]] = defaultdict(list)
@@ -353,11 +381,11 @@ def remnant(text: str, source: str, keys: list[str]) -> str:
 
 def rendered(wording: Wording, number: int, reply: str) -> Rendered:
     # The reply to one passage, without its tags, and with each mark of the source whose
-    # tags it keeps, in the order they stand in it. A mark whose tags the reply lost or
-    # garbled is left out; a reply that holds what is left of a tag, or does not hold a
-    # formula inside its own tags with exactly its text, is of no use.
+    # tags it keeps, in the order they stand in it, each formula's own text between its
+    # tags. A mark whose tags the reply lost or garbled is left out; a reply that holds what
+    # is left of a tag, or lost a formula's tags, is of no use.
     keys = keys_of(wording)
-    text, ranges = tag_ranges(reply, keys)
+    text, ranges = tag_ranges(with_formulas(wording, number, reply), keys)
     if not text:
         raise UnusableReply(NO_WORDS.format(number=number))
     left = remnant(text, wording.text, keys)
@@ -366,9 +394,6 @@ def rendered(wording: Wording, number: int, reply: str) -> Rendered:
     marks: list[Mark] = []
     for key, mark in zip(keys, wording.marks, strict=True):
         start, end = trimmed(*ranges.get(key, (0, 0)), text)
-        formula = wording.text[mark.start : mark.end]
-        if isinstance(mark, FormulaMark) and text[start:end] != formula:
-            raise UnusableReply(LOST_FORMULA.format(number=number, formula=formula))
         if start < end:
             marks.append(kept_mark(mark, start, end))
     return Rendered(text=text, marks=sorted(marks, key=lambda mark: (mark.start, mark.end)))

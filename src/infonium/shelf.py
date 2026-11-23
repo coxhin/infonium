@@ -8,7 +8,7 @@ from sqlalchemy.dialects import sqlite
 from infonium.document import BlockNumber, Tagged
 from infonium.glossary import Term
 from infonium.library import OwnerTransaction, document_table, metadata, replacing_insert
-from infonium.translation import ProgressKind, Stopped, Translated, TranslatedBlock, Unneeded
+from infonium.translation import ProgressKind, Translated, TranslatedBlock, Unneeded
 
 # The translations a library keeps: for each document and language, a record of how the
 # translation stands, and the blocks it has translated. Stored with every body, as the
@@ -52,9 +52,15 @@ class Running(Tagged):
     kind: Literal[ProgressKind.TRANSLATING] = ProgressKind.TRANSLATING
 
 
-# How a translation stands, as it is kept. A running translation is shown with how far it
-# has come; any other is shown as it is kept.
-Course = Annotated[Running | Stopped | Translated | Unneeded, Field(discriminator="kind")]
+class Halted(Tagged):
+    # The translation stopped before its end, for this reason.
+    kind: Literal[ProgressKind.STOPPED] = ProgressKind.STOPPED
+    reason: str
+
+
+# How a translation stands, as it is kept. A running or stopped translation is shown with
+# how far it has come; any other is shown as it is kept.
+Course = Annotated[Running | Halted | Translated | Unneeded, Field(discriminator="kind")]
 
 
 class SurveyKind(StrEnum):

@@ -71,9 +71,12 @@ class Translating(Tagged):
 
 
 class Stopped(Tagged):
-    # The translation stopped before its end, for this reason. What was translated is kept,
-    # and a translation that is asked for again goes on from there.
+    # The translation stopped before its end: of the blocks that are to be translated, so
+    # many are, and the reason is why it stopped. What was translated is kept, and a
+    # translation that is asked for again goes on from there.
     kind: Literal[ProgressKind.STOPPED] = ProgressKind.STOPPED
+    translated: Annotated[int, Field(ge=0)]
+    total: Annotated[int, Field(ge=0)]
     reason: str
 
 

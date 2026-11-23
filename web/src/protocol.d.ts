@@ -664,6 +664,10 @@ export interface components {
             kind: "stopped";
             /** Reason */
             reason: string;
+            /** Total */
+            total: number;
+            /** Translated */
+            translated: number;
         };
         /**
          * Style

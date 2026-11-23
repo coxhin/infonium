@@ -14,6 +14,7 @@ from infonium.library import Item, Library, LibraryStore, NotInLibrary, Read
 from infonium.reasons import failure_reason
 from infonium.shelf import (
     Course,
+    Halted,
     Overruled,
     Running,
     Surveyed,
@@ -46,9 +47,6 @@ ENDED_CHECK_SECONDS = 1.0
 NOT_TRANSLATED = "block {block_number} of item {item_id} is not translated"
 NOT_ASKED = "no translation of item {item_id} is asked for, so none of its blocks is translated"
 # Why a translation stopped with blocks missing, for a reader.
-MISSING = "{missing} of {total} {blocks} could not be translated; the last failure: {reason}"
-BLOCK = "block"
-BLOCKS = "blocks"
 READ_AGAIN = "the item was read again into another document, which is translated apart"
 
 logger = logging.getLogger(__name__)
@@ -70,9 +68,12 @@ class TranslationStanding(BaseModel):
 
 
 def progress_of(record: TranslationRecord, document: Document, kept: int) -> Progress:
+    total = len(translated_numbers(document))
     match record.course:
         case Running():
-            return Translating(translated=kept, total=len(translated_numbers(document)))
+            return Translating(translated=kept, total=total)
+        case Halted(reason=reason):
+            return Stopped(translated=kept, total=total, reason=reason)
         case course:
             return course
 
@@ -99,7 +100,7 @@ def restarted(
     match records:
         case []:
             return [first]
-        case [TranslationRecord(course=Stopped()) as record]:
+        case [TranslationRecord(course=Halted()) as record]:
             return [record.model_copy(update={"run": record.run + 1, "course": Running()})]
         case _:
             return []
@@ -296,7 +297,7 @@ class Translator:
             current = is_current(records, run)
             holds = holds_document(library.item(item_id), document_id)
             for record in records if current and not holds else []:
-                shelf.keep_record(record.model_copy(update={"course": Stopped(reason=READ_AGAIN)}))
+                shelf.keep_record(record.model_copy(update={"course": Halted(reason=READ_AGAIN)}))
             for record in records if current and holds else []:
                 shelf.keep_record(with_tokens(record, input_tokens, output_tokens))
                 for block in done:
@@ -336,7 +337,7 @@ class Translator:
             holds = holds_document(Library(transaction).item(item_id), document_id)
         if not holds:
             ended.set()
-            self.course_changed(owner, document_id, run, Stopped(reason=READ_AGAIN))
+            self.course_changed(owner, document_id, run, Halted(reason=READ_AGAIN))
         return holds
 
     def translate_in_background(
@@ -405,14 +406,8 @@ class Translator:
             case [], _:
                 self.course_changed(owner, document_id, run, Translated())
             case _, [*_, last]:
-                total = len(translated_numbers(document))
-                reason = MISSING.format(
-                    missing=len(missing),
-                    total=total,
-                    blocks=BLOCK if total == 1 else BLOCKS,
-                    reason=failure_reason(last),
-                )
-                self.course_changed(owner, document_id, run, Stopped(reason=reason))
+                stopped = Halted(reason=failure_reason(last))
+                self.course_changed(owner, document_id, run, stopped)
             case _:
                 logger.error("document %s ended its run %d with blocks missing", document_id, run)
 
@@ -427,7 +422,7 @@ class Translator:
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             logger.error("translating document %s failed", document_id, exc_info=error)
-            self.course_changed(owner, document_id, run, Stopped(reason=failure_reason(error)))
+            self.course_changed(owner, document_id, run, Halted(reason=failure_reason(error)))
 
     def resume(self) -> None:
         # Translations that were under way when the service stopped go on from what they

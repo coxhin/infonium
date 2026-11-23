@@ -1179,10 +1179,22 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "translated": {
+            "minimum": 0.0,
+            "title": "Translated",
+            "type": "integer"
           }
         },
         "required": [
           "kind",
+          "translated",
+          "total",
           "reason"
         ],
         "title": "Stopped",
