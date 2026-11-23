@@ -10,8 +10,8 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from infonium import api
-from infonium.intake import failure_reason
 from infonium.language_model import WireApi, endable_openai_model
+from infonium.reasons import failure_reason
 from tests.conversation import (
     answered_turn,
     asking,
@@ -393,7 +393,7 @@ def test_a_failure_of_the_model_ends_the_lines_unanswered_and_keeps_nothing(
     else:
         expected = failure_reason(interface_failure(wire_api, failure))
         assert reason == expected, (
-            f"Unanswered is not worded as intake.failure_reason words the failure: {reason!r}"
+            f"Unanswered is not worded as failure_reason words the failure: {reason!r}"
         )
     assert item_turns(app, item_id) == kept, f"a reply that is {failure} left something kept"
     app.model.reset(says(["Kept after."]))

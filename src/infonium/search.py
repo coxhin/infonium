@@ -12,7 +12,6 @@ from pydantic import AfterValidator, BaseModel, Field, validate_call
 
 from infonium.document import WORD_GAP, Block, BlockKind, BlockNumber, Document
 from infonium.embedding import ENGINE_AWAY, Embedder, EmbeddingEngine, Vector
-from infonium.intake import failure_reason
 from infonium.library import (
     LibraryStore,
     OwnerTransaction,
@@ -22,6 +21,7 @@ from infonium.library import (
     kept_title,
     metadata,
 )
+from infonium.reasons import failure_reason
 from infonium.terms import (
     TOKENIZER,
     all_words_expression,

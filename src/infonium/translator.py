@@ -9,9 +9,9 @@ from pydantic import BaseModel
 
 from infonium.asking import Work, requests_of, translate_blocks
 from infonium.document import BlockNumber, Document
-from infonium.intake import failure_reason
 from infonium.language_model import LanguageModel, StructuredCompletion
 from infonium.library import Item, Library, LibraryStore, NotInLibrary, Read
+from infonium.reasons import failure_reason
 from infonium.shelf import (
     Course,
     Overruled,
