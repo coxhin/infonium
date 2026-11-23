@@ -468,11 +468,6 @@ def test_any_query_is_answered_and_leaves_the_index_at_work(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a query holding the NUL character fails with SQLite's 'unterminated string' once "
-    "the library holds a block",
-)
 @pytest.mark.parametrize("query", [f"afternoon{NUL}", f"{NUL}afternoon", f"square afternoon{NUL}"])
 def test_a_query_holding_the_nul_character_fails_nothing(
     library_alone: tuple[LibraryStore, BlockIndex], query: str
@@ -569,10 +564,18 @@ def test_blocks_read_while_the_engine_is_away_get_their_vectors_once_it_is_back(
 
 
 def search_failure(index: BlockIndex, query: str, status: HTTPStatus) -> openai.APIStatusError:
+    # A search after the index has failed raises the index's own failure, which names no
+    # engine; the engine's answer is its cause.
     try:
         found = index.search(LOCAL_OWNER, query, 5)
-    except openai.APIStatusError as failure:
-        return failure
+    except search.IndexFailed as failure:
+        cause = failure.__cause__
+        if not isinstance(cause, openai.APIStatusError):
+            pytest.fail(
+                f"after the engine answered {status.value}, the index's failure has another "
+                f"cause than the engine's answer: {cause!r}"
+            )
+        return cause
     pytest.fail(
         f"after the engine answered {status.value}, a search answered as if the library held "
         f"no more than {shown(found)}"
