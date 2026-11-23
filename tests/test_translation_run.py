@@ -1,4 +1,3 @@
-import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -79,7 +78,6 @@ TERMS_USED = [("Quillmoor", "Quillmoor"), ("Phobos", "Phoboksen")]
 TERM_TRANSLATION = "奎尔穆尔港"
 # What the model that writes digests puts before a block it translates again.
 AGAIN = "再"
-NUMBER = re.compile(r"\d+")
 # How long the run before a POST is given to go on, were it not ended.
 QUIET_SECONDS_SHORT = 0.5
 
@@ -450,7 +448,9 @@ def test_post_on_an_unneeded_translation_translates_without_asking_again(app: Ap
 
 def test_get_starts_nothing(app: App) -> None:
     app.model.reset(translating())
-    document = kept(app, [Paragraph(text="harbour ledger", marks=[])])
+    document = kept(
+        app, [Code(text="print('harbour')"), Paragraph(text="harbour ledger", marks=[])]
+    )
     view = translation(app, document.item_id)
     assert view == {
         "document": document.document_id,
@@ -459,6 +459,7 @@ def test_get_starts_nothing(app: App) -> None:
         "input_tokens": 0,
         "output_tokens": 0,
         "blocks": [],
+        "blocks_to_translate": [1],
     }, f"a translation nobody asked for is not Unasked and empty: {view}"
     quiet(app)
     assert app.model.asked() == [], "GET of a translation sent a request to the model"
@@ -602,11 +603,14 @@ def test_a_failed_passage_leaves_its_blocks_and_put_goes_on_with_them(app: App) 
         "a passage that failed did not leave only its own blocks untranslated: the run did not "
         "go on with the rest"
     )
-    reason = stopped["progress"]["reason"]
-    counts = {int(number) for number in NUMBER.findall(reason)}
-    assert {missing, len(blocks)} <= counts and refused_reason(app) in reason, (
-        f"the reason does not say that {missing} of {len(blocks)} blocks could not be translated "
-        f"and why the last failed, as failure_reason words it: {reason!r}"
+    progress = stopped["progress"]
+    assert (progress["translated"], progress["total"]) == (len(blocks) - missing, len(blocks)), (
+        f"Stopped does not count the {len(blocks) - missing} of {len(blocks)} blocks kept: "
+        f"{progress}"
+    )
+    assert progress["reason"] == refused_reason(app), (
+        "the reason of Stopped is not the last failure alone, as failure_reason words it: "
+        f"{progress['reason']!r}"
     )
     app.model.reset(translating())
     asked_for(app, document.item_id)
@@ -682,6 +686,62 @@ def test_a_translation_asked_for_many_times_at_once_is_started_once(app: App) ->
     assert set(sent.values()) == {1} and len(surveys(app)) == 1, (
         f"a translation asked for at once was started more than once: passages sent "
         f"{max(sent.values())} times, {len(surveys(app))} surveys"
+    )
+
+
+def refusing_the_run(asked: Asked) -> Reply | Rejection:
+    # The translating model refuses every passage; the survey, and a block translated again
+    # by the model that writes digests, are answered.
+    if asks_passages(asked) and by_translating_model(asked):
+        return REFUSED_REQUEST
+    return translating()(asked)
+
+
+def test_a_translation_whose_every_block_is_kept_one_by_one_is_translated(
+    start_app: Callable[..., App],
+) -> None:
+    first = start_app()
+    first.model.reset(refusing_the_run)
+    blocks = long_paragraphs(3)
+    document = kept(first, blocks)
+    asked_for(first, document.item_id)
+    stopped = settled(first, document.item_id)
+    assert stopped["progress"]["kind"] == "stopped" and stopped["blocks"] == [], (
+        f"a translation whose every passage was refused did not stop with nothing kept: "
+        f"{stopped['progress']}"
+    )
+    for number in range(len(blocks)):
+        again = first.client.post(block_path(document.item_id, number))
+        assert again.status_code == HTTPStatus.OK, f"block {number} again failed: {again.text}"
+        progress = translation(first, document.item_id)["progress"]
+        if number < len(blocks) - 1:
+            assert progress == {
+                "kind": "stopped",
+                "translated": number + 1,
+                "total": len(blocks),
+                "reason": stopped["progress"]["reason"],
+            }, (
+                f"with {len(blocks) - number - 1} blocks still left out, the translation does not "
+                f"answer stopped with the counts of what is translated: {progress}"
+            )
+    done = translation(first, document.item_id)
+    assert done["progress"] == {"kind": "translated"}, (
+        f"a translation whose last block left out was translated by itself is not translated: "
+        f"{done['progress']}"
+    )
+    first.stop()
+    first.model.reset(translating())
+    restarted = start_app()
+    assert translation(restarted, document.item_id) == done, (
+        "a translation whose blocks were each translated by themselves is not translated after "
+        "the service started again"
+    )
+    asked_for(restarted, document.item_id)
+    view = settled(restarted, document.item_id)
+    quiet(restarted)
+    assert view == done and restarted.model.asked() == [], (
+        "PUT on a translation that holds every block did not end translated without asking the "
+        "model"
     )
 
 

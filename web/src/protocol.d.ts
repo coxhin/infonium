@@ -664,6 +664,10 @@ export interface components {
             kind: "stopped";
             /** Reason */
             reason: string;
+            /** Total */
+            total: number;
+            /** Translated */
+            translated: number;
         };
         /**
          * Style
@@ -780,6 +784,8 @@ export interface components {
         TranslationView: {
             /** Blocks */
             blocks: components["schemas"]["TranslatedBlock"][];
+            /** Blocks To Translate */
+            blocks_to_translate: number[];
             /** Document */
             document: string;
             /** Input Tokens */
