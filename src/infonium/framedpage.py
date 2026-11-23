@@ -9,7 +9,7 @@ from lxml import etree, html
 from pydantic import BaseModel
 from trafilatura.utils import decode_file
 
-from infonium.blockholders import drop_own_names, placed_blocks, unread_parts
+from infonium.blockholders import PAGE_ATTRIBUTE, drop_own_names, placed_blocks, unread_parts
 from infonium.document import (
     NO_TEXT,
     WEB_SCHEMES,
@@ -56,6 +56,14 @@ REPLACED_BY_CONTENT = frozenset({"object", "applet", "param", "embed"})
 FRAMES = ("iframe", "frame", "fencedframe", "portal")
 FRAMED_PAGE = ("src", "srcdoc")
 FORM = "form"
+# What navigates when it is activated: a link of HTML or SVG, an area of an image map, a form,
+# wherever it stands, in a template too, and the base that sets the target of them all. Each
+# opens a new browsing context, which the frame's sandbox, allowing no popups, refuses: a click,
+# Enter or a sent form loads nothing in the frame, whatever target the page gave it. The
+# addresses stay, for the reader to open a link elsewhere itself.
+NAVIGATING = frozenset({"a", "area", FORM})
+TARGET = "target"
+NEW_CONTEXT = "_blank"
 # A form whose method is dialog sends nothing anywhere: it closes the dialog it stands in, if
 # any. Its buttons may not name another method or address of their own.
 FORM_METHOD = "method"
@@ -175,6 +183,8 @@ def made_inert(page: html.HtmlElement) -> None:
             dropped = name in DROPPED_ATTRIBUTES or name.startswith(EVENT_HANDLER_PREFIX)
             if dropped or names_script(element, name, value):
                 del element.attrib[name]
+        if tag in NAVIGATING:
+            element.set(TARGET, NEW_CONTEXT)
         if tag in FRAMES:
             for name in FRAMED_PAGE:
                 element.attrib.pop(name, None)
@@ -267,6 +277,7 @@ def with_head(page: html.HtmlElement, base: str) -> None:
         page.insert(0, head)
     base_element = html.Element(BASE)
     base_element.set(REFERENCE_ADDRESS, base)
+    base_element.set(TARGET, NEW_CONTEXT)
     head.insert(0, base_element)
     referrer = html.Element(META)
     referrer.set(META_NAME, REFERRER)
@@ -274,7 +285,7 @@ def with_head(page: html.HtmlElement, base: str) -> None:
     head.insert(0, referrer)
 
 
-def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPage:
+def framed_page(content: bytes, item_id: str, origin: Origin, blocks: list[Block]) -> FramedPage:
     # The page an item was read from, made ready to be shown with none of its scripts run,
     # with the elements that hold the blocks' text marked. Its dialogs are left out, as the
     # extractor leaves them out: shown without the script that closes them, they would cover
@@ -290,6 +301,7 @@ def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPa
     drop_dialogs(page)
     placed = placed_blocks(page, unread_parts(page, heading_address(origin)), blocks)
     with_head(page, base)
+    page.set(PAGE_ATTRIBUTE, item_id)
     serialized = html.tostring(page, encoding="unicode")
     return FramedPage(html=f"{doctype}\n{serialized}" if doctype else serialized, placed=placed)
 
@@ -310,7 +322,7 @@ class KeptPages:
             if kept is not None:
                 self.pages.move_to_end(key)
                 return kept
-        built = framed_page(snapshot.read_bytes(), origin, document.blocks)
+        built = framed_page(snapshot.read_bytes(), document.item_id, origin, document.blocks)
         with self.lock:
             self.pages[key] = built
             self.pages.move_to_end(key)
