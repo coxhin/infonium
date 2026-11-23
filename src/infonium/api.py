@@ -59,7 +59,13 @@ from infonium.library import (
 from infonium.model_connection import Ending
 from infonium.settings import Settings
 from infonium.speech import Recogniser
-from infonium.translation import Progress, TranslatedBlock, TranslationStanding, Translator
+from infonium.translation import Progress, TranslatedBlock
+from infonium.translator import (
+    TranslationNotAsked,
+    TranslationStanding,
+    Translator,
+    UnusableTranslation,
+)
 
 JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for
@@ -227,11 +233,14 @@ app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
+app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
@@ -427,11 +436,12 @@ def translate_anew(item_id: str, owner: Owner) -> TranslationView:
 
 @app.post(
     "/api/items/{item_id}/translation/blocks/{block_number}",
-    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED,
+    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED,
 )
 def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> TranslatedBlock:
     # Translates one block again with the model that writes digests, and keeps the result in
-    # place of the block's earlier translation.
+    # place of the block's earlier translation. A translation that was never asked for, or
+    # that is not needed, has no block to translate again.
     return translator().retranslated(owner, item_id, block_number)
 
 
