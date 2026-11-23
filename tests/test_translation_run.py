@@ -1,7 +1,7 @@
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 
@@ -108,6 +108,15 @@ def refused_reason(app: App) -> str:
     pytest.fail("the model's interface took a refused request for a reply")
 
 
+@pytest.fixture
+def gate() -> Iterator[threading.Event]:
+    # Where the stand-in holds the replies a judgment holds; it is opened when the judgment
+    # ends, however it ends, so that no held request outlives its judgment.
+    opened = threading.Event()
+    yield opened
+    opened.set()
+
+
 # R5: requests.
 
 
@@ -141,9 +150,8 @@ def test_a_request_carries_several_passages_the_title_and_the_text_around_them(a
 
 
 def test_requests_of_one_document_run_several_at_a_time_and_no_more_than_a_bound(
-    app: App,
+    app: App, gate: threading.Event
 ) -> None:
-    gate = threading.Event()
     app.model.reset(holding(translating(), gate, asks_passages))
     document = kept(app, long_paragraphs(MANY_REQUESTS_PARAGRAPHS))
     asked_for(app, document.item_id)
@@ -457,9 +465,8 @@ def test_get_starts_nothing(app: App) -> None:
 
 
 def test_put_answers_at_once_and_changes_nothing_while_translating_or_translated(
-    app: App,
+    app: App, gate: threading.Event
 ) -> None:
-    gate = threading.Event()
     app.model.reset(holding(translating(), gate, lambda asked: True))
     blocks = long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS)
     document = kept(app, blocks)
@@ -486,8 +493,7 @@ def test_put_answers_at_once_and_changes_nothing_while_translating_or_translated
     )
 
 
-def test_a_block_is_served_as_soon_as_it_is_kept(app: App) -> None:
-    gate = threading.Event()
+def test_a_block_is_served_as_soon_as_it_is_kept(app: App, gate: threading.Event) -> None:
 
     def later(asked: Asked) -> bool:
         return asks_passages(asked) and 0 not in paragraph_numbers(asked)
@@ -510,9 +516,10 @@ def test_a_block_is_served_as_soon_as_it_is_kept(app: App) -> None:
     assert settled(app, document.item_id)["progress"]["kind"] == "translated", "did not end"
 
 
-def test_post_discards_what_was_translated_and_ends_the_run_before_it(app: App) -> None:
+def test_post_discards_what_was_translated_and_ends_the_run_before_it(
+    app: App, gate: threading.Event
+) -> None:
     old, new = "旧", "新"
-    gate = threading.Event()
 
     def later(asked: Asked) -> bool:
         return asks_passages(asked) and 0 not in paragraph_numbers(asked)
@@ -682,10 +689,9 @@ def test_a_translation_asked_for_many_times_at_once_is_started_once(app: App) ->
 
 
 def test_a_translation_under_way_goes_on_after_a_restart_without_translating_again(
-    start_app: Callable[..., App],
+    start_app: Callable[..., App], gate: threading.Event
 ) -> None:
     first = start_app()
-    gate = threading.Event()
 
     def later(asked: Asked) -> bool:
         return asks_passages(asked) and 0 not in paragraph_numbers(asked)
@@ -705,14 +711,23 @@ def test_a_translation_under_way_goes_on_after_a_restart_without_translating_aga
     wait_for(lambda: bool(translation(first, document.item_id)["blocks"]), "a kept block")
     kept_before = by_number(translation(first, document.item_id))
     first.stop()
+    held_requests = [served for served in first.model.requests() if later(served.asked)]
     try:
         first.model.reset(translating())
         again = start_app()
         view = settled(again, document.item_id)
         resumed = passages_sent(again)
     finally:
+        # The service that stopped is let go of its held requests, which fail, and of any it
+        # tries again, which are refused, before the test ends: none of them reaches the
+        # stand-in in a later test.
         first.model.reset(lambda asked: REFUSED_REQUEST)
         gate.set()
+        wait_for(
+            lambda: all(served.ended.is_set() for served in held_requests),
+            "the held requests of the service that stopped to end",
+        )
+        quiet(first)
     assert view["progress"]["kind"] == "translated", (
         f"a translation under way when the service stopped did not go on when it started: "
         f"{view['progress']}"
@@ -851,8 +866,9 @@ def test_one_block_again_answers_502_when_the_model_fails_and_keeps_the_earlier(
     assert after["blocks"] == before["blocks"], "a failed block again changed what was kept"
 
 
-def test_a_translation_under_way_never_writes_over_a_block_kept_again(app: App) -> None:
-    gate = threading.Event()
+def test_a_translation_under_way_never_writes_over_a_block_kept_again(
+    app: App, gate: threading.Event
+) -> None:
     app.model.reset(holding(again_or_first, gate, by_translating_model))
     blocks: list[Block] = [Paragraph(text="harbour ledger quorvex", marks=[])]
     document = kept(app, blocks)
@@ -933,10 +949,9 @@ def test_a_translation_changes_nothing_of_the_item_its_document_and_digest(app: 
 
 
 def test_a_document_read_again_has_its_own_translation_and_the_old_run_stops(
-    start_app: Callable[..., App],
+    start_app: Callable[..., App], gate: threading.Event
 ) -> None:
     app = start_app()
-    gate = threading.Event()
     app.model.reset(holding(translating(), gate, by_translating_model))
     item_id = app.read("/revised")
     old_document = app.client.get(f"/api/items/{item_id}/document").json()["id"]
