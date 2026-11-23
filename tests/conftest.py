@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from hypothesis import settings
 from pydantic import SecretStr
 
-from infonium import api, intake, speech
+from infonium import api, embedding, intake, search, speech
 from infonium.language_model import LanguageModel, WireApi, endable_openai_model, openai_model
 from infonium.library import LibraryStore
 from infonium.settings import Settings
@@ -135,6 +135,9 @@ def start_app(
         ),
         browser=Path("no-such-browser"),
     )
+    embedding_engine = embedding.EmbeddingEngine(
+        base_url="https://embedding.test/v1", api_key=SecretStr("unused"), model="none"
+    )
     started: list[App] = []
 
     def start(wire_api: WireApi = WireApi.RESPONSES) -> App:
@@ -150,6 +153,8 @@ def start_app(
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
         monkeypatch.setattr(api, "intake", lambda: reader)
+        index = search.BlockIndex(store=store, engine=embedding_engine)
+        monkeypatch.setattr(api, "block_index", lambda: index)
         monkeypatch.setattr(api, "language_model", language_model)
         monkeypatch.setattr(api, "answering_model", answering_model)
         client = TestClient(api.app)

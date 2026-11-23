@@ -10,6 +10,7 @@ from tempfile import NamedTemporaryFile
 from typing import Annotated, Any, BinaryIO, Literal
 
 import sqlalchemy
+import sqlite_vec
 from filelock import FileLock
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, TypeAdapter
 from sqlalchemy.dialects import sqlite
@@ -281,9 +282,14 @@ def replacing_insert(
 
 
 def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
-    # What every connection to the library's file is given before it is used.
+    # What every connection to the library's file is given before it is used: the settings,
+    # and sqlite-vec's functions over vectors, for the index of blocks. No other extension can
+    # be loaded through the connection afterwards.
     for setting in (ENFORCE_FOREIGN_KEYS, WRITE_AHEAD, AWAIT_WRITER):
         connection.execute(setting)
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
 
 
 def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
@@ -464,6 +470,13 @@ class LibraryStore:
     def library(self, owner: str) -> Iterator[Library]:
         with self.transaction(owner) as transaction:
             yield Library(transaction)
+
+    def owners(self) -> list[str]:
+        # Everyone who has an item in the library.
+        with self.engine.begin() as connection:
+            return list(
+                connection.execute(sqlalchemy.select(item_table.c.owner).distinct()).scalars()
+            )
 
     def underway(self) -> list[UnderwayItem]:
         with self.engine.begin() as connection:
