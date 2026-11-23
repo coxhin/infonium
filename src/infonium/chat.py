@@ -26,7 +26,6 @@ from infonium.citing import (
 )
 from infonium.document import Tagged
 from infonium.language_model import (
-    Ending,
     LanguageModel,
     Message,
     Replied,
@@ -35,6 +34,7 @@ from infonium.language_model import (
     Written,
 )
 from infonium.library import Holding, OwnerTransaction, item_table, metadata
+from infonium.model_connection import Ending
 
 # Stored with every turn, so that a later change to the models can tell which form a row has.
 TURN_FORMAT = 1

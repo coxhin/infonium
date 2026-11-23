@@ -1,16 +1,10 @@
-import socket
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager, suppress
-from contextvars import ContextVar
+from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
-from threading import Lock
 from typing import Any, Final
 
-import httpx2
 from openai import (
-    DefaultHttpxClient,
     OpenAI,
     omit,
     pydantic_function_tool,
@@ -34,6 +28,8 @@ from openai.types.responses import (
 )
 from openai.types.responses.response import IncompleteDetails
 from pydantic import BaseModel, ValidationError
+
+from infonium.model_connection import Ending, endable_http_client
 
 # The longest silence the endpoint is allowed: before a whole reply that is not streamed, and
 # between two events of one that is.
@@ -60,17 +56,6 @@ INPUT_TEXT: Final = "input_text"
 MESSAGE_ITEM: Final = "message"
 FUNCTION_CALL_ITEM: Final = "function_call"
 FUNCTION_OUTPUT_ITEM: Final = "function_call_output"
-# How a request tells the HTTP library to report the steps of its sending, the steps at which
-# its connection is made, and what that connection is asked for its socket. Encryption moves
-# the connection to a socket of its own, which is the one to cut.
-TRACE = "trace"
-CONNECTED = frozenset({"connection.connect_tcp.complete", "connection.start_tls.complete"})
-CONNECTION = "return_value"
-SOCKET_INFO = "socket"
-REQUEST_HOOK = "request"
-# The connections of the model's requests are not kept for later requests: a request opens
-# its own, so that its connection is known while the endpoint has yet to answer.
-MODEL_CONNECTION_LIMITS = httpx2.Limits(max_keepalive_connections=0)
 
 
 class WireApi(StrEnum):
@@ -172,57 +157,6 @@ class Tokens(BaseModel):
 
 
 NO_TOKENS = Tokens(input_tokens=0, output_tokens=0)
-
-
-def cut_off(connection: socket.socket) -> None:
-    # An SSL socket's own shutdown drops its TLS state, which the reading thread still uses;
-    # the plain socket's wakes that thread's read with the end of the connection. The other
-    # side may have closed the connection already, which leaves nothing to cut.
-    with suppress(OSError):
-        socket.socket.shutdown(connection, socket.SHUT_RDWR)
-
-
-class Ending:
-    # Ends a reply from any thread: the connections of its requests are cut, so that the
-    # read the replying thread waits in ends at once, whether the endpoint has begun to
-    # answer or not, and a request that connects afterwards is cut as it connects.
-    def __init__(self) -> None:
-        self.turn = Lock()
-        self.ended = False
-        self.connections: list[socket.socket] = []
-
-    def end(self) -> None:
-        with self.turn:
-            self.ended = True
-            for connection in self.connections:
-                cut_off(connection)
-
-    def traced(self, step: str, details: dict[str, Any]) -> None:
-        if step in CONNECTED:
-            connection = details[CONNECTION].get_extra_info(SOCKET_INFO)
-            with self.turn:
-                self.connections.append(connection)
-                if self.ended:
-                    cut_off(connection)
-
-    @contextmanager
-    def requesting(self) -> Iterator[None]:
-        # The requests sent meanwhile from this thread are this reply's.
-        token = REPLY_ENDING.set(self)
-        try:
-            yield
-        finally:
-            REPLY_ENDING.reset(token)
-
-
-# The ending of the reply whose request the current thread sends, for the hook that every
-# request of the model's client passes through. A client without that hook, as one answered
-# in this process, makes no connection to cut; a reply over it ends at its next event.
-REPLY_ENDING: ContextVar[Ending] = ContextVar("reply_ending")
-
-
-def traced_request(request: httpx2.Request) -> None:
-    request.extensions[TRACE] = REPLY_ENDING.get().traced
 
 
 def tokens_after(spent: Tokens, input_tokens: int, output_tokens: int) -> Tokens:
@@ -582,11 +516,14 @@ WIRE_API_MODELS: dict[WireApi, type[LanguageModel]] = {
 
 
 def openai_model(name: str, wire_api: WireApi) -> LanguageModel:
-    client = OpenAI(
-        timeout=MODEL_TIMEOUT_SECONDS,
-        max_retries=MODEL_RETRIES,
-        http_client=DefaultHttpxClient(
-            limits=MODEL_CONNECTION_LIMITS, event_hooks={REQUEST_HOOK: [traced_request]}
-        ),
-    )
+    client = OpenAI(timeout=MODEL_TIMEOUT_SECONDS, max_retries=MODEL_RETRIES)
+    return WIRE_API_MODELS[wire_api](client=client, name=name)
+
+
+def endable_openai_model(name: str, wire_api: WireApi) -> LanguageModel:
+    # A model whose replies an Ending cuts at once. Its requests are not sent again after a
+    # failure: the openai client waits before it does, and a reader who left would wait for
+    # the conversation that long. A digest's or a translation's requests keep the retry, and
+    # their connections, through openai_model.
+    client = OpenAI(timeout=MODEL_TIMEOUT_SECONDS, max_retries=0, http_client=endable_http_client())
     return WIRE_API_MODELS[wire_api](client=client, name=name)

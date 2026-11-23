@@ -40,10 +40,10 @@ from infonium.digest import (
 from infonium.document import Block, BlockNumber, MediaType, error_text
 from infonium.intake import Engines, Intake, failure_reason
 from infonium.language_model import (
-    Ending,
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
+    endable_openai_model,
     openai_model,
 )
 from infonium.library import (
@@ -56,6 +56,7 @@ from infonium.library import (
     Origin,
     Reading,
 )
+from infonium.model_connection import Ending
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
@@ -104,6 +105,12 @@ def intake() -> Intake:
 @cache
 def language_model() -> LanguageModel:
     return openai_model(name=settings.model, wire_api=settings.wire_api)
+
+
+@cache
+def answering_model() -> LanguageModel:
+    # The model that writes digests, over connections that a reader who leaves cuts.
+    return endable_openai_model(name=settings.model, wire_api=settings.wire_api)
 
 
 @cache
@@ -427,7 +434,7 @@ def ask_about_item(
     # kept before it is sent; a reader who leaves before then leaves nothing kept. A failure
     # of infonium's own is not told as an answer: it ends the lines without a last event.
     progress = answer_progress(
-        language_model(), questioned.holding, questioned.turns, question.text, ending
+        answering_model(), questioned.holding, questioned.turns, question.text, ending
     )
     try:
         for step in progress:
