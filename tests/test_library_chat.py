@@ -1,9 +1,7 @@
 import json
 import threading
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from datetime import UTC, datetime
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
@@ -13,19 +11,19 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
-from infonium import api
-from infonium.document import HTML_MEDIA_TYPE, Paragraph, document_of
 from infonium.intake import failure_reason
 from infonium.language_model import WireApi, endable_openai_model
-from infonium.library import LOCAL_OWNER, Item, LibraryStore, Link, Read, Settled, item_identity
+from infonium.library import LOCAL_OWNER
 from infonium.search import IndexFailed
 from tests.conversation import (
     Asking,
     answered_turn,
     asking,
+    first_asker_message,
     first_line,
     kept_turns,
     lines_of,
+    outline_of,
     statement_texts,
 )
 from tests.embedding_standin import EMBEDDING_HOST, EmbeddingStandin
@@ -39,7 +37,7 @@ from tests.model_standin import (
     call_id,
     pieces_of,
 )
-from tests.service import SITE, App, article
+from tests.service import App, Source, article, as_owner, keep_sources, new_owner
 
 CONVERSATION = "/api/conversation"
 SEARCH = "search_blocks"
@@ -90,14 +88,6 @@ MODEL_FAILURES = (
 FORM_FAILURES = frozenset({"unparsable"})
 
 
-class Source(BaseModel):
-    # A document kept for an item of the library, as a reading that settled keeps it.
-    item: str
-    document: str
-    title: str
-    blocks: list[str]
-
-
 class Cited(BaseModel):
     # A citation as the model writes it in the library's conversation.
     document: str
@@ -120,43 +110,6 @@ title_texts = st.text(
     min_size=1,
     max_size=200,
 )
-
-
-def keep_sources(
-    store: LibraryStore, owner: str, titled: list[tuple[str, list[str]]]
-) -> list[Source]:
-    now = datetime.now(UTC)
-    kept: list[Source] = []
-    with store.library(owner) as library:
-        for title, texts in titled:
-            url = f"{SITE}/source/{uuid4().hex}"
-            item_id = item_identity(owner, url)
-            document = document_of(
-                item_id=item_id,
-                extractor="test",
-                snapshot="0" * 64,
-                media_type=HTML_MEDIA_TYPE,
-                blocks=[Paragraph(text=text, marks=[]) for text in texts],
-            )
-            reading = Read(title=title, document=document.id, attempt=Settled())
-            library.keep_item(Item(id=item_id, origin=Link(url=url), added=now, reading=reading))
-            library.keep_document(document, now)
-            kept.append(Source(item=item_id, document=document.id, title=title, blocks=texts))
-    return kept
-
-
-@contextmanager
-def as_owner(owner: str) -> Iterator[None]:
-    # The service answers as another reader, whose library is their own.
-    api.app.dependency_overrides[api.current_owner] = lambda: owner
-    try:
-        yield
-    finally:
-        api.app.dependency_overrides.pop(api.current_owner, None)
-
-
-def new_owner() -> str:
-    return f"reader-{uuid4().hex}"
 
 
 def ask(app: App, question: str = QUESTION) -> Asking:
@@ -187,20 +140,6 @@ def reading(document: str, first: int, last: int) -> Reply:
 def scripted(replies: list[Callable[[Asked], Reply]]) -> Callable[[Asked], Reply]:
     # Each request of a reply answered by the next of the replies, the last to every one after.
     return lambda asked: replies[min(asked.number, len(replies) - 1)](asked)
-
-
-def first_asker_message(asked: Asked) -> str:
-    messages = [text for role, text in asked.messages() if role == "user"]
-    assert messages, "a request of the library's conversation holds no message of the asker"
-    return messages[0]
-
-
-def outline_of(asked: Asked) -> dict[str, Any]:
-    # The outline, as the first message of the asker's side gives it: JSON after its label.
-    message = first_asker_message(asked)
-    assert "{" in message, f"the asker's first message holds no JSON outline: {message[:300]!r}"
-    outline: dict[str, Any] = json.loads(message[message.index("{") :])
-    return outline
 
 
 def handles_by_title(asked: Asked) -> dict[str, str]:
@@ -254,7 +193,7 @@ def test_a_document_reaches_the_model_as_json_alike_in_a_digest_a_conversation_a
     owner = new_owner()
     [source] = keep_sources(app.store, owner, [(title, texts)])
     with as_owner(owner):
-        app.model.reset(lambda asked: Rejection(status=HTTPStatus.SERVICE_UNAVAILABLE, body="no"))
+        app.model.reset(lambda asked: Rejection(status=HTTPStatus.BAD_REQUEST, body="no"))
         app.client.put(f"/api/items/{source.item}/digest")
         digest = app.model.asked()[0]
         app.model.reset(lambda asked: says(["Of it."]))

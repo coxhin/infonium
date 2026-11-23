@@ -3,16 +3,20 @@ import time
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from infonium import api
-from infonium.library import LibraryStore
+from infonium.document import HTML_MEDIA_TYPE, Paragraph, document_of
+from infonium.library import Item, LibraryStore, Link, Read, Settled, item_identity
 from infonium.search import BlockIndex
 from tests.model_standin import Asked, ModelStandin, Reply
 from tests.unix_server import unix_server
@@ -170,6 +174,51 @@ def digest_reply(asked: Asked) -> Reply:
     return Reply(
         pieces=[json.dumps({"sections": [{"title": "Summary", "statements": statements}]})]
     )
+
+
+class Source(BaseModel):
+    # A document kept for an item of the library, as a reading that settled keeps it.
+    item: str
+    document: str
+    title: str
+    blocks: list[str]
+
+
+def keep_sources(
+    store: LibraryStore, owner: str, titled: list[tuple[str, list[str]]]
+) -> list[Source]:
+    now = datetime.now(UTC)
+    kept: list[Source] = []
+    with store.library(owner) as library:
+        for title, texts in titled:
+            url = f"{SITE}/source/{uuid4().hex}"
+            item_id = item_identity(owner, url)
+            document = document_of(
+                item_id=item_id,
+                extractor="test",
+                snapshot="0" * 64,
+                media_type=HTML_MEDIA_TYPE,
+                blocks=[Paragraph(text=text, marks=[]) for text in texts],
+            )
+            reading = Read(title=title, document=document.id, attempt=Settled())
+            library.keep_item(Item(id=item_id, origin=Link(url=url), added=now, reading=reading))
+            library.keep_document(document, now)
+            kept.append(Source(item=item_id, document=document.id, title=title, blocks=texts))
+    return kept
+
+
+@contextmanager
+def as_owner(owner: str) -> Iterator[None]:
+    # The service answers as another reader, whose library is their own.
+    api.app.dependency_overrides[api.current_owner] = lambda: owner
+    try:
+        yield
+    finally:
+        api.app.dependency_overrides.pop(api.current_owner, None)
+
+
+def new_owner() -> str:
+    return f"reader-{uuid4().hex}"
 
 
 class App:

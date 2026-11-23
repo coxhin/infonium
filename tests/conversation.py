@@ -9,7 +9,7 @@ import httpx2
 import pytest
 from pydantic import BaseModel
 
-from tests.model_standin import ModelStandin, Reply
+from tests.model_standin import Asked, ModelStandin, Reply
 
 # How a reader talks with infonium about an item or about the library: a question's response
 # read as its lines arrive, the turns kept, and a model's reply held open while a test looks.
@@ -77,3 +77,17 @@ def first_line(lines: Iterator[dict[str, Any]]) -> dict[str, Any]:
     if first is None:
         pytest.fail("a question's response ended before its first line")
     return first
+
+
+def first_asker_message(asked: Asked) -> str:
+    messages = [text for role, text in asked.messages() if role == "user"]
+    assert messages, "a request of the library's conversation holds no message of the asker"
+    return messages[0]
+
+
+def outline_of(asked: Asked) -> dict[str, Any]:
+    # The outline, as the first message of the asker's side gives it: JSON after its label.
+    message = first_asker_message(asked)
+    assert "{" in message, f"the asker's first message holds no JSON outline: {message[:300]!r}"
+    outline: dict[str, Any] = json.loads(message[message.index("{") :])
+    return outline
