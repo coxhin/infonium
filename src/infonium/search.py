@@ -6,10 +6,11 @@ from enum import StrEnum
 from threading import Event, Lock
 from typing import Annotated
 
+import openai
 import sqlalchemy
 from pydantic import AfterValidator, BaseModel, Field, validate_call
 
-from infonium.document import Block, BlockKind, BlockNumber, Document
+from infonium.document import WORD_GAP, Block, BlockKind, BlockNumber, Document
 from infonium.embedding import ENGINE_AWAY, Embedder, EmbeddingEngine, Vector
 from infonium.intake import failure_reason
 from infonium.library import (
@@ -27,6 +28,7 @@ from infonium.terms import (
     any_words_expression,
     has_word,
     indexed_words,
+    sought_pieces,
     word_total,
 )
 
@@ -123,8 +125,21 @@ MATERIALIZED = "MATERIALIZED"
 logger = logging.getLogger(__name__)
 
 SearchLimit = Annotated[int, Field(ge=1)]
-# What a lone surrogate, which no text can hold, becomes in a query.
+# A word or pair of letters that more than this share of the owner's blocks hold, as "of" and
+# "the" in English, tells little of which block is sought: a block is not found by some of the
+# words for holding it. In a library of six English Wikipedia pages "of" stood in 48% of the
+# blocks and "on" in 18%; in one of eight pages in six languages, where English is one page in
+# eight, "of" stood in 16%. Words of one page's subject stand in as much as 17%, and are then
+# left out too, though a block that holds every word of the query is found by them.
+COMMON_SHARE = 0.1
+# In a small library every word stands in a large share of the blocks; a word that no more
+# than this many blocks hold is never taken for a common one.
+COMMON_FLOOR = 10
+INDEX_FAILED = "the search of the library has failed; infonium must be started again"
+# What a lone surrogate, which no text can hold, becomes in a query; a NUL, which ends the
+# full-text match's reading of a word, parts words as a space does.
 UNREADABLE = "replace"
+NUL = "\x00"
 UTF16 = "utf-16"
 SURROGATES_KEPT = "surrogatepass"
 # The part of SQLite's code for a failure that says the file was busy; the rest of the code
@@ -134,7 +149,8 @@ PRIMARY_CODE = 0xFF
 
 def readable_query(query: str) -> str:
     # A query that comes as JSON may hold a lone surrogate, which the engine cannot be sent.
-    return query.encode(UTF16, SURROGATES_KEPT).decode(UTF16, UNREADABLE)
+    readable = query.encode(UTF16, SURROGATES_KEPT).decode(UTF16, UNREADABLE)
+    return readable.replace(NUL, WORD_GAP)
 
 
 SearchQuery = Annotated[str, AfterValidator(readable_query)]
@@ -145,6 +161,13 @@ def is_busy(error: sqlalchemy.exc.OperationalError) -> bool:
         isinstance(error.orig, sqlite3.Error)
         and error.orig.sqlite_errorcode & PRIMARY_CODE == sqlite3.SQLITE_BUSY
     )
+
+
+class IndexFailed(Exception):
+    # The index cannot search the library until infonium starts again: its work stopped on a
+    # fault, or the engine refused a query in a way that waiting does not mend. The cause is
+    # kept as the cause; the message names no address.
+    pass
 
 
 class FoundBy(StrEnum):
@@ -234,7 +257,10 @@ def without_vector(model: str) -> sqlalchemy.ColumnElement[bool]:
 
 
 def found_by_words(
-    transaction: OwnerTransaction, expression: str, *conditions: sqlalchemy.ColumnElement[bool]
+    transaction: OwnerTransaction,
+    expression: str,
+    *conditions: sqlalchemy.ColumnElement[bool],
+    cap: int = CANDIDATES,
 ) -> list[int]:
     # The words are matched first, by themselves: joined to the blocks in one query, SQLite
     # would match them again for every block of the owner.
@@ -252,9 +278,34 @@ def found_by_words(
             .join(indexed_block_table, indexed_block_table.c.id == matched.c.rowid)
             .where(indexed_block_table.c.owner == transaction.owner, *conditions)
             .order_by(matched.c[RANK_LABEL])
-            .limit(CANDIDATES)
+            .limit(cap)
         ).scalars()
     )
+
+
+def uncommon_pieces(transaction: OwnerTransaction, pieces: list[str]) -> list[str]:
+    # The pieces that no more than the common share of the owner's blocks that meaning may find
+    # hold; a piece's blocks are counted up to one past the bound.
+    bound = max(
+        COMMON_FLOOR,
+        int(
+            COMMON_SHARE
+            * transaction.connection.execute(
+                sqlalchemy.select(sqlalchemy.func.count())
+                .select_from(indexed_block_table)
+                .where(
+                    indexed_block_table.c.owner == transaction.owner,
+                    indexed_block_table.c.meaningful,
+                )
+            ).scalar_one()
+        ),
+    )
+    return [
+        piece
+        for piece in pieces
+        if len(found_by_words(transaction, piece, indexed_block_table.c.meaningful, cap=bound + 1))
+        <= bound
+    ]
 
 
 def found_by_meaning(transaction: OwnerTransaction, model: str, vector: Vector) -> list[int]:
@@ -471,7 +522,7 @@ class BlockIndex:
         if self.worker.done() and not self.worker.cancelled():
             failure = self.worker.exception()
             if failure is not None:
-                raise failure
+                raise IndexFailed(INDEX_FAILED) from failure
 
     def work(self) -> None:
         while not self.stopped.is_set():
@@ -625,7 +676,7 @@ class BlockIndex:
             ]
             some_words = found_by_words(
                 transaction,
-                any_words_expression(query),
+                any_words_expression(uncommon_pieces(transaction, sought_pieces(query))),
                 without_vector(model) if query_vectors else indexed_block_table.c.meaningful,
             )
             return found_blocks(transaction, ranked_blocks(every_word, meaning, some_words, limit))
@@ -642,3 +693,6 @@ class BlockIndex:
                 failure_reason(failure),
             )
             return []
+        except openai.APIError as failure:
+            logger.error("the embedding engine refused a query", exc_info=failure)
+            raise IndexFailed(INDEX_FAILED) from failure

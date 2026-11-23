@@ -15,8 +15,8 @@ from infonium.document import (
     Mark,
     Style,
     StyleMark,
-    is_unspaced,
 )
+from infonium.glossary import Term, occurring_terms
 from infonium.language_model import LanguageModel
 
 # A passage is written into a request with its marks as tags around the words they mark, each
@@ -39,45 +39,35 @@ NAMES = "|".join(TAG_NAMES)
 # entities, and the full-width and Chinese ones, also mixed.
 OPENS = r"(?:[<\N{FULLWIDTH LESS-THAN SIGN}《〈]|&lt;)"
 CLOSES = r"(?:[>\N{FULLWIDTH GREATER-THAN SIGN}》〉]|&gt;)"
-# A tag as the model may write it: in any case, with spaces, with or without a number, with
-# attributes, or closing itself.
+# What may be a tag as the model writes it: in any case, with spaces, with or without a
+# number, with attributes, or closing itself. It is a tag only where its name and number are
+# one of the passage's own keys.
 TAG = re.compile(
     rf"{OPENS}\s*(/?)\s*({NAMES})(?![a-z])\s*(\d*)(?:\s[^<>]{{0,80}}?)?\s*/?\s*{CLOSES}",
     re.IGNORECASE,
 )
-# What is left of a tag that was not read as one: one of the tag names with a number beside
-# a bracket of any kind, in the text as Unicode's compatibility form writes it, where a
-# full-width letter, digit or bracket is a plain one. A bracket of HTML that the source does
-# not hold is left of a tag that was cut.
-ANY_OPENING = r"(?:[<《〈\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK}«\[]|&(?:amp;)*lt;)"
-ANY_CLOSING = r"(?:[>》〉\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}»\]]|&(?:amp;)*gt;)"
-REMNANT = re.compile(
-    rf"{ANY_OPENING}\s*/?\s*(?:{NAMES})\s*[-_]?\s*\d"
-    rf"|(?<![a-z])(?:{NAMES})\s*[-_]?\s*\d+\s*/?\s*{ANY_CLOSING}",
-    re.IGNORECASE,
+# A passage's own key left in a reply's text as a word, in the text as Unicode's
+# compatibility form writes it, where a full-width letter or digit is a plain one: written
+# close, as "b1", "/b1" or "b-1", or with spaces where something other than a letter or a
+# digit stands before it, as a bracket does.
+KEY_LEFT = (
+    r"(?<![0-9a-z])/?{name}[-_]?0*{number}(?![0-9])"
+    r"|(?<=[^\w\s])\s*/?\s*{name}\s*[-_]?\s*0*{number}(?![0-9])"
 )
-LONE_BRACKETS = "<>"
+# The brackets of HTML, which the source does not hold where a tag was cut.
+LONE_BRACKETS = ("<", ">", "&lt;", "&gt;")
 COMPATIBILITY_FORM: Final = "NFKC"
 CLOSING_SLASH = "/"
 OPENING = "<{name}{number}>"
 CLOSING = f"<{CLOSING_SLASH}{{name}}{{number}}>"
 # Whether each tag of a pair closes, in the order a usable pair stands.
 OPENED_THEN_CLOSED = [False, True]
-# How a term lists several forms of itself, and the part of a form that may be left out.
-TERM_FORMS = re.compile(r"\s*/\s*")
-OPTIONAL_PART = re.compile(r"\([^)]*\)")
-# A word of a term's form is found in a passage where a word of the passage begins as it
-# begins: a word of two letters or fewer only whole, one of up to this many letters in full,
-# and a longer one without its last letters, as many as an ending changes, keeping as many.
-# Measured on the measurement's Finnish and Spanish sources and their terms: Phobos finds
-# Phoboksen, Lappeenranta Lappeenrannan, Haukivesi Haukiveden, Mars Marsin.
-WHOLE_WORD_LETTERS = 2
-STEM_LETTERS = 5
-ENDING_LETTERS = 2
-WORD = re.compile(r"[^\W\d_]+")
 # An answer is out of proportion with its passage when the share of its length in its
 # source's falls below or rises above these parts of the request's median share, among the
 # passages long enough to be judged; two answers alike to passages that differ are as wrong.
+# Only the segments of a block cut into several, a recording's, are judged so: only there
+# can an answer slip to its neighbour, and a heading or a table's cell may be far shorter or
+# longer than its source and still be sound.
 # Measured on three candidates' translations of sixteen documents, the requests gathered as
 # the engine gathers them: sound answers lie between 0.40 and 3.27 of their request's median,
 # and gpt-6.1-terra's run of answers shifted by one passage in a talk fell to 0.30, 0.25 and
@@ -152,11 +142,11 @@ class Rendered(BaseModel):
     marks: list[Mark]
 
 
-class Term(BaseModel):
-    # A name or a term that recurs in a document, and the one translation it is given in all
-    # of it.
-    source: str
-    translation: str
+class PassageBlock(BaseModel):
+    # The passages of one block, and whether they are segments of a block cut into several,
+    # whose answers can slip from one to the next.
+    wordings: list[Wording]
+    in_segments: bool
 
 
 class Passages(BaseModel):
@@ -166,7 +156,7 @@ class Passages(BaseModel):
     title: str
     terms: list[Term]
     before: str
-    blocks: list[list[Wording]]
+    blocks: list[PassageBlock]
     after: str
 
 
@@ -208,10 +198,20 @@ def tag_name(mark: Mark) -> str:
             return STYLE_TAGS[style]
 
 
+def keys_of(wording: Wording) -> list[str]:
+    # The keys of a passage's own tags, one for each mark: its tag's name and its number.
+    return [f"{tag_name(mark)}{number}" for number, mark in enumerate(wording.marks, start=1)]
+
+
+def tag_key(tag: re.Match[str]) -> str:
+    return f"{tag.group(2).lower()}{int(tag.group(3))}" if tag.group(3) else ""
+
+
 def is_bare(wording: Wording) -> bool:
-    # A text that holds what reads as one of the tags is sent without tags and read back
+    # A text that holds what reads as one of its own tags is sent without tags and read back
     # as it comes, since a tag in the reply could then be either.
-    return TAG.search(wording.text) is not None
+    keys = set(keys_of(wording))
+    return any(tag_key(tag) in keys for tag in TAG.finditer(wording.text))
 
 
 def markup(wording: Wording) -> str:
@@ -232,44 +232,13 @@ def markup(wording: Wording) -> str:
 
 
 def wordings_of(passages: Passages) -> list[Wording]:
-    return [wording for block in passages.blocks for wording in block]
-
-
-def term_forms(term: Term) -> list[str]:
-    forms = [OPTIONAL_PART.sub("", form).strip() for form in TERM_FORMS.split(term.source)]
-    return [form.casefold() for form in forms if form]
-
-
-def word_found(word: str, words: set[str]) -> bool:
-    # Whether a word of a term's form begins one of a passage's words, as far as an ending
-    # leaves it.
-    if len(word) <= WHOLE_WORD_LETTERS:
-        return word in words
-    stem = word[: max(min(len(word), STEM_LETTERS), len(word) - ENDING_LETTERS)]
-    return any(said.startswith(stem) for said in words)
-
-
-def form_found(form: str, said: str, words: set[str]) -> bool:
-    # A form written without spaces between its words is looked for as it is written.
-    if any(map(is_unspaced, form)):
-        return form in said
-    form_words = WORD.findall(form)
-    return bool(form_words) and all(word_found(word, words) for word in form_words)
-
-
-def occurring_terms(terms: list[Term], wordings: list[Wording]) -> list[Term]:
-    # The terms one of whose forms a passage uses, in whatever form its words take.
-    said = "\n".join(wording.text for wording in wordings).casefold()
-    words = set(WORD.findall(said))
-    return [
-        term for term in terms if any(form_found(form, said, words) for form in term_forms(term))
-    ]
+    return [wording for block in passages.blocks for wording in block.wordings]
 
 
 def prompt(passages: Passages) -> str:
     # The request carries, of the document's terms, those its passages use.
-    terms = occurring_terms(passages.terms, wordings_of(passages))
-    firsts = [0, *accumulate(len(block) for block in passages.blocks)]
+    terms = occurring_terms(passages.terms, [wording.text for wording in wordings_of(passages)])
+    firsts = [0, *accumulate(len(block.wordings) for block in passages.blocks)]
     numbered = [
         line
         for block_number, (first, block) in enumerate(
@@ -279,7 +248,7 @@ def prompt(passages: Passages) -> str:
             BLOCK.format(number=block_number),
             *(
                 PASSAGE.format(number=number, markup=markup(wording))
-                for number, wording in enumerate(block, start=first + 1)
+                for number, wording in enumerate(block.wordings, start=first + 1)
             ),
         ]
     ]
@@ -320,37 +289,50 @@ def kept_mark(mark: Mark, start: int, end: int) -> Mark:
     return mark.model_copy(update={"start": start, "end": end})
 
 
-def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
-    # The reply without anything that reads as a tag and without its spaces at either end,
-    # and the range each pair of numbered tags encloses in what is left, by the tag's name
-    # and number. A tag that stands other than once opening and then once closing, or has no
-    # number, encloses nothing; it is taken out all the same.
-    untagged = TAG.sub("", reply)
+def tag_ranges(reply: str, keys: list[str]) -> tuple[str, dict[str, tuple[int, int]]]:
+    # The reply without the passage's own tags that pair, and without its spaces at either
+    # end, and the range each such pair encloses in what is left, by its key. Only a key's
+    # tag that stands once opening and then once closing is a pair; anything else in
+    # brackets stays in the text, as a title such as 《F1》 does.
+    found: dict[str, list[re.Match[str]]] = defaultdict(list)
+    for tag in TAG.finditer(reply):
+        if tag_key(tag) in keys:
+            found[tag_key(tag)].append(tag)
+    pairs = {
+        key: tags
+        for key, tags in found.items()
+        if [tag.group(1) == CLOSING_SLASH for tag in tags] == OPENED_THEN_CLOSED
+    }
+    taken = sorted((tag for tags in pairs.values() for tag in tags), key=lambda tag: tag.start())
+    pieces: list[str] = []
+    ends: dict[str, list[int]] = defaultdict(list)
+    last = 0
+    for tag in taken:
+        pieces.append(reply[last : tag.start()])
+        ends[tag_key(tag)].append(sum(map(len, pieces)))
+        last = tag.end()
+    pieces.append(reply[last:])
+    untagged = "".join(pieces)
     lead = len(untagged) - len(untagged.lstrip())
     text = untagged.strip()
-    ends: dict[str, list[tuple[bool, int]]] = defaultdict(list)
-    removed = 0
-    for tag in TAG.finditer(reply):
-        at = min(max(tag.start() - removed - lead, 0), len(text))
-        if tag.group(3):
-            key = f"{tag.group(2).lower()}{int(tag.group(3))}"
-            ends[key].append((tag.group(1) == CLOSING_SLASH, at))
-        removed += len(tag.group())
-    paired = {
-        key: tag_ends
-        for key, tag_ends in ends.items()
-        if [closes for closes, _ in tag_ends] == OPENED_THEN_CLOSED
+    return text, {
+        key: (min(max(opened - lead, 0), len(text)), min(max(closed - lead, 0), len(text)))
+        for key, (opened, closed) in ends.items()
     }
-    return text, {key: (tag_ends[0][1], tag_ends[1][1]) for key, tag_ends in paired.items()}
 
 
-def remnant(text: str, source: str) -> str:
-    # What is left of a tag in a reply's text once the tags read are taken out, or nothing.
-    compatible = unicodedata.normalize(COMPATIBILITY_FORM, text)
-    found = REMNANT.search(compatible)
-    if found is not None:
-        return found.group()
-    compatible_source = unicodedata.normalize(COMPATIBILITY_FORM, source)
+def remnant(text: str, source: str, keys: list[str]) -> str:
+    # What is left of the passage's own tags in a reply's text once its pairs are taken out,
+    # or nothing: one of its keys, or the closing form of one, standing as a word the source
+    # does not hold; or a bracket of HTML that the source does not hold.
+    compatible = unicodedata.normalize(COMPATIBILITY_FORM, text).casefold()
+    compatible_source = unicodedata.normalize(COMPATIBILITY_FORM, source).casefold()
+    for key in keys:
+        name, number = key.rstrip("0123456789"), int(key[len(key.rstrip("0123456789")) :])
+        pattern = KEY_LEFT.format(name=re.escape(name), number=number)
+        for left in re.finditer(pattern, compatible):
+            if left.group().strip() not in compatible_source:
+                return left.group().strip()
     return "".join(
         bracket
         for bracket in LONE_BRACKETS
@@ -364,10 +346,11 @@ def rendered(wording: Wording, number: int, reply: str) -> Rendered:
     # as it is. A mark whose tags the reply lost or garbled is left out; a reply that holds
     # what is left of a tag, or does not hold a formula inside its own tags with exactly its
     # text, is of no use.
-    text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply)
+    keys = keys_of(wording)
+    text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply, keys)
     if not text:
         raise UnusableReply(NO_WORDS.format(number=number))
-    left = "" if is_bare(wording) else remnant(text, wording.text)
+    left = "" if is_bare(wording) else remnant(text, wording.text, keys)
     if left:
         raise UnusableReply(REMNANT_LEFT.format(number=number, remnant=left))
     marks: list[Mark] = []
@@ -392,11 +375,11 @@ def block_answers(passages: Passages, reply: Reply) -> tuple[dict[int, str], lis
         given[block_reply.block].append(block_reply)
     answers: dict[int, str] = {}
     unusable: list[str] = []
-    firsts = [0, *accumulate(len(block) for block in passages.blocks)]
+    firsts = [0, *accumulate(len(block.wordings) for block in passages.blocks)]
     for block_number, (first, block) in enumerate(
         zip(firsts[:-1], passages.blocks, strict=True), start=1
     ):
-        asked = list(range(first + 1, first + len(block) + 1))
+        asked = list(range(first + 1, first + len(block.wordings) + 1))
         match given[block_number]:
             case [BlockReply(translations=translations)] if (
                 sorted(answer.number for answer in translations) == asked
@@ -407,13 +390,21 @@ def block_answers(passages: Passages, reply: Reply) -> tuple[dict[int, str], lis
     return answers, unusable
 
 
-def out_of_proportion(wordings: list[Wording], kept: dict[int, Rendered]) -> dict[int, str]:
+def out_of_proportion(passages: Passages, kept: dict[int, Rendered]) -> dict[int, str]:
     # The answers out of proportion with their passages, or alike for passages that differ,
-    # among the passages long enough to be judged, with why.
+    # among the segments of blocks cut into several that are long enough to be judged, with
+    # why.
+    segments = {
+        at: wording
+        for at, (wording, in_segments) in enumerate(
+            (wording, block.in_segments) for block in passages.blocks for wording in block.wordings
+        )
+        if in_segments
+    }
     judged = {
-        at: (wordings[at].text, done.text)
+        at: (segments[at].text, done.text)
         for at, done in kept.items()
-        if len(wordings[at].text) >= JUDGED_CHARACTERS
+        if at in segments and len(segments[at].text) >= JUDGED_CHARACTERS
     }
     if not judged:
         return {}
@@ -464,7 +455,7 @@ def renditions(model: LanguageModel, language: str, passages: Passages) -> Rendi
             kept[at] = rendered(wordings[at], at + 1, answer)
         except UnusableReply as refused:
             unusable.append(str(refused))
-    refused_answers = out_of_proportion(wordings, kept)
+    refused_answers = out_of_proportion(passages, kept)
     unusable.extend(refused_answers.values())
     for reason in unusable:
         logger.warning("a passage is asked again: %s", reason)
