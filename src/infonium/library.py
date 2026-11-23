@@ -422,6 +422,19 @@ class Library:
             raise NotInLibrary(f"item {item_id} has no document in the library")
         return Holding(title=kept[0], document=Document.model_validate_json(kept[1]))
 
+    def held_document(self, document_id: str) -> Holding:
+        # A document by its id, while an item of the owner holds it now, with what the item
+        # is called; a document that no item holds now, or another owner's, is not found.
+        kept = self.connection.execute(
+            sqlalchemy.select(kept_title, document_table.c.body)
+            .select_from(item_table)
+            .join(document_table, document_table.c.id == kept_document_id)
+            .where(item_table.c.owner == self.owner, document_table.c.id == document_id)
+        ).first()
+        if kept is None:
+            raise NotInLibrary(f"no item of the library holds document {document_id}")
+        return Holding(title=kept[0], document=Document.model_validate_json(kept[1]))
+
     def kept_source(self, item_id: str) -> KeptSource:
         source = self.connection.execute(
             sqlalchemy.select(

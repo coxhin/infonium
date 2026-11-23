@@ -19,6 +19,12 @@ Do not translate it, correct it, or shorten it with an ellipsis.
 - Keep a quote to one sentence or a part of one, within a single block. Choose the passage \
 where the document makes the point most directly.
 """
+# What a citation of several documents names besides, for the instructions that give a model
+# several documents.
+SOURCED_CITING_RULE = """\
+- A citation also names the document its block lies in, by the document's handle. Where \
+these rules say "the document", they mean the document a statement cites.
+"""
 
 
 class DraftStatement(BaseModel):
@@ -47,3 +53,34 @@ def numbered_blocks(title: str, document: Document) -> str:
 def grounded(document: Document, draft: DraftStatement) -> Statement:
     # A citation whose quote the document does not hold gives no anchor.
     return Statement(text=draft.text, anchors=anchors_of(document, draft.citations))
+
+
+class SourcedCitation(BaseModel):
+    # A citation of a block of one of several documents, which it names by its handle.
+    document: str
+    block_number: int
+    quote: str
+
+
+class SourcedDraftStatement(BaseModel):
+    # A statement as a model writes it about several documents: its text and the passages,
+    # in whichever documents, it says it rests on.
+    text: str
+    citations: list[SourcedCitation]
+
+
+def grounded_across(documents: dict[str, Document], draft: SourcedDraftStatement) -> Statement:
+    # Each citation is looked up in the document its handle names; one whose handle names no
+    # document of these, or whose quote that document does not hold, gives no anchor.
+    return Statement(
+        text=draft.text,
+        anchors=[
+            anchor
+            for citation in draft.citations
+            if citation.document in documents
+            for anchor in anchors_of(
+                documents[citation.document],
+                [Citation(block_number=citation.block_number, quote=citation.quote)],
+            )
+        ],
+    )

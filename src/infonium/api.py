@@ -23,8 +23,10 @@ from infonium.chat import (
     Drafted,
     ItemConversation,
     ItemConversations,
+    LibraryConversation,
     Question,
     Questioned,
+    Searched,
     Turn,
     Unanswered,
     answer_progress,
@@ -56,6 +58,11 @@ from infonium.library import (
     NotInLibrary,
     Origin,
     Reading,
+)
+from infonium.library_conversation import (
+    LibraryConversations,
+    Shelf,
+    library_answer_progress,
 )
 from infonium.model_connection import Ending
 from infonium.search import BlockIndex
@@ -480,18 +487,53 @@ def forget_item_conversation(item_id: str, owner: Owner) -> None:
         ItemConversations(transaction).forget(item_id)
 
 
+def questioned_library(owner: Owner) -> Iterator[list[Turn]]:
+    # The owner's conversation about the library, held for a question until the question's
+    # response has been sent, with its turns before the question. A conversation that is
+    # answering is refused before a line of the answer is sent.
+    with answering().claimed(LibraryConversation(owner=owner)):
+        with library_store().transaction(owner) as transaction:
+            turns = LibraryConversations(transaction).turns()
+        yield turns
+
+
+QuestionedLibrary = Annotated[list[Turn], Depends(questioned_library)]
+
+
 @app.get("/api/conversation")
 def library_conversation(owner: Owner) -> Conversation:
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        return Conversation(turns=LibraryConversations(transaction).turns())
 
 
-@app.post("/api/conversation")
-def ask_about_library(question: Question, owner: Owner) -> Iterator[ChatEvent]:
+@app.post("/api/conversation", responses=ANSWERING)
+def ask_about_library(
+    question: Question, owner: Owner, turns: QuestionedLibrary, ending: AnswerEnding
+) -> Iterator[ChatEvent]:
     # Answers a question about everything the library holds, after the questions asked of
-    # the library before, and sends its events the same way.
-    yield Unanswered(reason=UNBUILT)
+    # the library before, and sends its events the same way. The model searches and reads
+    # the library's blocks with tools that change nothing; a search that fails because the
+    # index has failed is infonium's own failure.
+    shelf = Shelf(store=library_store(), index=block_index(), owner=owner)
+    progress = library_answer_progress(answering_model(), shelf, turns, question.text, ending)
+    try:
+        for step in progress:
+            match step:
+                case Searched() | Drafted():
+                    yield step
+                case Turn():
+                    with library_store().transaction(owner) as transaction:
+                        LibraryConversations(transaction).keep_turn(step)
+                    yield Answered(turn=step)
+    except MODEL_FAILURES as failure:
+        yield Unanswered(reason=failure_reason(failure))
 
 
-@app.delete("/api/conversation", status_code=HTTPStatus.NO_CONTENT)
+@app.delete("/api/conversation", responses=ANSWERING, status_code=HTTPStatus.NO_CONTENT)
 def forget_library_conversation(owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    # A conversation that is answering is not forgotten: the answer would be kept after it.
+    with (
+        answering().claimed(LibraryConversation(owner=owner)),
+        library_store().transaction(owner) as transaction,
+    ):
+        LibraryConversations(transaction).forget()

@@ -39,6 +39,7 @@ from infonium.model_connection import Ending
 # Stored with every turn, so that a later change to the models can tell which form a row has.
 TURN_FORMAT = 1
 BUSY = "a question about this item is being answered already"
+LIBRARY_BUSY = "a question about the library is being answered already"
 INSTRUCTIONS = """\
 You answer a reader's questions about one document. The reader checks every claim against \
 the source.
@@ -168,6 +169,13 @@ class ItemConversation(BaseModel):
     item_id: str
 
 
+class LibraryConversation(BaseModel):
+    # The conversation of an owner about the whole library.
+    model_config = ConfigDict(frozen=True)
+
+    owner: str
+
+
 class ConversationBusy(Exception):
     pass
 
@@ -233,13 +241,15 @@ class Answering:
     # question at a time: a second one is refused, not queued.
     def __init__(self) -> None:
         self.turn = Lock()
-        self.answering: set[ItemConversation] = set()
+        self.answering: set[ItemConversation | LibraryConversation] = set()
 
     @contextmanager
-    def claimed(self, conversation: ItemConversation) -> Iterator[None]:
+    def claimed(self, conversation: ItemConversation | LibraryConversation) -> Iterator[None]:
         with self.turn:
             if conversation in self.answering:
-                raise ConversationBusy(BUSY)
+                raise ConversationBusy(
+                    BUSY if isinstance(conversation, ItemConversation) else LIBRARY_BUSY
+                )
             self.answering.add(conversation)
         try:
             yield
