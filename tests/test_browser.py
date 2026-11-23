@@ -1,8 +1,11 @@
 import sys
 import time
 from contextlib import suppress
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Thread
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -15,10 +18,12 @@ from pydantic import BaseModel
 
 from infonium import browser
 from infonium.document import UnreadableSource
-from infonium.egress import Refusal
+from infonium.egress import LOOPBACK, Refusal
 
 URL = "https://example.test/app"
 PROGRAM = "/opt/google/chrome/chrome"
+# A port of the range this suite may take.
+LOCAL_PAGE_PORT = 28850
 REPLACEMENT = "\N{REPLACEMENT CHARACTER}"
 SURROGATES = frozenset(map(chr, range(0xD800, 0xE000)))
 # Marks that an address may hold without a space, among them every error Chrome names.
@@ -294,3 +299,37 @@ def test_an_aborted_rendering_reaches_the_caller_with_its_reason(reason: str) ->
     ):
         browser.rendered_page(URL, Path(folder), Path(sys.executable))
     assert str(raised.value) == reason, "an aborted rendering's reason did not reach the caller"
+
+
+class CountedRequests(BaseHTTPRequestHandler):
+    # A page of this machine, which counts the requests that reach it.
+    heard: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:
+        self.heard.append(self.path)
+        content = b"<html><body><p>A page of this machine.</p></body></html>"
+        self.send_response(200)
+        self.send_header("content-type", "text/html")
+        self.send_header("content-length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def log_message(self, format: str, *arguments: object) -> None:
+        pass
+
+
+@pytest.mark.chrome
+@pytest.mark.enable_socket
+def test_a_page_in_the_browser_does_not_reach_this_machine(chrome: Path, tmp_path: Path) -> None:
+    with ThreadingHTTPServer((LOOPBACK, LOCAL_PAGE_PORT), CountedRequests) as server:
+        Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with pytest.raises(UnreadableSource) as raised:
+                browser.rendered_page(f"http://{LOOPBACK}:{LOCAL_PAGE_PORT}/", tmp_path, chrome)
+        finally:
+            server.shutdown()
+    assert str(raised.value) == (
+        f"http://{LOOPBACK}:{LOCAL_PAGE_PORT}/ could not be opened: "
+        f"{LOOPBACK} is not a public address"
+    ), f"a page of this machine was not refused by the proxy: {raised.value}"
+    assert CountedRequests.heard == [], "the browser reached a page of this machine"
