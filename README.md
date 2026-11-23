@@ -6,7 +6,7 @@ infonium digests what you read, watch and listen to into a summary and takeaways
 
 | Source | Add it by | Read through |
 | --- | --- | --- |
-| Web article | pasting its address | the page's HTML, and the page as a browser builds it when its HTML holds little text |
+| Web article | pasting its address, or uploading the page saved from your browser (for a site that turns infonium away) | the page's HTML, and the page as a browser builds it when its HTML holds little text |
 | PDF, with a text layer or scanned | uploading the file or pasting its address | [MinerU](https://github.com/opendatalab/MinerU), which also recognises the text of scanned pages |
 | Video or podcast page, such as YouTube, Bilibili, TED, Apple Podcasts and SoundCloud | pasting its address | the page's own captions, or speech recognition when it has none |
 | Audio or video file | uploading the file or pasting its address | speech recognition |

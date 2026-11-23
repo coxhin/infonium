@@ -12,7 +12,7 @@ const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
   failed: " · 读取失败",
 };
 // Kinds of file the upload dialog offers; what a file really is, the server tells from its bytes.
-const UPLOADABLE = "application/pdf,audio/*,video/*";
+const UPLOADABLE = "application/pdf,audio/*,video/*,text/html,.html,.htm";
 
 export function Library({
   entries,
