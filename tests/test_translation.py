@@ -527,23 +527,9 @@ SOURCE_BRACKETS = (
     ("a1", "[0, 1)"),
     ("〈f2〉", "\\alpha"),
 )
-# A tag's word that the source writes in brackets of its own, as a reply keeps it.
-TAG_WORD_IN_BRACKETS = frozenset({"《F1》", "〈f2〉"})
-TAG_WORD_REFUSED = pytest.mark.xfail(
-    reason="R4 as amended after the third review: a reply that keeps a word of the source's own "
-    "text, written in brackets, that is also the word of one of the passage's tags (《F1》 beside "
-    "the tag f1) is refused three times, where the source's own text is kept",
-    strict=False,
-)
 
 
-@pytest.mark.parametrize(
-    ("bracketed", "formula"),
-    [
-        pytest.param(*case, marks=[TAG_WORD_REFUSED] if case[0] in TAG_WORD_IN_BRACKETS else [])
-        for case in SOURCE_BRACKETS
-    ],
-)
+@pytest.mark.parametrize(("bracketed", "formula"), SOURCE_BRACKETS)
 @given(paragraph=marked_paragraph())
 @UNSHRUNK_EXAMPLES
 def test_what_the_source_text_holds_is_kept_whatever_tags_the_passage_was_sent_with(
