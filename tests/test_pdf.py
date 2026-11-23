@@ -1,5 +1,5 @@
 import json
-import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -9,22 +9,13 @@ import pytest
 from infonium import pdf
 from infonium.document import Extracted
 from infonium.mineru import UnparsedFile
+from tests.pdf_engine_standin import PDF_DATA
 
-TESTS = Path(__file__).resolve().parent
-PDF_DATA = TESTS / "fixtures" / "pdf"
-STANDIN = TESTS / "pdf_engine_standin.py"
 # The samples were drawn for infonium; the reference is what commit 6facef0 read from them,
 # which a fresh run of the engine gave again on 2026-11-21. It is what was read then, not what
 # is right: in turned_digital a heading reads "accou nt", a known limit of turned pages.
 SAMPLES = sorted(sample.stem for sample in (PDF_DATA / "samples").glob("*.pdf"))
 REFERENCE = json.loads((PDF_DATA / "handed.json").read_text("utf-8"))["made_by"]
-
-
-def standin_engine(folder: Path, sample: str) -> Path:
-    engine = folder / "mineru"
-    engine.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{STANDIN}" {sample} "$@"\n')
-    engine.chmod(0o755)
-    return engine
 
 
 def reading_of(sample: str, engine: Path, folder: Path) -> Extracted:
@@ -68,9 +59,9 @@ def differences(expected: dict[str, Any], read: dict[str, Any]) -> str:
 
 @pytest.mark.parametrize("sample", SAMPLES)
 def test_a_pdf_reads_as_the_reference_from_the_engines_stored_results(
-    sample: str, tmp_path: Path
+    sample: str, standin_pdf_engine: Callable[[str], Path], tmp_path: Path
 ) -> None:
-    extracted = reading_of(sample, standin_engine(tmp_path, sample), tmp_path)
+    extracted = reading_of(sample, standin_pdf_engine(sample), tmp_path)
     pages = page_count(sample)
     unplaced = [number for number, block in enumerate(extracted.blocks) if not block.places]
     off_pages = {place.page for block in extracted.blocks for place in block.places} - set(

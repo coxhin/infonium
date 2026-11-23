@@ -1,10 +1,13 @@
 import shutil
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from hypothesis import settings
 
 from infonium.settings import Settings
+from tests import pdf_engine_standin
 
 # The examples of a property run as fast as the extractor and the parsers they call, whose
 # first calls load what they keep; a deadline per example would fail them at random.
@@ -52,3 +55,18 @@ def pdf_engine() -> Path:
     if found is None:
         pytest.fail("a test that needs MinerU is marked mineru")
     return found
+
+
+@pytest.fixture
+def standin_pdf_engine(tmp_path: Path) -> Callable[[str], Path]:
+    # The command of a stand-in for MinerU that replays the engine's stored results for a
+    # sample of the PDF fixtures.
+    def engine_for(sample: str) -> Path:
+        engine = tmp_path / f"mineru-{sample}"
+        engine.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{pdf_engine_standin.__file__}" {sample} "$@"\n'
+        )
+        engine.chmod(0o755)
+        return engine
+
+    return engine_for
