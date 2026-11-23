@@ -41,6 +41,7 @@ MODEL_FAILURES = (
     "cut_short",
     "filtered",
     "failed",
+    "broken_off",
     "unmetered",
     "unparsable",
     "misshapen",
@@ -389,6 +390,8 @@ def failing_reply(failure: str) -> Reply | Rejection:
             return Reply(pieces=[half], finish=Finish.FILTERED)
         case "failed":
             return Reply(pieces=[half], finish=Finish.FAILED)
+        case "broken_off":
+            return Reply(pieces=[half], finish=Finish.BROKEN_OFF)
         case "unmetered":
             return Reply(pieces=[written], metered=False)
         case "unparsable":

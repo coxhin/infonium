@@ -39,11 +39,13 @@ NO_REPLY = "the test told the stand-in model nothing to answer to this request"
 
 class Finish(StrEnum):
     # How a reply's stream ends: as written, at the endpoint's limit of output tokens, stopped
-    # by its filter, or failed by the endpoint in the middle.
+    # by its filter, failed by the endpoint, or broken off with an error event. The Chat
+    # Completions API tells a failure only the second way.
     STOPPED = "stopped"
     CUT_SHORT = "cut_short"
     FILTERED = "filtered"
     FAILED = "failed"
+    BROKEN_OFF = "broken_off"
 
 
 class Call(BaseModel):
@@ -264,7 +266,7 @@ def chat_frames(asked: Asked, reply: Reply) -> list[Frame]:
         frames += [Frame(event=chunk({"tool_calls": [opened]}))]
         frames += [Frame(event=chunk({"tool_calls": [written]}))]
     match reply.finish:
-        case Finish.FAILED:
+        case Finish.FAILED | Finish.BROKEN_OFF:
             failure = {"message": "The server had an error while processing your request."}
             return [*frames, Frame(event=sse({"error": {**failure, "type": "server_error"}}))]
         case Finish.CUT_SHORT:
@@ -415,6 +417,13 @@ class ResponseEvents:
                 ended = self.response("failed", reply)
                 ended["error"] = {"code": "server_error", "message": "The model failed."}
                 return [*frames, Frame(event=self.event("response.failed", response=ended))]
+            case Finish.BROKEN_OFF:
+                broken = {
+                    "code": "server_error",
+                    "message": "The server had an error.",
+                    "param": None,
+                }
+                return [*frames, Frame(event=self.event("error", **broken))]
 
 
 def reply_frames(asked: Asked, reply: Reply) -> list[Frame]:

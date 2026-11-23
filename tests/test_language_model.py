@@ -48,7 +48,15 @@ WORDS = ("harbour", "ledger", "ferry", "fog", "港", "évier")
 # A model may write text in a request in which it goes on to call tools; that text is not
 # the reply.
 ASIDE = "Let me look that up first."
-FAILURES = ("refused", "cut_short", "filtered", "failed", "unparsable", "misshapen", "unmetered")
+FAILURES = ("refused", "cut_short", "filtered", "unparsable", "misshapen", "unmetered")
+# The Chat Completions API tells a reply's failure only by breaking its stream off with an
+# error; the interface lets the openai package's error of it through instead of raising its
+# own.
+BROKEN_OFF_ON_CHAT = pytest.mark.xfail(
+    raises=openai.APIError,
+    strict=True,
+    reason="a Chat Completions reply that the endpoint fails raises openai.APIError",
+)
 # How long what the model has written may take to be handed on while it writes on.
 WRITING_SECONDS = 2.0
 # The examples a property runs: each is a few requests to the stand-in.
@@ -310,8 +318,6 @@ def failed_reply(failure: str, tally: Tally) -> Reply:
             return Reply(pieces=[text[: len(text) // 2]], finish=Finish.CUT_SHORT)
         case "filtered":
             return Reply(pieces=[text[: len(text) // 2]], finish=Finish.FILTERED)
-        case "failed":
-            return Reply(pieces=[text[: len(text) // 2]], finish=Finish.FAILED)
         case "unparsable":
             return Reply(pieces=["The count is three."])
         case "misshapen":
@@ -336,15 +342,35 @@ def test_a_reply_that_fails_in_any_request_raises_the_interfaces_own_failure(
     expected: tuple[type[Exception], ...] = (
         (UnmeteredCompletion,) if failure == "unmetered" else (UnstructuredCompletion,)
     )
-    # A stream the Chat Completions API breaks off with an error is the openai package's
-    # error of a request that failed.
-    if failure == "failed" and wire_api == WireApi.CHAT_COMPLETIONS:
-        expected = (UnstructuredCompletion, openai.APIError)
     with pytest.raises(expected):
         replying(wire_api, [lookup_tool(lookup_result)], events)
     assert len(model.asked()) == tool_rounds + 1, "the failing request was not the one that failed"
     assert not any(isinstance(event, Replied) for event in events), (
         f"a reply that is {failure} was handed on as a whole reply"
+    )
+
+
+@pytest.mark.parametrize(
+    ("wire_api", "finish"),
+    [
+        (WireApi.RESPONSES, Finish.FAILED),
+        (WireApi.RESPONSES, Finish.BROKEN_OFF),
+        pytest.param(WireApi.CHAT_COMPLETIONS, Finish.BROKEN_OFF, marks=BROKEN_OFF_ON_CHAT),
+    ],
+)
+@pytest.mark.parametrize("tool_rounds", [0, 2])
+def test_a_reply_the_endpoint_fails_in_any_request_raises_the_interfaces_own_failure(
+    model: ModelStandin, wire_api: WireApi, finish: Finish, tool_rounds: int
+) -> None:
+    call = Call(name=TOOL_NAME, arguments=Lookup(word="fog", times=1).model_dump_json())
+    failed = Reply(pieces=['{"words": ["fog"], '], finish=finish)
+    model.reset(by_request([*[Reply(calls=[call])] * tool_rounds, failed]))
+    events: list[ReplyEvent[Tally]] = []
+    with pytest.raises(UnstructuredCompletion):
+        replying(wire_api, [lookup_tool(lookup_result)], events)
+    assert len(model.asked()) == tool_rounds + 1, "the failing request was not the one that failed"
+    assert not any(isinstance(event, Replied) for event in events), (
+        "a reply the endpoint failed was handed on as a whole reply"
     )
 
 
