@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlsplit
 import trafilatura
 from lxml import etree, html
 from pydantic import BaseModel
+from trafilatura.utils import decode_file
 
 from infonium.blockholders import drop_own_names, placed_blocks, unread_parts
 from infonium.document import (
@@ -78,10 +79,25 @@ EVENT_HANDLER_PREFIX = "on"
 # characters before it, so these do not hide a script's address from it.
 ADDRESS_NOISE = re.compile(r"[\t\n\r]")
 SCRIPT_ADDRESS = re.compile(r"[\x00-\x20]*javascript:", re.IGNORECASE)
+# Attributes that hold several addresses, or an address beside other words, are looked at part
+# by part, and dropped where any part is a script's address: the candidates of a srcset, the
+# addresses of a ping or an archive, the content of a meta element (as a refresh's "0;
+# url=…"), and the url() of a style.
+ADDRESS_LISTS = frozenset({"srcset", "imagesrcset", "ping", "archive"})
+ADDRESS_LIST_PARTS = re.compile(r"[\s,;=]+")
+SCRIPT_IN_CSS = re.compile(r"url\(\s*['\"]?[\x00-\x20]*javascript:", re.IGNORECASE)
 META = "meta"
 META_INSTRUCTION = "http-equiv"
 META_NAME = "name"
 META_CONTENT = "content"
+# The page's own declaration of its document type, which sets the mode a browser lays it out
+# in. The extractor's parser is not told it: trafilatura removes a declaration that names a
+# document type definition, a "/" in its first line, before it parses. It is taken from the
+# decoded text as a browser's tokenizer reads it, after any spaces and comments, up to the
+# first ">".
+DOCUMENT_TYPE = re.compile(
+    r"\A\ufeff?(?:\s|<!--.*?-->)*(<!doctype[^>]*>)", re.IGNORECASE | re.DOTALL
+)
 REFERRER = "referrer"
 NO_REFERRER = "no-referrer"
 LINKED_RESOURCE = "link"
@@ -112,9 +128,9 @@ class FramedPage(BaseModel):
     placed: list[BlockNumber]
 
 
-def page_tree(content: bytes, address: str) -> html.HtmlElement:
-    # The page is decoded and parsed as the extractor does it.
-    page = trafilatura.load_html(content)
+def page_tree(text: str, address: str) -> html.HtmlElement:
+    # The page's decoded text is parsed as the extractor parses it.
+    page = trafilatura.load_html(text)
     if page is None:
         raise UnreadableSource(NO_TEXT.format(source=address))
     return page
@@ -122,6 +138,13 @@ def page_tree(content: bytes, address: str) -> html.HtmlElement:
 
 def is_script_address(value: str) -> bool:
     return SCRIPT_ADDRESS.match(ADDRESS_NOISE.sub("", value)) is not None
+
+
+def names_script(element: html.HtmlElement, name: str, value: str) -> bool:
+    listed = name in ADDRESS_LISTS or (element.tag == META and name == META_CONTENT)
+    parts = ADDRESS_LIST_PARTS.split(ADDRESS_NOISE.sub("", value)) if listed else []
+    in_css = name == STYLE_ATTRIBUTE and SCRIPT_IN_CSS.search(ADDRESS_NOISE.sub("", value))
+    return is_script_address(value) or any(map(is_script_address, parts)) or bool(in_css)
 
 
 def picture_sizes(picture: html.HtmlElement) -> list[float]:
@@ -150,7 +173,7 @@ def made_inert(page: html.HtmlElement) -> None:
             kept_resource(element)
         for name, value in list(element.attrib.items()):
             dropped = name in DROPPED_ATTRIBUTES or name.startswith(EVENT_HANDLER_PREFIX)
-            if dropped or is_script_address(value):
+            if dropped or names_script(element, name, value):
                 del element.attrib[name]
         if tag in FRAMES:
             for name in FRAMED_PAGE:
@@ -256,8 +279,10 @@ def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPa
     # with the elements that hold the blocks' text marked. Its dialogs are left out, as the
     # extractor leaves them out: shown without the script that closes them, they would cover
     # the page.
-    page = page_tree(content, heading_address(origin))
-    doctype = page.getroottree().docinfo.doctype
+    text = decode_file(content)
+    page = page_tree(text, heading_address(origin))
+    declared = DOCUMENT_TYPE.match(text)
+    doctype = declared.group(1) if declared else ""
     base = base_address(page, origin)
     made_inert(page)
     drop_own_names(page)

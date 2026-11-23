@@ -422,6 +422,18 @@ class Library:
             raise NotInLibrary(f"item {item_id} has no document in the library")
         return Holding(title=kept[0], document=Document.model_validate_json(kept[1]))
 
+    def owned_document(self, document_id: str) -> Document:
+        # A document of the owner's by its id: one that an item of theirs holds, or held when
+        # a reader began to ask of it. Another owner's document is not found.
+        body = self.connection.execute(
+            sqlalchemy.select(document_table.c.body).where(
+                document_table.c.owner == self.owner, document_table.c.id == document_id
+            )
+        ).scalar_one_or_none()
+        if body is None:
+            raise NotInLibrary(f"document {document_id} is not in the library")
+        return Document.model_validate_json(body)
+
     def kept_source(self, item_id: str) -> KeptSource:
         source = self.connection.execute(
             sqlalchemy.select(

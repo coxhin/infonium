@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from infonium.asking import with_attempts
 from infonium.document import Document
+from infonium.glossary import Term
 from infonium.language_model import LanguageModel, StructuredCompletion
-from infonium.rendition import Term
 from infonium.translation import translated_numbers
 
 # The survey of a document before it is translated: which language it is in, and the names

@@ -16,6 +16,28 @@
   color: var(--on-accent);
 }
 
+/* A statement without a found source: given none, or given sources that are not there. */
+.unsourced {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  border-bottom: 1px dotted var(--muted);
+  white-space: nowrap;
+}
+
+.unsourced.unfound {
+  color: var(--failure);
+  border-bottom-color: var(--failure);
+}
+
+/* Citations lost beside those found: said, but quietly. */
+.also-lost {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* What the model and its tokens cost, under a digest or an answer. */
 .spent {
   font-size: 0.75rem;

@@ -53,10 +53,23 @@ function refusalText(refusal: Refusal | undefined): string {
   return detail?.map((problem) => problem.msg).join("；") ?? "请求没有成功";
 }
 
-async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>): Promise<Data> {
-  const { data, error } = await request;
+// The service answered a request with a status other than success, so it did nothing of what
+// was asked. The status tells the kinds of refusal apart where a reader is told them apart.
+export class Refused extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function settled<Data>(
+  request: Promise<{ data?: Data; error?: Refusal; response: Response }>,
+): Promise<Data> {
+  const { data, error, response } = await request;
   if (data === undefined) {
-    throw new Error(refusalText(error));
+    throw new Refused(refusalText(error), response.status);
   }
   return data;
 }
@@ -65,17 +78,7 @@ async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>)
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;
   if (!response.ok) {
-    throw new Error(refusalText(error));
-  }
-}
-
-// The service answered a question with a status other than success, so it began no answer.
-export class RefusedQuestion extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+    throw new Refused(refusalText(error), response.status);
   }
 }
 
@@ -100,7 +103,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new RefusedQuestion(refusalText(error), response.status);
+    throw new Refused(refusalText(error), response.status);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");

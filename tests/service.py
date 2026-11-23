@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from infonium import api
 from infonium.library import LibraryStore
+from infonium.search import BlockIndex
 from tests.model_standin import Asked, ModelStandin, Reply
 from tests.unix_server import unix_server
 
@@ -83,6 +84,9 @@ class Site:
     # for, and what it answers.
     def __init__(self) -> None:
         self.hits: Counter[str] = Counter()
+        # Pages a test makes up, served under /page/ by their names until it changes them,
+        # as the bytes they are, so that a page may be in any encoding.
+        self.pages: dict[str, bytes] = {}
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -96,6 +100,10 @@ class Site:
                 return httpx.Response(200, html=article("Quillmoor ledger", LEDGER).decode())
             case ["revised"]:
                 return httpx.Response(200, html=article("Quillmoor revised", REVISED).decode())
+            case ["page", name] if name in self.pages:
+                return httpx.Response(
+                    200, headers={"content-type": "text/html"}, content=self.pages[name]
+                )
             case ["counted", name]:
                 time.sleep(0.3)
                 return httpx.Response(200, html=article(f"Counted {name}").decode())
@@ -147,12 +155,18 @@ def digest_reply(asked: Asked) -> Reply:
 
 class App:
     def __init__(
-        self, client: TestClient, store: LibraryStore, site: Site, model: ModelStandin
+        self,
+        client: TestClient,
+        store: LibraryStore,
+        site: Site,
+        model: ModelStandin,
+        index: BlockIndex,
     ) -> None:
         self.client = client
         self.store = store
         self.site = site
         self.model = model
+        self.index = index
         self.running = True
 
     def link(self, url: str, **headers: str) -> httpx2.Response:
@@ -179,6 +193,12 @@ class App:
         if stand(entry) != "read/settled":
             pytest.fail(f"the page {path} that a test needs was not read: {entry['reading']}")
         return str(entry["id"])
+
+    def read_page(self, name: str, content: bytes) -> str:
+        # The item of a page the test made up, served by the stand-in site at
+        # {SITE}/page/{name} and read.
+        self.site.pages[name] = content
+        return self.read(f"/page/{name}")
 
     def left_in(self, folder: Path) -> list[str]:
         return sorted(entry.name for entry in folder.iterdir())
