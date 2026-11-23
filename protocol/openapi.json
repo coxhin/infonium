@@ -727,6 +727,37 @@
         "title": "ListItem",
         "type": "object"
       },
+      "PageBlocks": {
+        "properties": {
+          "block_attribute": {
+            "description": "The name of the attribute that marks, in the served page, the element that holds the whole text of one block that is not a table, and nothing else a reader or the rest of the page needs. Its value is the block's number, and one element at most carries a number. The element's content may be replaced by the block's translation, and the element may be scrolled to. It holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The links, emphasis and line breaks inside it are part of the block's text, and the translation's marks and line breaks stand for them; a line break in the text or the translation is written into the page as a br element. Words that the page shows struck out are not part of the block's text, and go when the content is replaced, as they are left out of the text a reader reads. A place inside the element that the page's own links lead to, an element with an id, goes too: those links then lead nowhere. Where a block's text is only part of an element, the marked element is an infonium-run element added around that text, laid out inline.",
+            "title": "Block Attribute",
+            "type": "string"
+          },
+          "cell_attribute": {
+            "description": "The name of the attribute that marks, in the served page, each cell of a table (a td, th or caption element) that holds one cell of a table block's text. Its value is three numbers parted by commas: the block's number, then the row and the cell within the row, counted from 0 as the block's text gives them when it is split at its row separator and each row at its cell separator. A cell of the block's text that says nothing has no element. A marked cell's content may be replaced by the translation of that cell of the block's text; it holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The translation of a table block is one text, which is split at the block's own row and cell separators into the cells that the marks name. The table itself carries no mark: a table block is scrolled to by its first marked cell.",
+            "title": "Cell Attribute",
+            "type": "string"
+          },
+          "placed": {
+            "description": "The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.",
+            "items": {
+              "description": "The position of a block in its document, counted from 0.",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Placed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "block_attribute",
+          "cell_attribute",
+          "placed"
+        ],
+        "title": "PageBlocks",
+        "type": "object"
+      },
       "PagePlace": {
         "properties": {
           "end": {
@@ -793,34 +824,6 @@
           "height"
         ],
         "title": "PagePlace",
-        "type": "object"
-      },
-      "PageView": {
-        "properties": {
-          "block_attribute": {
-            "title": "Block Attribute",
-            "type": "string"
-          },
-          "html": {
-            "title": "Html",
-            "type": "string"
-          },
-          "placed": {
-            "items": {
-              "description": "The position of a block in its document, counted from 0.",
-              "minimum": 0.0,
-              "type": "integer"
-            },
-            "title": "Placed",
-            "type": "array"
-          }
-        },
-        "required": [
-          "html",
-          "block_attribute",
-          "placed"
-        ],
-        "title": "PageView",
         "type": "object"
       },
       "Paragraph": {
@@ -2278,9 +2281,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageView"
+                  "type": "string"
                 }
               }
             },
@@ -2308,6 +2311,55 @@
           }
         },
         "summary": "Item Page"
+      }
+    },
+    "/api/items/{item_id}/page/blocks": {
+      "get": {
+        "operationId": "item_page_blocks_api_items__item_id__page_blocks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageBlocks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Page Blocks"
       }
     },
     "/api/items/{item_id}/source": {
@@ -2541,6 +2593,16 @@
               }
             },
             "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {

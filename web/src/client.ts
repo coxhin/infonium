@@ -17,7 +17,7 @@ export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
 export type TranslatedBlock = Schemas["TranslatedBlock"];
 export type Segment = Schemas["Segment"];
-export type Page = Schemas["PageView"];
+export type PageBlocks = Schemas["PageBlocks"];
 export type Conversation = Schemas["Conversation"];
 export type Turn = Schemas["Turn"];
 // What happens while a question is answered. The protocol lists these as the items of a
@@ -30,6 +30,7 @@ export type ChatEvent =
 type Refusal = Schemas["Failure"] | Schemas["HTTPValidationError"];
 
 const SOURCE_PATH = "/api/items/{item_id}/source" satisfies keyof paths;
+const PAGE_PATH = "/api/items/{item_id}/page" satisfies keyof paths;
 const ITEM_PLACE = "{item_id}";
 
 const api = createClient<paths>();
@@ -37,6 +38,11 @@ const api = createClient<paths>();
 // Where the file an item's document was read from is served: the PDF, or the recording.
 export function sourceLink(itemId: string): string {
   return SOURCE_PATH.replace(ITEM_PLACE, itemId);
+}
+
+// Where the web page an item was read from is served, inert, for a frame to show.
+export function pageLink(itemId: string): string {
+  return PAGE_PATH.replace(ITEM_PLACE, itemId);
 }
 
 function refusalText(refusal: Refusal | undefined): string {
@@ -64,7 +70,14 @@ async function done(request: Promise<{ error?: Refusal; response: Response }>): 
 }
 
 // The service answered a question with a status other than success, so it began no answer.
-export class RefusedQuestion extends Error {}
+export class RefusedQuestion extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 // The question never reached the service: the request itself failed, before any answer.
 // Any failure of a question that is neither this nor a refusal is a connection that broke.
@@ -87,7 +100,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new RefusedQuestion(refusalText(error));
+    throw new RefusedQuestion(refusalText(error), response.status);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");
@@ -190,8 +203,10 @@ export function retranslateBlock(itemId: string, blockNumber: number): Promise<T
   );
 }
 
-export function readPage(itemId: string): Promise<Page> {
-  return settled(api.GET("/api/items/{item_id}/page", { params: { path: { item_id: itemId } } }));
+export function readPageBlocks(itemId: string): Promise<PageBlocks> {
+  return settled(
+    api.GET("/api/items/{item_id}/page/blocks", { params: { path: { item_id: itemId } } }),
+  );
 }
 
 export function readItemConversation(itemId: string): Promise<Conversation> {
