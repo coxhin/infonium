@@ -92,6 +92,7 @@ class ServedPage(BaseModel):
     # stand in it.
     item_id: str
     markup: str
+    page_attribute: str
     block_attribute: str
     cell_attribute: str
     placed: list[int]
@@ -670,8 +671,14 @@ def test_nothing_the_page_wrote_in_infoniums_names_is_left(app: App, page: str) 
     own = (served_page.block_attribute, served_page.cell_attribute)
     for tag, attributes in tag_views(served_page.markup):
         named = dict(attributes)
+        # The root element names the item the page is of, in infonium's own words.
+        names_item = tag == "html" and named.get(served_page.page_attribute) == served_page.item_id
         foreign = [
-            name for name in named if name.startswith(INFONIUM_DATA_PREFIX) and name not in own
+            name
+            for name in named
+            if name.startswith(INFONIUM_DATA_PREFIX)
+            and name not in own
+            and not (names_item and name == served_page.page_attribute)
         ]
         assert not foreign, f"the page's own attributes {foreign} in infonium's names are left"
         assert "forged" not in named.get("class", "").split() or not set(own) & set(named), (
