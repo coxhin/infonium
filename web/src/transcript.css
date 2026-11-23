@@ -79,29 +79,10 @@
   outline-offset: 2px;
 }
 
+/* The control to translate a block again stands in the margin beside the block's first line,
+   as translated.css sets it. */
 .line-group .again {
-  position: absolute;
-  top: 0.4rem;
-  right: 0;
-  font-size: 0.75rem;
-  padding: 0.05rem 0.45rem;
-  white-space: nowrap;
-  color: var(--muted);
-  background: var(--paper);
-  opacity: 0;
-}
-
-.line-group:hover .again,
-.line-group .again:focus-visible,
-.line-group .again:disabled {
-  opacity: 1;
-}
-
-@media (min-width: 92rem) {
-  .line-group .again {
-    right: auto;
-    left: calc(100% + 0.5rem);
-  }
+  top: 0.75rem;
 }
 
 .transcript .follow {

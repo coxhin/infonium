@@ -1,8 +1,9 @@
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
 import type { Clock } from "./player";
-import { scrolls } from "./scrolling";
+import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
 import { Transcript, LINES_ATTRIBUTE } from "./transcript";
 import { POINTED_CLASS, Row, TRANSLATION_ATTRIBUTE } from "./translated";
@@ -42,6 +43,10 @@ export function Reader({
   const blocks = itemDocument.blocks;
   const pointedHere = pointed?.document_id === itemDocument.id ? pointed : undefined;
   const asLines = playing !== undefined && setting !== "source";
+  // The passage highlighted in this document goes when the document leaves the page. React
+  // runs this before the effects of a reader that takes its place, so the passage that reader
+  // is opened for stays.
+  useEffect(() => hideAnchor, []);
   return (
     <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}>
       <header>
@@ -174,14 +179,155 @@ export function showAnchor(anchor: Anchor): void {
     bringIntoView(passage);
     return;
   }
-  const shown = document.querySelector(
-    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] :is([${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"], [${LINES_ATTRIBUTE}="${anchor.block_number}"]) .${POINTED_CLASS}`,
-  );
+  const shown = pointedTranslationOf(anchor);
   if (shown !== null) {
     const place = document.createRange();
     place.selectNodeContents(shown);
     bringIntoView(place);
   }
+}
+
+function pointedTranslationOf(anchor: Anchor): Element | null {
+  return document.querySelector(
+    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] :is([${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"], [${LINES_ATTRIBUTE}="${anchor.block_number}"]) .${POINTED_CLASS}`,
+  );
+}
+
+// Where a passage is on show: its source block, where that is on show, or else the parts of
+// the block's translation or lines that are marked as pointed at.
+function passageOnShow(anchor: Anchor): Element | null {
+  const blockElement = document.querySelector(
+    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] [${BLOCK_ATTRIBUTE}="${anchor.block_number}"]`,
+  );
+  if (blockElement === null) {
+    return null;
+  }
+  return blockElement.checkVisibility() ? blockElement : pointedTranslationOf(anchor);
+}
+
+// Where a passage pointed at should stand in the window, and the scroller and its scroll
+// position when that was last settled. The browser's own anchoring of the scroll is turned off
+// in that scroller for as long as the passage is kept, so that every scroll there is the
+// reader's or this keeping's own.
+type Kept = {
+  anchor: Anchor;
+  setting: Setting;
+  top: number;
+  height: number;
+  scroller: Element;
+  position: number;
+};
+
+const OVERFLOW_ANCHOR = "overflow-anchor";
+const NO_SCROLL_ANCHORING = "none";
+
+function scrollerAround(element: Element): Element {
+  return scrollerOf(element) ?? document.scrollingElement ?? document.documentElement;
+}
+
+function viewOfScroller(scroller: Element): DOMRect {
+  return scroller === document.scrollingElement
+    ? new DOMRect(0, 0, innerWidth, innerHeight)
+    : scroller.getBoundingClientRect();
+}
+
+// Keeps a passage that is pointed at where it stands on show while what lies around it
+// changes: a translation that arrives in the passage's block or in blocks above it, or a
+// picture above it that loads, moves it, and the view is moved back by as much. Only a passage
+// in view, in a view that is on show, is kept; once the reader scrolls it out of view it is
+// left, and the browser anchors the scroll as it would. The result is to be called once the
+// passage has been brought into view.
+export function usePassageKept(
+  anchor: Anchor | undefined,
+  onShow: boolean,
+  setting: Setting,
+): () => void {
+  const kept = useRef<Kept>(undefined);
+
+  const release = useCallback(() => {
+    const scroller = kept.current?.scroller;
+    if (scroller instanceof HTMLElement) {
+      scroller.style.removeProperty(OVERFLOW_ANCHOR);
+    }
+    kept.current = undefined;
+  }, []);
+
+  const remember = useCallback(() => {
+    const element = anchor !== undefined && onShow ? passageOnShow(anchor) : null;
+    if (anchor === undefined || element === null || !inView(element)) {
+      release();
+      return;
+    }
+    const scroller = scrollerAround(element);
+    if (kept.current !== undefined && kept.current.scroller !== scroller) {
+      release();
+    }
+    if (scroller instanceof HTMLElement) {
+      scroller.style.setProperty(OVERFLOW_ANCHOR, NO_SCROLL_ANCHORING);
+    }
+    const place = element.getBoundingClientRect();
+    kept.current = {
+      anchor,
+      setting,
+      top: place.top,
+      height: place.height,
+      scroller,
+      position: scroller.scrollTop,
+    };
+  }, [anchor, onShow, setting, release]);
+
+  // Puts the passage back where it should stand, after what lies above it has changed.
+  const keep = useCallback(() => {
+    const before = kept.current;
+    const element = anchor !== undefined && onShow ? passageOnShow(anchor) : null;
+    const same = before !== undefined && before.anchor === anchor && before.setting === setting;
+    if (same && element !== null) {
+      const shift = element.getBoundingClientRect().top - before.top;
+      if (Math.abs(shift) >= 1) {
+        before.scroller.scrollBy({ top: shift });
+      }
+    }
+    remember();
+  }, [anchor, onShow, setting, remember]);
+
+  // A scroll moves where the passage stands by as much as it scrolls, without measuring the
+  // passage, which may have moved for other reasons that are not settled yet.
+  const scrolled = useCallback(() => {
+    const before = kept.current;
+    if (before === undefined) {
+      return;
+    }
+    const position = before.scroller.scrollTop;
+    const top = before.top - (position - before.position);
+    const view = viewOfScroller(before.scroller);
+    if (top + before.height <= view.top || top >= view.bottom) {
+      release();
+    } else {
+      kept.current = { ...before, top, position };
+    }
+  }, [release]);
+
+  // After every drawing of the view, and whenever the document's height changes without one.
+  useLayoutEffect(keep);
+  useEffect(() => {
+    const article =
+      anchor === undefined
+        ? null
+        : document.querySelector(`[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"]`);
+    if (article === null) {
+      return;
+    }
+    const resized = new ResizeObserver(keep);
+    resized.observe(article);
+    addEventListener("scroll", scrolled, { capture: true, passive: true });
+    return () => {
+      resized.disconnect();
+      removeEventListener("scroll", scrolled, { capture: true });
+    };
+  }, [anchor, keep, scrolled]);
+  useEffect(() => release, [release]);
+
+  return remember;
 }
 
 export function hideAnchor(): void {

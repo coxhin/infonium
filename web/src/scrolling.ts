@@ -15,3 +15,16 @@ export function scrollerOf(element: Element): Element | null {
   }
   return null;
 }
+
+// What the element's scroller shows, in the coordinates of the window.
+export function viewOf(element: Element): DOMRect {
+  return (
+    scrollerOf(element)?.getBoundingClientRect() ?? new DOMRect(0, 0, innerWidth, innerHeight)
+  );
+}
+
+export function inView(element: Element): boolean {
+  const view = viewOf(element);
+  const place = element.getBoundingClientRect();
+  return place.bottom > view.top && place.top < view.bottom;
+}

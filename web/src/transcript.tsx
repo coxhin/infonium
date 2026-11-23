@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from
 import { MarkedText, unitOffset, unitOffsets } from "./blocks";
 import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./client";
 import type { Clock } from "./player";
-import { scrollerOf } from "./scrolling";
+import { inView } from "./scrolling";
 import type { Setting } from "./setting";
 import { AgainControl, overlaps, POINTED_CLASS, type TextRange } from "./translated";
 import type { Again } from "./translation";
@@ -17,6 +17,10 @@ const SECONDS_IN_MINUTE = 60;
 // What a reader does that may scroll the transcript. A scroll that follows one of these is
 // the reader's; any other is the transcript following the playing.
 const SCROLLING_INPUTS = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+// How long without a scroll event counts as the end of a scroll, where the browser does not
+// say when a scroll ends.
+const SCROLL_SETTLES_MS = 150;
+const SPOKEN_LINE = `.line[aria-current="true"]`;
 
 // One line of a transcript: a range of a block's text, the words spoken there, their
 // translation once there is one, and the stretch it is played from.
@@ -96,13 +100,6 @@ function spokenLine(moments: (number | undefined)[], clock: Clock): number | und
     }
   });
   return spoken;
-}
-
-function inView(element: Element): boolean {
-  const scroller = scrollerOf(element);
-  const view = scroller?.getBoundingClientRect() ?? new DOMRect(0, 0, innerWidth, innerHeight);
-  const place = element.getBoundingClientRect();
-  return place.bottom > view.top && place.top < view.bottom;
 }
 
 const BlockLines = memo(function BlockLines({
@@ -216,8 +213,6 @@ export function Transcript({
   );
   const spoken = useSyncExternalStore(clock.subscribe, () => spokenLine(moments, clock));
   const [following, setFollowing] = useState(true);
-  const spokenNow = useRef(spoken);
-  spokenNow.current = spoken;
 
   const spokenElement = (line: number | undefined) =>
     line === undefined
@@ -225,25 +220,36 @@ export function Transcript({
       : (transcript.current?.querySelector(`[${LINE_ATTRIBUTE}="${line}"]`) ?? null);
 
   // A scroll that the reader makes decides, once it has ended, whether the transcript follows
-  // the playing: it does when the line being spoken is still, or again, in view.
+  // the playing: it does when the line being spoken is still, or again, in view. A scroll has
+  // ended when the browser says so, or, where a browser never says so, once no scroll has
+  // come for a short while.
   useEffect(() => {
     let byReader = false;
+    let settling: ReturnType<typeof setTimeout> | undefined;
     const readerScrolls = () => {
       byReader = true;
     };
     const scrolled = () => {
+      clearTimeout(settling);
       if (byReader) {
         byReader = false;
-        const element = spokenElement(spokenNow.current);
+        const element = transcript.current?.querySelector(SPOKEN_LINE) ?? null;
         if (element !== null) {
           setFollowing(inView(element));
         }
       }
     };
+    const scrolling = () => {
+      clearTimeout(settling);
+      settling = setTimeout(scrolled, SCROLL_SETTLES_MS);
+    };
     SCROLLING_INPUTS.forEach((input) => addEventListener(input, readerScrolls, true));
+    addEventListener("scroll", scrolling, { capture: true, passive: true });
     addEventListener("scrollend", scrolled, true);
     return () => {
+      clearTimeout(settling);
       SCROLLING_INPUTS.forEach((input) => removeEventListener(input, readerScrolls, true));
+      removeEventListener("scroll", scrolling, { capture: true });
       removeEventListener("scrollend", scrolled, true);
     };
   }, []);

@@ -11,6 +11,9 @@ export const TRANSLATION_ATTRIBUTE = "data-translation";
 export const POINTED_CLASS = "pointed";
 // Segments of one block follow each other as sentences of one paragraph do.
 const SEGMENT_GAP = " ";
+// The control to translate a block again stands in the narrow margin beside the block, where
+// a word would not fit.
+const AGAIN_MARK = "↻";
 
 // A range of a block's text, in code points.
 export type TextRange = { start: number; end: number };
@@ -27,8 +30,9 @@ function SegmentText({ segment, pointed }: { segment: Segment; pointed: boolean 
   );
 }
 
-// A control, shown on hover and on focus, to translate one block again, and what has come of
-// doing so.
+// A control to translate one block again, and what has come of doing so. It stands in the
+// margin beside the block, clear of its words; where there is a pointer that hovers it shows
+// on hover and on focus, and elsewhere it is always on show.
 export function AgainControl({
   number,
   again,
@@ -44,9 +48,10 @@ export function AgainControl({
         className="again"
         disabled={again?.state === "underway"}
         title="用写摘要的模型重新翻译这一段"
+        aria-label="重新翻译这一段"
         onClick={() => onAgain(number)}
       >
-        重译
+        {AGAIN_MARK}
       </button>
       {again?.state === "underway" && <p className="again-note">正在重新翻译这一段…</p>}
       {again?.state === "failed" && (
@@ -144,14 +149,17 @@ export const Row = memo(function Row({
 // How far the translation has come, and what can be done about it from there.
 export function TranslationNote({ translation }: { translation: TranslationState }) {
   const loaded = translation.loaded;
-  if (loaded === undefined || loaded.state === "loading") {
-    return <p className="translation-note">正在请求译文…</p>;
+  if (loaded === undefined) {
+    return null;
+  }
+  if (loaded.state === "loading") {
+    return <p className="translation-note">正在读取译文…</p>;
   }
   if (loaded.state === "failed") {
     return (
       <p className="translation-note failed">
         译文取不到：{loaded.reason}
-        <button onClick={translation.goOn}>再试一次</button>
+        <button onClick={translation.readAgain}>再试一次</button>
       </p>
     );
   }
@@ -161,7 +169,13 @@ export function TranslationNote({ translation }: { translation: TranslationState
   );
   switch (progress.kind) {
     case "unasked":
-      return <p className="translation-note">还没有请求译文。{interrupted}</p>;
+      return (
+        <p className="translation-note">
+          还没有译文。
+          <button onClick={translation.goOn}>翻译</button>
+          {interrupted}
+        </p>
+      );
     case "translating":
       return (
         <p className="translation-note">

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureTranslation,
   readTranslation,
@@ -12,10 +12,12 @@ import { reasonOf, useWatched, type Loaded } from "./loading";
 // How one block's second translation is going.
 export type Again = { state: "underway" } | { state: "failed"; reason: string };
 
-// What is asked of the service to begin a round of watching: that the translation go on from
-// where it is, or that it start again from its first block.
-type Asking = "ensure" | "anew";
-type Round = { asking: Asking; count: number };
+// What a round of watching begins with: reading the translation as it stands, asking the
+// service to go on with it, or asking it to start again from the first block.
+type Asking = "read" | "ensure" | "anew";
+// A translation started again begins an epoch: what was asked of the one before is dropped.
+type Round = { asking: Asking; count: number; epoch: number };
+type OfEpoch<Value> = { epoch: number; values: ReadonlyMap<number, Value> };
 
 export type TranslationState = {
   // Nothing is loaded for an item until its translation is first wanted.
@@ -26,9 +28,12 @@ export type TranslationState = {
   blocks: ReadonlyMap<number, TranslatedBlock>;
   again: ReadonlyMap<number, Again>;
   goOn: () => void;
+  readAgain: () => void;
   anew: () => void;
   translateAgain: (blockNumber: number) => void;
 };
+
+type Kept = { translation: Translation; blocks: ReadonlyMap<number, TranslatedBlock> };
 
 const NO_BLOCKS: ReadonlyMap<number, TranslatedBlock> = new Map();
 
@@ -48,82 +53,123 @@ function sameBlock(first: TranslatedBlock, second: TranslatedBlock): boolean {
 function steadied(
   before: ReadonlyMap<number, TranslatedBlock>,
   arrived: TranslatedBlock[],
-  translatedAgain: ReadonlyMap<number, TranslatedBlock>,
-): Map<number, TranslatedBlock> {
+): ReadonlyMap<number, TranslatedBlock> {
   const blocks = new Map<number, TranslatedBlock>();
   for (const block of arrived) {
     const kept = before.get(block.block_number);
     blocks.set(block.block_number, kept !== undefined && sameBlock(kept, block) ? kept : block);
   }
-  // A block translated again is newer than any reading of the translation that was under way
-  // when it came back; one read later holds it too.
-  for (const [number, block] of translatedAgain) {
-    blocks.set(number, block);
-  }
   return blocks;
 }
 
-// The translation of an item's document: asked for the first time it is wanted, then watched
-// while it is under way, whatever is wanted afterwards.
+function withValue<Value>(
+  before: OfEpoch<Value>,
+  epoch: number,
+  number: number,
+  value: Value | undefined,
+): OfEpoch<Value> {
+  if (before.epoch !== epoch) {
+    return before;
+  }
+  const values = new Map(before.values);
+  if (value === undefined) {
+    values.delete(number);
+  } else {
+    values.set(number, value);
+  }
+  return { epoch, values };
+}
+
+// The translation of an item's document. It is read the first time it is wanted, and asked
+// for only when the service has never been asked for it; then it is watched while it is under
+// way, whatever is wanted afterwards. A translation that stopped goes on only when the reader
+// asks it to.
 export function useTranslation(itemId: string, wanted: boolean): TranslationState {
   const [asked, setAsked] = useState(wanted);
   if (wanted && !asked) {
     setAsked(true);
   }
-  const [round, setRound] = useState<Round>({ asking: "ensure", count: 0 });
-  const [translatedAgain, setTranslatedAgain] = useState<ReadonlyMap<number, TranslatedBlock>>(
-    new Map(),
-  );
-  const [again, setAgain] = useState<ReadonlyMap<number, Again>>(new Map());
+  const wantedNow = useRef(wanted);
+  useEffect(() => {
+    wantedNow.current = wanted;
+  }, [wanted]);
+  const [round, setRound] = useState<Round>({ asking: "read", count: 0, epoch: 0 });
+  const [translatedAgain, setTranslatedAgain] = useState<OfEpoch<TranslatedBlock>>({
+    epoch: 0,
+    values: new Map(),
+  });
+  const [again, setAgain] = useState<OfEpoch<Again>>({ epoch: 0, values: new Map() });
   const key = asked ? `${itemId}:${round.count}` : `${itemId}:unasked`;
 
-  // The first load of a round asks the service to translate; the loads after it only read.
+  // A round that goes on or starts again begins with that request; every other load reads,
+  // and a translation the service says was never asked for is asked for while it is wanted.
   const begun = useRef<string>(undefined);
   function load(): Promise<Translation | null> {
     if (!asked) {
       return Promise.resolve(null);
     }
-    if (begun.current !== key) {
+    if (begun.current !== key && round.asking !== "read") {
       begun.current = key;
       return round.asking === "anew" ? translateAnew(itemId) : ensureTranslation(itemId);
     }
-    return readTranslation(itemId);
+    return readTranslation(itemId).then((translation) =>
+      translation.progress.kind === "unasked" && wantedNow.current
+        ? ensureTranslation(itemId)
+        : translation,
+    );
   }
   const watched = useWatched(load, key, isUnderway);
 
-  // While a new round begins, the translation on show stays until the round's first answer
+  // The translation on show stays while a new round begins, until the round's first answer
   // takes its place; that of a translation started again holds none of the earlier blocks.
-  const shown = useRef<Translation | null>(null);
-  if (watched.loaded.state === "ready") {
-    shown.current = watched.loaded.value;
-  }
-  const latest = shown.current;
+  const [kept, setKept] = useState<Kept>();
+  useEffect(() => {
+    const loaded = watched.loaded;
+    if (loaded.state === "ready" && loaded.value !== null) {
+      const translation = loaded.value;
+      setKept((before) => ({
+        translation,
+        blocks: steadied(before?.blocks ?? NO_BLOCKS, translation.blocks),
+      }));
+    }
+  }, [watched.loaded]);
 
-  const steady = useRef<ReadonlyMap<number, TranslatedBlock>>(NO_BLOCKS);
+  // A translation that the service had forgotten while none was on show is asked for once one
+  // is on show again.
+  useEffect(() => {
+    if (wanted && kept?.translation.progress.kind === "unasked") {
+      setRound((before) => ({ ...before, asking: "read", count: before.count + 1 }));
+    }
+  }, [wanted]);
+
+  // A block translated again is newer than any reading of the translation that was under way
+  // when it came back; one read later holds it too.
   const blocks = useMemo(() => {
-    steady.current = steadied(steady.current, latest?.blocks ?? [], translatedAgain);
-    return steady.current;
-  }, [latest, translatedAgain]);
+    const read = kept?.blocks ?? NO_BLOCKS;
+    if (translatedAgain.values.size === 0) {
+      return read;
+    }
+    const merged = new Map(read);
+    translatedAgain.values.forEach((block, number) => merged.set(number, block));
+    return merged;
+  }, [kept, translatedAgain]);
 
+  const epoch = round.epoch;
   const translateAgain = useCallback(
     (blockNumber: number) => {
-      setAgain((before) => new Map(before).set(blockNumber, { state: "underway" }));
+      setAgain((before) => withValue(before, epoch, blockNumber, { state: "underway" }));
       retranslateBlock(itemId, blockNumber).then(
         (block) => {
-          setTranslatedAgain((before) => new Map(before).set(blockNumber, block));
-          setAgain((before) => {
-            const after = new Map(before);
-            after.delete(blockNumber);
-            return after;
-          });
+          setTranslatedAgain((before) => withValue(before, epoch, blockNumber, block));
+          setAgain((before) => withValue<Again>(before, epoch, blockNumber, undefined));
         },
         (error: unknown) =>
           setAgain((before) =>
-            new Map(before).set(blockNumber, { state: "failed", reason: reasonOf(error) }),
+            withValue(before, epoch, blockNumber, { state: "failed", reason: reasonOf(error) }),
           ),
       );
     },
-    [itemId],
+    [itemId, epoch],
   );
 
   let loaded: Loaded<Translation> | undefined;
@@ -131,8 +177,8 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
     loaded = undefined;
   } else if (watched.loaded.state === "failed") {
     loaded = watched.loaded;
-  } else if (latest !== null) {
-    loaded = { state: "ready", value: latest };
+  } else if (kept !== undefined) {
+    loaded = { state: "ready", value: kept.translation };
   } else {
     loaded = { state: "loading" };
   }
@@ -141,12 +187,14 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
     loaded,
     interrupted: watched.interrupted,
     blocks,
-    again,
-    goOn: () => setRound({ asking: "ensure", count: round.count + 1 }),
+    again: again.values,
+    goOn: () => setRound({ ...round, asking: "ensure", count: round.count + 1 }),
+    readAgain: () => setRound({ ...round, asking: "read", count: round.count + 1 }),
     anew: () => {
-      setTranslatedAgain(new Map());
-      setAgain(new Map());
-      setRound({ asking: "anew", count: round.count + 1 });
+      const next = round.epoch + 1;
+      setTranslatedAgain({ epoch: next, values: new Map() });
+      setAgain({ epoch: next, values: new Map() });
+      setRound({ asking: "anew", count: round.count + 1, epoch: next });
     },
     translateAgain,
   };

@@ -37,36 +37,55 @@
   color: var(--ink);
 }
 
-.translated .again {
+/* The control to translate a block again stands in the margin to the left of the block, in
+   the reader's padding, so it never lies over words. Where a pointer hovers, it shows while
+   the block or its stretch of margin is hovered, or while it has the focus, and takes no click
+   while it cannot be seen. Where nothing hovers, as on a phone, it is always on show. */
+:is(.translated, .line-group)::before {
+  content: "";
   position: absolute;
   top: 0;
-  right: 0;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  padding: 0.05rem 0.45rem;
-  white-space: nowrap;
+  bottom: 0;
+  right: 100%;
+  width: 2rem;
+}
+
+.again {
+  position: absolute;
+  top: 0.15rem;
+  right: calc(100% + 0.3rem);
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  line-height: 1;
   color: var(--muted);
   background: var(--paper);
-  opacity: 0;
 }
 
-.translated:hover .again,
-.translated .again:focus-visible,
-.translated .again:disabled {
-  opacity: 1;
+@media (hover: hover) {
+  .again {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  :is(.translated, .line-group):hover .again,
+  .again:focus-visible,
+  .again:disabled {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
-.translated .again:focus-visible {
+.again:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.again:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-/* Where the column has room beside the text, the control stands there, clear of the words. */
-@media (min-width: 92rem) {
-  .translated .again {
-    right: auto;
-    left: calc(100% + 0.5rem);
-  }
 }
 
 .again-note {
