@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from functools import cache
+from functools import cache, lru_cache
 from http import HTTPStatus
 from pathlib import PurePath
 from typing import Annotated, Any
@@ -12,9 +12,9 @@ from urllib.parse import urldefrag, urlsplit
 import openai
 from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
-from infonium.blockholders import BLOCK_ATTRIBUTE
+from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE
 from infonium.chat import (
     Answered,
     Answering,
@@ -56,6 +56,7 @@ from infonium.library import (
     LibraryStore,
     NotInLibrary,
     Origin,
+    Read,
     Reading,
 )
 from infonium.model_connection import Ending
@@ -73,16 +74,19 @@ SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options"
 # A web page an item was read from, served as a document of its own, is inert and quiet
 # whoever opens its address, a frame or a tab: these headers are the first line of defence,
 # and what framedpage removes from the page the second. The page keeps infonium's origin so
-# that the reader's code can reach into it, but no script, plugin or frame runs in it, and
-# no form is sent from it.
+# that the reader's code can reach into it, but no script, plugin or frame runs in it, no
+# form is sent from it, and a click on a link does not ping an address.
 PAGE_HEADERS = {
     "Content-Security-Policy": (
         "sandbox allow-same-origin; script-src 'none'; object-src 'none'; frame-src 'none';"
-        " form-action 'none'"
+        " form-action 'none'; connect-src 'none'"
     ),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
 }
+# How many pages built for documents are kept, those asked for last; a page of a megabyte
+# takes a fifth of a second to build.
+PAGES_KEPT = 8
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 FETCH_SITE = "sec-fetch-site"
 OWN_SITES = frozenset({"same-origin", "none"})
@@ -197,11 +201,43 @@ class TranslationView(BaseModel):
 
 class PageBlocks(BaseModel):
     # Where the blocks of an item's document stand in the web page it was read from, as the
-    # page is served: an element that holds the text of one block, and nothing else, carries
-    # that block's number in the attribute named here. The blocks placed so are listed; any
-    # other block has no element of its own in the page.
-    block_attribute: str
-    placed: list[BlockNumber]
+    # page is served at the item's page address.
+    block_attribute: str = Field(
+        description=(
+            "The name of the attribute that marks, in the served page, the element that holds"
+            " the whole text of one block that is not a table, and nothing else a reader or the"
+            " rest of the page needs. Its value is the block's number, and one element at most"
+            " carries a number. The element's content may be replaced by the block's"
+            " translation, and the element may be scrolled to. It holds no picture, control,"
+            " formula or stylesheet, and no place that the page's own links lead to; the links,"
+            " emphasis and line breaks inside it are part of the block's text, and the"
+            " translation's marks and line breaks stand for them. Where a block's text is only"
+            " part of an element, the marked element is an infonium-run element added around"
+            " that text, laid out inline."
+        )
+    )
+    cell_attribute: str = Field(
+        description=(
+            "The name of the attribute that marks, in the served page, each cell of a table"
+            " (a td, th or caption element) that holds one cell of a table block's text. Its"
+            " value is three numbers parted by commas: the block's number, then the row and"
+            " the cell within the row, counted from 0 as the block's text gives them when it is"
+            " split at its row separator and each row at its cell separator. A cell of the"
+            " block's text that says nothing has no element. A marked cell's content may be"
+            " replaced by the translation of that cell of the block's text; it holds no"
+            " picture, control, formula or stylesheet. The table itself carries no mark."
+        )
+    )
+    placed: list[BlockNumber] = Field(
+        description=(
+            "The numbers of the blocks that the page shows in elements of their own: for a"
+            " block that is not a table, the element that carries the block attribute; for a"
+            " table, every cell of its text that says something, each in an element that"
+            " carries the cell attribute. A block not listed has no element of its own in the"
+            " page; a figure never has, since the words that describe a picture are not shown"
+            " in a page."
+        )
+    )
 
 
 def refusal(status: HTTPStatus, detail: str) -> Response:
@@ -423,8 +459,10 @@ def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> 
     raise NotImplementedError(UNBUILT)
 
 
-def framed_item_page(item_id: str, owner: str) -> FramedPage:
-    # The page of an item that was read from a web page; any other item has none.
+@lru_cache(maxsize=PAGES_KEPT)
+def framed_document_page(owner: str, item_id: str, document_id: str) -> FramedPage:
+    # A document never changes, so the page built for it is kept for the next request, of
+    # the page or of its blocks; an item read again has another document.
     store = library_store()
     with store.library(owner) as library:
         origin = library.item(item_id).origin
@@ -432,6 +470,17 @@ def framed_item_page(item_id: str, owner: str) -> FramedPage:
     if document.media_type != HTML_MEDIA_TYPE:
         raise NotInLibrary(f"item {item_id} was not read from a web page")
     return framed_page(store.snapshot(document.snapshot).read_bytes(), origin, document.blocks)
+
+
+def framed_item_page(item_id: str, owner: str) -> FramedPage:
+    # The page of an item that was read from a web page; any other item has none.
+    with library_store().library(owner) as library:
+        reading = library.item(item_id).reading
+    match reading:
+        case Read(document=document_id):
+            return framed_document_page(owner, item_id, document_id)
+        case _:
+            raise NotInLibrary(f"item {item_id} has no document in the library")
 
 
 @app.get(
@@ -447,7 +496,9 @@ def item_page(item_id: str, owner: Owner) -> Response:
 @app.get("/api/items/{item_id}/page/blocks", responses=NOT_IN_LIBRARY)
 def item_page_blocks(item_id: str, owner: Owner) -> PageBlocks:
     return PageBlocks(
-        block_attribute=BLOCK_ATTRIBUTE, placed=framed_item_page(item_id, owner).placed
+        block_attribute=BLOCK_ATTRIBUTE,
+        cell_attribute=CELL_ATTRIBUTE,
+        placed=framed_item_page(item_id, owner).placed,
     )
 
 

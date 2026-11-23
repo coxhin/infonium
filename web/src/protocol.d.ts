@@ -484,9 +484,20 @@ export interface components {
         };
         /** PageBlocks */
         PageBlocks: {
-            /** Block Attribute */
+            /**
+             * Block Attribute
+             * @description The name of the attribute that marks, in the served page, the element that holds the whole text of one block that is not a table, and nothing else a reader or the rest of the page needs. Its value is the block's number, and one element at most carries a number. The element's content may be replaced by the block's translation, and the element may be scrolled to. It holds no picture, control, formula or stylesheet, and no place that the page's own links lead to; the links, emphasis and line breaks inside it are part of the block's text, and the translation's marks and line breaks stand for them. Where a block's text is only part of an element, the marked element is an infonium-run element added around that text, laid out inline.
+             */
             block_attribute: string;
-            /** Placed */
+            /**
+             * Cell Attribute
+             * @description The name of the attribute that marks, in the served page, each cell of a table (a td, th or caption element) that holds one cell of a table block's text. Its value is three numbers parted by commas: the block's number, then the row and the cell within the row, counted from 0 as the block's text gives them when it is split at its row separator and each row at its cell separator. A cell of the block's text that says nothing has no element. A marked cell's content may be replaced by the translation of that cell of the block's text; it holds no picture, control, formula or stylesheet. The table itself carries no mark.
+             */
+            cell_attribute: string;
+            /**
+             * Placed
+             * @description The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.
+             */
             placed: number[];
         };
         /** PagePlace */

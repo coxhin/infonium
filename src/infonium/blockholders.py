@@ -1,26 +1,56 @@
 import re
 from bisect import bisect_left
+from collections import Counter, defaultdict
 from copy import deepcopy
 from difflib import SequenceMatcher
-from itertools import count
-from urllib.parse import urljoin, urlsplit
+from itertools import count, pairwise
 
 from lxml import etree, html
 from pydantic import BaseModel, ConfigDict
+from trafilatura.htmlprocessing import CONVERSIONS, convert_deletions, convert_headings
 
 from infonium.anchor import comparable
-from infonium.document import CELL_SEPARATOR, ROW_SEPARATOR, Block, BlockNumber, Figure, Table
-from infonium.htmlpage import INLINE_QUOTATION, PICTURE, drop_unread_parts
+from infonium.document import (
+    CELL_SEPARATOR,
+    ROW_SEPARATOR,
+    Block,
+    BlockNumber,
+    Figure,
+    Heading,
+    Table,
+)
+from infonium.htmlpage import (
+    BODY,
+    CODE_FOR_THE_BROWSER,
+    INLINE_QUOTATION,
+    IS_HIDDEN_BY_STYLE,
+    LINK,
+    PICTURE,
+    drop_unread_parts,
+)
 
+# The names infonium gives what it adds to a page. What a page itself wrote in these names is
+# taken out before anything is marked, so that every mark in the page is infonium's.
+OWN_ATTRIBUTE_PREFIX = "data-infonium-"
+OWN_ELEMENT_PREFIX = "infonium-"
 # The attribute that carries a block's number on the element that holds the block's text,
 # and the element that holds a block's text where the text is only part of an element. The
 # element's name is one that no page's stylesheet names, and like any unknown element it is
 # laid out inline, so it changes no layout around the inline content it holds.
-BLOCK_ATTRIBUTE = "data-infonium-block"
-RUN_ELEMENT = "infonium-run"
+BLOCK_ATTRIBUTE = f"{OWN_ATTRIBUTE_PREFIX}block"
+RUN_ELEMENT = f"{OWN_ELEMENT_PREFIX}run"
+# The attribute that a cell of a table carries when it holds a cell of a table block's text:
+# the block's number, the row and the cell within the row, counted from 0 as the block's
+# text gives them, parted by the separator.
+CELL_ATTRIBUTE = f"{OWN_ATTRIBUTE_PREFIX}cell"
+CELL_PLACE_SEPARATOR = ","
+# The attribute by which elements of the page are found again in a copy of it.
+COPY_MARK = f"{OWN_ATTRIBUTE_PREFIX}copy"
 
-# Elements laid out as blocks, which part the runs of inline content around them, as the
-# extractor parts its blocks at them.
+# Elements laid out as blocks, which part the runs of inline content around them. The
+# extractor parts its blocks at the elements it converts into its own block elements, inside
+# trafilatura, where no list of them is offered; this list is HTML's own block elements, which
+# those are among.
 BLOCK_LEVEL_TAGS = frozenset(
     {
         "address",
@@ -70,13 +100,18 @@ BLOCK_LEVEL_TAGS = frozenset(
     }
 )
 LINE_BREAK_TAG = "br"
-BODY = "body"
-# The extractor does not read what a style hides.
-HIDDEN_BY_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.IGNORECASE)
-STYLE_ATTRIBUTE = "style"
-# Elements whose text the extractor does not read: code for the browser, and words the author
-# struck out.
-UNREAD_TAGS = frozenset({"script", "style", "template", "noscript", "del", "s", "strike"})
+# Words the author struck out, which the extractor leaves out, as trafilatura converts them.
+STRUCK_OUT_TAGS = frozenset(
+    tag for tag, conversion in CONVERSIONS.items() if conversion is convert_deletions
+)
+UNREAD_TAGS = frozenset(CODE_FOR_THE_BROWSER) | STRUCK_OUT_TAGS
+# The elements whose text the extractor reads as a heading: those trafilatura converts into
+# headings, and the summary of a details element, which it turns into one inside its
+# conversion of details.
+SUMMARY = "summary"
+HEADING_TAGS = frozenset(
+    tag for tag, conversion in CONVERSIONS.items() if conversion is convert_headings
+) | {SUMMARY}
 # What an element may hold besides its text that a reader would lose if the element's content
 # were replaced by a translation.
 EMBEDDED_TAGS = (
@@ -94,21 +129,26 @@ EMBEDDED_TAGS = (
     "select",
     "textarea",
 )
+# What an element may hold that the rest of the page needs, and that is taken out of a placed
+# element, in front of it, before it is marked: stylesheets, an image map that a picture
+# elsewhere names, and the places the page's own links lead to.
+NEEDED_ELSEWHERE_TAGS = ("style", "link", "map")
+IDENTITY = "id"
+ANCHOR_NAME = "name"
+FRAGMENT_START = "#"
+OWN_PLACE_LINKS = etree.XPath(f"//{LINK}/@href | //area/@href")
+PLACE_MARKER = "span"
 TABLE = "table"
 # A table's rows as the extractor reads them: its caption first, as a row of one cell.
 OWN_ROWS = etree.XPath("./caption | ./tr | ./thead/tr | ./tbody/tr | ./tfoot/tr")
 CELLS = etree.XPath("self::caption | ./td | ./th")
-# Picture addresses the extractor reads, in the order it tries them.
-PICTURE_ADDRESS_PREFIX = "data-src"
-PICTURE_ADDRESS = "src"
 QUOTATION_MARK = '"'
 WORD_GAP = " "
 CELL_FILLER = re.compile(r"[ ;]")
-# Kinds of key, so that a figure's address or a table's cells never equal a text.
+# Kinds of key, so that a table's cells never equal a text, and a heading's text is never
+# taken for the same text standing elsewhere than in a heading.
 TABLE_KEY = "\x01"
-FIGURE_KEY = "\x02"
-# The attribute by which elements of the page are found again in a copy of it.
-COPY_MARK = "data-infonium-copy"
+HEADING_KEY = "\x03"
 
 
 class ElementHolder(BaseModel):
@@ -134,7 +174,18 @@ class RunHolder(BaseModel):
     children: list[html.HtmlElement]
 
 
-Holder = ElementHolder | RunHolder
+class TableHolder(BaseModel):
+    # A table whose cells that say something, row by row, hold the cells of a table block's
+    # text that say something.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    order: int
+    begin: int
+    end: int
+    element: html.HtmlElement
+    cells: list[html.HtmlElement]
+
+
+Holder = ElementHolder | RunHolder | TableHolder
 
 
 class Candidate(BaseModel):
@@ -159,15 +210,19 @@ class ShownText:
             self.length += len(piece)
 
     def is_read(self, node: etree._Element) -> bool:
+        # The extractor leaves out what a style hides, unless that would leave a seventh or
+        # less of the text of the part it takes for the page's own; that exception is
+        # trafilatura's, made inside it, and is not followed here.
         return (
             isinstance(node.tag, str)
             and node.tag not in UNREAD_TAGS
             and node not in self.unread
-            and HIDDEN_BY_STYLE.search(node.get(STYLE_ATTRIBUTE, "")) is None
+            and not IS_HIDDEN_BY_STYLE(node)
         )
 
     def parts_runs(self, node: etree._Element) -> bool:
-        # The second of two line breaks in a row parts paragraphs, as it does for the extractor.
+        # The second of two line breaks in a row parts paragraphs, as webpage.flowed_blocks
+        # parts them in the extractor's tree, where this rule cannot be shared.
         earlier = node.getprevious()
         second_break = (
             node.tag == LINE_BREAK_TAG
@@ -246,6 +301,14 @@ def is_bare_break(node: html.HtmlElement) -> bool:
     return node.tag == LINE_BREAK_TAG and not (node.tail or "").strip()
 
 
+def drop_own_names(page: html.HtmlElement) -> None:
+    for element in list(page.iter(etree.Element)):
+        for name in [name for name in element.attrib if name.startswith(OWN_ATTRIBUTE_PREFIX)]:
+            del element.attrib[name]
+        if str(element.tag).startswith(OWN_ELEMENT_PREFIX):
+            element.drop_tag()
+
+
 def unread_parts(page: html.HtmlElement, address: str) -> set[html.HtmlElement]:
     # The parts that the extractor drops before it reads are found by dropping them from a
     # copy of the page, and they stay shown.
@@ -275,48 +338,52 @@ def table_key(rows: list[list[str]]) -> str:
     return TABLE_KEY + ROW_SEPARATOR.join(CELL_SEPARATOR.join(cells) for cells in kept if cells)
 
 
-def picture_key(address: str) -> str:
-    parts = urlsplit(address)
-    return f"{FIGURE_KEY}{parts.path}?{parts.query}"
+def table_cells(text: str) -> list[list[str]]:
+    return [
+        [cell_key(comparable_key(cell)) for cell in row.split(CELL_SEPARATOR)]
+        for row in text.split(ROW_SEPARATOR)
+    ]
 
 
 def block_key(block: Block) -> str:
+    # A figure has none: the words of a picture's description are not shown in a page.
     match block:
         case Table(text=text):
-            rows = [
-                [cell_key(comparable_key(cell)) for cell in row.split(CELL_SEPARATOR)]
-                for row in text.split(ROW_SEPARATOR)
-            ]
-            return table_key(rows)
-        case Figure(source=source):
-            return picture_key(source)
+            return table_key(table_cells(text))
+        case Heading(text=text):
+            return HEADING_KEY + comparable_key(text)
+        case Figure():
+            return ""
         case _:
             return comparable_key(block.text)
 
 
-def picture_keys(picture: html.HtmlElement, base: str) -> set[str]:
-    return {
-        picture_key(urljoin(base, value.strip()))
-        for name, value in picture.attrib.items()
-        if name == PICTURE_ADDRESS or name.startswith(PICTURE_ADDRESS_PREFIX)
-    }
+def is_in_heading(element: html.HtmlElement) -> bool:
+    return any(
+        tag in HEADING_TAGS for tag in (element.tag, *(a.tag for a in element.iterancestors()))
+    )
+
+
+def held_roots(holder: Holder) -> list[html.HtmlElement]:
+    match holder:
+        case ElementHolder(element=element):
+            return [element]
+        case RunHolder(children=children):
+            return children
+        case TableHolder(cells=cells):
+            return cells
 
 
 def holds_embedded(holder: Holder) -> bool:
-    match holder:
-        case ElementHolder(element=element):
-            roots = [element]
-        case RunHolder(children=children):
-            roots = children
-    return any(next(root.iter(EMBEDDED_TAGS), None) is not None for root in roots)
+    return any(next(root.iter(EMBEDDED_TAGS), None) is not None for root in held_roots(holder))
 
 
 def page_candidates(
-    page: html.HtmlElement, unread: set[html.HtmlElement], base: str, wanted: set[str]
+    page: html.HtmlElement, unread: set[html.HtmlElement], wanted: set[str]
 ) -> list[Candidate]:
     # The elements and runs of the page's body whose key is wanted, in document order, keyed
-    # by their text as citations compare it, a table by its cells and a picture by its
-    # address, as the extractor gives them.
+    # by their text as citations compare it, a heading's marked as such, and a table by its
+    # cells, as the extractor gives them.
     body = page.find(BODY)
     if body is None:
         return []
@@ -337,15 +404,29 @@ def page_candidates(
         match holder:
             case ElementHolder(element=element) if element.tag == TABLE:
                 rows = [
-                    [cell_key(key_of(elements[cell])) for cell in CELLS(row) if cell in elements]
+                    [
+                        (cell, cell_key(key_of(elements[cell])))
+                        for cell in CELLS(row)
+                        if cell in elements
+                    ]
                     for row in OWN_ROWS(element)
                 ]
-                keys = [table_key(rows)]
-            case ElementHolder(element=element) if element.tag == PICTURE:
-                keys = sorted(picture_keys(element, base) & wanted)[:1]
-            case _:
-                keys = [key_of(holder)]
-        candidates.extend(Candidate(key=key, holder=holder) for key in keys if key in wanted)
+                key = table_key([[cell for _, cell in row] for row in rows])
+                holder = TableHolder(
+                    order=holder.order,
+                    begin=holder.begin,
+                    end=holder.end,
+                    element=element,
+                    cells=[cell for row in rows for cell, said in row if said],
+                )
+            case ElementHolder(element=element):
+                kind = HEADING_KEY if is_in_heading(element) else ""
+                key = kind + key_of(holder)
+            case RunHolder(parent=parent):
+                kind = HEADING_KEY if is_in_heading(parent) else ""
+                key = kind + key_of(holder)
+        if key in wanted:
+            candidates.append(Candidate(key=key, holder=holder))
     return candidates
 
 
@@ -354,13 +435,12 @@ def is_nested(inner: Holder, outer: Holder) -> bool:
 
 
 def placeable(candidates: list[Candidate]) -> list[Candidate]:
-    # An element or run that holds a picture or a control besides its text holds no block. Of
-    # those that hold the same text one inside the other, the innermost is taken, which keeps
-    # the most of the page around the text.
+    # An element or run that holds a picture or a control besides its text holds no block, nor
+    # does a table with such a cell. Of those that hold the same text one inside the other, the
+    # innermost is taken, which keeps the most of the page around the text.
     kept: list[Candidate] = []
     for candidate in candidates:
-        is_picture = candidate.key.startswith(FIGURE_KEY)
-        if not is_picture and holds_embedded(candidate.holder):
+        if holds_embedded(candidate.holder):
             continue
         if kept and kept[-1].key == candidate.key and is_nested(candidate.holder, kept[-1].holder):
             kept[-1] = candidate
@@ -369,13 +449,85 @@ def placeable(candidates: list[Candidate]) -> list[Candidate]:
     return kept
 
 
-def mark(holder: Holder, number: BlockNumber) -> None:
+def aligned(keys: list[str], candidates: list[Candidate]) -> list[tuple[int, int]]:
+    # Blocks whose text stands once among the blocks and once in the page anchor the
+    # alignment, where they stand in the same order in both. Between two anchors, the blocks of
+    # a text are placed on the holders of that text there, in order, when there are as many of
+    # each; otherwise neither the order nor the kind decides, and they are left unplaced.
+    candidate_keys = [candidate.key for candidate in candidates]
+    block_counts = Counter(keys)
+    holder_counts = Counter(candidate_keys)
+    matcher = SequenceMatcher(None, keys, candidate_keys, False)
+    anchors = [
+        (match.a + step, match.b + step)
+        for match in matcher.get_matching_blocks()
+        for step in range(match.size)
+        if block_counts[keys[match.a + step]] == 1 and holder_counts[keys[match.a + step]] == 1
+    ]
+    bounds = [(-1, -1), *anchors, (len(keys), len(candidates))]
+    pairs = list(anchors)
+    for (first_block, first_holder), (next_block, next_holder) in pairwise(bounds):
+        blocks_between: defaultdict[str, list[int]] = defaultdict(list)
+        holders_between: defaultdict[str, list[int]] = defaultdict(list)
+        for number in range(first_block + 1, next_block):
+            if keys[number]:
+                blocks_between[keys[number]].append(number)
+        for position in range(first_holder + 1, next_holder):
+            holders_between[candidate_keys[position]].append(position)
+        for key, numbers in blocks_between.items():
+            positions = holders_between[key]
+            if len(positions) == len(numbers):
+                pairs.extend(zip(numbers, positions, strict=True))
+    return sorted(pairs)
+
+
+def own_place_names(page: html.HtmlElement) -> set[str]:
+    # The places in the page that its own links lead to.
+    return {
+        str(address)[1:]
+        for address in OWN_PLACE_LINKS(page)
+        if str(address).startswith(FRAGMENT_START) and len(str(address)) > 1
+    }
+
+
+def lifted_out(node: html.HtmlElement, front: html.HtmlElement) -> None:
+    # The node goes in front of the element, and the text after it stays where it was.
+    tail, node.tail = node.tail, None
+    previous = node.getprevious()
+    parent = node.getparent()
+    if previous is not None:
+        previous.tail = (previous.tail or "") + (tail or "")
+    elif parent is not None:
+        parent.text = (parent.text or "") + (tail or "")
+    front.addprevious(node)
+
+
+def keep_what_others_need(
+    roots: list[html.HtmlElement], front: html.HtmlElement, places: set[str]
+) -> None:
+    # What the rest of the page needs from inside a placed element is put in front of it:
+    # stylesheets and image maps themselves, and for a place the page's links lead to, an empty
+    # element that bears its name in place of the element inside.
+    for root in roots:
+        for node in [node for node in root.iter(NEEDED_ELSEWHERE_TAGS) if node is not root]:
+            lifted_out(node, front)
+        for node in [node for node in root.iter(etree.Element) if node is not root]:
+            for attribute in (IDENTITY, ANCHOR_NAME):
+                name = node.get(attribute)
+                if name in places:
+                    marker = html.Element(PLACE_MARKER)
+                    marker.set(IDENTITY, name)
+                    front.addprevious(marker)
+                    del node.attrib[attribute]
+
+
+def mark(holder: Holder, number: BlockNumber, block: Block, places: set[str]) -> None:
     match holder:
         case ElementHolder(element=element):
+            keep_what_others_need([element], element, places)
             element.set(BLOCK_ATTRIBUTE, str(number))
         case RunHolder(parent=parent, after=after, children=children):
             wrapper = html.Element(RUN_ELEMENT)
-            wrapper.set(BLOCK_ATTRIBUTE, str(number))
             if after is None:
                 wrapper.text, parent.text = parent.text, None
                 parent.insert(0, wrapper)
@@ -383,22 +535,30 @@ def mark(holder: Holder, number: BlockNumber) -> None:
                 wrapper.text, after.tail = after.tail, None
                 after.addnext(wrapper)
             wrapper.extend(children)
+            keep_what_others_need([wrapper], wrapper, places)
+            wrapper.set(BLOCK_ATTRIBUTE, str(number))
+        case TableHolder(element=table, cells=cells):
+            keep_what_others_need(cells, table, places)
+            said = [
+                (row, cell)
+                for row, texts in enumerate(table_cells(block.text))
+                for cell, text in enumerate(texts)
+                if text
+            ]
+            for element, (row, cell) in zip(cells, said, strict=True):
+                place = CELL_PLACE_SEPARATOR.join(str(part) for part in (number, row, cell))
+                element.set(CELL_ATTRIBUTE, place)
 
 
 def placed_blocks(
-    page: html.HtmlElement, unread: set[html.HtmlElement], base: str, blocks: list[Block]
+    page: html.HtmlElement, unread: set[html.HtmlElement], blocks: list[Block]
 ) -> list[BlockNumber]:
     # The blocks are matched to holders in the order both have, so that of the holders that
     # hold the same text, the one among the blocks around it is taken.
     keys = [block_key(block) for block in blocks]
-    wanted = {key for key in keys if key}
-    candidates = placeable(page_candidates(page, unread, base, wanted))
-    matcher = SequenceMatcher(None, keys, [candidate.key for candidate in candidates], False)
-    pairs = [
-        (match.a + step, candidates[match.b + step].holder)
-        for match in matcher.get_matching_blocks()
-        for step in range(match.size)
-    ]
-    for number, holder in pairs:
-        mark(holder, number)
+    candidates = placeable(page_candidates(page, unread, {key for key in keys if key}))
+    pairs = aligned(keys, candidates)
+    places = own_place_names(page)
+    for number, position in pairs:
+        mark(candidates[position].holder, number, blocks[number], places)
     return [number for number, _ in pairs]

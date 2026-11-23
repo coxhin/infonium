@@ -1,14 +1,13 @@
 import re
-from base64 import b64encode
 from urllib.parse import urljoin, urlsplit
 
 import trafilatura
 from lxml import etree, html
 from pydantic import BaseModel
 
-from infonium.blockholders import STYLE_ATTRIBUTE, placed_blocks, unread_parts
+from infonium.blockholders import drop_own_names, placed_blocks, unread_parts
 from infonium.document import NO_TEXT, WEB_SCHEMES, Block, BlockNumber, UnreadableSource
-from infonium.htmlpage import IS_HIDDEN, drop_dialogs
+from infonium.htmlpage import IS_HIDDEN, PICTURE, REFERENCE_ADDRESS, STYLE_ATTRIBUTE, drop_dialogs
 from infonium.library import Link, Origin, Upload
 
 # What a page holds that would run, send or load another page where it is shown. The headers
@@ -17,21 +16,24 @@ from infonium.library import Link, Origin, Upload
 # headers. A script is removed with what it holds. An object or an applet is replaced by its
 # fallback content, which a browser shows where it cannot show the object; so is an embed,
 # which holds nothing in a browser, but which the parser takes for an element that holds
-# what follows it. A frame keeps its box but not its page.
+# what follows it. A frame keeps its box but not its page. An animation of a picture is
+# removed: it can set an attribute to a value that the page does not hold, such as a link's
+# address to a script's.
 SCRIPT = "script"
 STYLE_ELEMENT = "style"
 FOREIGN_CONTENT = ("svg", "math")
+ANIMATIONS = frozenset({"animate", "animatecolor", "animatemotion", "animatetransform", "set"})
 # What a page holds for a browser without scripts is shown, as such a browser shows it: its
-# stylesheets and the pictures of its article. A picture in it that is there only to count
-# the visit is not: one of a pixel or none, by its attributes or its style, one that is
-# hidden, and one with neither a size nor a description, which a counter needs no more than
-# it needs to be seen.
-SCRIPTLESS_PICTURES = etree.XPath("//noscript//img")
-PICTURE_SIZE = re.compile(r"(?:^|[;\s])(?:width|height)\s*:\s*[01](?:px)?\s*(?:;|$)", re.IGNORECASE)
-PIXEL_SIZE_SUFFIX = "px"
+# stylesheets and the pictures of its article. A picture in it that says of itself that it is
+# not to be seen is left out, as one that is only there to count the visit: one whose sizes,
+# by its attributes or its style, are a pixel or less, and one that is hidden.
+SCRIPTLESS_PICTURES = etree.XPath(f"//noscript//{PICTURE}")
 SIZE_ATTRIBUTES = ("width", "height")
-DESCRIPTION = "alt"
-LARGEST_COUNTER_SIZE = 1
+STYLED_SIZE = re.compile(
+    r"(?:^|[;\s])(?:width|height)\s*:\s*([0-9.]+)(?:px)?\s*(?:;|$)", re.IGNORECASE
+)
+PIXEL_SIZE = re.compile(r"\s*([0-9.]+)(?:px)?\s*", re.IGNORECASE)
+LARGEST_COUNTER_SIZE = 1.0
 REPLACED_BY_CONTENT = frozenset({"object", "applet", "param", "embed"})
 FRAMES = ("iframe", "frame", "fencedframe", "portal")
 FRAMED_PAGE = ("src", "srcdoc")
@@ -51,6 +53,7 @@ DROPPED_ATTRIBUTES = frozenset(
         "referrerpolicy",
         "autofocus",
         "autoplay",
+        "attributionsrc",
     }
 )
 EVENT_HANDLER_PREFIX = "on"
@@ -75,39 +78,17 @@ PRINT_MEDIA = "print"
 ON_LOAD = "onload"
 
 # Where the page's relative addresses lead. A base that leads nowhere makes the browser fail
-# to resolve them, so a page with no address of its own loads nothing from infonium's origin.
+# to resolve them, so a page with no address of its own loads nothing from infonium's origin;
+# a base of the page's own is kept only where it is a web address, since any other, such as a
+# data: address, makes the browser resolve the page's addresses against infonium's.
 BASE = "base"
 HEAD = "head"
-BODY = "body"
-REFERENCE_ADDRESS = "href"
 NOWHERE = "about:blank"
 WORLD_WIDE_WEB_PREFIX = "www."
 NAMED_ADDRESSES = etree.XPath(
     "//link[@rel = 'canonical']/@href | //meta[@property = 'og:url']/@content"
 )
 OWN_BASE = etree.XPath("//base[@href]/@href")
-
-# Chrome sends the origin of the page as the referrer of what the CSS held in the page loads,
-# in a style element or a style attribute, whatever referrer policy the page names in its
-# headers or in a meta element; what a stylesheet loaded from an address loads names that
-# address, and a stylesheet loaded from a data: address names nothing.
-# So CSS that loads anything is moved into stylesheets with data: addresses, which are no
-# referrer, and its addresses are made absolute, since a data: address is no base for them.
-# A declaration taken out of a style attribute is applied to its element by a rule in such a
-# stylesheet, marked important as a style attribute outweighs other rules.
-CSS_ADDRESS = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)""", re.IGNORECASE)
-CSS_IMPORT = re.compile(r"""@import\s+(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
-# A fragment names an element of the page itself, wherever the CSS stands.
-UNFETCHED_ADDRESS_PREFIXES = ("#", "data:")
-CSS_DECLARATION_END = re.compile(r";(?![^(]*\))")
-IMPORTANT = re.compile(r"!\s*important\s*$", re.IGNORECASE)
-IMPORTANT_MARK = " !important"
-STYLESHEET_ADDRESS = "data:text/css;charset=utf-8;base64,{content}"
-IMPORTED_STYLESHEET = '@import url("{address}");'
-CSS_URL = 'url("{address}")'
-QUOTE_ESCAPE = str.maketrans({'"': "%22"})
-MOVED_STYLE_ATTRIBUTE = "data-infonium-style"
-MOVED_STYLE_RULE = '[{attribute}="{number}"]{{{declarations}}}'
 
 
 class FramedPage(BaseModel):
@@ -127,14 +108,17 @@ def is_script_address(value: str) -> bool:
     return SCRIPT_ADDRESS.match(ADDRESS_NOISE.sub("", value)) is not None
 
 
+def picture_sizes(picture: html.HtmlElement) -> list[float]:
+    given = [PIXEL_SIZE.fullmatch(picture.get(name, "")) for name in SIZE_ATTRIBUTES]
+    styled = STYLED_SIZE.findall(picture.get(STYLE_ATTRIBUTE, ""))
+    numbers = [size.group(1) for size in given if size is not None] + styled
+    return [float(number) for number in numbers if number.count(".") <= 1 and number != "."]
+
+
 def is_visit_counter(picture: html.HtmlElement) -> bool:
-    sizes = [
-        picture.get(name, "").strip().removesuffix(PIXEL_SIZE_SUFFIX) for name in SIZE_ATTRIBUTES
-    ]
-    tiny = any(size.isdigit() and int(size) <= LARGEST_COUNTER_SIZE for size in sizes)
-    styled_tiny = PICTURE_SIZE.search(picture.get(STYLE_ATTRIBUTE, "")) is not None
-    unsized = not any(sizes) and not picture.get(DESCRIPTION, "").strip()
-    return tiny or styled_tiny or unsized or bool(IS_HIDDEN(picture))
+    sizes = picture_sizes(picture)
+    no_larger_than_a_pixel = bool(sizes) and all(size <= LARGEST_COUNTER_SIZE for size in sizes)
+    return no_larger_than_a_pixel or bool(IS_HIDDEN(picture))
 
 
 def drop_visit_counters(page: html.HtmlElement) -> None:
@@ -159,7 +143,12 @@ def made_inert(page: html.HtmlElement) -> None:
             element.set(FORM_METHOD, SENT_NOWHERE)
         elif tag in REPLACED_BY_CONTENT:
             element.drop_tag()
-        elif tag in (SCRIPT, BASE) or is_page_instruction(element) or is_markup_in_style(element):
+        elif (
+            tag in (SCRIPT, BASE)
+            or str(tag).lower() in ANIMATIONS
+            or is_page_instruction(element)
+            or is_markup_in_style(element)
+        ):
             element.drop_tree()
 
 
@@ -193,66 +182,6 @@ def kept_resource(link: html.HtmlElement) -> None:
         del link.attrib[MEDIA]
 
 
-def css_address(match: re.Match[str]) -> str:
-    return next(group for group in match.groups() if group is not None).strip()
-
-
-def loads_from_css(css: str) -> bool:
-    return any(
-        not css_address(match).lower().startswith(UNFETCHED_ADDRESS_PREFIXES)
-        for match in CSS_ADDRESS.finditer(css)
-    )
-
-
-def absolute_css(css: str, base: str) -> str:
-    def absolute(match: re.Match[str]) -> str:
-        address = css_address(match)
-        if address.lower().startswith(UNFETCHED_ADDRESS_PREFIXES):
-            return match.group(0)
-        joined = urljoin(base, address).translate(QUOTE_ESCAPE)
-        return CSS_URL.format(address=joined)
-
-    imports_as_addresses = CSS_IMPORT.sub(
-        lambda match: f"@import {CSS_URL.format(address=css_address(match))}", css
-    )
-    return CSS_ADDRESS.sub(absolute, imports_as_addresses)
-
-
-def stylesheet_address(css: str) -> str:
-    return STYLESHEET_ADDRESS.format(content=b64encode(css.encode()).decode())
-
-
-def important(declaration: str) -> str:
-    return declaration if IMPORTANT.search(declaration) else declaration + IMPORTANT_MARK
-
-
-def with_css_moved(page: html.HtmlElement, base: str) -> None:
-    for style in page.iter(STYLE_ELEMENT):
-        if loads_from_css(style.text or ""):
-            imported = stylesheet_address(absolute_css(style.text or "", base))
-            style.text = IMPORTED_STYLESHEET.format(address=imported)
-    rules: list[str] = []
-    for element in page.iter(etree.Element):
-        declarations = CSS_DECLARATION_END.split(element.get(STYLE_ATTRIBUTE, ""))
-        moved = [declaration for declaration in declarations if loads_from_css(declaration)]
-        if moved:
-            kept = [declaration for declaration in declarations if declaration not in moved]
-            element.set(STYLE_ATTRIBUTE, ";".join(kept))
-            element.set(MOVED_STYLE_ATTRIBUTE, str(len(rules)))
-            applied = ";".join(important(absolute_css(declaration, base)) for declaration in moved)
-            rules.append(
-                MOVED_STYLE_RULE.format(
-                    attribute=MOVED_STYLE_ATTRIBUTE, number=len(rules), declarations=applied
-                )
-            )
-    body = page.find(BODY)
-    if rules and body is not None:
-        stylesheet = html.Element(LINKED_RESOURCE)
-        stylesheet.set(RELATION, STYLESHEET)
-        stylesheet.set(REFERENCE_ADDRESS, stylesheet_address("\n".join(rules)))
-        body.append(stylesheet)
-
-
 def site_of(address: str) -> str:
     return (urlsplit(address).hostname or "").removeprefix(WORLD_WIDE_WEB_PREFIX)
 
@@ -275,9 +204,9 @@ def base_address(page: html.HtmlElement, origin: Origin) -> str:
         case Upload():
             absolute = [address for address in named if address.startswith(WEB_SCHEMES)]
             address = absolute[0] if absolute else NOWHERE
-    if own_base and address != NOWHERE:
-        return urljoin(address, own_base[0])
-    return address
+    joined = [urljoin(address, base) if address != NOWHERE else base for base in own_base]
+    own_web_base = [base for base in joined if base.lower().startswith(WEB_SCHEMES)]
+    return own_web_base[0] if own_web_base else address
 
 
 def heading_address(origin: Origin) -> str:
@@ -315,10 +244,10 @@ def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPa
     doctype = page.getroottree().docinfo.doctype
     base = base_address(page, origin)
     made_inert(page)
+    drop_own_names(page)
     drop_visit_counters(page)
-    with_css_moved(page, base)
     drop_dialogs(page)
-    placed = placed_blocks(page, unread_parts(page, heading_address(origin)), base, blocks)
+    placed = placed_blocks(page, unread_parts(page, heading_address(origin)), blocks)
     with_head(page, base)
     serialized = html.tostring(page, encoding="unicode")
     return FramedPage(html=f"{doctype}\n{serialized}" if doctype else serialized, placed=placed)
