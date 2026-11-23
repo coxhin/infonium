@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from collections import Counter
 from collections.abc import Iterator
@@ -33,7 +32,11 @@ POLL_SECONDS = 0.05
 LOWERED_FETCH_SECONDS = 1.0
 LOWERED_FETCH_BYTES = 4 * 1024**2
 MADE_UP_QUOTE = "This sentence was never written anywhere in the source at all."
-BLOCK_LINE = re.compile(r"^\[(\d+)(?: heading)?\] (.*)$", re.MULTILINE)
+# How a request gives a document to the model: JSON with a list of its blocks.
+USER_ROLE = "user"
+BLOCKS_KEY = "blocks"
+BLOCK_NUMBER_KEY = "block"
+BLOCK_TEXT_KEY = "text"
 # The paragraphs of a made-up article that a test asks about: each says one thing in words
 # no other says, so that a quote of it is found in it alone.
 LEDGER = (
@@ -133,9 +136,25 @@ class Site:
             yield response
 
 
+def given_json(text: str) -> object:
+    # What a message gives as JSON; a message in words gives nothing.
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
 def numbered_blocks_asked(asked: Asked) -> list[tuple[int, str]]:
-    # The blocks of a document as a request gives them to the model, by their numbers.
-    return [(int(number), text) for number, text in BLOCK_LINE.findall(asked.text())]
+    # The blocks of a document as a request gives them to the model, by their numbers. The
+    # document is a message of the asker in JSON, with a list "blocks" of objects, each with its
+    # number ("block") and its text ("text"), as the instructions tell the model.
+    documents = [given_json(text) for role, text in asked.messages() if role == USER_ROLE]
+    return [
+        (block[BLOCK_NUMBER_KEY], block[BLOCK_TEXT_KEY])
+        for document in documents
+        if isinstance(document, dict) and isinstance(document.get(BLOCKS_KEY), list)
+        for block in document[BLOCKS_KEY]
+    ]
 
 
 def digest_reply(asked: Asked) -> Reply:

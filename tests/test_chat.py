@@ -557,7 +557,7 @@ def test_a_conversation_is_kept_by_item_and_by_owner(app: App, ledger: Ledger) -
     assert own == [], "another owner's item of the same page shares its conversation"
 
 
-def test_questionedleaves_the_item_its_document_and_digest_as_they_were(
+def test_asking_leaves_the_item_its_document_and_digest_as_they_were(
     app: App, ledger: Ledger
 ) -> None:
     paths = [f"/api/items/{ledger.item_id}", f"/api/items/{ledger.item_id}/document"]
