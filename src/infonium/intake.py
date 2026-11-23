@@ -251,11 +251,11 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
                 sum(rendered.broken_off),
             )
         built = page_copy(url, rendered.file, rendered.address)
-    except UnreadableSource:
+    except UnreadableSource as failure:
         if not plain.text.blocks:
             raise
         logger.warning(
-            "rendering %s failed; its plain reading is kept", source.reference, exc_info=True
+            "rendering %s failed: %s; its plain reading is kept", source.reference, failure
         )
         return copy_readout(plain)
     kept = built if built.words > plain.words else plain
