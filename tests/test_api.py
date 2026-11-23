@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from infonium import api, intake, speech
+from infonium import api, intake, search, speech
 from infonium.language_model import ChatCompletionsLanguageModel
 from infonium.library import (
     CUT_OFF,
@@ -217,6 +217,9 @@ def start_app(
         ),
         browser=Path("no-such-browser"),
     )
+    embedding = search.EmbeddingEngine(
+        base_url="https://embedding.test/v1", api_key=SecretStr("unused"), model="none"
+    )
     started: list[TestClient] = []
 
     def start() -> App:
@@ -224,6 +227,8 @@ def start_app(
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
         monkeypatch.setattr(api, "intake", lambda: reader)
+        index = search.BlockIndex(directory=tmp_path / "data", engine=embedding)
+        monkeypatch.setattr(api, "block_index", lambda: index)
         client = TestClient(api.app)
         client.__enter__()
         started.append(client)

@@ -21,6 +21,7 @@ dependencies = [
     "pypdfium2>=5.15.2",
     "python-multipart>=0.0.33",
     "sqlalchemy>=2.1.8",
+    "sqlite-vec>=0.1.9",
     "trafilatura>=2.3.1",
     "uvicorn>=0.54.0",
     # With its default set, for requests: read through it, a download is held to its size.
@@ -68,7 +69,7 @@ markers = [
 
 [[tool.mypy.overrides]]
 # These ship no type information.
-module = ["filetype", "pypdfium2"]
+module = ["filetype", "pypdfium2", "sqlite_vec"]
 ignore_missing_imports = true
 
 [dependency-groups]

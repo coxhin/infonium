@@ -39,6 +39,7 @@ from infonium.library import (
     Origin,
     Reading,
 )
+from infonium.search import BlockIndex, EmbeddingEngine
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
@@ -82,6 +83,18 @@ def intake() -> Intake:
 
 
 @cache
+def block_index() -> BlockIndex:
+    return BlockIndex(
+        directory=settings.data_dir,
+        engine=EmbeddingEngine(
+            base_url=settings.embedding_base_url,
+            api_key=settings.embedding_api_key,
+            model=settings.embedding_model,
+        ),
+    )
+
+
+@cache
 def language_model() -> LanguageModel:
     return openai_model(name=settings.model, wire_api=settings.wire_api)
 
@@ -94,7 +107,9 @@ async def running(service: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig()
     logging.getLogger(__package__).setLevel(logging.INFO)
     intake().resume()
+    block_index().resume()
     yield
+    block_index().close()
     intake().close()
 
 
