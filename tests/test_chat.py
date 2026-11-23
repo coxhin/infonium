@@ -142,7 +142,8 @@ def ledger(app: App) -> Ledger:
 @contextmanager
 def held(app: App, reply: Reply) -> Iterator[threading.Event]:
     # The model writes the first piece of the reply and waits until the test opens the gate,
-    # which it does at the latest when the context ends.
+    # which it does at the latest when the context ends; a server the reply goes through is
+    # stopped after that, or it would wait for the reply.
     gate = threading.Event()
     app.model.reset(lambda asked: reply.model_copy(update={"gate": gate}))
     try:
@@ -156,7 +157,12 @@ def lines_of(response: httpx2.Response) -> Iterator[dict[str, Any]]:
 
 
 def first_line(lines: Iterator[dict[str, Any]]) -> dict[str, Any]:
-    first = next(lines, None)
+    # The first line of an answer that the model has begun and not finished, which a reader
+    # waits for as long as the client's timeout of reading.
+    try:
+        first = next(lines, None)
+    except httpx2.ReadTimeout:
+        pytest.fail("no line of the answer was sent while the model was writing it")
     if first is None:
         pytest.fail("a question's response ended before its first line")
     return first
@@ -351,8 +357,8 @@ def test_what_is_written_is_sent_before_the_model_has_finished(app: App, ledger:
     cut = written.index("past") + len("past")
     path = conversation_path(ledger.item_id)
     with (
-        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         app.served() as reader,
+        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         reader.stream("POST", path, json={"text": QUESTION}) as response,
     ):
         lines = lines_of(response)
@@ -460,8 +466,8 @@ def test_a_question_or_a_delete_while_answering_is_refused_and_not_queued(
     path = conversation_path(ledger.item_id)
     cut = written.index("left")
     with (
-        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         app.served() as reader,
+        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         reader.stream("POST", path, json={"text": QUESTION}) as response,
     ):
         lines = lines_of(response)
@@ -495,7 +501,7 @@ def test_a_reader_who_leaves_keeps_nothing_and_the_next_question_is_taken_at_onc
 ) -> None:
     written = plain(["The ferry left at nine.", "It ran late in fog."]).model_dump_json()
     path = conversation_path(ledger.item_id)
-    with held(app, Reply(pieces=[written[:30], written[30:]])), app.served() as reader:
+    with app.served() as reader, held(app, Reply(pieces=[written[:30], written[30:]])):
         with reader.stream("POST", path, json={"text": QUESTION}) as response:
             assert first_line(lines_of(response))["kind"] == "drafted", (
                 "no Drafted came before leaving"

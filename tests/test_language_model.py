@@ -1,5 +1,7 @@
 import threading
 from collections.abc import Callable
+from concurrent import futures
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 
 import openai
@@ -47,6 +49,8 @@ WORDS = ("harbour", "ledger", "ferry", "fog", "港", "évier")
 # the reply.
 ASIDE = "Let me look that up first."
 FAILURES = ("refused", "cut_short", "filtered", "failed", "unparsable", "misshapen", "unmetered")
+# How long what the model has written may take to be handed on while it writes on.
+WRITING_SECONDS = 2.0
 # The examples a property runs: each is a few requests to the stand-in.
 EXAMPLES = settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
 
@@ -137,13 +141,13 @@ def test_a_reply_is_handed_on_before_the_model_has_finished_it(
     reply = model_of(wire_api).replying(
         INSTRUCTIONS, [Message(side=Side.ASKER, text=QUESTION)], Tally, [], Ending()
     )
-    try:
-        first = next(reply)
-        assert not gate.is_set() and first == Written(request=0, text=text[:12]), (
-            f"what the model had written was not handed on while it wrote: {first}"
-        )
-    finally:
+    with ThreadPoolExecutor(max_workers=1) as reader:
+        first = reader.submit(next, reply)
+        written = futures.wait([first], timeout=WRITING_SECONDS).done
         gate.set()
+    assert written and first.result() == Written(request=0, text=text[:12]), (
+        f"what the model had written was not handed on within {WRITING_SECONDS} s while it wrote on"
+    )
     assert isinstance([*reply][-1], Replied), "the reply did not end whole once the model wrote on"
 
 
