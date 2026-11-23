@@ -5,6 +5,9 @@ from enum import StrEnum
 from typing import Any, Final
 
 from openai import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
     OpenAI,
     omit,
     pydantic_function_tool,
@@ -347,17 +350,26 @@ class ChatCompletionsLanguageModel(LanguageModel):
                 stream=True,
                 stream_options={"include_usage": True},
             )
-        with stream:
-            for chunk in stream:
-                usage = chunk.usage or usage
-                for choice in chunk.choices[:1]:
-                    refusal += choice.delta.refusal or ""
-                    finish = choice.finish_reason or finish
-                    for piece in choice.delta.tool_calls or []:
-                        pieces[piece.index].append(piece)
-                    if choice.delta.content:
-                        content += choice.delta.content
-                        yield Written(request=request, text=content)
+        # An endpoint that fails the reply in the middle of its stream says so in a data line
+        # that holds an error object, which the openai package raises as its bare APIError:
+        # the model's failure, as a failed event of the Responses API is. Its subclasses are
+        # failures of the request, and stay what they are.
+        try:
+            with stream:
+                for chunk in stream:
+                    usage = chunk.usage or usage
+                    for choice in chunk.choices[:1]:
+                        refusal += choice.delta.refusal or ""
+                        finish = choice.finish_reason or finish
+                        for piece in choice.delta.tool_calls or []:
+                            pieces[piece.index].append(piece)
+                        if choice.delta.content:
+                            content += choice.delta.content
+                            yield Written(request=request, text=content)
+        except (APIStatusError, APIConnectionError):
+            raise
+        except APIError as failed:
+            raise UnstructuredCompletion(failed.message) from failed
         if refusal:
             raise UnstructuredCompletion(refusal)
         if finish in CUT_FINISHES:
