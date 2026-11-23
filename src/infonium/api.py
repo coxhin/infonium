@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from functools import cache, lru_cache
+from functools import cache
 from http import HTTPStatus
 from pathlib import PurePath
 from typing import Annotated, Any
@@ -40,7 +40,7 @@ from infonium.digest import (
 )
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
-from infonium.framedpage import FramedPage, framed_page
+from infonium.framedpage import FramedPage, KeptPages
 from infonium.intake import Engines, Intake, failure_reason
 from infonium.language_model import (
     LanguageModel,
@@ -57,7 +57,6 @@ from infonium.library import (
     LibraryStore,
     NotInLibrary,
     Origin,
-    Read,
     Reading,
 )
 from infonium.model_connection import Ending
@@ -225,11 +224,16 @@ class PageBlocks(BaseModel):
             " rest of the page needs. Its value is the block's number, and one element at most"
             " carries a number. The element's content may be replaced by the block's"
             " translation, and the element may be scrolled to. It holds no picture, control,"
-            " formula or stylesheet, and no place that the page's own links lead to; the links,"
-            " emphasis and line breaks inside it are part of the block's text, and the"
-            " translation's marks and line breaks stand for them. Where a block's text is only"
-            " part of an element, the marked element is an infonium-run element added around"
-            " that text, laid out inline."
+            " formula, image map or stylesheet, and no words for a browser without scripts."
+            " The links, emphasis and line breaks inside it are part of the block's text, and"
+            " the translation's marks and line breaks stand for them; a line break in the text"
+            " or the translation is written into the page as a br element. Words that the page"
+            " shows struck out are not part of the block's text, and go when the content is"
+            " replaced, as they are left out of the text a reader reads. A place inside the"
+            " element that the page's own links lead to, an element with an id, goes too: those"
+            " links then lead nowhere. Where a block's text is only part of an element, the"
+            " marked element is an infonium-run element added around that text, laid out"
+            " inline."
         )
     )
     cell_attribute: str = Field(
@@ -241,7 +245,11 @@ class PageBlocks(BaseModel):
             " split at its row separator and each row at its cell separator. A cell of the"
             " block's text that says nothing has no element. A marked cell's content may be"
             " replaced by the translation of that cell of the block's text; it holds no"
-            " picture, control, formula or stylesheet. The table itself carries no mark."
+            " picture, control, formula, image map or stylesheet, and no words for a browser"
+            " without scripts. The translation of a table block is one text, which is split at"
+            " the block's own row and cell separators into the cells that the marks name. The"
+            " table itself carries no mark: a table block is scrolled to by its first marked"
+            " cell."
         )
     )
     placed: list[BlockNumber] = Field(
@@ -475,28 +483,21 @@ def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> 
     raise NotImplementedError(UNBUILT)
 
 
-@lru_cache(maxsize=PAGES_KEPT)
-def framed_document_page(owner: str, item_id: str, document_id: str) -> FramedPage:
-    # A document never changes, so the page built for it is kept for the next request, of
-    # the page or of its blocks; an item read again has another document.
+@cache
+def kept_pages() -> KeptPages:
+    return KeptPages(room=PAGES_KEPT)
+
+
+def framed_item_page(item_id: str, owner: str) -> FramedPage:
+    # The page of an item that was read from a web page; any other item has none. The page is
+    # built from the very document read here, and kept under that document's name.
     store = library_store()
     with store.library(owner) as library:
         origin = library.item(item_id).origin
         document = library.holding(item_id).document
     if document.media_type != HTML_MEDIA_TYPE:
         raise NotInLibrary(f"item {item_id} was not read from a web page")
-    return framed_page(store.snapshot(document.snapshot).read_bytes(), origin, document.blocks)
-
-
-def framed_item_page(item_id: str, owner: str) -> FramedPage:
-    # The page of an item that was read from a web page; any other item has none.
-    with library_store().library(owner) as library:
-        reading = library.item(item_id).reading
-    match reading:
-        case Read(document=document_id):
-            return framed_document_page(owner, item_id, document_id)
-        case _:
-            raise NotInLibrary(f"item {item_id} has no document in the library")
+    return kept_pages().page(owner, document, origin, store.snapshot(document.snapshot))
 
 
 @app.get(

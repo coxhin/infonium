@@ -1,4 +1,7 @@
 import re
+from collections import OrderedDict
+from pathlib import Path
+from threading import Lock
 from urllib.parse import urljoin, urlsplit
 
 import trafilatura
@@ -6,8 +9,22 @@ from lxml import etree, html
 from pydantic import BaseModel
 
 from infonium.blockholders import drop_own_names, placed_blocks, unread_parts
-from infonium.document import NO_TEXT, WEB_SCHEMES, Block, BlockNumber, UnreadableSource
-from infonium.htmlpage import IS_HIDDEN, PICTURE, REFERENCE_ADDRESS, STYLE_ATTRIBUTE, drop_dialogs
+from infonium.document import (
+    NO_TEXT,
+    WEB_SCHEMES,
+    Block,
+    BlockNumber,
+    Document,
+    UnreadableSource,
+)
+from infonium.htmlpage import (
+    HEAD,
+    IS_HIDDEN,
+    PICTURE,
+    REFERENCE_ADDRESS,
+    STYLE_ATTRIBUTE,
+    drop_dialogs,
+)
 from infonium.library import Link, Origin, Upload
 
 # What a page holds that would run, send or load another page where it is shown. The headers
@@ -82,7 +99,6 @@ ON_LOAD = "onload"
 # a base of the page's own is kept only where it is a web address, since any other, such as a
 # data: address, makes the browser resolve the page's addresses against infonium's.
 BASE = "base"
-HEAD = "head"
 NOWHERE = "about:blank"
 WORLD_WIDE_WEB_PREFIX = "www."
 NAMED_ADDRESSES = etree.XPath(
@@ -251,3 +267,28 @@ def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPa
     with_head(page, base)
     serialized = html.tostring(page, encoding="unicode")
     return FramedPage(html=f"{doctype}\n{serialized}" if doctype else serialized, placed=placed)
+
+
+class KeptPages:
+    # The pages built last, kept by owner and document. A document never changes, so a page is
+    # dropped only for room. functools.lru_cache keys a result on every argument it is built
+    # from, where a page must be built from the document already read and kept by its name.
+    def __init__(self, room: int) -> None:
+        self.room = room
+        self.pages: OrderedDict[tuple[str, str], FramedPage] = OrderedDict()
+        self.lock = Lock()
+
+    def page(self, owner: str, document: Document, origin: Origin, snapshot: Path) -> FramedPage:
+        key = (owner, document.id)
+        with self.lock:
+            kept = self.pages.get(key)
+            if kept is not None:
+                self.pages.move_to_end(key)
+                return kept
+        built = framed_page(snapshot.read_bytes(), origin, document.blocks)
+        with self.lock:
+            self.pages[key] = built
+            self.pages.move_to_end(key)
+            while len(self.pages) > self.room:
+                self.pages.popitem(last=False)
+        return built

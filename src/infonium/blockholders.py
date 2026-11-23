@@ -22,11 +22,12 @@ from infonium.document import (
 from infonium.htmlpage import (
     BODY,
     CODE_FOR_THE_BROWSER,
+    HEAD,
     INLINE_QUOTATION,
     IS_HIDDEN_BY_STYLE,
-    LINK,
     PICTURE,
     drop_unread_parts,
+    holds_words,
 )
 
 # The names infonium gives what it adds to a page. What a page itself wrote in these names is
@@ -112,9 +113,13 @@ SUMMARY = "summary"
 HEADING_TAGS = frozenset(
     tag for tag, conversion in CONVERSIONS.items() if conversion is convert_headings
 ) | {SUMMARY}
-# What an element may hold besides its text that a reader would lose if the element's content
-# were replaced by a translation.
+# What an element may hold besides its text that a reader or the rest of the page would lose
+# if the element's content were replaced by a translation: an image map is named by a
+# picture elsewhere. An element that holds one of these holds no block, nor does one that
+# holds words for a browser without scripts, which a page shown without its scripts shows.
+SCRIPTLESS = "noscript"
 EMBEDDED_TAGS = (
+    "map",
     PICTURE,
     "picture",
     "svg",
@@ -129,15 +134,9 @@ EMBEDDED_TAGS = (
     "select",
     "textarea",
 )
-# What an element may hold that the rest of the page needs, and that is taken out of a placed
-# element, in front of it, before it is marked: stylesheets, an image map that a picture
-# elsewhere names, and the places the page's own links lead to.
-NEEDED_ELSEWHERE_TAGS = ("style", "link", "map")
-IDENTITY = "id"
-ANCHOR_NAME = "name"
-FRAGMENT_START = "#"
-OWN_PLACE_LINKS = etree.XPath(f"//{LINK}/@href | //area/@href")
-PLACE_MARKER = "span"
+# Stylesheets that a placed element holds apply to the whole page, and are moved to the end
+# of the page's head before the element is marked.
+STYLESHEET_TAGS = ("style", "link")
 TABLE = "table"
 # A table's rows as the extractor reads them: its caption first, as a row of one cell.
 OWN_ROWS = etree.XPath("./caption | ./tr | ./thead/tr | ./tbody/tr | ./tfoot/tr")
@@ -375,7 +374,11 @@ def held_roots(holder: Holder) -> list[html.HtmlElement]:
 
 
 def holds_embedded(holder: Holder) -> bool:
-    return any(next(root.iter(EMBEDDED_TAGS), None) is not None for root in held_roots(holder))
+    return any(
+        next(root.iter(EMBEDDED_TAGS), None) is not None
+        or any(holds_words("".join(words.itertext())) for words in root.iter(SCRIPTLESS))
+        for root in held_roots(holder)
+    )
 
 
 def page_candidates(
@@ -481,50 +484,24 @@ def aligned(keys: list[str], candidates: list[Candidate]) -> list[tuple[int, int
     return sorted(pairs)
 
 
-def own_place_names(page: html.HtmlElement) -> set[str]:
-    # The places in the page that its own links lead to.
-    return {
-        str(address)[1:]
-        for address in OWN_PLACE_LINKS(page)
-        if str(address).startswith(FRAGMENT_START) and len(str(address)) > 1
-    }
-
-
-def lifted_out(node: html.HtmlElement, front: html.HtmlElement) -> None:
-    # The node goes in front of the element, and the text after it stays where it was.
-    tail, node.tail = node.tail, None
-    previous = node.getprevious()
-    parent = node.getparent()
-    if previous is not None:
-        previous.tail = (previous.tail or "") + (tail or "")
-    elif parent is not None:
-        parent.text = (parent.text or "") + (tail or "")
-    front.addprevious(node)
-
-
-def keep_what_others_need(
-    roots: list[html.HtmlElement], front: html.HtmlElement, places: set[str]
-) -> None:
-    # What the rest of the page needs from inside a placed element is put in front of it:
-    # stylesheets and image maps themselves, and for a place the page's links lead to, an empty
-    # element that bears its name in place of the element inside.
+def stylesheets_moved(roots: list[html.HtmlElement], head: html.HtmlElement) -> None:
+    # A stylesheet goes to the end of the head, and the text after it stays where it was.
     for root in roots:
-        for node in [node for node in root.iter(NEEDED_ELSEWHERE_TAGS) if node is not root]:
-            lifted_out(node, front)
-        for node in [node for node in root.iter(etree.Element) if node is not root]:
-            for attribute in (IDENTITY, ANCHOR_NAME):
-                name = node.get(attribute)
-                if name in places:
-                    marker = html.Element(PLACE_MARKER)
-                    marker.set(IDENTITY, name)
-                    front.addprevious(marker)
-                    del node.attrib[attribute]
+        for node in [node for node in root.iter(STYLESHEET_TAGS) if node is not root]:
+            tail, node.tail = node.tail, None
+            previous = node.getprevious()
+            parent = node.getparent()
+            if previous is not None:
+                previous.tail = (previous.tail or "") + (tail or "")
+            elif parent is not None:
+                parent.text = (parent.text or "") + (tail or "")
+            head.append(node)
 
 
-def mark(holder: Holder, number: BlockNumber, block: Block, places: set[str]) -> None:
+def mark(holder: Holder, number: BlockNumber, block: Block, head: html.HtmlElement) -> None:
     match holder:
         case ElementHolder(element=element):
-            keep_what_others_need([element], element, places)
+            stylesheets_moved([element], head)
             element.set(BLOCK_ATTRIBUTE, str(number))
         case RunHolder(parent=parent, after=after, children=children):
             wrapper = html.Element(RUN_ELEMENT)
@@ -535,10 +512,10 @@ def mark(holder: Holder, number: BlockNumber, block: Block, places: set[str]) ->
                 wrapper.text, after.tail = after.tail, None
                 after.addnext(wrapper)
             wrapper.extend(children)
-            keep_what_others_need([wrapper], wrapper, places)
+            stylesheets_moved([wrapper], head)
             wrapper.set(BLOCK_ATTRIBUTE, str(number))
-        case TableHolder(element=table, cells=cells):
-            keep_what_others_need(cells, table, places)
+        case TableHolder(cells=cells):
+            stylesheets_moved(cells, head)
             said = [
                 (row, cell)
                 for row, texts in enumerate(table_cells(block.text))
@@ -558,7 +535,10 @@ def placed_blocks(
     keys = [block_key(block) for block in blocks]
     candidates = placeable(page_candidates(page, unread, {key for key in keys if key}))
     pairs = aligned(keys, candidates)
-    places = own_place_names(page)
+    head = page.find(HEAD)
+    if head is None:
+        head = html.Element(HEAD)
+        page.insert(0, head)
     for number, position in pairs:
-        mark(candidates[position].holder, number, blocks[number], places)
+        mark(candidates[position].holder, number, blocks[number], head)
     return [number for number, _ in pairs]

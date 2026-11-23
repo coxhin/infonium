@@ -24,6 +24,7 @@ HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 EXSLT_NAMESPACES = {"re": "http://exslt.org/regular-expressions"}
 LINK = "a"
 PICTURE = "img"
+HEAD = "head"
 BODY = "body"
 STYLE_ATTRIBUTE = "style"
 HIDDEN_BY_STYLE = (
