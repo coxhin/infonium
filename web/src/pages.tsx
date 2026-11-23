@@ -10,7 +10,7 @@ import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
-import { scrolls } from "./reader";
+import { scrollerOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -26,20 +26,6 @@ const BOX_CLASS = "page-box";
 
 function percent(fraction: number): string {
   return `${fraction * 100}%`;
-}
-
-// The nearest element around this one that scrolls its content, or none when the window does.
-function scrollerOf(element: Element): Element | null {
-  for (
-    let ancestor = element.parentElement;
-    ancestor !== null;
-    ancestor = ancestor.parentElement
-  ) {
-    if (scrolls(getComputedStyle(ancestor).overflowY)) {
-      return ancestor;
-    }
-  }
-  return null;
 }
 
 // Hands a result or a failure on only while the view that asked is still the current one. A

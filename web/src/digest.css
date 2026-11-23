@@ -1,0 +1,39 @@
+.digest {
+  padding: 0.6rem 1.2rem 3rem;
+}
+
+.digest > header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.digest > header button {
+  font-size: 0.85rem;
+}
+
+.digest h2 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  margin: 1rem 0 0.5rem;
+}
+
+.digest ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.digest li {
+  margin-bottom: 0.7rem;
+}
+
+.unsourced {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  border-bottom: 1px dotted var(--muted);
+}
+
+.digest .spent {
+  margin-top: 1.5rem;
+}
