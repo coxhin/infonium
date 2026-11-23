@@ -91,6 +91,10 @@
   color: var(--failure);
 }
 
+.translation-note .stopped-reason {
+  color: var(--muted);
+}
+
 .translation-note .anew-asking {
   display: inline-flex;
   flex-wrap: wrap;

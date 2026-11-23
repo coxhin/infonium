@@ -66,17 +66,6 @@ export function cutAtMarks(text: string, marks: Mark[]): Piece[] {
   });
 }
 
-// Whether the translation is to translate a block, as the service judges it: a listing is kept
-// as it is written, and so is a block that one formula covers whole; a block with no letter of
-// any script says nothing in words.
-export function isToBeTranslated(block: Block): boolean {
-  const marks = "marks" in block ? block.marks : [];
-  const wholeFormula = marks.some(
-    (mark) => mark.kind === "formula" && mark.start === 0 && mark.end === [...block.text].length,
-  );
-  return block.kind !== "code" && !wholeFormula && /\p{L}/u.test(block.text);
-}
-
 // A table's text, the block's own or its translation, as rows of cells.
 export function cellTexts(block: Block & { kind: "table" }, text: string): string[][] {
   return text.split(block.row_separator).map((row) => row.split(block.cell_separator));

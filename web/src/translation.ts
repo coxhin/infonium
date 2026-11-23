@@ -194,6 +194,11 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
         (block) => {
           setTranslatedAgain((before) => withValue(before, epoch, blockNumber, block));
           setAgain((before) => withValue<Again>(before, epoch, blockNumber, undefined));
+          // A block translated by itself changes what the translation counts, so it is read
+          // again; a round of an earlier epoch is left as it is.
+          setRound((before) =>
+            before.epoch === epoch ? { ...before, asking: "read", count: before.count + 1 } : before,
+          );
         },
         (error: unknown) =>
           setAgain((before) =>

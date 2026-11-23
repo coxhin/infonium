@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock } from "./blocks";
-import { isToBeTranslated, unitOffset, unitOffsets } from "./blocktext";
+import { unitOffset, unitOffsets } from "./blocktext";
 import { originLabel } from "./entry";
 import { FORMULA_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";
@@ -13,6 +13,7 @@ import type { TranslationState } from "./translation";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const ANCHOR_HIGHLIGHT = "anchor";
+const NONE_LEFT_OUT: ReadonlySet<number> = new Set();
 const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
 const CHANGED = "原文已经变化，找不到这段引文";
 
@@ -47,9 +48,17 @@ export function Reader({
   const blocks = itemDocument.blocks;
   const pointedHere = pointed?.document_id === itemDocument.id ? pointed : undefined;
   const asLines = playing !== undefined && setting !== "source";
-  // A translation that stopped has left some blocks it was to translate in their source.
-  const stopped =
-    translation.loaded?.state === "ready" && translation.loaded.value.progress.kind === "stopped";
+  // The blocks a translation that stopped has left in their source: those the service says it
+  // translates that have no translation.
+  const leftOut = useMemo(() => {
+    const loaded = translation.loaded;
+    if (loaded?.state !== "ready" || loaded.value.progress.kind !== "stopped") {
+      return NONE_LEFT_OUT;
+    }
+    return new Set(
+      loaded.value.blocks_to_translate.filter((number) => !translation.blocks.has(number)),
+    );
+  }, [translation.loaded, translation.blocks]);
   // The passage highlighted in this document goes when the document leaves the page. React
   // runs this before the effects of a reader that takes its place, so the passage that reader
   // is opened for stays.
@@ -83,7 +92,7 @@ export function Reader({
             again={translation.again}
             pointed={pointedHere}
             played={playing.played}
-            stopped={stopped}
+            leftOut={leftOut}
             clock={playing.clock}
             onAgain={translation.translateAgain}
             onPlay={playing.onPlay}
@@ -100,9 +109,7 @@ export function Reader({
             again={translation.again.get(number)}
             pointed={pointedHere?.block_number === number ? pointedHere : undefined}
             onAgain={translation.translateAgain}
-            missing={
-              stopped && !translation.blocks.has(number) && isToBeTranslated(block)
-            }
+            missing={leftOut.has(number)}
           />
         ))
       )}

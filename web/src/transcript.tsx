@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MarkedText } from "./blocks";
-import { isToBeTranslated, unitOffset, unitOffsets } from "./blocktext";
+import { unitOffset, unitOffsets } from "./blocktext";
 import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./client";
 import type { Clock } from "./player";
 import { inView, scrollerOf } from "./scrolling";
@@ -210,7 +210,7 @@ export function Transcript({
   again,
   pointed,
   played,
-  stopped,
+  leftOut,
   clock,
   onAgain,
   onPlay,
@@ -222,7 +222,8 @@ export function Transcript({
   again: ReadonlyMap<number, Again>;
   pointed: Anchor | undefined;
   played: TimePlace[];
-  stopped: boolean;
+  // The blocks a translation that stopped has left in their source.
+  leftOut: ReadonlySet<number>;
   clock: Clock;
   onAgain: (blockNumber: number) => void;
   onPlay: (place: TimePlace) => void;
@@ -232,7 +233,7 @@ export function Transcript({
     let first = 0;
     return blocks.map((block, number) => {
       const lines = keptLines(block, translations.get(number));
-      const group = { block, number, lines, first };
+      const group = { number, lines, first };
       first += lines.length;
       return group;
     });
@@ -312,7 +313,7 @@ export function Transcript({
 
   return (
     <div className="transcript" ref={transcript}>
-      {groups.map(({ block, number, lines, first }) => {
+      {groups.map(({ number, lines, first }) => {
         const here = spoken !== undefined && spoken >= first && spoken < first + lines.length;
         const isPointed =
           pointed !== undefined &&
@@ -327,7 +328,7 @@ export function Transcript({
             spoken={here ? spoken - first : undefined}
             setting={setting}
             translated={translations.has(number)}
-            missing={stopped && !translations.has(number) && isToBeTranslated(block)}
+            missing={leftOut.has(number)}
             again={again.get(number)}
             pointed={isPointed ? pointed : undefined}
             onAgain={onAgain}
