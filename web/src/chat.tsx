@@ -50,11 +50,13 @@ function Spent({ answer }: { answer: Turn["answer"] }) {
 
 function Answer({
   turn,
+  kind,
   citing,
   seat,
   onOpen,
 }: {
   turn: Turn;
+  kind: ScopeKind;
   citing: Citing;
   seat: Seat | undefined;
   onOpen: Opener;
@@ -101,6 +103,16 @@ function Answer({
           <LostCitations statement={statement} citesAll={false} />
         </p>
       ))}
+      {kind === "library" && answer.sources.length > 0 && (
+        <p className="sources">
+          出处：
+          {answer.sources.map((source) => (
+            <span key={source.document} title={source.title}>
+              {source.title}
+            </span>
+          ))}
+        </p>
+      )}
       <Spent answer={answer} />
     </div>
   );
@@ -113,14 +125,17 @@ function writingNote(pending: Pending): string {
   return pending.statements.length === 0 ? "正在回答…" : "正在写…";
 }
 
+// The library may be searched many times for one answer, with long queries, so only the
+// latest is shown, with how many there were; all of them are the line's title.
 function Draft({ pending }: { pending: Pending }) {
+  const searches = pending.searches.length;
   return (
     <div className="answer draft" aria-busy="true">
-      {pending.searches.map((query, queryIndex) => (
-        <p key={queryIndex} className="searched">
-          检索：{query}
+      {searches > 0 && (
+        <p className="searched" title={pending.searches.join("\n")}>
+          {searches === 1 ? "检索" : `第 ${searches} 次检索`}：{pending.searches[searches - 1]}
         </p>
-      ))}
+      )}
       {pending.statements.map((statement, statementIndex) => (
         <p key={statementIndex}>{statement}</p>
       ))}
@@ -187,6 +202,27 @@ function Thread({
       element.scrollTop = place.current.following ? element.scrollHeight : place.current.top;
     }
   });
+
+  // An answer that has just arrived and is taller than the thread is shown from its question,
+  // so that it is read from its start; the thread then stays there.
+  const heard = useRef(chat.heard);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const arrived = element?.querySelector("article:last-of-type");
+    if (
+      chat.heard !== heard.current &&
+      element !== null &&
+      arrived instanceof HTMLElement &&
+      shown &&
+      place.current.following &&
+      arrived.offsetHeight > element.clientHeight
+    ) {
+      element.scrollTop +=
+        arrived.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      moveTo({ top: element.scrollTop, following: false });
+    }
+    heard.current = chat.heard;
+  }, [chat.heard]);
 
   return (
     // The thread takes the focus so that it can be scrolled from the keyboard.
@@ -379,7 +415,9 @@ function ChatScope({
         onPlace={(place) => conversations.keepPlace(scope, place)}
         onRetry={() => conversations.read(scope)}
       >
-        {(turn) => <Answer turn={turn} citing={citing} seat={seat} onOpen={onOpen} />}
+        {(turn) => (
+          <Answer turn={turn} kind={scope.kind} citing={citing} seat={seat} onOpen={onOpen} />
+        )}
       </Thread>
       {/* An answer that has arrived is told to a screen reader once, not as it grows. */}
       <p className="heard" role="status">

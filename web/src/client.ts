@@ -61,21 +61,22 @@ async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>)
   return data;
 }
 
-// A request that answers with nothing when it succeeds.
-async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
-  const { error, response } = await request;
-  if (!response.ok) {
-    throw new Error(refusalText(error));
-  }
-}
-
-// The service answered a question with a status other than success, so it began no answer.
-export class RefusedQuestion extends Error {
+// The service answered a request with a status other than success: a question, so it began no
+// answer, or a clearing, so nothing was cleared. The status tells why.
+export class Refused extends Error {
   constructor(
     message: string,
     readonly status: number,
   ) {
     super(message);
+  }
+}
+
+// A request that answers with nothing when it succeeds.
+async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
+  const { error, response } = await request;
+  if (!response.ok) {
+    throw new Refused(refusalText(error), response.status);
   }
 }
 
@@ -100,7 +101,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new RefusedQuestion(refusalText(error), response.status);
+    throw new Refused(refusalText(error), response.status);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");
