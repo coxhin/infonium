@@ -49,14 +49,6 @@ WORDS = ("harbour", "ledger", "ferry", "fog", "港", "évier")
 # the reply.
 ASIDE = "Let me look that up first."
 FAILURES = ("refused", "cut_short", "filtered", "unparsable", "misshapen", "unmetered")
-# The Chat Completions API tells a reply's failure only by breaking its stream off with an
-# error; the interface lets the openai package's error of it through instead of raising its
-# own.
-BROKEN_OFF_ON_CHAT = pytest.mark.xfail(
-    raises=openai.APIError,
-    strict=True,
-    reason="a Chat Completions reply that the endpoint fails raises openai.APIError",
-)
 # How long what the model has written may take to be handed on while it writes on.
 WRITING_SECONDS = 2.0
 # The examples a property runs: each is a few requests to the stand-in.
@@ -355,7 +347,7 @@ def test_a_reply_that_fails_in_any_request_raises_the_interfaces_own_failure(
     [
         (WireApi.RESPONSES, Finish.FAILED),
         (WireApi.RESPONSES, Finish.BROKEN_OFF),
-        pytest.param(WireApi.CHAT_COMPLETIONS, Finish.BROKEN_OFF, marks=BROKEN_OFF_ON_CHAT),
+        (WireApi.CHAT_COMPLETIONS, Finish.BROKEN_OFF),
     ],
 )
 @pytest.mark.parametrize("tool_rounds", [0, 2])
