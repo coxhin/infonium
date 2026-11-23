@@ -33,6 +33,9 @@ ABANDONED_STATUS = 1
 # two looks at what of it is still alive.
 ENDING_LIMIT_SECONDS = 10.0
 ENDING_WATCH_SECONDS = 0.02
+# How long a killed process that shows as ended is given to finish: its other threads end
+# within milliseconds, and one that takes longer is stuck, its children left to it.
+REAPING_LIMIT_SECONDS = 1.0
 # Where Linux lists the children of each thread of a process: a walk over these lists reads
 # the descendants alone, where one over every process reads all the machine runs (25 ms for
 # 2,171 processes here). And where it shows the files a process holds open, and the unit of
@@ -249,10 +252,10 @@ class HeldProgram:
     def reap_ended(self) -> None:
         # A process whose first thread has ended shows as ended while its other threads still
         # end, and can be reaped, or hands its children on, only after them: the noted processes
-        # that ended are looked at again while one of them waits for that, for as long as an
-        # ending may take. An ended process whose parent goes on is that parent's to reap.
+        # that ended are looked at again while one of them waits for that, for a while. An
+        # ended process whose parent goes on is that parent's to reap.
         began = time.monotonic()
-        while time.monotonic() - began < ENDING_LIMIT_SECONDS:
+        while time.monotonic() - began < REAPING_LIMIT_SECONDS:
             waiting = False
             for process in self.seen:
                 with suppress(psutil.NoSuchProcess, ChildProcessError):
