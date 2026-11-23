@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AreaText } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
-import { PageTranslation } from "./pagetranslation";
+import { PageTranslation, type Drawn } from "./pagetranslation";
 import { scrollerOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
@@ -115,9 +115,9 @@ function Page({
   const copy = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
   const [failure, setFailure] = useState<string>();
-  // Counts the drawings of the page that have ended, so that what is read from a drawing is
-  // read again from the next; nothing is drawn while it is naught.
-  const [drawn, setDrawn] = useState(0);
+  // The canvas of the page's latest drawing that has ended, and how many have, so that what is
+  // read from a drawing is read again from the next. Nothing is set over the page without it.
+  const [drawn, setDrawn] = useState<Drawn>();
   const [width, setWidth] = useState(0);
   const paired = overlay?.paired ?? false;
 
@@ -149,7 +149,8 @@ function Page({
     let drawnPage: PDFPageProxy | undefined;
     let drawing: RenderTask | undefined;
     function draw(page: PDFPageProxy) {
-      if (canvas.current === null || frame.current === null) {
+      const target = canvas.current;
+      if (target === null || frame.current === null) {
         return;
       }
       drawnPage = page;
@@ -157,12 +158,14 @@ function Page({
       const natural = page.getViewport({ scale: 1 });
       const sharpness = (frame.current.clientWidth / natural.width) * devicePixelRatio;
       const viewport = page.getViewport({ scale: sharpness });
-      canvas.current.width = viewport.width;
-      canvas.current.height = viewport.height;
-      drawing = page.render({ canvas: canvas.current, viewport });
+      target.width = viewport.width;
+      target.height = viewport.height;
+      drawing = page.render({ canvas: target, viewport });
       // Leaving the page cancels its drawing, which is no failure; anything else is one.
       drawing.promise.then(
-        () => current && setDrawn((count) => count + 1),
+        () =>
+          current &&
+          setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 })),
         (error: unknown) => {
           if (!(error instanceof RenderingCancelledException)) {
             setFailure(reasonOf(error));
@@ -174,7 +177,7 @@ function Page({
     return () => {
       current = false;
       drawing?.cancel();
-      setDrawn(0);
+      setDrawn(undefined);
       // A page that has gone far gives up its drawing, which is as large as a photograph,
       // and once the drawing has ended, what the file keeps of the page's pictures; it is
       // drawn again when it comes near.
@@ -191,42 +194,41 @@ function Page({
 
   // The source beside the translated page is the same drawing, copied.
   useEffect(() => {
-    const source = canvas.current;
     const beside = copy.current;
-    if (paired && drawn > 0 && source !== null && beside !== null) {
-      beside.width = source.width;
-      beside.height = source.height;
-      beside.getContext("2d")?.drawImage(source, 0, 0);
+    if (paired && drawn !== undefined && beside !== null) {
+      beside.width = drawn.canvas.width;
+      beside.height = drawn.canvas.height;
+      beside.getContext("2d")?.drawImage(drawn.canvas, 0, 0);
     }
   }, [paired, drawn]);
 
-  const page = (
-    <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
-      <canvas ref={canvas} />
-      {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
-      {overlay !== undefined && near && (
-        <PageTranslation
-          texts={overlay.texts}
-          shape={shape}
-          canvas={canvas.current}
-          drawn={drawn}
-          revealing={overlay.revealing}
-          width={width}
-        />
-      )}
-      <Boxes boxes={boxes} />
-    </div>
-  );
-  if (!paired) {
-    return page;
-  }
+  // One shape of tree whether or not the source stands beside the page, so that the page's
+  // canvas, and its drawing, stay when the pairing changes.
   return (
     <div className="page-pair">
-      <div className="page" style={{ aspectRatio: `1 / ${shape}` }} aria-label="原文的这一页">
+      <div
+        className="page"
+        hidden={!paired}
+        style={{ aspectRatio: `1 / ${shape}` }}
+        aria-label="原文的这一页"
+      >
         <canvas ref={copy} />
         <Boxes boxes={boxes} />
       </div>
-      {page}
+      <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
+        <canvas ref={canvas} />
+        {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
+        {overlay !== undefined && near && drawn !== undefined && (
+          <PageTranslation
+            texts={overlay.texts}
+            shape={shape}
+            drawn={drawn}
+            revealing={overlay.revealing}
+            width={width}
+          />
+        )}
+        <Boxes boxes={boxes} />
+      </div>
     </div>
   );
 }

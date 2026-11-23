@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type ClipboardEvent } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
@@ -12,6 +12,7 @@ import type { TranslationState } from "./translation";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const ANCHOR_HIGHLIGHT = "anchor";
+const PLAIN_TEXT = "text/plain";
 const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
 const CHANGED = "原文已经变化，找不到这段引文";
 
@@ -51,7 +52,11 @@ export function Reader({
   // is opened for stays.
   useEffect(() => hideAnchor, []);
   return (
-    <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}>
+    <article
+      className="reader"
+      {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
+      onCopy={copySelectedText}
+    >
       <header>
         {entry.origin.kind === "link" ? (
           <a href={entry.origin.url} target="_blank" rel="noreferrer noopener">
@@ -117,6 +122,18 @@ export function textOf(blockElement: Element): string {
     text += node.textContent ?? "";
   }
   return text;
+}
+
+// A copy takes the text of the selection as the selection reads it: across a formula, the
+// formula's LaTeX in the run of the text. The browser's own copy would break the line where a
+// formula is drawn.
+function copySelectedText(event: ClipboardEvent<HTMLElement>): void {
+  const selection = getSelection();
+  if (selection === null || selection.isCollapsed) {
+    return;
+  }
+  event.clipboardData.setData(PLAIN_TEXT, selection.toString());
+  event.preventDefault();
 }
 
 function rangeIn(blockElement: Element, start: number, end: number): Range {

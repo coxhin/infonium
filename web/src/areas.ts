@@ -5,19 +5,21 @@ export type Box = { left: number; top: number; width: number; height: number };
 
 // Where a part of a block's translation is set on a page: the lines of the source it stands
 // for, which follow one another in one column, the rectangle around them, and how the source's
-// text runs there. The size is the height of a horizontal line, or the width of a vertical
-// one, as a fraction of the page's height or width; the pitch is the distance from one line to
-// the next in the same measure, where the area has more than one line.
+// text runs there.
 export type Area = {
   page: number;
   box: Box;
   lines: Box[];
   vertical: boolean;
-  size: number;
-  pitch: number | undefined;
+  typeset: Typeset;
   // The share of the block's source text that the area's lines hold.
   characters: number;
 };
+
+// How the source's text runs: the height of a horizontal line, or the width of a vertical one,
+// as a fraction of the page's height or width, and the distance from one line to the next in
+// the same measure, where it is known.
+export type Typeset = { size: number; pitch: number | undefined };
 
 // A part of a translation's text, with its marks counted in that part.
 export type Piece = { text: string; marks: Mark[] };
@@ -32,6 +34,14 @@ const SLIVER = 0.1;
 // A line belongs to the line before it when it begins no higher than this part of that line's
 // height above it.
 const RISE = 0.5;
+// A step from one line to the next is a line's pitch when it lies between these, as parts of
+// a line's size; any other is a gap between paragraphs or a turn of column.
+const LEAST_STEP = 0.5;
+const MOST_STEP = 3;
+// A block whose lines are within this part of its kind's size on its page is set in that size.
+// Boxes in whole points put a 10 point text anywhere from 9 to 11 points, a tenth either way;
+// a footnote of 8 points under 10 point paragraphs is a fifth smaller and keeps its own size.
+const SAME_TYPE = 0.15;
 
 function median(values: number[]): number | undefined {
   const sorted = [...values].sort((first, second) => first - second);
@@ -85,29 +95,26 @@ function goesOn(last: PagePlace, next: PagePlace, downward: boolean): boolean {
   return sideBySide || sameColumn;
 }
 
-function areaOf(lines: PagePlace[], downward: boolean): Area {
+function areaOf(lines: PagePlace[], downward: boolean, typeset: Typeset): Area {
   const boxes = lines.map(({ left, top, width, height }) => ({ left, top, width, height }));
-  const extent = (box: Box) => (downward ? box.width : box.height);
-  const ordinary = median(boxes.map(extent)) ?? 0;
-  const sizes = boxes.map(extent).filter((size) => size <= TALL_LINE * ordinary);
-  const starts = boxes.map((box) => (downward ? -(box.left + box.width) : box.top));
-  const steps = starts.slice(1).map((start, index) => start - (starts[index] ?? start));
-  const pitch = median(steps.filter((step) => step > 0.5 * ordinary));
   return {
     page: lines[0]?.page ?? 0,
     box: union(boxes),
     lines: boxes,
     vertical: downward,
-    size: median(sizes) ?? ordinary,
-    pitch,
+    typeset,
     characters: lines.reduce((sum, line) => sum + (line.end - line.start), 0),
   };
 }
 
 // The areas of one block: its lines in the order of its text, a new area wherever the next
 // line does not go on from the last in the same column, or would make the area cover lines of
-// other blocks. The boxes of the other blocks are those on each page.
-export function areasOf(places: PagePlace[], othersOn: (page: number) => Box[]): Area[] {
+// other blocks. Each area is set as the block's text runs on its page.
+export function areasOf(
+  places: PagePlace[],
+  othersOn: (page: number) => Box[],
+  typesetOn: (page: number) => Typeset,
+): Area[] {
   const lines = [...places].sort((first, second) => first.start - second.start);
   const downward = isDownward(lines);
   const runs: PagePlace[][] = [];
@@ -125,16 +132,105 @@ export function areasOf(places: PagePlace[], othersOn: (page: number) => Box[]):
       runs.push([line]);
     }
   }
-  // The size and the spacing of a block's text are those of all its lines, so that an area of
-  // one line, whose box may be a little taller or shorter than most, is set like the rest.
-  const areas = runs.map((run) => areaOf(run, downward));
-  const ordinary = median(areas.flatMap((area) => area.lines.map((line) => (downward ? line.width : line.height)))) ?? 0;
-  const sizes = areas
-    .flatMap((area) => area.lines.map((line) => (downward ? line.width : line.height)))
-    .filter((size) => size <= TALL_LINE * ordinary);
-  const size = median(sizes) ?? ordinary;
-  const pitch = median(areas.flatMap((area) => (area.pitch === undefined ? [] : [area.pitch])));
-  return areas.map((area) => ({ ...area, size, pitch }));
+  return runs.map((run) => areaOf(run, downward, typesetOn(run[0]?.page ?? 0)));
+}
+
+// The sizes and the steps between lines that a set of lines shows, a line much taller than
+// the rest left out.
+type Measures = { sizes: number[]; pitches: number[] };
+
+function measuresOf(places: PagePlace[]): Measures {
+  const lines = [...places].sort((first, second) => first.start - second.start);
+  const downward = isDownward(lines);
+  const extent = (line: PagePlace) => (downward ? line.width : line.height);
+  const ordinary = median(lines.map(extent)) ?? 0;
+  const sizes = lines.map(extent).filter((size) => size <= TALL_LINE * ordinary);
+  const pitches: number[] = [];
+  lines.slice(1).forEach((line, index) => {
+    const last = lines[index];
+    if (last === undefined || !goesOn(last, line, downward)) {
+      return;
+    }
+    const step = downward
+      ? last.left + last.width - (line.left + line.width)
+      : line.top - last.top;
+    if (step > LEAST_STEP * ordinary && step < MOST_STEP * ordinary) {
+      pitches.push(step);
+    }
+  });
+  return { sizes, pitches };
+}
+
+function typesetOf(measures: Measures): Typeset | undefined {
+  const size = median(measures.sizes);
+  return size === undefined ? undefined : { size, pitch: median(measures.pitches) };
+}
+
+// Where every block's lines stand on each page, so that each block's areas keep off the
+// others', and how each kind of text runs on each page, from the lines of every block of that
+// kind there. The engine gives the boxes of lines in whole points, so the boxes of one
+// paragraph may run a point or two taller or shorter than those of the next in the same type;
+// what all of a page's paragraphs show together is their type.
+export type Layout = {
+  boxes: Map<number, { blockNumber: number; box: Box }[]>;
+  kinds: Map<string, Typeset>;
+};
+
+function kindOnPage(page: number, kind: Block["kind"]): string {
+  return `${page}|${kind}`;
+}
+
+function pagePlacesOf(block: Block): PagePlace[] {
+  return block.places.filter((place) => place.kind === "page");
+}
+
+export function layoutOf(blocks: Block[]): Layout {
+  const boxes = new Map<number, { blockNumber: number; box: Box }[]>();
+  const measured = new Map<string, Measures>();
+  blocks.forEach((block, blockNumber) => {
+    const byPage = new Map<number, PagePlace[]>();
+    for (const place of pagePlacesOf(block)) {
+      const { left, top, width, height } = place;
+      boxes.set(place.page, [
+        ...(boxes.get(place.page) ?? []),
+        { blockNumber, box: { left, top, width, height } },
+      ]);
+      byPage.set(place.page, [...(byPage.get(place.page) ?? []), place]);
+    }
+    byPage.forEach((places, page) => {
+      const own = measuresOf(places);
+      const key = kindOnPage(page, block.kind);
+      const kept = measured.get(key) ?? { sizes: [], pitches: [] };
+      measured.set(key, {
+        sizes: [...kept.sizes, ...own.sizes],
+        pitches: [...kept.pitches, ...own.pitches],
+      });
+    });
+  });
+  const kinds = new Map<string, Typeset>();
+  measured.forEach((measures, key) => {
+    const typeset = typesetOf(measures);
+    if (typeset !== undefined) {
+      kinds.set(key, typeset);
+    }
+  });
+  return { boxes, kinds };
+}
+
+// A block is set in the type of its kind on its page where its own lines are near that size;
+// one clearly larger or smaller, as a title among headings, keeps its own, with the spacing of
+// its kind in proportion where its own lines show none.
+function blockTypeset(own: Typeset | undefined, kind: Typeset | undefined): Typeset {
+  if (kind === undefined) {
+    return own ?? { size: 0, pitch: undefined };
+  }
+  if (own === undefined || Math.abs(own.size / kind.size - 1) <= SAME_TYPE) {
+    return kind;
+  }
+  return {
+    size: own.size,
+    pitch: own.pitch ?? (kind.pitch === undefined ? undefined : (kind.pitch * own.size) / kind.size),
+  };
 }
 
 // Marks that open or close a phrase, before and after which a line is not broken in Chinese
@@ -220,6 +316,7 @@ export type AreaText = {
   key: string;
   blockNumber: number;
   area: Area;
+  kind: Block["kind"];
   piece: Piece;
   marker: string | undefined;
 };
@@ -237,41 +334,29 @@ function markerOf(block: Block): string | undefined {
 // their own, and a listing, which is never translated.
 const KEPT_AS_PAGE = new Set<Block["kind"]>(["table", "code"]);
 
-// The boxes of every block on each page, by page, so that each block's areas keep off the
-// others' lines.
-export function boxesByPage(blocks: Block[]): Map<number, { blockNumber: number; box: Box }[]> {
-  const byPage = new Map<number, { blockNumber: number; box: Box }[]>();
-  blocks.forEach((block, blockNumber) => {
-    for (const place of block.places) {
-      if (place.kind === "page") {
-        const { left, top, width, height } = place;
-        const onPage = byPage.get(place.page) ?? [];
-        onPage.push({ blockNumber, box: { left, top, width, height } });
-        byPage.set(place.page, onPage);
-      }
-    }
-  });
-  return byPage;
-}
-
 // Where a block's translation is set on the pages, and what part of it each area holds,
 // parted by the share of the source's text each area's lines hold.
 export function placedOf(
   block: Block,
   blockNumber: number,
   translated: TranslatedBlock,
-  byPage: Map<number, { blockNumber: number; box: Box }[]>,
+  layout: Layout,
   gap: string,
 ): AreaText[] {
-  const places = block.places.filter((place) => place.kind === "page");
+  const places = pagePlacesOf(block);
   if (KEPT_AS_PAGE.has(block.kind) || places.length === 0) {
     return [];
   }
   const othersOn = (page: number) =>
-    (byPage.get(page) ?? [])
+    (layout.boxes.get(page) ?? [])
       .filter((other) => other.blockNumber !== blockNumber)
       .map((other) => other.box);
-  const areas = areasOf(places, othersOn);
+  const typesetOn = (page: number) =>
+    blockTypeset(
+      typesetOf(measuresOf(places.filter((place) => place.page === page))),
+      layout.kinds.get(kindOnPage(page, block.kind)),
+    );
+  const areas = areasOf(places, othersOn, typesetOn);
   const whole = translatedText(translated, gap);
   const pieces = partedByShares(
     whole.text,
@@ -282,6 +367,7 @@ export function placedOf(
     key: `${blockNumber}:${index}`,
     blockNumber,
     area,
+    kind: block.kind,
     piece: pieces[index] ?? { text: "", marks: [] },
     marker: index === 0 ? markerOf(block) : undefined,
   }));

@@ -198,30 +198,12 @@ export function translateAnew(itemId: string): Promise<Translation> {
   );
 }
 
-// The service refused a request, with this status, which says what kind of refusal it is.
-export class RefusedRequest extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
-
-// Translating one block again is refused for reasons a reader is told apart: the translation
-// was never asked for, the block is never translated, or the model failed.
-export async function retranslateBlock(
-  itemId: string,
-  blockNumber: number,
-): Promise<TranslatedBlock> {
-  const { data, error, response } = await api.POST(
-    "/api/items/{item_id}/translation/blocks/{block_number}",
-    { params: { path: { item_id: itemId, block_number: blockNumber } } },
+export function retranslateBlock(itemId: string, blockNumber: number): Promise<TranslatedBlock> {
+  return settled(
+    api.POST("/api/items/{item_id}/translation/blocks/{block_number}", {
+      params: { path: { item_id: itemId, block_number: blockNumber } },
+    }),
   );
-  if (data === undefined) {
-    throw new RefusedRequest(refusalText(error), response.status);
-  }
-  return data;
 }
 
 export function readPageBlocks(itemId: string): Promise<PageBlocks> {

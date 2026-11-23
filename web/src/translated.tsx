@@ -149,11 +149,15 @@ export const Row = memo(function Row({
 // The service says why a translation stopped in its own words; where they say how many blocks
 // could not be translated, the reader is told so in Chinese, with the service's last failure.
 const BLOCKS_MISSING = /^(\d+) of (\d+) blocks? could not be translated; the last failure: (.*)$/s;
+const READ_AGAIN = "the item was read again into another document, which is translated apart";
 
 function stoppedReason(reason: string): string {
+  if (reason === READ_AGAIN) {
+    return "翻译停在了半路：这一篇已重新读取，新读到的内容另行翻译。";
+  }
   const missing = BLOCKS_MISSING.exec(reason);
   if (missing === null) {
-    return `翻译停在了半路。原因：${reason}`;
+    return `翻译停在了半路。服务给出的原因：${reason}`;
   }
   const [, failed, total, last] = missing;
   return `翻译停在了半路：${total} 段中有 ${failed} 段没能译出，这几段先显示原文。最后一次失败的原因：${last}`;
@@ -190,11 +194,12 @@ export function TranslationNote({ translation }: { translation: TranslationState
         </p>
       );
     case "translating":
-      // Before its first blocks, a translation reads the document through once to settle
-      // its terms, which takes some tens of seconds with nothing to count.
+      // The first blocks come only after some tens of seconds, for a translation that first
+      // reads the document through and for one that goes on alike; until then there is
+      // nothing to count.
       return progress.translated === 0 ? (
         <p className="translation-note">
-          <span>正在准备翻译：先通读全文、统一译名，第一批译文通常要等几十秒</span>
+          <span>正在翻译，第一批译文还没有到，通常要等几十秒</span>
           <progress />
           {interrupted}
         </p>

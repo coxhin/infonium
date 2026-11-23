@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { boxesByPage, placedOf, type AreaText } from "./areas";
+import { layoutOf, placedOf, type AreaText } from "./areas";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { PageViewer } from "./pages";
 import { pagePlaces, placesOf } from "./places";
@@ -28,7 +28,7 @@ export function PagesView({
       pointed === undefined ? NO_PAGES : pagePlaces(placesOf(itemDocument.blocks, pointed.anchor)),
     [pointed, itemDocument],
   );
-  const byPage = useMemo(() => boxesByPage(itemDocument.blocks), [itemDocument]);
+  const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
   const shown = setting !== "source";
   const overlays = useMemo(() => {
     if (!shown) {
@@ -42,7 +42,7 @@ export function PagesView({
       }
       let placed = placedKept.get(translated);
       if (placed === undefined) {
-        placed = placedOf(block, blockNumber, translated, byPage, SEGMENT_GAP);
+        placed = placedOf(block, blockNumber, translated, layout, SEGMENT_GAP);
         placedKept.set(translated, placed);
       }
       for (const text of placed) {
@@ -52,7 +52,7 @@ export function PagesView({
       }
     });
     return onPages;
-  }, [shown, translation.blocks, itemDocument, byPage]);
+  }, [shown, translation.blocks, itemDocument, layout]);
   const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
   return (
     <>

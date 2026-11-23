@@ -1,11 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AreaText, Box } from "./areas";
 import { MarkedText } from "./blocks";
 import "./pagetranslation.css";
 
-// A line's box, as the reading of a page gives it, is about as tall as the letters' size: the
-// size of the text is told from the box's height by this.
-const BOX_PER_SIZE = 1;
 const PLAIN_SPACING = 1.25;
 // The line spacing of the source is kept between these, as a part of the size of the text.
 const SPACING_BOUNDS = [1, 2.4] as const;
@@ -26,6 +23,54 @@ const PAPER = "rgb(255, 255, 255)";
 const INK = "rgb(20, 20, 20)";
 
 export type Colours = { paper: string; ink: string };
+
+// The canvas a page was last drawn on, and how many drawings of it have ended.
+export type Drawn = { canvas: HTMLCanvasElement; count: number };
+
+// Text of one kind on one paper is set in one ink across a page: the ink read from each area
+// varies with how much of the letters' soft edges it caught, so the areas of a kind that lie on
+// the same paper take the middle of their inks.
+function evened(
+  texts: AreaText[],
+  read: ReadonlyMap<string, Colours>,
+): ReadonlyMap<string, Colours> {
+  const groups = new Map<string, string[]>();
+  for (const text of texts) {
+    const colours = read.get(text.key);
+    if (colours !== undefined) {
+      const group = groupOf(text, colours);
+      groups.set(group, [...(groups.get(group) ?? []), colours.ink]);
+    }
+  }
+  const middles = new Map<string, string>();
+  groups.forEach((inks, group) => {
+    const sorted = [...inks].sort((first, second) => brightnessOf(first) - brightnessOf(second));
+    middles.set(group, sorted[Math.floor(sorted.length / 2)] ?? INK);
+  });
+  const evenedColours = new Map<string, Colours>();
+  for (const text of texts) {
+    const colours = read.get(text.key);
+    if (colours !== undefined) {
+      const ink = middles.get(groupOf(text, colours)) ?? colours.ink;
+      evenedColours.set(text.key, { paper: colours.paper, ink });
+    }
+  }
+  return evenedColours;
+}
+
+// Papers alike to the eye are one paper: each channel is taken to eight levels.
+const PAPER_LEVEL = 32;
+
+function groupOf(text: AreaText, colours: Colours): string {
+  const paper = (colours.paper.match(/\d+/g) ?? []).map((channel) =>
+    Math.floor(Number(channel) / PAPER_LEVEL),
+  );
+  return `${text.kind}|${paper.join(",")}`;
+}
+
+function brightnessOf(colour: string): number {
+  return (colour.match(/\d+/g) ?? []).reduce((sum, channel) => sum + Number(channel), 0);
+}
 
 function percent(fraction: number): string {
   return `${fraction * 100}%`;
@@ -113,15 +158,19 @@ function TranslatedArea({
   const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
   const [open, setOpen] = useState(false);
   const { area, piece } = text;
-  // The size of the text, as a part of the page's width.
-  const size = (area.vertical ? area.size : area.size * shape) / BOX_PER_SIZE;
+  const { size: lineSize, pitch } = area.typeset;
+  // The size of the text, and its leading, as parts of the page's width.
+  const size = area.vertical ? lineSize : lineSize * shape;
   const spacing =
-    area.pitch === undefined
+    pitch === undefined
       ? PLAIN_SPACING
       : Math.min(
           SPACING_BOUNDS[1],
-          Math.max(SPACING_BOUNDS[0], (area.pitch * (area.vertical ? 1 : shape)) / size),
+          Math.max(SPACING_BOUNDS[0], (pitch * (area.vertical ? 1 : shape)) / size),
         );
+  // The source's lines hold their leading between them; the room their text takes is that of
+  // its lines with the leading of each, half above the first and half below the last.
+  const leading = (spacing - 1) * size;
 
   useLayoutEffect(() => {
     const box = element.current;
@@ -156,11 +205,13 @@ function TranslatedArea({
     setFit(found);
   }, [piece, size, spacing, width]);
 
+  const half = `${(leading / 2) * 100}cqw`;
+  const whole = `${leading * 100}cqw`;
   const style = {
-    left: percent(area.box.left),
-    top: percent(area.box.top),
-    width: percent(area.box.width),
-    height: percent(area.box.height),
+    left: area.vertical ? `calc(${percent(area.box.left)} - ${half})` : percent(area.box.left),
+    top: area.vertical ? percent(area.box.top) : `calc(${percent(area.box.top)} - ${half})`,
+    width: area.vertical ? `calc(${percent(area.box.width)} + ${whole})` : percent(area.box.width),
+    height: area.vertical ? percent(area.box.height) : `calc(${percent(area.box.height)} + ${whole})`,
     "--size": `${size * 100}cqw`,
     "--fit": fit.ratio,
     lineHeight: spacing,
@@ -178,6 +229,7 @@ function TranslatedArea({
       data-cut={fit.cut ? "" : undefined}
       data-open={open ? "" : undefined}
       data-block-translated={text.blockNumber}
+      data-kind={text.kind}
       tabIndex={pressable ? 0 : undefined}
       role={pressable ? "button" : undefined}
       aria-pressed={pressable ? open : undefined}
@@ -206,39 +258,32 @@ function TranslatedArea({
 export function PageTranslation({
   texts,
   shape,
-  canvas,
   drawn,
   revealing,
   width,
 }: {
   texts: AreaText[];
   shape: number;
-  canvas: HTMLCanvasElement | null;
-  drawn: number;
+  drawn: Drawn;
   revealing: boolean;
   width: number;
 }) {
-  const [colours, setColours] = useState<Map<string, Colours>>(new Map());
+  const [read, setRead] = useState<ReadonlyMap<string, Colours>>(new Map());
   useEffect(() => {
-    if (canvas === null || drawn === 0) {
-      return;
-    }
-    setColours((before) => {
+    setRead((before) => {
       const after = new Map(before);
       for (const text of texts) {
         if (!after.has(text.key)) {
-          const read = coloursOf(canvas, text.area.box);
-          if (read !== undefined) {
-            after.set(text.key, read);
+          const colours = coloursOf(drawn.canvas, text.area.box);
+          if (colours !== undefined) {
+            after.set(text.key, colours);
           }
         }
       }
       return after;
     });
-  }, [texts, canvas, drawn]);
-  if (drawn === 0) {
-    return null;
-  }
+  }, [texts, drawn]);
+  const colours = useMemo(() => evened(texts, read), [texts, read]);
   return (
     <div className={revealing ? "page-translation revealing" : "page-translation"}>
       {texts.map((text) => (

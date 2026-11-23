@@ -1,12 +1,11 @@
 /* A formula set as MathML. Its LaTeX stays in the page as the text anchors are resolved
    against, out of sight. */
 
+/* Inline and of no size, so that a selection or a copy reads it in the run of the text, where
+   a box taken out of the flow would be read as a line of its own. */
 .formula-source {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+  font-size: 0;
+  color: transparent;
   white-space: nowrap;
 }
 
@@ -19,6 +18,13 @@
   margin: 0.3em 0;
   text-align: center;
   overflow-x: auto;
+}
+
+/* The drawing is not text: a selection or a copy takes the LaTeX beside it. Set as a box in
+   the line, it is not read as a line of its own either. */
+.formula [data-drawn] {
+  user-select: none;
+  display: inline-block;
 }
 
 .formula math {
