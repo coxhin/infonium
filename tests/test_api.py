@@ -205,7 +205,7 @@ def start_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, standin_pdf_engine: Callable[[str], Path]
 ) -> Iterator[Callable[[], App]]:
     site, model = Site(), StubModel()
-    monkeypatch.setattr(intake.httpx, "stream", site.stream)
+    monkeypatch.setattr(httpx, "stream", site.stream)
     monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
     monkeypatch.setattr(intake, "FETCH_LIMIT_BYTES", LOWERED_FETCH_BYTES)
     monkeypatch.setattr(api, "language_model", model.language_model)
@@ -338,9 +338,15 @@ def test_a_link_never_read_ends_failed_without_a_document(app: App) -> None:
     item_id = app.link(f"{SITE}/no-such-page").json()["id"]
     failed = app.settled(item_id)
     assert stand(failed) == "unread/failed", f"a missing page did not fail: {failed['reading']}"
-    assert failed["reading"]["attempt"]["reason"] == f"{SITE}/no-such-page answered 404 Not Found"
-    assert app.client.get(f"/api/items/{item_id}/document").status_code == 404
-    assert app.client.get(f"/api/items/{item_id}/source").status_code == 404
+    assert (
+        failed["reading"]["attempt"]["reason"] == f"{SITE}/no-such-page answered 404 Not Found"
+    ), "a missing page does not give the site's answer as the reason"
+    assert app.client.get(f"/api/items/{item_id}/document").status_code == 404, (
+        "an item that was never read has a document"
+    )
+    assert app.client.get(f"/api/items/{item_id}/source").status_code == 404, (
+        "an item that was never read has a source"
+    )
     assert app.client.get(f"/api/items/{'0' * 64}").status_code == 404, "an unknown item exists"
 
 
@@ -436,7 +442,9 @@ def test_a_pdf_upload_is_read_with_its_places(app: App) -> None:
         for block in blocks
     ), "a block of a PDF has no place on a page"
     source = app.client.get(f"/api/items/{ended['id']}/source")
-    assert (source.content, source.headers["content-type"]) == (pdf, "application/pdf")
+    assert (source.content, source.headers["content-type"]) == (pdf, "application/pdf"), (
+        "the source of a PDF is not served as the file uploaded"
+    )
 
 
 def test_a_second_service_on_the_same_library_stops(app: App, tmp_path: Path) -> None:

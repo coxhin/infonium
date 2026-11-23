@@ -26,10 +26,10 @@ web_addresses = st.builds(
 
 
 def served(
-    title: str, body: str = SHORT_BODY, asked: str = ASKED, at: str = ASKED, **kept: int
+    title: str, body: str = SHORT_BODY, *, words: int, asked: str = ASKED, at: str = ASKED
 ) -> guard.ServedPage:
     content = f"<html><head><title>{title}</title></head><body>{body}</body></html>"
-    return guard.ServedPage(asked=asked, served=at, content=content.encode(), words=kept["words"])
+    return guard.ServedPage(asked=asked, served=at, content=content.encode(), words=words)
 
 
 @st.composite

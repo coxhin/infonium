@@ -37,7 +37,8 @@ def main() -> int:
     options = [argument for at, argument in enumerate(arguments) if at not in placed]
     handed = json.loads((PDF_DATA / "handed.json").read_text("utf-8"))
     if options != handed["options"]:
-        print(f"the engine is called with {options}, and the reference called it with {handed}")
+        called = handed["options"]
+        print(f"the engine is called with {options}, and the reference called it with {called}")
         return REFUSED
     if unnamed_digest(file) != handed["samples"][sample]:
         print(f"the file handed to the engine for {sample} is not the one the reference handed it")
