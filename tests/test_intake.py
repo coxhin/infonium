@@ -24,6 +24,7 @@ from infonium.document import (
     turned_away,
     word_count,
 )
+from tests.test_guard import check_addresses
 
 URL = "https://example.test/posts/night-train"
 PLAIN_FILE = "source"
@@ -55,6 +56,11 @@ def page_text(content: bytes) -> webpage.PageText:
 
 
 little_pages = st.integers(0, LITTLE_TEXT_WORDS - 1).map(page)
+# Where the browser may land with a page that is no check: where it was sent, or further on.
+landing_addresses = st.one_of(
+    st.just(URL),
+    st.builds(lambda path: f"https://example.test/{path}", st.sampled_from(VOCABULARY)),
+)
 any_pages = st.integers(0, LITTLE_TEXT_WORDS + 50).map(page)
 other_failures = st.one_of(
     st.builds(lambda kind, said: kind(said), st.sampled_from(OTHER_FAILURE_KINDS), st.text()),
@@ -64,13 +70,15 @@ other_failures = st.one_of(
 )
 
 
-def completed(content: bytes, broken: bool, broken_off: list[bool]) -> RenderedPageFunction:
-    # A browser that renders the page as `content`.
+def completed(
+    content: bytes, landed: str, broken: bool, broken_off: list[bool]
+) -> RenderedPageFunction:
+    # A browser that renders the page as `content`, at the address it lands at.
     def rendered_page(url: str, directory: Path, program: Path) -> browser.RenderedPage:
         file = directory / browser.RENDERED_FILE
         file.write_bytes(content)
         return browser.RenderedPage(
-            file=file, address=url, broken_off_by_network=broken, broken_off=broken_off
+            file=file, address=landed, broken_off_by_network=broken, broken_off=broken_off
         )
 
     return rendered_page
@@ -127,35 +135,50 @@ def test_a_failed_rendering_keeps_the_plain_reading_exactly_when_it_has_text(
         )
 
 
-@given(plain=little_pages, title=st.sampled_from(sorted(guard.CHECK_TITLES)))
-def test_a_check_answered_to_the_browser_is_a_failed_rendering(plain: bytes, title: str) -> None:
-    check = page(5, title=title)
+@st.composite
+def checks_answered_to_the_browser(draw: st.DrawFn) -> tuple[bytes, str]:
+    # A short check that a site answers the browser with, as the browser renders it, and the
+    # address the browser lands at: known by its title, or by that address alone.
+    words = draw(st.integers(1, LITTLE_TEXT_WORDS - 1))
+    if draw(st.booleans()):
+        return page(words, title=draw(st.sampled_from(sorted(guard.CHECK_TITLES)))), URL
+    return page(words), draw(check_addresses())
+
+
+@given(plain=little_pages, check=checks_answered_to_the_browser())
+def test_a_check_answered_to_the_browser_is_a_failed_rendering(
+    plain: bytes, check: tuple[bytes, str]
+) -> None:
+    content, landed = check
+    rendering = completed(content, landed, broken=False, broken_off=[False])
     plain_text = page_text(plain)
     if plain_text.blocks:
-        readout = read_page(plain, completed(check, broken=False, broken_off=[False]))
-        assert readout.extracted.blocks == plain_text.blocks, (
-            "a check the browser was answered with replaced the plain reading"
+        readout = read_page(plain, rendering)
+        assert (readout.file.name, readout.extracted.blocks) == (PLAIN_FILE, plain_text.blocks), (
+            f"a check the browser met at {landed} replaced the plain reading"
         )
     else:
         with pytest.raises(UnreadableSource) as raised:
-            read_page(plain, completed(check, broken=False, broken_off=[False]))
+            read_page(plain, rendering)
         assert str(raised.value) == turned_away(URL), (
-            "a page without text whose rendering met a check did not fail as turned away"
+            f"a page without text whose rendering met a check at {landed} did not fail as "
+            "turned away"
         )
 
 
 @given(
     plain=little_pages,
     rendered=any_pages,
+    landed=landing_addresses,
     broken=st.booleans(),
     broken_off=st.lists(st.booleans(), min_size=1, max_size=browser.RENDERING_ATTEMPTS),
 )
 def test_a_completed_rendering_keeps_the_reading_with_more_words(
-    plain: bytes, rendered: bytes, broken: bool, broken_off: list[bool]
+    plain: bytes, rendered: bytes, landed: str, broken: bool, broken_off: list[bool]
 ) -> None:
-    plain_text, rendered_text = page_text(plain), page_text(rendered)
+    plain_text, rendered_text = page_text(plain), webpage.page_text(rendered, landed)
     if plain_text.blocks or rendered_text.blocks:
-        readout = read_page(plain, completed(rendered, broken, broken_off))
+        readout = read_page(plain, completed(rendered, landed, broken, broken_off))
         rendered_kept = word_count(rendered_text.blocks) > word_count(plain_text.blocks)
         fuller, file = (
             (rendered_text, browser.RENDERED_FILE) if rendered_kept else (plain_text, PLAIN_FILE)
@@ -167,7 +190,7 @@ def test_a_completed_rendering_keeps_the_reading_with_more_words(
         # With no text on either side, the reason is the network's when it broke the page off.
         reason = BROKEN_OFF_SOURCE if broken else NO_TEXT
         with pytest.raises(UnreadableSource) as raised:
-            read_page(plain, completed(rendered, broken, broken_off))
+            read_page(plain, completed(rendered, landed, broken, broken_off))
         assert str(raised.value) == reason.format(source=URL), (
             f"a page without text, broken off by the network: {broken}, failed with the "
             f"wrong reason {raised.value}"
