@@ -107,9 +107,11 @@ def all_words_expression(query: str) -> str:
     return EVERY.join(dict.fromkeys(sought(WORD_GAP.join(part)) for part in query_parts(query)))
 
 
-def any_words_expression(query: str) -> str:
-    # A block that holds any word or pair of letters of the query, ranked higher the more it
-    # holds.
-    return EITHER.join(
-        dict.fromkeys(sought(piece) for part in query_parts(query) for piece in part)
-    )
+def sought_pieces(query: str) -> list[str]:
+    # Each word or pair of letters of the query, once, as it is sought.
+    return list(dict.fromkeys(sought(piece) for part in query_parts(query) for piece in part))
+
+
+def any_words_expression(pieces: list[str]) -> str:
+    # A block that holds any of the pieces, ranked higher the more it holds.
+    return EITHER.join(pieces)
