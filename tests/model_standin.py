@@ -35,18 +35,32 @@ GATE_POLL_SECONDS = 0.01
 JSON_TYPE = (b"content-type", b"application/json")
 EVENT_STREAM_TYPE = (b"content-type", b"text/event-stream")
 CHAT_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
+# A line of a stream that is not JSON, and the frames a stream begins with before its first
+# piece on either wire API.
+GARBLED_LINE = "data: {this is not json\n\n"
+BEGINNING_FRAMES = 2
+SEVERED_CONNECTION = "the stand-in broke the connection off"
 NO_REPLY = "the test told the stand-in model nothing to answer to this request"
 
 
 class Finish(StrEnum):
     # How a reply's stream ends: as written, at the endpoint's limit of output tokens, stopped
-    # by its filter, failed by the endpoint, or broken off with an error event. The Chat
-    # Completions API tells a failure only the second way.
+    # by its filter, failed by the endpoint, or broken off with an error event (the Chat
+    # Completions API tells a failure only this way). Or it goes wrong as an endpoint or the
+    # way to it may: a line that is not JSON after the pieces, or the connection broken off
+    # after them.
     STOPPED = "stopped"
     CUT_SHORT = "cut_short"
     FILTERED = "filtered"
     FAILED = "failed"
     BROKEN_OFF = "broken_off"
+    GARBLED = "garbled"
+    SEVERED = "severed"
+
+
+class Severed(Exception):
+    # Raised to the server, which breaks the connection off in the middle of the response.
+    pass
 
 
 class Call(BaseModel):
@@ -120,6 +134,12 @@ class Asked(BaseModel):
 
 
 type Responder = Callable[[Asked], Reply | Rejection]
+
+
+def by_request(replies: list[Reply]) -> Callable[[Asked], Reply]:
+    # The stand-in answers each request of a reply with the next of the replies, and the last
+    # one to every request after.
+    return lambda asked: replies[min(asked.number, len(replies) - 1)]
 
 
 def pieces_of(text: str, cuts: list[int]) -> list[str]:
@@ -274,7 +294,7 @@ def chat_frames(asked: Asked, reply: Reply) -> list[Frame]:
             frames += [Frame(event=chunk({}, "length"))]
         case Finish.FILTERED:
             frames += [Frame(event=chunk({}, "content_filter"))]
-        case Finish.STOPPED:
+        case Finish.STOPPED | Finish.GARBLED | Finish.SEVERED:
             frames += [Frame(event=chunk({}, "tool_calls" if reply.calls else "stop"))]
     usage = {"prompt_tokens": INPUT_TOKENS, "completion_tokens": OUTPUT_TOKENS}
     usage["total_tokens"] = INPUT_TOKENS + OUTPUT_TOKENS
@@ -404,7 +424,9 @@ class ResponseEvents:
             frames += self.message(reply)
         frames += self.calls(reply)
         match reply.finish:
-            case Finish.STOPPED:
+            # A garbled or severed reply is first written as it would stop; reply_frames
+            # makes it go wrong.
+            case Finish.STOPPED | Finish.GARBLED | Finish.SEVERED:
                 ended = self.response("completed", reply)
                 return [*frames, Frame(event=self.event("response.completed", response=ended))]
             case Finish.CUT_SHORT | Finish.FILTERED:
@@ -427,12 +449,26 @@ class ResponseEvents:
                 return [*frames, Frame(event=self.event("error", **broken))]
 
 
-def reply_frames(asked: Asked, reply: Reply) -> list[Frame]:
+def wire_frames(asked: Asked, reply: Reply) -> list[Frame]:
     match asked.wire_api:
         case WireApi.CHAT_COMPLETIONS:
             return chat_frames(asked, reply)
         case WireApi.RESPONSES:
             return ResponseEvents(asked).frames(reply)
+
+
+def reply_frames(asked: Asked, reply: Reply) -> list[Frame]:
+    # A reply that goes wrong is the reply as written as far as its last piece, then a line
+    # that is not JSON where it is garbled; a severed one is broken off by the stream.
+    match reply.finish:
+        case Finish.GARBLED | Finish.SEVERED:
+            whole = wire_frames(asked, reply.model_copy(update={"finish": Finish.STOPPED}))
+            pieces = [number for number, frame in enumerate(whole) if frame.piece]
+            begun = whole[: pieces[-1] + 1 if pieces else BEGINNING_FRAMES]
+            garbled = [Frame(event=GARBLED_LINE)] if reply.finish == Finish.GARBLED else []
+            return [*begun, *garbled]
+        case _:
+            return wire_frames(asked, reply)
 
 
 def refused_reply(asked: Asked) -> Rejection:
@@ -521,6 +557,9 @@ class ModelStandin:
                 if left.is_set():
                     break
                 await asyncio.sleep(GATE_POLL_SECONDS)
+        if reply.finish == Finish.SEVERED and not left.is_set():
+            watching.cancel()
+            raise Severed(SEVERED_CONNECTION)
         whole = not left.is_set()
         await send({"type": "http.response.body", "body": b"", "more_body": False})
         watching.cancel()

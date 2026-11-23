@@ -49,6 +49,7 @@ from infonium.item_conversation import (
     item_turns,
 )
 from infonium.language_model import (
+    MODEL_FAILURES,
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
@@ -112,6 +113,7 @@ HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
 UNBUILT = "this part of infonium is not built yet"
+OPENAI_LOGGER = "openai"
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
 DISCONNECT = "http.disconnect"
@@ -188,6 +190,9 @@ async def running(service: FastAPI) -> AsyncIterator[None]:
     # none of its lines is written twice.
     logging.basicConfig()
     logging.getLogger(__package__).setLevel(logging.INFO)
+    # The openai client says at INFO when it sends a request again; a slow answer is
+    # explained by that beside the times of each request.
+    logging.getLogger(OPENAI_LOGGER).setLevel(logging.INFO)
     intake().resume()
     translator().resume()
     block_index().resume()
@@ -336,7 +341,6 @@ UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"mo
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
-MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
 
 @app.middleware("http")

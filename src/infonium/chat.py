@@ -26,8 +26,18 @@ from infonium.library import OwnerTransaction
 # Stored with every turn, so that a later change to the models can tell which form a row has.
 TURN_FORMAT = 1
 # The most characters of earlier turns that a question gives the model again; the oldest
-# turns are left out first. The conversation that is kept is not cut.
+# turns are left out first, and the newest is cut where it alone is longer. The conversation
+# that is kept is not cut.
 EARLIER_CHARACTERS = 12_000
+ANSWER_CUT = "\n[The rest of this answer is left out here.]"
+TURNS_LEFT_OUT = (
+    "{turns} earlier questions of this conversation, with their answers, are left out here; "
+    "the questions that follow are the latest."
+)
+TURN_LEFT_OUT = (
+    "1 earlier question of this conversation, with its answer, is left out here; the "
+    "questions that follow are the latest."
+)
 # The rules of an answer's grounding, for the instructions of either conversation: what it
 # rests on, and the rules of citing that its citations keep.
 ANSWER_RULES = """\
@@ -242,20 +252,40 @@ def answered_text(answer: Answer) -> str:
 
 def earlier_messages(turns: list[Turn], given_again: Callable[[Answer], str]) -> list[Message]:
     # The questions asked before and their answers as the model is given them again, newest
-    # last, as many of the newest as EARLIER_CHARACTERS holds.
+    # last, within EARLIER_CHARACTERS. The newest turn is always given, its answer cut to what
+    # fits, with a mark that says so; older turns are given while they fit; and where turns
+    # are left out, the model is told how many.
     pairs = [(turn.question, given_again(turn.answer)) for turn in turns]
-    kept: list[tuple[str, str]] = []
-    room = EARLIER_CHARACTERS
-    for question, answer in reversed(pairs):
-        room -= len(question) + len(answer)
+    if not pairs:
+        return []
+    *older, (question, answer) = pairs
+    room = EARLIER_CHARACTERS - len(question)
+    newest = answer if len(answer) <= room else f"{answer[: max(room, 0)]}{ANSWER_CUT}"
+    room -= len(newest)
+    kept = [(question, newest)]
+    for earlier_question, earlier_answer in reversed(older):
+        room -= len(earlier_question) + len(earlier_answer)
         if room < 0:
             break
-        kept.insert(0, (question, answer))
+        kept.insert(0, (earlier_question, earlier_answer))
+    left_out = len(pairs) - len(kept)
     return [
-        message
-        for question, answer in kept
-        for message in (
-            Message(side=Side.ASKER, text=question),
-            Message(side=Side.MODEL, text=answer),
-        )
+        *(
+            [
+                Message(
+                    side=Side.ASKER,
+                    text=TURN_LEFT_OUT if left_out == 1 else TURNS_LEFT_OUT.format(turns=left_out),
+                )
+            ]
+            if left_out
+            else []
+        ),
+        *(
+            message
+            for kept_question, kept_answer in kept
+            for message in (
+                Message(side=Side.ASKER, text=kept_question),
+                Message(side=Side.MODEL, text=kept_answer),
+            )
+        ),
     ]

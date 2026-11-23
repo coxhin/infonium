@@ -2,7 +2,8 @@ from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from infonium.document import BlockKind, Document
+from infonium.citing import GivenBlock, given_block
+from infonium.document import Document
 from infonium.language_model import MOST_CALLS_PER_ROUND, Tool
 from infonium.library import Library, LibraryStore, Read
 from infonium.search import BlockIndex, FoundBy
@@ -62,7 +63,8 @@ a source from its start.\
 
 
 class Source(BaseModel):
-    # A document an item of the library holds, by the handle the model knows it by.
+    # A document an item of the library holds, by the handle the model knows it by, and the
+    # item's whole title, which only what the model is given cuts.
     handle: str
     document: str
     item: str
@@ -137,17 +139,11 @@ class SearchAnswer(BaseModel):
     results: list[FoundResult]
 
 
-class ReadBlock(BaseModel):
-    block: int
-    heading: bool
-    text: str
-
-
 class ReadAnswer(BaseModel):
     document: str
     title: str
     blocks_in_source: int
-    blocks: list[ReadBlock]
+    blocks: list[GivenBlock]
 
 
 class ToolRefusal(BaseModel):
@@ -198,7 +194,7 @@ def library_outline(library: Library) -> Outline:
                 handle=handles[reading.document],
                 document=reading.document,
                 item=item,
-                title=cut(reading.title, TITLE_CHARACTERS),
+                title=reading.title,
             )
             for item, reading in read
         ],
@@ -210,7 +206,7 @@ def outline_material(outline: Outline, listed: int) -> str:
         items=outline.items,
         unread_items=outline.items - len(outline.sources),
         sources=[
-            OutlineSource(document=source.handle, title=source.title)
+            OutlineSource(document=source.handle, title=cut(source.title, TITLE_CHARACTERS))
             for source in outline.sources[:listed]
         ],
         sources_not_listed=max(0, len(outline.sources) - listed),
@@ -236,7 +232,7 @@ class Shelf:
                 FoundResult(
                     document=source.handle,
                     block=block.block_number,
-                    title=source.title,
+                    title=cut(source.title, TITLE_CHARACTERS),
                     found_by=FOUND_BY_TOLD[block.found_by],
                     text=cut(block.text, SHOWN_CHARACTERS),
                 )
@@ -269,14 +265,10 @@ class Shelf:
             ).model_dump_json()
         return ReadAnswer(
             document=sources[0].handle,
-            title=sources[0].title,
+            title=cut(sources[0].title, TITLE_CHARACTERS),
             blocks_in_source=len(blocks),
             blocks=[
-                ReadBlock(
-                    block=number,
-                    heading=blocks[number].kind == BlockKind.HEADING,
-                    text=cut(blocks[number].text, SHOWN_CHARACTERS),
-                )
+                given_block(number, blocks[number], cut(blocks[number].text, SHOWN_CHARACTERS))
                 for number in range(arguments.first_block, last + 1)
             ],
         ).model_dump_json()
