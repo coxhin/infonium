@@ -1,0 +1,242 @@
+import logging
+import re
+from collections import defaultdict
+
+from pydantic import BaseModel
+
+from infonium.document import (
+    FormulaMark,
+    LinkMark,
+    Mark,
+    Style,
+    StyleMark,
+)
+from infonium.language_model import LanguageModel
+
+# A passage is written into a request with its marks as tags around the words they mark, each
+# tag named for what its mark is and numbered, so that the model can carry it over to the
+# words that translate them and the reply tells which mark it is. Names a reader knows from
+# HTML keep the model's handling of them close to what it knows: it keeps code and formulas
+# as they are.
+LINK_TAG = "a"
+FORMULA_TAG = "f"
+STYLE_TAGS = {
+    Style.STRONG: "b",
+    Style.EMPHASIS: "i",
+    Style.UNDERLINE: "u",
+    Style.CODE: "code",
+    Style.SUBSCRIPT: "sub",
+    Style.SUPERSCRIPT: "sup",
+}
+TAG_NAMES = sorted([LINK_TAG, FORMULA_TAG, *STYLE_TAGS.values()], key=len, reverse=True)
+TAG = re.compile(rf"<(/?)({'|'.join(TAG_NAMES)})(\d+)>")
+CLOSING_SLASH = "/"
+logger = logging.getLogger(__name__)
+OPENING = "<{name}{number}>"
+CLOSING = "<" + CLOSING_SLASH + "{name}{number}>"
+# Whether each tag of a pair closes, in the order a usable pair stands.
+OPENED_THEN_CLOSED = [False, True]
+NO_WORDS = "the reply has no words for passage {number}"
+LOST_FORMULA = "the reply lost the formula {formula!r} of passage {number}"
+INSTRUCTIONS = """\
+You translate passages of a document into {language}, for a reader who reads the \
+document in that language.
+
+The passages are numbered; each starts on a line of its own with its number in square \
+brackets. Translate every passage, and only the passages: the text before and after them \
+is there so that you know what you are translating. Reply with one translation for each \
+passage, under the same number.
+
+- Translate faithfully and completely into natural {language}. Do not summarise, explain, \
+or add anything that the passage does not say.
+- A passage may be a heading, a cell of a table, a caption, or a sentence that the next \
+passage goes on with. Translate what the passage says, and nothing of the passages around \
+it.
+- Keep each name of a person, a product, a place or a work, and each technical term, the \
+same in every passage. Keep numbers and units as they are written.
+- Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \
+Put each pair of tags, with the same name and number, around the words of your translation \
+that translate the words it encloses. Add no tags of your own.
+- A tag named f, such as <f4>...</f4>, encloses a formula written in LaTeX. Copy it with \
+its tags, character for character.
+- Copy the words inside code tags as they are written.
+"""
+TITLE = "Title: {title}"
+BEFORE = "Text before the passages:\n{text}"
+PASSAGES = "Passages to translate:"
+PASSAGE = "[{number}] {markup}"
+AFTER = "Text after the passages:\n{text}"
+PARTS_BETWEEN = "\n\n"
+
+
+class Wording(BaseModel):
+    # A passage of a source, with its marks, counted in its text.
+    text: str
+    marks: list[Mark]
+
+
+class Rendered(BaseModel):
+    # A passage in the reader's language, with the marks of its source that the model kept,
+    # counted in the translated text.
+    text: str
+    marks: list[Mark]
+
+
+class Passages(BaseModel):
+    # Passages to translate, numbered from 1 in the order they are given, and the text of
+    # the document around them.
+    title: str
+    before: str
+    wordings: list[Wording]
+    after: str
+
+
+class PassageReply(BaseModel):
+    number: int
+    translation: str
+
+
+class Reply(BaseModel):
+    translations: list[PassageReply]
+
+
+class Renditions(BaseModel):
+    # What came back for a request: each passage that came back usable, by its place among
+    # the passages asked for, and what the request took of the model.
+    rendered: dict[int, Rendered]
+    input_tokens: int
+    output_tokens: int
+
+
+class UnusableReply(Exception):
+    pass
+
+
+def tag_name(mark: Mark) -> str:
+    match mark:
+        case LinkMark():
+            return LINK_TAG
+        case FormulaMark():
+            return FORMULA_TAG
+        case StyleMark(style=style):
+            return STYLE_TAGS[style]
+
+
+def is_bare(wording: Wording) -> bool:
+    # A text that holds what reads as one of the tags is sent without tags and read back
+    # as it comes, since a tag in the reply could then be either.
+    return TAG.search(wording.text) is not None
+
+
+def markup(wording: Wording) -> str:
+    # The text with a tag at each end of each mark. Where tags meet, the closing ones come
+    # first, and of the ones that open together the one that closes last opens first.
+    if is_bare(wording):
+        return wording.text
+    tags: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
+    for number, mark in enumerate(wording.marks, start=1):
+        name = tag_name(mark)
+        tags[mark.end].append((0, -mark.start, CLOSING.format(name=name, number=number)))
+        tags[mark.start].append((1, -mark.end, OPENING.format(name=name, number=number)))
+    pieces: list[str] = []
+    for at in range(len(wording.text) + 1):
+        pieces.extend(tag for _, _, tag in sorted(tags[at]))
+        pieces.append(wording.text[at : at + 1])
+    return "".join(pieces)
+
+
+def prompt(passages: Passages) -> str:
+    numbered = [
+        PASSAGE.format(number=number, markup=markup(wording))
+        for number, wording in enumerate(passages.wordings, start=1)
+    ]
+    parts = [
+        TITLE.format(title=passages.title),
+        *([BEFORE.format(text=passages.before)] if passages.before else []),
+        "\n".join([PASSAGES, *numbered]),
+        *([AFTER.format(text=passages.after)] if passages.after else []),
+    ]
+    return PARTS_BETWEEN.join(parts)
+
+
+def trimmed(start: int, end: int, text: str) -> tuple[int, int]:
+    # A range without the spaces at its ends.
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def kept_mark(mark: Mark, start: int, end: int) -> Mark:
+    return mark.model_copy(update={"start": start, "end": end})
+
+
+def tag_ranges(reply: str) -> tuple[str, dict[str, tuple[int, int]]]:
+    # The reply without its tags and its spaces at either end, and the range each pair of
+    # tags encloses in what is left, by the tag's name and number. A tag that stands other
+    # than once opening and then once closing encloses nothing.
+    untagged = TAG.sub("", reply)
+    lead = len(untagged) - len(untagged.lstrip())
+    text = untagged.strip()
+    ends: dict[str, list[tuple[bool, int]]] = defaultdict(list)
+    removed = 0
+    for tag in TAG.finditer(reply):
+        at = min(max(tag.start() - removed - lead, 0), len(text))
+        ends[f"{tag.group(2)}{tag.group(3)}"].append((tag.group(1) == CLOSING_SLASH, at))
+        removed += len(tag.group())
+    paired = {
+        key: tag_ends
+        for key, tag_ends in ends.items()
+        if [closes for closes, _ in tag_ends] == OPENED_THEN_CLOSED
+    }
+    return text, {key: (tag_ends[0][1], tag_ends[1][1]) for key, tag_ends in paired.items()}
+
+
+def rendered(wording: Wording, number: int, reply: str) -> Rendered:
+    # The reply to one passage, without its tags, and with each mark of the source whose
+    # tags it keeps. A mark whose tags the reply lost or garbled is left out, but a formula
+    # comes back as it was: where its tags are lost, it is found by its text, and a reply
+    # that lost the text as well is of no use.
+    text, ranges = (reply.strip(), {}) if is_bare(wording) else tag_ranges(reply)
+    if not text:
+        raise UnusableReply(NO_WORDS.format(number=number))
+    marks: list[Mark] = []
+    for mark_number, mark in enumerate(wording.marks, start=1):
+        start, end = trimmed(*ranges.get(f"{tag_name(mark)}{mark_number}", (0, 0)), text)
+        if isinstance(mark, FormulaMark):
+            formula = wording.text[mark.start : mark.end]
+            if text[start:end] != formula:
+                start = text.find(formula)
+                if start < 0:
+                    raise UnusableReply(LOST_FORMULA.format(formula=formula, number=number))
+                end = start + len(formula)
+        if start < end:
+            marks.append(kept_mark(mark, start, end))
+    return Rendered(text=text, marks=marks)
+
+
+def renditions(model: LanguageModel, language: str, passages: Passages) -> Renditions:
+    # One request for the passages. A passage that the reply leaves out, answers twice or
+    # answers unusably is left out of what comes back.
+    completion = model.structured(
+        instructions=INSTRUCTIONS.format(language=language), prompt=prompt(passages), output=Reply
+    )
+    answers: dict[int, list[str]] = defaultdict(list)
+    for answer in completion.output.translations:
+        answers[answer.number].append(answer.translation)
+    kept: dict[int, Rendered] = {}
+    for at, wording in enumerate(passages.wordings):
+        match answers[at + 1]:
+            case [translation]:
+                try:
+                    kept[at] = rendered(wording, at + 1, translation)
+                except UnusableReply as unusable:
+                    logger.warning("a passage is asked again: %s", unusable)
+            case answered:
+                logger.warning("a passage is asked again: %d replies to it", len(answered))
+    return Renditions(
+        rendered=kept,
+        input_tokens=completion.input_tokens,
+        output_tokens=completion.output_tokens,
+    )
