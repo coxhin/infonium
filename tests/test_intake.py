@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx2
 import openai
 import pytest
-from hypothesis import assume, given
+from hypothesis import given
 from hypothesis import strategies as st
 from playwright.sync_api import Error as PlaywrightError
 from pydantic import SecretStr
@@ -227,15 +227,9 @@ def test_a_reason_is_one_line_a_person_reads(kind: type[Exception], said: str) -
 
 @given(kind=st.sampled_from(ERROR_KINDS), said=st.text())
 def test_a_reason_says_something(kind: type[Exception], said: str) -> None:
-    assume(said.strip() or not said)
     assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an error whose text is only spaces or line breaks is given an empty reason: "
-    "failure_reason names the error's kind only when its text is empty",
-)
 @given(kind=st.sampled_from(ERROR_KINDS), said=st.text(st.sampled_from(" \t\n\x85"), min_size=1))
 def test_an_error_that_says_only_spaces_is_given_a_reason(kind: type[Exception], said: str) -> None:
     assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
