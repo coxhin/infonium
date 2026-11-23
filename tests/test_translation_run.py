@@ -147,7 +147,10 @@ def test_requests_of_one_document_run_several_at_a_time_and_no_more_than_a_bound
     app.model.reset(holding(translating(), gate, asks_passages))
     document = kept(app, long_paragraphs(MANY_REQUESTS_PARAGRAPHS))
     asked_for(app, document.item_id)
-    wait_for(lambda: len(passage_requests(app)) > 0, "the first request for passages")
+    # Requests held from their first piece on can only be several at once if the part sends
+    # them so; a loaded machine may send them slowly, so the test waits for two before it
+    # waits for the rest.
+    wait_for(lambda: len(passage_requests(app)) > 1, "several requests for passages at once")
     quiet(app)
     at_once = len(passage_requests(app))
     gate.set()
@@ -510,37 +513,53 @@ def test_a_block_is_served_as_soon_as_it_is_kept(app: App) -> None:
 def test_post_discards_what_was_translated_and_ends_the_run_before_it(app: App) -> None:
     old, new = "旧", "新"
     gate = threading.Event()
-    app.model.reset(
-        holding(translating(lambda passage: f"{old}{passage.text}"), gate, asks_passages)
-    )
+
+    def later(asked: Asked) -> bool:
+        return asks_passages(asked) and 0 not in paragraph_numbers(asked)
+
+    # The old run keeps the blocks of its first request and is held in the others.
+    app.model.reset(holding(translating(lambda passage: f"{old}{passage.text}"), gate, later))
     blocks = long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS)
     document = kept(app, blocks)
     asked_for(app, document.item_id)
-    wait_for(lambda: len(passage_requests(app)) > 0, "the old run's first request")
+    wait_for(lambda: bool(translation(app, document.item_id)["blocks"]), "a block of the old run")
     quiet(app)
+    old_requests = app.model.requests()
     # From here the stand-in counts afresh: what it is asked is asked after the old run's
     # requests, which it holds.
     app.model.reset(translating(lambda passage: f"{new}{passage.text}"))
     anew = app.client.post(translation_path(document.item_id))
     assert anew.status_code == HTTPStatus.OK, f"POST failed: {anew.text}"
-    assert (
-        anew.json()["progress"]
-        == {
-            "kind": "translating",
-            "translated": 0,
-            "total": len(blocks),
-        }
-        and anew.json()["blocks"] == []
-    ), f"POST did not start from the first block: {anew.json()}"
+    # The new run is answered at once, and may have kept blocks of its own before the answer
+    # was built: what the answer may not hold is anything of the run before it.
+    answered = anew.json()
+    answered_texts = [block["segments"][0]["text"] for block in answered["blocks"]]
+    assert not any(text.startswith(old) for text in answered_texts), (
+        "POST answered with blocks of the translation before it: it did not discard them"
+    )
+    assert answered["progress"] in (
+        {"kind": "translating", "translated": len(answered_texts), "total": len(blocks)},
+        {"kind": "translated"},
+    ), f"POST did not answer with the new run's progress: {answered['progress']}"
     time.sleep(QUIET_SECONDS_SHORT)
     gate.set()
-    view = settled(app, document.item_id)
-    assert view["progress"]["kind"] == "translated", f"the new run did not end: {view['progress']}"
+    assert settled(app, document.item_id)["progress"]["kind"] == "translated", (
+        "the new run did not end"
+    )
+    # The old run's held replies come back once the gate opens, whenever the new run ended;
+    # what is kept is judged once they have all been sent and the model has had nothing more
+    # to answer.
+    wait_for(
+        lambda: all(served.ended.is_set() for served in old_requests),
+        "the old run's held replies to be sent",
+    )
+    quiet(app)
+    view = translation(app, document.item_id)
     texts = [block["segments"][0]["text"] for block in view["blocks"]]
     assert len(texts) == len(blocks) and all(text.startswith(new) for text in texts), (
         "a block of the run before POST was kept after it"
     )
-    quiet(app)
+    assert view["progress"]["kind"] == "translated", f"the new run did not end: {view['progress']}"
     after = passages_sent(app)
     assert sorted(after) == sorted(block.text for block in blocks), (
         "after POST, a block was not sent to the model"
