@@ -1,0 +1,26 @@
+/* A formula set as MathML. Its LaTeX stays in the page as the text anchors are resolved
+   against, out of sight. */
+
+.formula-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.formula {
+  position: relative;
+}
+
+.formula.display {
+  display: block;
+  margin: 0.3em 0;
+  text-align: center;
+  overflow-x: auto;
+}
+
+.formula math {
+  font-size: 1.05em;
+}

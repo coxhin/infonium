@@ -10,7 +10,7 @@ import "./translated.css";
 export const TRANSLATION_ATTRIBUTE = "data-translation";
 export const POINTED_CLASS = "pointed";
 // Segments of one block follow each other as sentences of one paragraph do.
-const SEGMENT_GAP = " ";
+export const SEGMENT_GAP = " ";
 // The control to translate a block again stands in the narrow margin beside the block, where
 // a word would not fit.
 const AGAIN_MARK = "↻";

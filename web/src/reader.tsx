@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
+import { DRAWN_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";
 import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
@@ -98,9 +99,29 @@ export function Reader({
   );
 }
 
+// The text nodes of a block's element that hold its text: all of them but those of a
+// formula's drawing, beside which the formula's own text is kept.
+function textsOf(blockElement: Element): TreeWalker {
+  return document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT, (node) =>
+    node.parentElement?.closest(`[${DRAWN_ATTRIBUTE}]`)
+      ? NodeFilter.FILTER_REJECT
+      : NodeFilter.FILTER_ACCEPT,
+  );
+}
+
+// The text a block's element holds, as anchors are resolved against it.
+export function textOf(blockElement: Element): string {
+  const texts = textsOf(blockElement);
+  let text = "";
+  for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
+    text += node.textContent ?? "";
+  }
+  return text;
+}
+
 function rangeIn(blockElement: Element, start: number, end: number): Range {
   const range = document.createRange();
-  const texts = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
+  const texts = textsOf(blockElement);
   let passed = 0;
   let startSet = false;
   for (let text = texts.nextNode(); text !== null; text = texts.nextNode()) {
@@ -190,15 +211,15 @@ export function checkAnchor(itemDocument: ItemDocument, anchor: Anchor): void {
 // highlighted in the source block whether or not that block is on show.
 export function highlightAnchor(anchor: Anchor): Range {
   const blockElement = blockElementOf(anchor);
-  const offsets = unitOffsets(blockElement.textContent ?? "");
-  const passage = rangeIn(
-    blockElement,
-    unitOffset(offsets, anchor.start),
-    unitOffset(offsets, anchor.end),
-  );
-  if (passage.toString() !== anchor.quote) {
+  const text = textOf(blockElement);
+  const offsets = unitOffsets(text);
+  const start = unitOffset(offsets, anchor.start);
+  const end = unitOffset(offsets, anchor.end);
+  // The range may hold a formula's drawing as well, so the quote is checked against the text.
+  if (text.slice(start, end) !== anchor.quote) {
     throw new Error(CHANGED);
   }
+  const passage = rangeIn(blockElement, start, end);
   CSS.highlights.set(ANCHOR_HIGHLIGHT, new Highlight(passage));
   return passage;
 }
