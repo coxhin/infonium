@@ -1,9 +1,8 @@
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from functools import partial
 from html import escape, unescape
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -850,10 +849,11 @@ def link_address(element: html.HtmlElement) -> str | None:
     return next((element.get(name) for name in LINK_ADDRESSES if element.get(name)), None)
 
 
-def link_leads(root: html.HtmlElement, resolve: Callable[[str], str]) -> Counter[tuple[str, str]]:
-    # Where the page's links and areas lead, but for those to scripts, which R2 takes away.
+def link_addresses_of(root: html.HtmlElement) -> Counter[tuple[str, str]]:
+    # The addresses the page's links and areas give, as written, but for those to scripts,
+    # which R2 takes away. Where an address leads under the page's base is judged with R3.
     return Counter(
-        (str(element.tag), resolve(address))
+        (str(element.tag), address.strip())
         for element in root.iter(*NAVIGATING_TAGS)
         for address in [link_address(element)]
         if address is not None and not address_of(address).startswith(SCRIPT_SCHEMES)
@@ -863,18 +863,12 @@ def link_leads(root: html.HtmlElement, resolve: Callable[[str], str]) -> Counter
 @EXAMPLES
 @given(page=made_up_pages())
 def test_what_navigates_keeps_its_address(app: App, page: str) -> None:
-    name = next(names)
-    served_page = served(app, app.read_page(name, page.encode()))
-    original = html.document_fromstring(page)
-    page_url = f"{SITE}/page/{name}"
-    own = [base.get("href", "") for base in original.iter("base") if base.get("href")]
-    base = urljoin(page_url, own[0].strip()) if own else page_url
-    leads = link_leads(original, lambda address: urljoin(base, address.strip()))
-    assume(leads)
-    kept = link_leads(served_page.root(), partial(effective_address, served_page))
-    assert kept == leads, (
-        f"links lead elsewhere than the page's own did: lost {sorted((leads - kept).elements())},"
-        f" gained {sorted((kept - leads).elements())}"
+    written = link_addresses_of(html.document_fromstring(page))
+    assume(written)
+    kept = link_addresses_of(read_made_up(app, page).root())
+    assert kept == written, (
+        f"links give other addresses than the page's own did: lost "
+        f"{sorted((written - kept).elements())}, gained {sorted((kept - written).elements())}"
     )
 
 
