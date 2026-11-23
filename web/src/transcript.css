@@ -1,0 +1,109 @@
+/* A recording's transcript as lines, like the lyrics of a song: the moment a line is spoken,
+   its words, and their translation under them. */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+}
+
+.line-group {
+  position: relative;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.line-group:last-of-type {
+  border-bottom: 0;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: 3.4rem minmax(0, 1fr);
+  gap: 0.6rem;
+  margin: 0 -0.6rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.4rem;
+  scroll-margin: 8rem 0;
+}
+
+.line .moment {
+  align-self: start;
+  margin-top: 0.15rem;
+  padding: 0 0.3rem;
+  border-color: transparent;
+  background: none;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.line .moment:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--line);
+}
+
+.line .words {
+  cursor: pointer;
+}
+
+.line .said,
+.line .spoken-translation {
+  margin: 0;
+}
+
+.line .said + .spoken-translation {
+  margin-top: 0.1rem;
+  color: var(--muted);
+  font-size: 0.95em;
+}
+
+.line[aria-current="true"] {
+  background: var(--panel);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.line[aria-current="true"] .said + .spoken-translation {
+  color: var(--ink);
+}
+
+.line.pointed {
+  background: var(--found);
+}
+
+.line.pointed .said + .spoken-translation {
+  color: inherit;
+}
+
+.transcript button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.line-group .again {
+  position: absolute;
+  top: 0.4rem;
+  right: 0;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  color: var(--muted);
+  background: var(--paper);
+  opacity: 0;
+}
+
+.line-group:hover .again,
+.line-group .again:focus-visible,
+.line-group .again:disabled {
+  opacity: 1;
+}
+
+.transcript .follow {
+  position: sticky;
+  bottom: 1rem;
+  align-self: center;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+}

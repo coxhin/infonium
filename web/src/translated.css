@@ -1,0 +1,73 @@
+/* A block's translation in the text. Beside its source it is the second voice: the same
+   form, set quieter, after a rule that ties it to the block above. */
+
+.translated {
+  position: relative;
+}
+
+.translated.beside {
+  margin: -0.5em 0 1.4em;
+  padding-left: 0.8rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95em;
+}
+
+.translated.beside :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.6em;
+  font-size: 0.95em;
+}
+
+.translated.beside :is(p, blockquote, .list-item, figure, .table-scroll) {
+  margin-bottom: 0;
+}
+
+/* A figure's translation is its words; its picture stands once, above, in the source. */
+.translated.beside figure img {
+  display: none;
+}
+
+.translated.beside figure {
+  margin-top: 0;
+}
+
+.translated .segment.pointed,
+.translated table.pointed {
+  background: var(--found);
+  color: var(--ink);
+}
+
+.translated .again {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 0.05rem 0.45rem;
+  color: var(--muted);
+  background: var(--paper);
+  opacity: 0;
+}
+
+.translated:hover .again,
+.translated .again:focus-visible,
+.translated .again:disabled {
+  opacity: 1;
+}
+
+.translated .again:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.again-note {
+  margin: 0.2rem 0 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: normal;
+}
+
+.again-note.failed {
+  color: var(--failure);
+  overflow-wrap: anywhere;
+}

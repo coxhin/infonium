@@ -1,172 +1,47 @@
-import { createElement, Fragment, type CSSProperties, type ReactNode } from "react";
-import type { Anchor, Block, ItemDocument, ItemEntry, Mark, Style } from "./client";
+import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
+import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
+import type { Clock } from "./player";
+import { scrolls } from "./scrolling";
+import type { Setting } from "./setting";
+import { Transcript, LINES_ATTRIBUTE } from "./transcript";
+import { POINTED_CLASS, Row, TRANSLATION_ATTRIBUTE } from "./translated";
+import type { TranslationState } from "./translation";
 
-const STYLE_ELEMENTS: Record<Style, string> = {
-  strong: "strong",
-  emphasis: "em",
-  underline: "u",
-  code: "code",
-  subscript: "sub",
-  superscript: "sup",
-};
-const BULLET = "•";
 const DOCUMENT_ATTRIBUTE = "data-document";
-const BLOCK_ATTRIBUTE = "data-block";
 const ANCHOR_HIGHLIGHT = "anchor";
 
-// The protocol counts offsets in Unicode code points. Strings and DOM ranges count UTF-16
-// units, and the two part ways after any character outside the Basic Multilingual Plane.
-// The result gives, for each code point offset of the text and for its end, the unit offset.
-function unitOffsets(text: string): number[] {
-  const offsets: number[] = [];
-  let units = 0;
-  for (const character of text) {
-    offsets.push(units);
-    units += character.length;
-  }
-  offsets.push(units);
-  return offsets;
-}
+// What the text view of a recording needs to show its transcript as lines that follow the
+// playing: the clock of the player, the stretches last played from, and a way to play.
+export type Playing = {
+  clock: Clock;
+  played: TimePlace[];
+  onPlay: (place: TimePlace) => void;
+};
 
-function unitOffset(offsets: number[], offset: number): number {
-  const units = offsets[offset];
-  if (units === undefined) {
-    throw new Error(`offset ${offset} lies outside the text`);
-  }
-  return units;
-}
-
-type Segment = { text: string; marks: Mark[] };
-
-// Cuts the text wherever a mark starts or ends, so each segment lies wholly inside or outside
-// every mark and the segments together are the block's text, character for character.
-function segmentsOf(text: string, marks: Mark[]): Segment[] {
-  const offsets = unitOffsets(text);
-  const spans = marks.map((mark) => ({
-    mark,
-    start: unitOffset(offsets, mark.start),
-    end: unitOffset(offsets, mark.end),
-  }));
-  const cuts = [
-    ...new Set([0, text.length, ...spans.flatMap((span) => [span.start, span.end])]),
-  ].sort((first, second) => first - second);
-  return cuts.slice(0, -1).map((start, index) => {
-    const end = cuts[index + 1] ?? text.length;
-    return {
-      text: text.slice(start, end),
-      marks: spans.filter((span) => span.start <= start && end <= span.end).map((span) => span.mark),
-    };
-  });
-}
-
-function marked(content: ReactNode, mark: Mark): ReactNode {
-  switch (mark.kind) {
-    case "link":
-      return (
-        <a href={mark.target} target="_blank" rel="noreferrer noopener">
-          {content}
-        </a>
-      );
-    case "style":
-      return createElement(STYLE_ELEMENTS[mark.style], null, content);
-    case "formula":
-      return <code className="formula">{content}</code>;
-  }
-}
-
-function MarkedText({ text, marks }: { text: string; marks: Mark[] }) {
-  return segmentsOf(text, marks).map((segment, index) => (
-    <Fragment key={index}>{segment.marks.reduce(marked, segment.text as ReactNode)}</Fragment>
-  ));
-}
-
-// The element that carries a block's number holds exactly that block's text. Anchors are
-// resolved against this, so nothing else may put text inside such an element.
-function numbered(number: number): Record<string, number> {
-  return { [BLOCK_ATTRIBUTE]: number };
-}
-
-function TableView({ block, number }: { block: Block & { kind: "table" }; number: number }) {
-  const rows = block.text.split(block.row_separator).map((row) => row.split(block.cell_separator));
-  return (
-    <div className="table-scroll">
-      <table {...numbered(number)}>
-        <tbody>
-          {rows.map((cells, rowIndex) => (
-            <tr key={rowIndex}>
-              {cells.map((cell, cellIndex) => (
-                <td key={cellIndex}>
-                  {cell}
-                  {cellIndex < cells.length - 1 && block.cell_separator}
-                  {cellIndex === cells.length - 1 &&
-                    rowIndex < rows.length - 1 &&
-                    block.row_separator}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function BlockView({ block, number }: { block: Block; number: number }) {
-  switch (block.kind) {
-    case "heading":
-      return createElement(
-        `h${block.level}`,
-        numbered(number),
-        <MarkedText text={block.text} marks={block.marks} />,
-      );
-    case "paragraph":
-      return (
-        <p {...numbered(number)}>
-          <MarkedText text={block.text} marks={block.marks} />
-        </p>
-      );
-    case "list_item":
-      return (
-        <div
-          className="list-item"
-          {...numbered(number)}
-          data-marker={block.continues ? "" : block.ordered ? `${block.position}.` : BULLET}
-          style={{ "--depth": block.depth } as CSSProperties}
-        >
-          <MarkedText text={block.text} marks={block.marks} />
-        </div>
-      );
-    case "quotation":
-      return (
-        <blockquote {...numbered(number)}>
-          <MarkedText text={block.text} marks={block.marks} />
-        </blockquote>
-      );
-    case "code":
-      return <pre {...numbered(number)}>{block.text}</pre>;
-    case "table":
-      return <TableView block={block} number={number} />;
-    case "figure":
-      return (
-        <figure>
-          <img src={block.source} alt="" loading="lazy" referrerPolicy="no-referrer" />
-          {block.text !== "" && <figcaption {...numbered(number)}>{block.text}</figcaption>}
-        </figure>
-      );
-  }
-}
-
+// The text of a document, in the words the setting asks for. A recording's transcript is
+// shown as lines once a translation is on show; in its source alone it is the text it always
+// was.
 export function Reader({
   entry,
   title,
   itemDocument,
+  setting,
+  translation,
+  pointed,
+  playing,
 }: {
   entry: ItemEntry;
   title: string;
   itemDocument: ItemDocument;
+  setting: Setting;
+  translation: TranslationState;
+  pointed: Anchor | undefined;
+  playing: Playing | undefined;
 }) {
   const blocks = itemDocument.blocks;
+  const pointedHere = pointed?.document_id === itemDocument.id ? pointed : undefined;
+  const asLines = playing !== undefined && setting !== "source";
   return (
     <article className="reader" {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}>
       <header>
@@ -179,9 +54,39 @@ export function Reader({
         )}
         {blocks[0]?.kind !== "heading" && <h1>{title}</h1>}
       </header>
-      {blocks.map((block, number) => (
-        <BlockView key={number} block={block} number={number} />
-      ))}
+      {asLines ? (
+        <>
+          {/* The source blocks stay in the page, out of sight, so that citations resolve. */}
+          {blocks.map((block, number) => (
+            <SourceBlock key={number} block={block} number={number} hidden />
+          ))}
+          <Transcript
+            documentId={itemDocument.id}
+            blocks={blocks}
+            translations={translation.blocks}
+            setting={setting}
+            again={translation.again}
+            pointed={pointedHere}
+            played={playing.played}
+            clock={playing.clock}
+            onAgain={translation.translateAgain}
+            onPlay={playing.onPlay}
+          />
+        </>
+      ) : (
+        blocks.map((block, number) => (
+          <Row
+            key={number}
+            block={block}
+            number={number}
+            setting={setting}
+            translated={setting === "source" ? undefined : translation.blocks.get(number)}
+            again={translation.again.get(number)}
+            pointed={pointedHere?.block_number === number ? pointedHere : undefined}
+            onAgain={translation.translateAgain}
+          />
+        ))
+      )}
     </article>
   );
 }
@@ -204,10 +109,6 @@ function rangeIn(blockElement: Element, start: number, end: number): Range {
     passed += length;
   }
   throw new Error(`characters ${start}–${end} lie outside the block's text`);
-}
-
-export function scrolls(overflow: string): boolean {
-  return overflow === "auto" || overflow === "scroll";
 }
 
 // Puts the passage in the middle of everything around it that has room to scroll, innermost
@@ -236,15 +137,21 @@ function bringIntoView(passage: Range): void {
   }
 }
 
-// Highlights an anchor's passage, and refuses when the page does not hold the document the
-// anchor points into or when the text there is no longer the quoted text.
-export function highlightAnchor(anchor: Anchor): Range {
+function blockElementOf(anchor: Anchor): Element {
   const blockElement = document.querySelector(
     `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] [${BLOCK_ATTRIBUTE}="${anchor.block_number}"]`,
   );
   if (blockElement === null) {
     throw new Error("这段引文所在的原文不在当前页面上");
   }
+  return blockElement;
+}
+
+// Highlights an anchor's passage, and refuses when the page does not hold the document the
+// anchor points into or when the text there is no longer the quoted text. The passage is
+// highlighted in the source block whether or not that block is on show.
+export function highlightAnchor(anchor: Anchor): Range {
+  const blockElement = blockElementOf(anchor);
   const offsets = unitOffsets(blockElement.textContent ?? "");
   const passage = rangeIn(
     blockElement,
@@ -258,9 +165,23 @@ export function highlightAnchor(anchor: Anchor): Range {
   return passage;
 }
 
-// Highlights an anchor's passage and brings it into view, for text that is on show.
+// Highlights an anchor's passage and brings into view where it is on show: the passage in its
+// source block, or, where only the block's translation or its lines are on show, the parts of
+// them that the reader has marked as pointed at.
 export function showAnchor(anchor: Anchor): void {
-  bringIntoView(highlightAnchor(anchor));
+  const passage = highlightAnchor(anchor);
+  if (blockElementOf(anchor).checkVisibility()) {
+    bringIntoView(passage);
+    return;
+  }
+  const shown = document.querySelector(
+    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] :is([${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"], [${LINES_ATTRIBUTE}="${anchor.block_number}"]) .${POINTED_CLASS}`,
+  );
+  if (shown !== null) {
+    const place = document.createRange();
+    place.selectNodeContents(shown);
+    bringIntoView(place);
+  }
 }
 
 export function hideAnchor(): void {

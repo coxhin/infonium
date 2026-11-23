@@ -1,0 +1,101 @@
+/* The head of the reader: the views of the source, the language switch, how far the
+   translation has come, and the player of a recording. It stays on show while the text
+   scrolls. */
+
+.reading-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.reading-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 1rem;
+}
+
+.reading-head button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.setting-switch {
+  display: inline-flex;
+}
+
+.setting-switch button {
+  font-size: 0.85rem;
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.setting-switch button:first-child {
+  border-radius: 0.4rem 0 0 0.4rem;
+  margin-left: 0;
+}
+
+.setting-switch button:last-child {
+  border-radius: 0 0.4rem 0.4rem 0;
+}
+
+.setting-switch button[aria-pressed="true"] {
+  position: relative;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.setting-switch button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+.translation-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.translation-note.failed {
+  color: var(--failure);
+}
+
+.translation-note progress {
+  width: 8rem;
+  height: 0.4rem;
+  accent-color: var(--accent);
+}
+
+.translation-note button {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.5rem;
+}
+
+.translation-note button.quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+  text-decoration: underline dotted;
+}
+
+.translation-note .interrupted {
+  color: var(--failure);
+}
+
+.view-note {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}

@@ -286,14 +286,8 @@ main > .status {
 /* Source: the pages of a paged file, or the player of a recording */
 
 .views {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   display: flex;
   gap: 0.4rem;
-  padding: 0.5rem 1rem;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
 }
 
 .views button {
@@ -344,12 +338,7 @@ main > .status {
 }
 
 .player {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0.5rem 1rem;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
+  padding: 0 1rem 0.5rem;
 }
 
 .player audio {
