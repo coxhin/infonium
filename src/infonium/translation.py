@@ -788,9 +788,10 @@ class Translator:
         finished.add_done_callback(partial(self.record_failure, owner, document_id, run))
 
     def translate(self, owner: str, document_id: str, run: int) -> None:
-        # One run of a translation. A document of which nothing is kept is surveyed first, for
-        # its language and its terms; the blocks not kept are then asked for, several requests
-        # at once.
+        # One run of a translation. A document is surveyed first, for its language and its
+        # terms, unless a run before found its terms; the blocks not kept are then asked for,
+        # several requests at once. A translation that holds only blocks translated one at a
+        # time has no terms yet, and one whose survey found none is surveyed again.
         with self.shelves(owner) as (_, shelf):
             records = shelf.records(document_id, self.language)
             document = shelf.document(document_id)
@@ -799,7 +800,7 @@ class Translator:
             return
         pending = [number for number in translated_numbers(document) if number not in kept]
         terms = records[0].terms
-        if pending and not kept:
+        if pending and not terms:
             survey = self.survey(document)
             self.keep_survey(owner, document_id, run, survey)
             if survey.output.written_in_asked_language:
