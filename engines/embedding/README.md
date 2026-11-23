@@ -10,9 +10,15 @@ docker compose up -d
 
 This starts the engine at <http://127.0.0.1:8751/v1>, where infonium looks for it. The first start fetches the weights, 0.4 GB, and keeps them in a Docker volume; the engine answers once it has them. The image weighs 0.9 GB, and the running engine holds about 2 GB of memory.
 
-Without the engine, infonium finds blocks by their words alone. Once it answers, the blocks of the library get their vectors in the background: on a machine of 24 cores, the engine took about 9 seconds over 300 blocks and kept about 16 cores busy meanwhile.
+Without the engine, infonium finds blocks by their words alone. Once it answers, the blocks of the library get their vectors in the background, the blocks read last first.
+
+The engine may take 4 processors. With them it gave vectors to about 30 blocks of 30 words a second, and a search took 184 ms at the median while it caught up 10,000 blocks. Given all 24 processors of the machine it was built on, it took 199 seconds over those blocks where it took 329 with 4, and a search took 111 ms. To give it another number, name it: `EMBEDDING_CPUS=8 docker compose up -d`.
 
 To use another port, name it: `EMBEDDING_PORT=8761 docker compose up -d`. A port other than 8751 goes into `INFONIUM_EMBEDDING_BASE_URL` too.
+
+## Without the network
+
+The engine reaches the Hugging Face hub only to fetch the weights. Once they are fetched, start it with `EMBEDDING_OFFLINE=1 docker compose up -d`: it then reads them from its volume and asks the hub nothing. Started so with no network at all (`docker run --network none`), it loaded the weights and was ready to answer. The port it publishes stays on 127.0.0.1.
 
 `docker compose down` stops the engine and keeps the weights. `docker compose down --volumes` removes them as well.
 
@@ -28,7 +34,9 @@ Text Embeddings Inference has images for NVIDIA cards as well (`ghcr.io/huggingf
 
 ## Another engine
 
-infonium sends up to 32 blocks at a time, each cut to its first 2,000 characters, to `POST /v1/embeddings` with `encoding_format=float`, and a question by itself the same way. Any endpoint that answers this will do, such as Ollama's or OpenAI's: set `INFONIUM_EMBEDDING_BASE_URL`, `INFONIUM_EMBEDDING_API_KEY` and `INFONIUM_EMBEDDING_MODEL` to it.
+infonium sends up to 8 blocks at a time, each cut to its first 2,000 characters, to `POST /v1/embeddings` with `encoding_format=float`, and a question by itself the same way. A block of fewer than 8 words, such as a heading, is not sent. Any endpoint that answers this will do, such as Ollama's or OpenAI's: set `INFONIUM_EMBEDDING_BASE_URL`, `INFONIUM_EMBEDDING_API_KEY` and `INFONIUM_EMBEDDING_MODEL` to it.
+
+infonium takes an endpoint for away, and tries it again every 10 seconds, when it cannot be reached, does not answer in time, or answers 429 or 5xx. Any other error, such as 401 for a wrong key or 404 for a wrong address or model, stops the index of blocks until infonium starts again, and every search fails with that error.
 
 ## Licences
 

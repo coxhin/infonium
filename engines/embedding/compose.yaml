@@ -19,6 +19,13 @@ services:
       # longer, as 2,000 of the rarest Chinese characters are.
       - --max-batch-tokens
       - "2048"
+    # The processors the engine may take. Given all of them, it took about 16 of 24 while a
+    # library was caught up, and a search waited for it behind each batch.
+    cpus: ${EMBEDDING_CPUS:-4}
+    environment:
+      # Set to 1 once the weights are fetched: the engine then reads them from the volume and
+      # does not reach the hub.
+      HF_HUB_OFFLINE: ${EMBEDDING_OFFLINE:-0}
     ports:
       # This machine only: the endpoint has no authentication.
       - "127.0.0.1:${EMBEDDING_PORT:-8751}:80"
