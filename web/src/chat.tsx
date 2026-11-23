@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 import type { Anchor, Turn } from "./client";
-import { Citations, type Citing } from "./citing";
+import { Citations, LostCitations, type Citing } from "./citing";
 import {
   canAsk,
   scopeKey,
@@ -98,6 +98,7 @@ function Answer({
             titleOf={titleOf}
             onPoint={point}
           />
+          <LostCitations statement={statement} citesAll={false} />
         </p>
       ))}
       <Spent answer={answer} />
