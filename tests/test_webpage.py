@@ -111,11 +111,6 @@ def test_a_hidden_dialog_is_not_read_however_much_it_holds(
     assert not holds_unshown(blocks), f"the text of the hidden {dialog!r} was read"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a <dialog> without the open attribute, which no browser shows, is taken for shown: "
-    "when it holds half the page's text it is read as the page",
-)
 @given(text=st.lists(unshown, min_size=4, max_size=6), note=phrases)
 def test_a_closed_dialog_is_not_read_however_much_it_holds(text: list[str], note: str) -> None:
     blocks = read(f"<dialog><div>{paragraphs(text)}</div></dialog><p>{note}.</p>")

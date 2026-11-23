@@ -24,9 +24,10 @@ HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 EXSLT_NAMESPACES = {"re": "http://exslt.org/regular-expressions"}
 LINK = "a"
 PICTURE = "img"
-# The ways the HTML itself hides an element from the person reading it.
+# The ways the HTML itself hides an element from the person reading it. A dialog element is
+# shown only while it is open, which a script that shows one marks with the open attribute.
 IS_HIDDEN = etree.XPath(
-    "boolean(self::*[@hidden"
+    "boolean(self::*[@hidden or self::dialog[not(@open)]"
     " or re:test(@style, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i')])",
     namespaces=EXSLT_NAMESPACES,
 )
