@@ -126,20 +126,29 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
 
   // A round that goes on or starts again begins with that request; every other load reads,
   // and a translation the service says was never asked for is asked for while it is wanted.
-  const begun = useRef<string>(undefined);
+  // A read waits for the request that began its round: a read that reached the service before
+  // it would answer with the run before, which a watch may take for the end. That happens
+  // when the watch that sent the request is begun again, as React does once in development.
+  const begun = useRef<{ key: string; request: Promise<unknown> }>(undefined);
   function load(): Promise<Translation | null> {
     if (!asked) {
       return Promise.resolve(null);
     }
-    if (begun.current !== key && round.asking !== "read") {
-      begun.current = key;
-      return round.asking === "anew" ? translateAnew(itemId) : ensureTranslation(itemId);
+    if (begun.current?.key !== key && round.asking !== "read") {
+      const request =
+        round.asking === "anew" ? translateAnew(itemId) : ensureTranslation(itemId);
+      begun.current = { key, request };
+      return request;
     }
-    return readTranslation(itemId).then((translation) =>
-      translation.progress.kind === "unasked" && wantedNow.current
-        ? ensureTranslation(itemId)
-        : translation,
-    );
+    const before = begun.current?.key === key ? begun.current.request : Promise.resolve();
+    return before
+      .catch(() => undefined)
+      .then(() => readTranslation(itemId))
+      .then((translation) =>
+        translation.progress.kind === "unasked" && wantedNow.current
+          ? ensureTranslation(itemId)
+          : translation,
+      );
   }
   const watched = useWatched(load, key, isUnderway);
 

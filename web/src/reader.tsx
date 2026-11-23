@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock } from "./blocks";
-import { unitOffset, unitOffsets } from "./blocktext";
+import { isToBeTranslated, unitOffset, unitOffsets } from "./blocktext";
 import { originLabel } from "./entry";
 import { FORMULA_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";
@@ -47,6 +47,9 @@ export function Reader({
   const blocks = itemDocument.blocks;
   const pointedHere = pointed?.document_id === itemDocument.id ? pointed : undefined;
   const asLines = playing !== undefined && setting !== "source";
+  // A translation that stopped has left some blocks it was to translate in their source.
+  const stopped =
+    translation.loaded?.state === "ready" && translation.loaded.value.progress.kind === "stopped";
   // The passage highlighted in this document goes when the document leaves the page. React
   // runs this before the effects of a reader that takes its place, so the passage that reader
   // is opened for stays.
@@ -80,6 +83,7 @@ export function Reader({
             again={translation.again}
             pointed={pointedHere}
             played={playing.played}
+            stopped={stopped}
             clock={playing.clock}
             onAgain={translation.translateAgain}
             onPlay={playing.onPlay}
@@ -96,6 +100,9 @@ export function Reader({
             again={translation.again.get(number)}
             pointed={pointedHere?.block_number === number ? pointedHere : undefined}
             onAgain={translation.translateAgain}
+            missing={
+              stopped && !translation.blocks.has(number) && isToBeTranslated(block)
+            }
           />
         ))
       )}
