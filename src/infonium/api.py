@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import ExitStack, asynccontextmanager, closing
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import cache
 from http import HTTPStatus
@@ -23,21 +24,23 @@ from infonium.chat import (
     ItemConversation,
     ItemConversations,
     Question,
+    Questioned,
     Turn,
     Unanswered,
     answer_progress,
 )
+from infonium.citing import numbered_blocks
 from infonium.digest import (
     Digest,
     DraftDigest,
     Section,
     digest_instructions,
-    digest_prompt,
     grounded_sections,
 )
 from infonium.document import Block, BlockNumber, MediaType, error_text
 from infonium.intake import Engines, Intake, failure_reason
 from infonium.language_model import (
+    Ending,
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
@@ -47,6 +50,7 @@ from infonium.library import (
     LOCAL_OWNER,
     Holding,
     Item,
+    Library,
     LibraryStore,
     NotInLibrary,
     Origin,
@@ -71,6 +75,9 @@ HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
 UNBUILT = "this part of infonium is not built yet"
+# What an ASGI server's message says of itself, and the message that the connection is gone.
+MESSAGE_TYPE = "type"
+DISCONNECT = "http.disconnect"
 
 settings = Settings()
 
@@ -231,28 +238,43 @@ def current_owner() -> str:
 Owner = Annotated[str, Depends(current_owner)]
 
 
-def questioned_holding(item_id: str, owner: Owner) -> Iterator[Holding]:
-    # The document a question is asked about, and the conversation about it held for the
-    # question until its response has been sent: an item without a document, or one whose
-    # conversation is answering, is refused before a line of the answer is sent.
-    with library_store().library(owner) as library:
-        holding = library.holding(item_id)
+def questioned_item(item_id: str, owner: Owner) -> Iterator[Questioned]:
+    # The item's conversation, held for a question until the question's response has been
+    # sent, with what the question is asked of. A conversation that is answering, or an item
+    # without a document, is refused before a line of the answer is sent.
     with answering().claimed(ItemConversation(owner=owner, item_id=item_id)):
-        yield holding
+        with library_store().transaction(owner) as transaction:
+            questioned = Questioned(
+                holding=Library(transaction).holding(item_id),
+                turns=ItemConversations(transaction).turns(item_id),
+            )
+        yield questioned
 
 
-QuestionedHolding = Annotated[Holding, Depends(questioned_holding)]
+QuestionedItem = Annotated[Questioned, Depends(questioned_item)]
 
 
-def answer_scope() -> Iterator[ExitStack]:
-    # What an answer holds open, its request to the model, is let go when the response is
-    # over. A reader who leaves in the middle of it leaves the generator that sends the lines
-    # where it stopped, and nothing else would end that request.
-    with ExitStack() as held:
-        yield held
+async def ended_on_leaving(request: Request, ending: Ending) -> None:
+    # The server says the connection is gone also once the response is complete, when ending
+    # the reply ends nothing.
+    while (await request.receive())[MESSAGE_TYPE] != DISCONNECT:
+        pass
+    ending.end()
 
 
-AnswerScope = Annotated[ExitStack, Depends(answer_scope)]
+async def answer_ending(request: Request) -> AsyncIterator[Ending]:
+    # A reader who leaves in the middle of an answer ends it at once, whatever the model is
+    # doing: the thread that writes the lines waits in a read of the model's reply, and only
+    # cutting the reply's connection ends that wait.
+    ending = Ending()
+    watching = asyncio.create_task(ended_on_leaving(request, ending))
+    try:
+        yield ending
+    finally:
+        watching.cancel()
+
+
+AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 
 def entry_of(item: Item) -> ItemEntry:
@@ -272,7 +294,7 @@ def written_digest(holding: Holding, owner: str) -> Digest:
     model = language_model()
     completion = model.structured(
         instructions=digest_instructions(settings.language),
-        prompt=digest_prompt(holding.title, holding.document),
+        prompt=numbered_blocks(holding.title, holding.document),
         output=DraftDigest,
     )
     digest = Digest(
@@ -387,22 +409,25 @@ def item_page(item_id: str, owner: Owner) -> PageView:
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
 def item_conversation(item_id: str, owner: Owner) -> Conversation:
     # An item without a document has no conversation.
-    with library_store().library(owner) as library:
-        library.holding(item_id)
-        return Conversation(turns=ItemConversations(library).turns(item_id))
+    with library_store().transaction(owner) as transaction:
+        Library(transaction).holding(item_id)
+        return Conversation(turns=ItemConversations(transaction).turns(item_id))
 
 
 @app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
 def ask_about_item(
-    item_id: str, question: Question, owner: Owner, holding: QuestionedHolding, held: AnswerScope
+    item_id: str,
+    question: Question,
+    owner: Owner,
+    questioned: QuestionedItem,
+    ending: AnswerEnding,
 ) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
     # What happens on the way is sent as it happens, each event a line of JSON. The turn is
-    # kept before it is sent; a reader who leaves before then leaves nothing kept.
-    with library_store().library(owner) as library:
-        turns = ItemConversations(library).turns(item_id)
-    progress = held.enter_context(
-        closing(answer_progress(language_model(), holding, turns, question.text))
+    # kept before it is sent; a reader who leaves before then leaves nothing kept. A failure
+    # of infonium's own is not told as an answer: it ends the lines without a last event.
+    progress = answer_progress(
+        language_model(), questioned.holding, questioned.turns, question.text, ending
     )
     try:
         for step in progress:
@@ -410,8 +435,8 @@ def ask_about_item(
                 case Drafted():
                     yield step
                 case Turn():
-                    with library_store().library(owner) as library:
-                        ItemConversations(library).keep_turn(item_id, step)
+                    with library_store().transaction(owner) as transaction:
+                        ItemConversations(transaction).keep_turn(item_id, step)
                     yield Answered(turn=step)
     except MODEL_FAILURES as failure:
         yield Unanswered(reason=failure_reason(failure))
@@ -419,13 +444,17 @@ def ask_about_item(
 
 @app.delete(
     "/api/items/{item_id}/conversation",
-    responses=NOT_IN_LIBRARY,
+    responses=NOT_IN_LIBRARY | ANSWERING,
     status_code=HTTPStatus.NO_CONTENT,
 )
 def forget_item_conversation(item_id: str, owner: Owner) -> None:
-    with library_store().library(owner) as library:
-        library.holding(item_id)
-        ItemConversations(library).forget(item_id)
+    # A conversation that is answering is not forgotten: the answer would be kept after it.
+    with (
+        answering().claimed(ItemConversation(owner=owner, item_id=item_id)),
+        library_store().transaction(owner) as transaction,
+    ):
+        Library(transaction).holding(item_id)
+        ItemConversations(transaction).forget(item_id)
 
 
 @app.get("/api/conversation")

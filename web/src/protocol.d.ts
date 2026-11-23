@@ -1165,6 +1165,15 @@ export interface operations {
                     "application/json": components["schemas"]["Failure"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {

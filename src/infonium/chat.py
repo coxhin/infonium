@@ -1,17 +1,32 @@
 from collections.abc import Generator, Iterator
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock
 from typing import Annotated, Final, Literal
 
 import sqlalchemy
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+)
 
-from infonium.anchor import anchors_of
-from infonium.digest import HEADING_LABEL, DraftStatement, Statement, digest_prompt
+from infonium.citing import (
+    BLOCKS_EXPLAINED,
+    CITING_RULES,
+    DraftStatement,
+    Statement,
+    grounded,
+    numbered_blocks,
+)
 from infonium.document import Tagged
 from infonium.language_model import (
+    Ending,
     LanguageModel,
     Message,
     Replied,
@@ -19,7 +34,7 @@ from infonium.language_model import (
     StructuredCompletion,
     Written,
 )
-from infonium.library import Holding, Library, item_table, metadata
+from infonium.library import Holding, OwnerTransaction, item_table, metadata
 
 # Stored with every turn, so that a later change to the models can tell which form a row has.
 TURN_FORMAT = 1
@@ -28,22 +43,16 @@ INSTRUCTIONS = """\
 You answer a reader's questions about one document. The reader checks every claim against \
 the source.
 
-The document arrives in the first message as numbered blocks. Each block starts with its \
-number in square brackets. A block whose brackets also say "{heading_label}" is a heading. \
-The questions asked before follow, each with the statements you answered it with, and last \
-the question to answer now.
+{blocks_explained}\
+The document comes in the first message. The questions asked before follow, each with the \
+statements you answered it with, and last the question to answer now.
 
 Write the answer in the language the question is asked in.
 
 Grounding rules:
-- State only what the document says. Add no outside knowledge and no opinion of your own.
 - Answer in statements of one or two sentences each, as few as the question needs.
-- Give every statement that tells what the document says one to three citations. A citation \
-names one block by its number and quotes the words in that block that support the statement.
-- Copy each quote from the block character for character, in the document's own language. \
-Do not translate it, correct it, or shorten it with an ellipsis.
-- Keep a quote to one sentence or a part of one, within a single block. Choose the passage \
-where the document makes the point most directly.
+- Give every statement that tells what the document says one to three citations.
+{citing_rules}\
 - When the document does not say what the question asks, or says only part of it, give one \
 statement that says only that, with no citations. What the document does say on the matter \
 goes into statements of their own, each with its citations.
@@ -144,6 +153,13 @@ WRITTEN_ANSWER = TypeAdapter(WrittenAnswer)
 UNFINISHED_JSON: Final = "trailing-strings"
 
 
+class Questioned(BaseModel):
+    # What a question about an item is asked of: its document, and the turns of its
+    # conversation before the question.
+    holding: Holding
+    turns: list[Turn]
+
+
 class ItemConversation(BaseModel):
     # Which conversation a question is asked in: the one of an owner's item.
     model_config = ConfigDict(frozen=True)
@@ -171,9 +187,9 @@ item_turn_table = sqlalchemy.Table(
 
 class ItemConversations:
     # The conversations about an owner's items, kept in the library beside the items.
-    def __init__(self, library: Library) -> None:
-        self.connection = library.connection
-        self.owner = library.owner
+    def __init__(self, transaction: OwnerTransaction) -> None:
+        self.connection = transaction.connection
+        self.owner = transaction.owner
 
     def turns(self, item_id: str) -> list[Turn]:
         bodies = self.connection.execute(
@@ -233,7 +249,7 @@ class Answering:
 
 
 def answer_instructions() -> str:
-    return INSTRUCTIONS.format(heading_label=HEADING_LABEL)
+    return INSTRUCTIONS.format(blocks_explained=BLOCKS_EXPLAINED, citing_rules=CITING_RULES)
 
 
 def answered_text(answer: Answer) -> str:
@@ -252,7 +268,7 @@ def conversation_messages(holding: Holding, turns: list[Turn], question: str) ->
         )
     ]
     return [
-        Message(side=Side.ASKER, text=digest_prompt(holding.title, holding.document)),
+        Message(side=Side.ASKER, text=numbered_blocks(holding.title, holding.document)),
         *earlier,
         Message(side=Side.ASKER, text=question),
     ]
@@ -260,10 +276,12 @@ def conversation_messages(holding: Holding, turns: list[Turn], question: str) ->
 
 def drafted_statements(written: str) -> list[str]:
     # The texts of the statements in an answer the model is still writing, each as far as it
-    # goes; a statement whose text has not begun is left out.
-    if not written.strip():
+    # goes; a statement whose text has not begun is left out. Text that is not the beginning
+    # of an answer, as a model writes before it calls a tool, is no draft.
+    try:
+        answer = WRITTEN_ANSWER.validate_json(written, experimental_allow_partial=UNFINISHED_JSON)
+    except ValidationError:
         return []
-    answer = WRITTEN_ANSWER.validate_json(written, experimental_allow_partial=UNFINISHED_JSON)
     return [statement.text for statement in answer.statements if statement.text]
 
 
@@ -275,8 +293,7 @@ def answered_turn(
     written: datetime,
 ) -> Turn:
     statements = [
-        Statement(text=statement.text, anchors=anchors_of(holding.document, statement.citations))
-        for statement in completion.output.statements
+        grounded(holding.document, statement) for statement in completion.output.statements
     ]
     cited = [
         CitedSource(
@@ -297,7 +314,7 @@ def answered_turn(
 
 
 def answer_progress(
-    model: LanguageModel, holding: Holding, turns: list[Turn], question: str
+    model: LanguageModel, holding: Holding, turns: list[Turn], question: str, ending: Ending
 ) -> Generator[Drafted | Turn]:
     # The answer to a question about an item's document as it is written, a draft each time
     # the texts of its statements grow, and last the whole turn.
@@ -306,18 +323,15 @@ def answer_progress(
         answer_instructions(),
         conversation_messages(holding, turns, question),
         DraftAnswer,
-        tools=[],
+        [],
+        ending,
     )
-    # Closing the answer closes the reply, and with it the request to the model.
-    with closing(replies):
-        for event in replies:
-            match event:
-                case Written(text=text):
-                    statements = drafted_statements(text)
-                    if statements != shown:
-                        shown = statements
-                        yield Drafted(statements=shown)
-                case Replied(completion=completion):
-                    yield answered_turn(
-                        holding, question, model.name, completion, datetime.now(UTC)
-                    )
+    for event in replies:
+        match event:
+            case Written(text=text):
+                statements = drafted_statements(text)
+                if statements != shown:
+                    shown = statements
+                    yield Drafted(statements=shown)
+            case Replied(completion=completion):
+                yield answered_turn(holding, question, model.name, completion, datetime.now(UTC))
