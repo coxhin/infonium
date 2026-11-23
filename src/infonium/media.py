@@ -94,6 +94,13 @@ DOWNLOADED_BYTES = "downloaded_bytes"
 # starts it holds open and writes nothing to: when the pipe closes, the fetcher ends the
 # group it leads. Started with a standard input that is at its end, it ends at once.
 FETCHER = [sys.executable, lineage.RUN_AS_MODULE, __spec__.name]
+# The fetcher takes, of infonium's environment, the PATH, on which yt-dlp finds ffmpeg, the
+# locale, the proxies, which yt-dlp reads as urllib does, and yt-dlp's own settings, such as
+# YTDLP_NO_PLUGINS; the ffmpeg it starts is given the same. Driven as here, yt-dlp reads no
+# configuration file, and its cache is a folder of the fetch.
+FETCHER_TAKES = re.compile(
+    "|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES, r"YTDLP_\w+"))
+)
 FETCH_REPORT_FILE = "fetch.json"
 # How long the process that started the fetcher lets pass between two looks at whether it
 # has ended.
@@ -366,7 +373,10 @@ def reported_fetch(url: str, downloads: Path) -> CompletedFetch:
     began = time.monotonic()
     # The fetcher leads a session of its own, so that all it has started is ended with it,
     # and its standard input is a pipe that closes when this process is gone.
-    with subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True) as fetcher:
+    environment = lineage.program_environment(os.environ, FETCHER_TAKES, {})
+    with subprocess.Popen(
+        command, stdin=subprocess.PIPE, start_new_session=True, env=environment
+    ) as fetcher:
         try:
             while fetcher.poll() is None:
                 if time.monotonic() - began > MEDIA_FETCH_LIMIT_SECONDS:

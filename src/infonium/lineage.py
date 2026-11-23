@@ -7,7 +7,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from threading import Event, Thread
@@ -19,6 +19,20 @@ import psutil
 # How Python is told to run a module as a program, as infonium runs the programs it starts
 # of its own.
 RUN_AS_MODULE = "-m"
+# Each program infonium starts takes of infonium's environment the variables its rule names: a
+# pattern that a whole name matches, made of these parts where they serve the program. The
+# PATH, on which a program is found and finds the programs it starts; the locale and the time
+# zone, in which a program writes; and the proxies, which Python's urllib takes from every
+# variable whose name ends in _proxy, in any case.
+SEARCH_PATH = "PATH"
+LOCALE = r"LANG|LANGUAGE|LC_\w+|TZ"
+PROXIES = r"(?i:\w+_proxy)"
+# Whatever its rule names, no program takes infonium's own settings, under the prefix Settings
+# reads them by, or those of the model client it holds, nor a variable named like a key, a
+# token, a password or another secret.
+WITHHELD = re.compile(
+    r"(?:^|_)(?:INFONIUM|OPENAI)_|KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH", re.IGNORECASE
+)
 # Linux's option of prctl that makes a process the reaper of the orphans among its
 # descendants, so that whatever they start stays its descendant when its parent dies, a
 # process that leads a session of its own as well; and the one that has a process sent a
@@ -56,6 +70,21 @@ LOOK_REFUSED = (
     psutil.NoSuchProcess,
     psutil.AccessDenied,
 )
+
+
+def program_environment(
+    environment: Mapping[str, str], taken: re.Pattern[str], given: Mapping[str, str]
+) -> dict[str, str]:
+    # The environment a program is started with: of infonium's, the variables its rule takes
+    # and none withheld, and what infonium gives the program, in place of any of these.
+    return {
+        **{
+            name: value
+            for name, value in environment.items()
+            if taken.fullmatch(name) and not WITHHELD.search(name)
+        },
+        **given,
+    }
 
 
 def hold_data_to(limit: int) -> None:

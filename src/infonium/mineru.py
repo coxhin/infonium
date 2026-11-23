@@ -1,4 +1,5 @@
 import os
+import re
 import signal
 import subprocess
 import unicodedata
@@ -8,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, TypeAdapter
 
+from infonium import lineage
 from infonium.document import HeadingLevel, PageFraction, PageNumber
 
 # MinerU parses a PDF, run as a program of its own, with its hybrid backend, which is left to
@@ -54,6 +56,25 @@ ENGINE_PATIENCE = "MINERU_TASK_RESULT_TIMEOUT_SECONDS"
 # The variable from which a program takes where to keep its temporary files. The engine is
 # given the folder, so that whatever it leaves behind is cleared with the folder.
 TEMPORARY_FILES = "TMPDIR"
+# The engine takes, of infonium's environment, what it reads that a person sets for it, and
+# hands all it is given on to the server it starts and the workers that server starts: its
+# own settings; the GPU, which the CUDA driver chooses and orders among its settings by
+# CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER, and whose driver triton and the loader find on
+# LD_LIBRARY_PATH where the system's list of libraries lacks it; its configuration file in
+# the home, which names where its models are; the hubs it fetches models from, the caches it
+# keeps them in, under the home unless XDG_CACHE_HOME or the hubs' own settings say
+# otherwise, and the proxies to the hubs; and the PATH and the locale.
+ENGINE_TAKES = re.compile(
+    "|".join(
+        (
+            lineage.SEARCH_PATH,
+            lineage.LOCALE,
+            lineage.PROXIES,
+            r"(?:MINERU|CUDA|HF|HUGGINGFACE|MODELSCOPE)_\w+",
+            "LD_LIBRARY_PATH|HOME|XDG_CACHE_HOME",
+        )
+    )
+)
 # Measured with one engine on an RTX 5090: a run takes 10 to 15 seconds to start and stop its
 # server, and between 0.4 and 8.5 seconds a page. For its work the engine is given a minute
 # and more than twice the slowest of those a page, and the call a minute more around that, in
@@ -300,7 +321,7 @@ def engine_results(to_parse: FileToParse, page_count: int) -> Path:
             check=False,
             stdout=logged,
             stderr=subprocess.STDOUT,
-            env={**os.environ, **told},
+            env=lineage.program_environment(os.environ, ENGINE_TAKES, told),
             timeout=patience + SPARE_SECONDS,
         )
     results = [*output.rglob(ENGINE_RESULTS)]

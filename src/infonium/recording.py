@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import time
@@ -11,6 +12,7 @@ from typing import IO, Annotated
 
 from pydantic import BaseModel, Field
 
+from infonium import lineage
 from infonium.document import WORD_GAP, MediaType, Seconds, UnreadableSource
 
 # AAC in an MP4 file: Chrome, Firefox and Safari play it in an audio element, its index of
@@ -37,6 +39,10 @@ OGG = "ogg"
 WAV = "wav"
 RECORDING_FORMATS = f"aac,aiff,amr,asf,avi,flac,flv,matroska,mov,mp3,mpeg,{OGG},{WAV}"
 HELD_TO_RECORDINGS = ["-protocol_whitelist", LOCAL_FILE, "-format_whitelist", RECORDING_FORMATS]
+# ffmpeg and ffprobe take, of infonium's environment, only the PATH they are found on. What
+# else they read colours their log, writes a report of their run, or serves fonts, presets and
+# protocols that these commands do not use.
+PROGRAMS_TAKE = re.compile(lineage.SEARCH_PATH)
 # The sound of a file with several is its first.
 FIRST_SOUND = "a:0"
 # ffprobe reading the first sound of the recording on its standard input; what it is asked
@@ -207,9 +213,12 @@ def started_on(
     # One of the programs at work on a recording, which is handed to it as its standard
     # input. Started in any other way, it would read whatever this process has for a
     # standard input. The program is ended when its user is done with it.
+    environment = lineage.program_environment(os.environ, PROGRAMS_TAKE, {})
     with (
         file.open("rb") as recording,
-        subprocess.Popen(command, stdin=recording, stdout=stdout, stderr=stderr) as program,
+        subprocess.Popen(
+            command, stdin=recording, stdout=stdout, stderr=stderr, env=environment
+        ) as program,
     ):
         try:
             yield program

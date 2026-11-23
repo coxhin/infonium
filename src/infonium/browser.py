@@ -165,8 +165,7 @@ HOME_VARIABLES = {
 # infonium's, only where programs are found, the language and the time zone; besides these,
 # the home in the work folder and the folder for temporary files. Nothing else of infonium's,
 # its keys least, reaches the processes that run a page.
-PASSED_VARIABLES = frozenset({"PATH", "TZ", "LANG", "LANGUAGE"})
-LOCALE_PREFIX = "LC_"
+RENDERER_TAKES = re.compile(f"{lineage.SEARCH_PATH}|{lineage.LOCALE}")
 # The profile's preferences, written before the browser starts: WebRTC sends nothing over
 # UDP, which the proxy cannot carry, and binds no UDP port but 1, which a process without
 # privilege cannot bind: each WebRTC connection a page opened held a UDP port open on every
@@ -266,15 +265,14 @@ RENDERING_REPORT = TypeAdapter(RenderingReport)
 
 def renderer_environment(work: Path, temporary: Path) -> dict[str, str]:
     home = work / HOME_FOLDER
-    return {
-        **{
-            name: value
-            for name, value in os.environ.items()
-            if name in PASSED_VARIABLES or name.startswith(LOCALE_PREFIX)
+    return lineage.program_environment(
+        os.environ,
+        RENDERER_TAKES,
+        {
+            **{name: str(home / part) for name, part in HOME_VARIABLES.items()},
+            TEMPORARY_FOLDER_VARIABLE: str(temporary),
         },
-        **{name: str(home / part) for name, part in HOME_VARIABLES.items()},
-        TEMPORARY_FOLDER_VARIABLE: str(temporary),
-    }
+    )
 
 
 def wellformed(text: str) -> str:
