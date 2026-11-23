@@ -80,6 +80,11 @@ ADDRESS_EDGE = "".join(map(chr, range(0x21)))
 INFONIUM_PREFIX = "infonium-"
 INFONIUM_DATA_PREFIX = "data-infonium-"
 DIALOG = "dialog"
+# What navigates when a reader activates it, by the attributes that give its address, and
+# the one target that opens a browsing context of its own.
+NAVIGATING_TAGS = ("a", "area")
+LINK_ADDRESSES = ("href", "xlink:href")
+NEW_CONTEXT = "_blank"
 DOCTYPE = re.compile(r"^\s*(<!doctype[^>]*>)", re.IGNORECASE)
 # A style or a stylesheet link of a made-up page is labelled with where the page has it: in
 # its head, at the end of its body, or among the words of a block.
@@ -183,11 +188,12 @@ def table_has_all_cells(page: ServedPage, number: int, cells: set[tuple[int, int
 # struck-out words, and scripts, handlers and ways to load other pages in every place.
 INLINE_KINDS = (
     "style", "link", "break", "struck", "hidden", "script", "noscript", "entity", "sheet",
-    "danger", "forged",
+    "danger", "forged", "aimed",
 )  # fmt: skip
 PART_KINDS = (
     "heading", "paragraph", "paragraph", "list", "table", "figure", "loose", "parted", "quote",
-    "code", "noscript", "danger", "again", "forged",
+    "code", "noscript", "danger", "again", "forged", "map", "drawing", "template", "sent",
+    "named frame",
 )  # fmt: skip
 STYLE_TAGS = ("b", "i", "em", "strong", "u", "span", "small")
 STRUCK_TAGS = ("del", "s", "strike")
@@ -212,7 +218,13 @@ FORGED_PARTS = (
     "<img class='forged' src='https://pictures.test/f.jpg' data-infonium-block='3'"
     " data-infonium-cell='0,0,0'>",
     f"<p data-infonium-elsewhere='x' data-INFONIUM-cell='9,9,9'>{FORGED_WORDS[0]} words</p>",
+    f"<p data-infonium-page='{FORGED_WORDS[1]}'>{FORGED_WORDS[1]} words</p>",
+    "<span data-INFONIUM-PAGE=''></span>",
 )
+# Where a page names the item it would be the page of, on its root and its body.
+FORGED_ROOTS = ("", " data-infonium-page='forged'", " DATA-INFONIUM-PAGE=''", " data-infonium-page")
+# The frame a page names for its links, which it also holds.
+FRAME_NAME = "beside"
 FORGED_RUN = f" <span class='forged' data-infonium-block='0'>{FORGED_WORDS[0]}</span> "
 
 words = st.lists(st.sampled_from(VOCABULARY), min_size=1, max_size=7).map(
@@ -236,6 +248,29 @@ script_addresses = st.sampled_from(
         "java&#x09;script:x()",
         "&#106;avascript:x()",
         "java\nscript:x()",
+    ]
+)
+# The targets a page gives what navigates, every one of them the frame itself or one beside
+# it but the last; and the bases it gives, some naming a target.
+targets = st.sampled_from(
+    [
+        "",
+        " target='_self'",
+        " TARGET='_TOP'",
+        " target='_parent'",
+        f" target='{FRAME_NAME}'",
+        " target=' _self '",
+        " target=''",
+        " target='_blank'",
+    ]
+)
+own_bases = st.sampled_from(
+    [
+        "",
+        "<base target='_self'>",
+        "<base href='https://pages.test/' target='_top'>",
+        f"<base target='{FRAME_NAME}'><base target='_blank'>",
+        "<base href='https://pages.test/'>",
     ]
 )
 link_addresses = st.one_of(
@@ -307,6 +342,9 @@ def inline(draw: st.DrawFn, depth: int = 0) -> str:
                 pieces.append(draw(inline_dangers))
             case "forged":
                 pieces.append(FORGED_RUN)
+            case "aimed":
+                address = draw(link_addresses)
+                pieces.append(f" <a href='{address}'{draw(targets)}>{inner}</a> ")
         pieces.append(draw(words))
     return "".join(pieces)
 
@@ -371,6 +409,31 @@ def page_parts(draw: st.DrawFn) -> list[str]:
                 parts.append(draw(st.sampled_from(parts)))
             case "forged":
                 parts.append(draw(st.sampled_from(FORGED_PARTS)))
+            case "map":
+                parts.append(
+                    "<img src='https://pictures.test/map.png' usemap='#stops' alt=''>"
+                    f"<map name='stops'><area href='{draw(link_addresses)}'{draw(targets)}"
+                    " shape='rect' coords='0,0,9,9' alt='stop'><area shape='default'></map>"
+                )
+            case "drawing":
+                parts.append(
+                    f"<svg><a xlink:href='{draw(link_addresses)}'{draw(targets)}><text>"
+                    f"{draw(words)}</text></a><a href='{draw(link_addresses)}'{draw(targets)}>"
+                    "<rect width='9' height='9'/></a></svg>"
+                )
+            case "template":
+                parts.append(
+                    f"<template><p><a href='{draw(link_addresses)}'{draw(targets)}>"
+                    f"{draw(words)}</a></p><form{draw(targets)}></form></template>"
+                )
+            case "sent":
+                parts.append(
+                    f"<form action='/send'{draw(targets)}><input name='q'>"
+                    f"<button formtarget='_self'>Go</button>"
+                    f"<input type='submit' formtarget='{FRAME_NAME}'></form>"
+                )
+            case "named frame":
+                parts.append(f"<iframe name='{FRAME_NAME}'></iframe>")
             case _:
                 parts.append(f"<p{handler}>{draw(inline())}</p>")
     return parts
@@ -381,12 +444,14 @@ def made_up_pages(draw: st.DrawFn) -> str:
     head_extras = "".join(draw(st.lists(dangers, min_size=1, max_size=3)))
     nav = draw(st.sampled_from(["", f"<nav><p>{draw(words)}</p></nav>"]))
     parts = "".join(draw(page_parts()))
+    root, body = draw(st.sampled_from(FORGED_ROOTS)), draw(st.sampled_from(FORGED_ROOTS))
     page = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Trains</title>"
+        f"<!DOCTYPE html><html{root}><head>{draw(own_bases)}<meta charset='utf-8'>"
+        "<title>Trains</title>"
         "<style>/* style head */ body { margin: 0 }</style>"
         "<link rel='stylesheet' href='style-head.css'>"
         f"<script>fetch('https://sink.test/head')</script>{head_extras}</head>"
-        f"<body{draw(handlers)}>{nav}<article>{parts}{FILLER}</article>"
+        f"<body{body}{draw(handlers)}>{nav}<article>{parts}{FILLER}</article>"
         "<style>/* style body */</style></body></html>"
     )
     numbers = count()
@@ -690,6 +755,121 @@ def test_nothing_the_page_wrote_in_infoniums_names_is_left(app: App, page: str) 
         assert not tag.startswith(INFONIUM_PREFIX) or served_page.block_attribute in named, (
             f"an {tag} element is not a block's mark: {named}"
         )
+
+
+@EXAMPLES
+@given(page=made_up_pages())
+def test_the_served_page_names_its_item_on_its_root_and_nowhere_else(app: App, page: str) -> None:
+    served_page = read_made_up(app, page)
+    root = served_page.root()
+    assert root.get(served_page.page_attribute) == served_page.item_id, (
+        f"the served page's root names {root.get(served_page.page_attribute)!r}, not its item"
+    )
+    namers = [
+        (tag, dict(attributes).get(served_page.page_attribute))
+        for tag, attributes in tag_views(served_page.markup)
+        if served_page.page_attribute in dict(attributes)
+    ]
+    # The page as the tree and as the tokens have it: the root once in each.
+    assert namers == [("html", served_page.item_id)] * 2, (
+        f"elements other than the root, or with another value, carry {served_page.page_attribute}:"
+        f" {namers}"
+    )
+
+
+def opens_a_new_context(target: str | None) -> bool:
+    # Only this target opens a browsing context of its own whatever else the reader's window
+    # holds; a name may be that of a frame beside the page.
+    return target is not None and target.lower() == NEW_CONTEXT
+
+
+def what_navigates_the_frame(page_html: str) -> list[str]:
+    # What, activated, would load a page in the frame itself or in one beside it: a link of
+    # HTML or SVG, an area of an image map or a form that names no new browsing context, a
+    # control that names another target for its form, and a base that names none for the
+    # rest. Template contents are elements of the page here, as the tokens have them.
+    found = []
+    for tag, attributes in tag_views(page_html):
+        named = dict(attributes)
+        navigates = tag == "form" or (
+            tag in NAVIGATING_TAGS and any(name in named for name in LINK_ADDRESSES)
+        )
+        if navigates and not opens_a_new_context(named.get("target")):
+            found.append(f"a {tag} that opens in the frame: {named}")
+        if "formtarget" in named and not opens_a_new_context(named["formtarget"]):
+            found.append(f"a {tag} that sends its form into the frame: {named}")
+    aimed = [
+        base.get("target")
+        for base in html.document_fromstring(page_html).iter("base")
+        if base.get("target") is not None
+    ]
+    if not aimed or not opens_a_new_context(aimed[0]):
+        found.append(f"the page's base names the target {aimed[0] if aimed else None!r}")
+    return found
+
+
+@EXAMPLES
+@given(page=made_up_pages())
+def test_nothing_in_the_served_page_loads_a_page_in_the_frame_when_activated(
+    app: App, page: str
+) -> None:
+    assert what_navigates_the_frame(page), "a made-up page holds nothing that opens in its frame"
+    served_page = read_made_up(app, page)
+    found = what_navigates_the_frame(served_page.markup)
+    assert not found, f"the served page still loads a page in the frame: {found}"
+
+
+def every_navigating_kind(target: str) -> str:
+    # One of each thing that navigates when activated, all given the same target, under a
+    # base of the page's own that names it too.
+    return article_page(
+        f"<p>A <a href='/link'{target}>link</a> and <a href='#place'{target}>a place</a>.</p>"
+        "<img src='https://pictures.test/map.png' usemap='#stops' alt=''>"
+        f"<map name='stops'><area href='/area'{target} shape='rect' coords='0,0,9,9'></map>"
+        f"<svg><a xlink:href='/drawn'{target}><text>drawn</text></a>"
+        f"<a href='/drawn-too'{target}><rect width='9' height='9'/></a></svg>"
+        f"<template><p><a href='/kept'{target}>kept</a></p><form{target}></form></template>"
+        f"<form action='/send'{target}><input name='q'><button formtarget='_self'>Go</button>"
+        f"</form><iframe name='{FRAME_NAME}'></iframe>",
+        head=f"<base{target}>",
+    )
+
+
+def test_every_kind_of_thing_that_navigates_opens_a_new_context_whatever_its_target(
+    app: App,
+) -> None:
+    for target in ("", " target='_self'", " target='_top'", f" target='{FRAME_NAME}'"):
+        page = every_navigating_kind(target)
+        served_page = served(app, app.read_page(next(names), page.encode()))
+        found = what_navigates_the_frame(served_page.markup)
+        assert not found, f"with the target {target!r}, the served page loads in the frame: {found}"
+
+
+def link_address(element: html.HtmlElement) -> str | None:
+    return next((element.get(name) for name in LINK_ADDRESSES if element.get(name)), None)
+
+
+def link_addresses_of(root: html.HtmlElement) -> Counter[tuple[str, str]]:
+    # The addresses the page's links and areas give, as written, but for those to scripts,
+    # which R2 takes away. Where an address leads under the page's base is judged with R3.
+    return Counter(
+        (str(element.tag), address.strip())
+        for element in root.iter(*NAVIGATING_TAGS)
+        for address in [link_address(element)]
+        if address is not None and not address_of(address).startswith(SCRIPT_SCHEMES)
+    )
+
+
+@EXAMPLES
+@given(page=made_up_pages())
+def test_what_navigates_keeps_its_address(app: App, page: str) -> None:
+    written = link_addresses_of(html.document_fromstring(page))
+    assume(written)
+    kept = link_addresses_of(read_made_up(app, page).root())
+    assert kept == written, (
+        f"links give other addresses than the page's own did: lost "
+        f"{sorted((written - kept).elements())}, gained {sorted((kept - written).elements())}"
+    )
 
 
 def style_labels(element: html.HtmlElement) -> list[str]:
