@@ -47,7 +47,7 @@ CANDIDATES = 50
 RANK_DAMPING = 60
 # Blocks are sent to the engine this many at a time, and of each block at most this much text.
 EMBEDDING_BATCH = 32
-EMBEDDED_CHARACTERS = 4000
+EMBEDDED_CHARACTERS = 2000
 DOCUMENTS_AT_ONCE = 16
 # The longest the engine may take over a batch of blocks, and over a query, which a search
 # waits for.
@@ -267,19 +267,19 @@ class BlockIndex:
         self.woken.set()
 
     def vectors_are_stale(self, connection: sqlalchemy.Connection) -> bool:
-        models = connection.execute(sqlalchemy.select(vector_model_table.c.model)).scalars()
+        # Vectors are of no use when they are of another model, when their table is gone, or
+        # when they are not those of the blocks marked as having them.
+        models = list(connection.execute(sqlalchemy.select(vector_model_table.c.model)).scalars())
         embedded = connection.execute(
             sqlalchemy.select(sqlalchemy.func.count())
             .select_from(indexed_block_table)
             .where(indexed_block_table.c.embedded)
         ).scalar_one()
-        match list(models):
-            case [model] if model == self.embedding_model:
-                return bool(connection.execute(COUNT_VECTORS).scalar_one() != embedded)
-            case [] if embedded == 0:
-                return False
-            case _:
-                return True
+        if models != [self.embedding_model] or not sqlalchemy.inspect(connection).has_table(
+            VECTOR_TABLE
+        ):
+            return bool(models) or embedded > 0
+        return bool(connection.execute(COUNT_VECTORS).scalar_one() != embedded)
 
     def forget_vectors(self, connection: sqlalchemy.Connection) -> None:
         connection.execute(DROP_VECTORS)
@@ -307,17 +307,15 @@ class BlockIndex:
     def catch_up(self, owner: str) -> None:
         # The owner's documents that items hold now are indexed, and those that no item holds
         # any more are taken out.
-        held_documents = (
-            sqlalchemy.select(item_table.c.id, kept_document_id)
-            .where(item_table.c.owner == owner)
-            .where(kept_document_id.is_not(None))
+        held_documents = sqlalchemy.select(kept_document_id).where(
+            item_table.c.owner == owner, kept_document_id.is_not(None)
         )
         indexed_documents = sqlalchemy.select(
             indexed_document_table.c.document_id, indexed_document_table.c.format
         ).where(indexed_document_table.c.owner == owner)
         with self.turn:
             with self.database.connect() as connection:
-                held = {document: item for item, document in connection.execute(held_documents)}
+                held = set(connection.execute(held_documents).scalars())
                 indexed = {
                     document: format for document, format in connection.execute(indexed_documents)
                 }

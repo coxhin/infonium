@@ -1,0 +1,30 @@
+# The engine that turns the library's blocks into vectors for infonium: Hugging Face's Text
+# Embeddings Inference, which serves an embedding model behind OpenAI's embeddings API, here
+# on the CPU. infonium reaches it at http://127.0.0.1:8751/v1.
+name: infonium-embedding
+services:
+  embedder:
+    # Release 1.9.4 for the CPU. Pinned by digest, so that the same build is run everywhere.
+    image: ghcr.io/huggingface/text-embeddings-inference@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    restart: unless-stopped
+    command:
+      - --model-id
+      - ${EMBEDDING_MODEL:-ibm-granite/granite-embedding-97m-multilingual-r2}
+      - --revision
+      - ${EMBEDDING_REVISION:-835ad14087e140460703cf0fae09f97d469d65c2}
+      # The engine sets aside memory for the longest batch it may take. The model reads up to
+      # 32,768 tokens, and room for a batch that long took 37 GB. infonium sends at most 2,000
+      # characters of a block, which came to about 1,700 tokens in Chinese and Japanese and
+      # fewer in other writings, and room for 2,048 takes about 2 GB. The engine cuts what is
+      # longer, as 2,000 of the rarest Chinese characters are.
+      - --max-batch-tokens
+      - "2048"
+    ports:
+      # This machine only: the endpoint has no authentication.
+      - "127.0.0.1:${EMBEDDING_PORT:-8751}:80"
+    volumes:
+      # The weights are fetched once, when the engine first starts, and kept here.
+      - models:/data
+
+volumes:
+  models:
