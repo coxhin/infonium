@@ -1,6 +1,6 @@
 # infonium
 
-infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording.
+infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links.
 
 ## What it reads
 
@@ -11,7 +11,27 @@ infonium digests what you read, watch and listen to into a summary and takeaways
 | Video or podcast page, such as YouTube, Bilibili, TED, Apple Podcasts and SoundCloud | pasting its address | the page's own captions, or speech recognition when it has none |
 | Audio or video file | uploading the file or pasting its address | speech recognition |
 
-A PDF opens as its pages, with the text read from them one tab away. A recording opens as a player above its transcript.
+A PDF opens as its pages, with the text read from them one tab away. A web article opens as its text, with the page it was read from one tab away. A recording opens as a player above its transcript.
+
+## What it does with a source
+
+A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记), which stays empty until notes are built.
+
+### Translation
+
+A switch above the reader shows the source (原文), its translation (译文), or both (对照). A translation is made when you first ask for it, into the language of digests, and arrives block by block. It keeps the form of its source:
+
+| Source | Its translation |
+| --- | --- |
+| PDF | On the page: each block is drawn where its lines stand, in the page's layout and at the size of its text. With both on show and room for two, the source's page stands beside the translated page. |
+| Recording | As lines that follow the playback: each sentence of the transcript with its translation. A click on a line plays from that moment. |
+| Web article | In the page's own layout: each block's translation stands in the place of its words, or after them with both on show. |
+
+Every source can also be read as text, each block in translation or followed by its translation. A formula is set as a formula and is never translated. One block can be translated again, by the model that writes digests.
+
+### The chat
+
+The chat answers a question about the open source, or about the whole library (整个库). An answer appears as it is written. Each of its statements carries citations that open the quoted passage, in whichever source it lies.
 
 ## Run it
 
@@ -23,18 +43,21 @@ make install
 make dev
 ```
 
-Open <http://localhost:5173>. Paste an address or upload a file. The source opens in the reader and its digest appears beside it. Click a numbered citation to jump to the quoted passage.
+Open <http://localhost:5173>. Paste an address or upload a file. The source opens in the reader and its digest appears beside it. Click a numbered citation to jump to the quoted passage. Switch to 译文 to read the source in your language, and ask about it under 对话.
 
 The API listens on port 8710 and the UI on 5173. When one is taken, pass another: `make dev API_PORT=8720 UI_PORT=5180`.
 
-Each kind of source needs one more program:
+Some sources and features need one more program:
 
-| To read | Install |
+| For | Install |
 | --- | --- |
 | Web pages that scripts build | [Google Chrome](https://www.google.com/chrome/), as the `google-chrome` command, or Chromium, on Linux 5.9 or later; `playwright install` is not needed. The browser must start with its sandbox, which infonium checks before each page and never turns off: on Ubuntu 23.10 and later only a packaged Chrome with an AppArmor profile does, and in a container the seccomp profile must allow user namespaces (not tried). A page whose HTML holds little text is opened in it and read again. Without it, such a page is read from its HTML alone, and one with no text there is not read. Set `INFONIUM_BROWSER` when the command is another or not on the `PATH`. |
 | PDFs | [MinerU](https://github.com/opendatalab/MinerU) 3.4.2 with its `core` extra (`mineru[core]==3.4.2`), as the `mineru` command. infonium reads what this version writes, and with another version every PDF fails. Set `INFONIUM_PDF_ENGINE` when the command is not on the `PATH`. |
 | Recordings | [FFmpeg](https://ffmpeg.org/), as the `ffmpeg` and `ffprobe` commands on the `PATH`. |
 | Recordings without captions | A speech recogniser. [`engines/speech`](engines/speech) starts one on your machine with two commands. |
+| Passages found by their meaning, for questions about the whole library | An embedding engine. [`engines/embedding`](engines/embedding) starts one on your machine, on the CPU, with one command. Without it, the library is searched by words alone. |
+
+The Python that infonium runs on must be able to load SQLite extensions: infonium loads [sqlite-vec](https://github.com/asg017/sqlite-vec) into every connection to the library's file. uv's Python 3.13 can. On a Python whose `sqlite3` cannot, infonium does not start; this comes from reading the code and has not been tried.
 
 ## Configuration
 
@@ -44,15 +67,19 @@ Settings are environment variables, read from `.env` by `make dev`.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | none | Key for the endpoint that serves the model |
 | `OPENAI_BASE_URL` | OpenAI | Endpoint, when the model is served elsewhere |
-| `INFONIUM_MODEL` | `gpt-6.1-terra` | Model that writes digests |
+| `INFONIUM_MODEL` | `gpt-6.1-terra` | Model that writes digests and answers questions, and translates one block again |
+| `INFONIUM_TRANSLATION_MODEL` | `gpt-6-luna` | Model that translates a document |
 | `INFONIUM_WIRE_API` | `chat_completions` | API the endpoint speaks: `chat_completions` or `responses` |
-| `INFONIUM_LANGUAGE` | `简体中文` | Language digests are written in |
+| `INFONIUM_LANGUAGE` | `简体中文` | Language of digests and translations |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and the snapshots of its sources are stored |
 | `INFONIUM_PDF_ENGINE` | `mineru` | MinerU command that parses PDFs |
 | `INFONIUM_BROWSER` | `google-chrome` | Chrome command, or its path, that renders web pages |
 | `INFONIUM_SPEECH_BASE_URL` | `http://127.0.0.1:8750/v1` | Endpoint of the speech recogniser; the default is the one that `engines/speech` starts |
 | `INFONIUM_SPEECH_API_KEY` | `unused` | Key for that endpoint; the local recogniser asks for none |
 | `INFONIUM_SPEECH_MODEL` | `Systran/faster-whisper-large-v3` | Model the recogniser transcribes with |
+| `INFONIUM_EMBEDDING_BASE_URL` | `http://127.0.0.1:8751/v1` | Endpoint of the embedding engine; the default is the one that `engines/embedding` starts |
+| `INFONIUM_EMBEDDING_API_KEY` | `unused` | Key for that endpoint; the local engine asks for none |
+| `INFONIUM_EMBEDDING_MODEL` | `ibm-granite/granite-embedding-97m-multilingual-r2` | Model the engine embeds with; when it changes, every vector is made again |
 
 ## How it works
 
@@ -63,6 +90,16 @@ The model reads the numbered blocks and must back every statement with a quote f
 The reader resolves an anchor to that range and highlights it. In a PDF it also outlines the places of the range on the page. In a recording it plays from the place where the range is spoken.
 
 infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF file, or the sound of a recording. The reader shows the snapshot, so a citation still leads to its passage after the source has changed or gone.
+
+A document is translated into the language of digests by a model of its own. infonium first shows that model passages from across the document. The model says which language the document is in and, if it needs translating, lists the names and terms that recur, each with the one translation to use. infonium then translates the document a few blocks a request, eight requests at a time, and keeps each block as it comes; each request carries the listed terms that its passages use. A link, a style or a formula of a passage goes to the model as a pair of tags around its words and comes back as a mark on the words that translate them, and a formula must come back as written. A reply is kept only if it answers each block with exactly that block's passages, holds no remnant of a tag, and keeps every formula. The sentences of a recording are also checked against their neighbours: an answer out of proportion with its source, or the same answer to different sentences, is not kept. A reply that fails any of these is asked for again, up to three times. A table is translated cell by cell into the same grid, and a recording sentence by sentence along its stretches of time. Listings and formulas stay as written.
+
+The reader draws a PDF's translation itself, over the page. A block's lines that follow one another in one column are one area. The area is filled with the colour of the paper around the lines, and the translation is set in it at the size of the source's text, told from the height of its lines, in the colour of their ink. A formula is set from its LaTeX as MathML, by a reader of LaTeX of infonium's own.
+
+For a web article the reader can also show the kept page itself. infonium serves it with headers that let none of its scripts, plugins or frames run and send none of its forms. It removes from the page what would run, makes its links and forms open nothing by themselves, and marks the element that holds each block's text, and each cell of a table, so that the reader can put a translation in its place. A link that is clicked is opened by the reader, in a new tab.
+
+A question about a source goes to the model that writes digests with the source's whole document and the earlier questions with their answers. A question about the library goes with an outline of the library and two tools that change nothing: one searches the library's blocks, the other reads a run of a source's blocks. Everything of a source reaches the model as JSON, so that a source's text cannot pass for anything but itself. The model answers with statements whose citations name a block and a quote. infonium keeps the citations it finds, as it does for a digest, and counts on each statement those it could not find.
+
+The blocks of every document the library holds are indexed in the library's file, by their words and, through an embedding engine, by their meaning. A block is given to the engine under the title of its item. A search gives first the blocks that hold every word of it, then the blocks nearest to it in meaning and the blocks without a vector yet that hold some of its words, and says of each how it was found.
 
 ## Limits
 
@@ -83,11 +120,21 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 - If infonium is killed while a page is in the browser, the browser is ended and its folders are removed within half a second. If the program that drives the browser is killed with it, the browser's work folder stays until infonium starts again, and a small folder stays in the system's temporary folder.
 - Each time an address of this machine changes, as when a container starts or stops beside it, the browser breaks off what a page is loading, and the page is opened anew once a second passes without a change, in at most five attempts, each begun within its first 25.5 seconds.
 - When the network changed through every attempt, the fullest attempt is kept, which may hold only part of the page, and when neither it nor the page's HTML holds text, the reading fails saying that the network changed.
+- The kept page (原件) is shown without its scripts, so it lacks what they build or show: menus, sections that a script unfolds, pictures that a script loads, and every style of a page that loads its stylesheet by script.
+- The kept page asks its site for its stylesheets, pictures, fonts and media each time it is shown, so a page whose site has changed or gone is shown without them. The site learns infonium's address from some of these requests: over 51 pages, 83 requests named it, as the origin of a font request or as the referrer of what the page's own CSS loads.
+- Some of those requests fail because the page is shown from infonium's address and sends no referrer: fonts that a site serves only to its own pages, and everything from a site that asks for its own referrer (on sspai.com, every stylesheet and article picture).
+- Of the blocks of a web page that are not figures, 87% have an element of their own in the kept page (4,210 of 4,858 over 51 pages), and 22 of 35 tables. The others are shown there as the page has them, untranslated, a citation of one sends the reader to 文本, and the line above the page says how many they are. A page that parts its paragraphs by line breaks inside one element has many: 108 of the 274 blocks of an essay on paulgraham.com.
+- A citation is marked in the kept page by its words where the page shows them as the block's text, white space and the quotation marks of an inline quotation aside. Elsewhere the whole paragraph is marked, and in a table its first cell.
+- A link in the kept page opens in a new tab, and one to a place in the page scrolls there. A link to infonium itself, to anything but a web address, or, in a saved page with no web address of its own, to a relative address, does nothing.
+- When the kept page cannot be fetched, or something other than the item's page comes back, 原件 says so and shows nothing of it; 文本 still has the whole text.
+- In one column, where fewer than 160 pixels of the window are left for the kept page, it keeps 160 pixels and its foot lies under the column beside the reader.
 
 ### PDFs
 
 - A PDF without a usable text layer, a scan above all, is read as pictures of its pages. The words of a paragraph or a heading are then recognised together and spread over its lines by their lengths, so a citation may outline a neighbouring line as well, or miss a line that holds only a word of the quote. A caption, a footnote or a reference is outlined whole. The engine chooses one way of reading for a whole file: scanned pages in a file that has a text layer elsewhere are read line by line, which glues and splits more words.
 - A code listing is read as a whole in every PDF, and each of its rows is outlined as an even slice of its box.
+- A PDF with a text layer whose lines are written downwards is read badly: in the one page tried, halves of lines came out interleaved, characters were lost, and nearly all the text was marked as superscript or subscript. The same page as a scan was read well.
+- A scan of typewritten pages with wide line spacing was read a line a block: 101 of its 108 paragraphs were single lines. Such a document is translated a line at a time, which reads poorly.
 - On a page that a PDF stores turned, a word may come out split in two when the file's own figures for the turn are not exact, as pypdf's `Transformation().rotate` writes them.
 - How well a page read as pictures comes out depends on its writing, and that has been tried on no more than a paragraph of each. Latin, Cyrillic and Greek writing, Chinese and Japanese came out right or nearly, and Korean, Arabic, Thai, Hindi, Tamil, Bengali and Tibetan with a few wrong characters. In writing the engine does not know, Hebrew, Georgian, Armenian, Amharic and Khmer among what was tried, it writes words that are not on the page, and may take so long that the reading is given up.
 - MinerU's models want a GPU. On the machine infonium was built on, a PDF of up to ten pages took about 4 to 5.5 GB of its memory, and a scan of 40 pages about 10 GB.
@@ -100,8 +147,52 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 - Speech is recognised in pieces of up to 16 seconds. A citation in a recognised recording plays from the start of the piece that holds the quote. A word at the edge of a piece is lost now and then, and each piece is punctuated by itself.
 - The default speech model is less accurate in Chinese than in English.
 
+### Translation
+
+- Whether a document is in the language of digests already is judged by the translating model from up to 12,000 characters spread over it, by the language most of that sample is in. A document mostly in the reader's language is not translated, and its passages in other languages stay as written, unless the reader asks for it all the same (仍然翻译). A document mostly in another language is translated whole, and its passages already in the reader's language go to the model as well.
+- A long document takes minutes. The 20,840 words of a Wikipedia article took 288 seconds, and a paper of 15 pages 26,000 input and 17,000 output tokens. The first blocks appear after about a minute.
+- The translating model decides once for a document how its recurring names and terms are translated, and a wrong choice repeats wherever the term stands: in one Japanese article a shark was misnamed in every block that named it.
+- The translating model can misplace words: in a paper it swapped two formulas in one sentence. One block can be translated again by the model that writes digests.
+- A link or a style is kept only where the model puts its tags back around the words that translate it. In the articles tried, 97 to 100 percent of links were kept, after asking again for any passage that lost half its marks or more.
+- A block whose replies hold what is left of a tag, lose a formula or, in a recording, answer a sentence with the words of another is asked for again. After three attempts it stays in its source's language, and the translation shows as stopped, with how many blocks could not be translated and why the last failed. Asking for the translation again goes on with those blocks.
+- Cells of a table that hold only numbers are not translated and keep the source's way of writing numbers, such as a decimal comma.
+- A line of a recording's translation ends at the end of a sentence, or at the first stretch that ends after 10 seconds. In the talks tried the longest line ran 16.5 seconds. A recording recognised without punctuation has no sentences, so every line of it is of the second kind.
+- On a PDF's pages, a translation that does not fit its block's lines at their size is set smaller, down to 0.6 of it, and beyond that cut, with a mark that shows the rest when pressed. Over 11 documents and 396 areas, 99 were set smaller and 9 cut, all 9 in a typewritten scan.
+- On a PDF's pages, tables, listings and blocks that are one formula stay as the page has them; a table's translation is read under 文本. Small leftovers of the source's letters may show between the translated areas of a dense or scanned page.
+- A formula that uses more of LaTeX than infonium's reader of it knows (fractions, roots, sums, scripts, Greek letters, common operators and names, matrices and aligned lines) is shown as its LaTeX. All 59 formulas of the paper tried were set. A selection across a formula copies its drawn characters, one a line, not its LaTeX.
+- With a translation on show, a citation marks the translated block, or the lines of a recording, that hold the quote, not the quoted words themselves.
+- If infonium is killed during a translation, the requests in flight are made again when it starts; blocks already kept are not. A document whose item is read again meanwhile is not translated further.
+
+### The chat
+
+- Every question about a source sends the source's whole document to the model again: about 9,000 input tokens a question for a Wikipedia article of 165 blocks. A document too long for the model cannot be asked about, just as it cannot be digested.
+- An answer about a source begins to appear after 2.5 to 5 seconds, and after up to 18 seconds when the model reasons first.
+- A question about the library takes 6 to 42 seconds and 4,000 to 53,000 input tokens with the embedding engine running, measured on two libraries of nine and ten sources, and up to 80,000 tokens without it, when the model searches longer. When the endpoint stalls in the middle of an answer, as it did once in ten, it takes longer: 99 seconds that time.
+- For a question about the library the model may call its tools in at most 7 rounds of at most 4 calls each. Its last request offers no tools, so it answers with what it has found.
+- A question in one language does not always reach a source in another: the model does not always search in every language of the library, and a search by meaning in English did not bring a Chinese passage on the same subject.
+- The model is told the titles of at most 80 sources, each cut at 120 characters; it finds the others by searching.
+- Earlier questions are given to the model again only as far as 12,000 characters of them go: the latest always, its answer cut where it is longer, and the model is told how many older ones are left out.
+- A conversation answers one question at a time: a second question, or clearing the conversation, is refused while it answers. A reader who leaves before an answer is complete keeps nothing of it.
+- The question being typed and an answer being written are held by the open page: reloading it keeps only the answers that infonium has kept.
+- While the embedding engine is away, nothing on the page says that the library is being searched by words alone.
+- A digest written before infonium counted the citations it could not find shows a statement that lost all of them as 无出处, like one that was given none.
+
+### Finding passages in the library
+
+- A block is found by its words at the first search after its reading settles, and by its meaning once it has a vector. The blocks read last get theirs first: a page read behind 9,500 waiting blocks had them within 3 seconds.
+- A heading, and any other block of fewer than 3 words (a Chinese or Japanese character counting as one), is never found by meaning, only when it holds every word of the search: 29% of the blocks of a library of 8 Wikipedia pages.
+- A block that shares with a search only a word that more than a tenth of the library's blocks hold, and more than ten of them, is not found by that word.
+- A short block that says what longer blocks beside it say may rank below them: a five-word Finnish answer came 6th for a question in English and 11th for one in Chinese.
+- A search by meaning prefers the language it is written in: for a question in English, a Chinese passage that answered it was not among the first fifty blocks.
+- While the embedding engine is away (no answer, a timeout, 429 or 5xx), searches go by words alone, and blocks get their vectors within 10 seconds of its answering again. Any other error of the engine stops the search of the library until infonium starts again.
+- When another writer holds the library's file past 30 seconds, the index waits a round and tries again. Any other fault of the index stops the search of the library until infonium starts again.
+- Words are found in the form written, but a Korean word also finds the forms it starts (서울 finds 서울은). Chinese, Japanese, Thai, Lao, Burmese and Khmer are found by any two or more letters side by side.
+- `engines/embedding` holds the engine to 4 processors. Over 9,500 waiting blocks it took 97 seconds, and searches meanwhile took 56 ms at the median.
+- The first search after starting on a large library not yet indexed waits for its words: 12 seconds for 320,000 blocks. Over 100,000 blocks, a search took 29 ms at the median by words alone and 123 ms with vectors.
+
 ### In general
 
+- The reason shown when a call of the model or of an engine fails gives the address the call went to and what was answered.
 - An address is fetched for up to ten minutes and up to 2 GiB. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
 - The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
 - The other programs infonium starts are given none of them either, nor any variable named like a key, a token, a password or a secret: FFmpeg only `PATH`; the fetcher of video and podcast pages `PATH`, the locale, the proxies and yt-dlp's `YTDLP_` settings; MinerU `PATH`, the locale, the proxies, `HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH`, its own `MINERU_` settings, the GPU's `CUDA_` settings and the `HF_`, `HUGGINGFACE_` and `MODELSCOPE_` settings of the hubs it fetches its models from. Only `file` is given all of infonium's environment: when infonium loads yt-dlp, once each time infonium starts and each time `--reload` restarts it, Python runs `file` on its own executable, and `file` reads that executable and its magic database and nothing else.
@@ -117,7 +208,7 @@ make protocol    # regenerate protocol/openapi.json and web/src/protocol.d.ts
 
 The HTTP protocol is defined by the models in `src/infonium`. `protocol/openapi.json` and `web/src/protocol.d.ts` are generated from them and never edited by hand.
 
-`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser or a model: a test that opens a network socket or looks up a name fails. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
+`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes two to three minutes. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
 
 ```bash
 uv run pytest -m chrome    # Chrome or Chromium, by INFONIUM_BROWSER
