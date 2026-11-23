@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from infonium import browser, captions, guard, lineage, media, pdf, recording, speech, webpage
 from infonium.document import (
+    BROKEN_OFF_SOURCE,
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
     MEDIA_TYPE_PATTERN,
@@ -233,6 +234,8 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
     # A page that holds little text may be one that its scripts build, and is rendered in a
     # browser and read again. What a rendering reads is kept when it holds more. A check that
     # the site answers the browser with is a rendering that failed, as an error status is.
+    # Where nothing is left to read once changes of this machine's network have broken off
+    # every attempt at the page, those changes are the reason.
     plain = page_copy(url, source.file, source.reference)
     if plain.words >= LITTLE_TEXT_WORDS:
         return copy_readout(plain)
@@ -246,7 +249,10 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
             "rendering %s failed; its plain reading is kept", source.reference, exc_info=True
         )
         return copy_readout(plain)
-    return copy_readout(built if built.words > plain.words else plain)
+    kept = built if built.words > plain.words else plain
+    if rendered.broken_off_by_network and not kept.text.blocks:
+        raise UnreadableSource(BROKEN_OFF_SOURCE.format(source=source.reference))
+    return copy_readout(kept)
 
 
 def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
