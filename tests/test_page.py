@@ -124,17 +124,21 @@ def same_text(text: str) -> str:
     return comparable(text, set()).text.strip()
 
 
-def shown_text(element: html.HtmlElement, parted: bool = False) -> str:
+def shown_text(element: html.HtmlElement, parted_at: tuple[str, ...] | None = None) -> str:
     # The words of an element as the extractor reads them: no code for the browser, nothing
-    # struck out or hidden by a style, and a line break for a br element. Parted, the words of
-    # elements laid out as blocks are kept apart, as the words of two blocks are.
+    # struck out or hidden by a style, and a line break for a br element. Parted at marks, the
+    # words of elements laid out as blocks, and of elements that carry one of those marks, are
+    # kept apart, as the words of two blocks are: a marked element's content goes as a whole.
     pieces: list[str] = []
 
     def walk(node: html.HtmlElement) -> None:
         if node.tag == LINE_BREAK_TAG:
             pieces.append(LINE_BREAK)
         elif isinstance(node.tag, str) and node.tag not in UNREAD and not IS_HIDDEN_BY_STYLE(node):
-            gap = LINE_BREAK if parted and node.tag not in INLINE_TAGS else ""
+            parted = parted_at is not None and (
+                node.tag not in INLINE_TAGS or any(node.get(mark) is not None for mark in parted_at)
+            )
+            gap = LINE_BREAK if parted else ""
             pieces.append(gap + (node.text or ""))
             for child in node:
                 walk(child)
@@ -520,8 +524,9 @@ def body_of(root: html.HtmlElement) -> html.HtmlElement:
     return body
 
 
-def body_text(root: html.HtmlElement) -> str:
-    return same_text(shown_text(body_of(root), parted=True))
+def body_text(page: ServedPage, root: html.HtmlElement) -> str:
+    marks = (page.block_attribute, page.cell_attribute)
+    return same_text(shown_text(body_of(root), parted_at=marks))
 
 
 def pictures(root: html.HtmlElement) -> set[str]:
@@ -533,13 +538,13 @@ def pictures(root: html.HtmlElement) -> set[str]:
 def test_replacing_every_marked_element_loses_nothing_of_another_block(app: App, page: str) -> None:
     served_page = read_made_up(app, page)
     root = served_page.root()
-    before, pictures_before = body_text(root), pictures(root)
+    before, pictures_before = body_text(served_page, root), pictures(root)
     marks = page_marks(served_page, root)
     for element in marks:
         for child in list(element):
             element.remove(child)
         element.text = "#"
-    after, pictures_after = body_text(root), pictures(root)
+    after, pictures_after = body_text(served_page, root), pictures(root)
     others = [
         (number, block)
         for number, block in enumerate(served_page.blocks)
