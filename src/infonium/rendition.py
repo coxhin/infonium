@@ -53,7 +53,8 @@ or add anything that the passage does not say.
 passage goes on with. Translate what the passage says, and nothing of the passages around \
 it.
 - Keep each name of a person, a product, a place or a work, and each technical term, the \
-same in every passage. Keep numbers and units as they are written.
+same in every passage. Where the request lists terms, translate each as it is listed, \
+wherever it stands. Keep numbers and units as they are written.
 - Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \
 Put each pair of tags, with the same name and number, around the words of your translation \
 that translate the words it encloses. Add no tags of your own.
@@ -62,6 +63,8 @@ its tags, character for character.
 - Copy the words inside code tags as they are written.
 """
 TITLE = "Title: {title}"
+TERMS = "Terms:"
+TERM = "{source} = {translation}"
 BEFORE = "Text before the passages:\n{text}"
 PASSAGES = "Passages to translate:"
 PASSAGE = "[{number}] {markup}"
@@ -82,10 +85,18 @@ class Rendered(BaseModel):
     marks: list[Mark]
 
 
+class Term(BaseModel):
+    # A name or a term that recurs in a document, and the one translation it is given in all
+    # of it.
+    source: str
+    translation: str
+
+
 class Passages(BaseModel):
-    # Passages to translate, numbered from 1 in the order they are given, and the text of
-    # the document around them.
+    # Passages to translate, numbered from 1 in the order they are given, the terms of their
+    # document, and the text of the document around them.
     title: str
+    terms: list[Term]
     before: str
     wordings: list[Wording]
     after: str
@@ -152,6 +163,21 @@ def prompt(passages: Passages) -> str:
     ]
     parts = [
         TITLE.format(title=passages.title),
+        *(
+            [
+                "\n".join(
+                    [
+                        TERMS,
+                        *(
+                            TERM.format(source=term.source, translation=term.translation)
+                            for term in passages.terms
+                        ),
+                    ]
+                )
+            ]
+            if passages.terms
+            else []
+        ),
         *([BEFORE.format(text=passages.before)] if passages.before else []),
         "\n".join([PASSAGES, *numbered]),
         *([AFTER.format(text=passages.after)] if passages.after else []),

@@ -35,7 +35,12 @@ from infonium.document import (
     TimePlace,
 )
 from infonium.intake import failure_reason
-from infonium.language_model import LanguageModel, UnmeteredCompletion, UnstructuredCompletion
+from infonium.language_model import (
+    LanguageModel,
+    StructuredCompletion,
+    UnmeteredCompletion,
+    UnstructuredCompletion,
+)
 from infonium.library import (
     Holding,
     Library,
@@ -45,7 +50,7 @@ from infonium.library import (
     metadata,
     replacing_insert,
 )
-from infonium.rendition import Passages, Rendered, Wording, renditions
+from infonium.rendition import Passages, Rendered, Term, Wording, renditions
 from infonium.transcript import ends_sentence
 
 
@@ -124,10 +129,11 @@ CONTEXT_CHARACTERS = 600
 REQUESTS_AT_ONCE = 4
 TRANSLATIONS_AT_ONCE = 2
 ATTEMPTS = 3
-# The sample of a document by which its language is judged: so many of the blocks that are
-# translated, spread over the document, and so much of each.
-SAMPLE_BLOCKS = 12
-SAMPLE_BLOCK_CHARACTERS = 200
+# The sample of a document by which its language is judged and its terms are found: the
+# blocks that are translated, as many as this many characters hold, spread over the
+# document; and the most terms that are found.
+SAMPLE_CHARACTERS = 12000
+SURVEY_TERMS = 60
 # Stored with every body, as the library's tables do.
 TRANSLATION_FORMAT = 1
 LETTER = "L"
@@ -136,11 +142,20 @@ SAMPLE_BETWEEN = "\n\n"
 NOT_TRANSLATED = "block {block_number} of item {item_id} is not translated"
 UNUSABLE = "the model's translations of blocks {numbers} could not be used in {attempts} replies"
 UNASKED_BLOCKS = "only blocks translated one at a time are kept; the rest was never asked for"
-JUDGE_INSTRUCTIONS = """\
-You are given a sample of a document: passages taken from across it. Name the language most \
-of its words are written in, and say whether that is {language}, in the script {language} \
-is written in. A document written mostly in another language, or in another script of the \
-same language, such as Traditional Chinese where Simplified Chinese is asked for, is not.
+SURVEY_INSTRUCTIONS = """\
+You are given passages taken from across a document, which is to be translated into \
+{language} in pieces.
+
+First name the language most of its words are written in, and say whether that is \
+{language}, in the script {language} is written in. A document written mostly in another \
+language, or in another script of the same language, such as Traditional Chinese where \
+Simplified Chinese is asked for, is not.
+
+Then, unless it is, list the names and terms that recur in the passages and that pieces \
+translated apart could render differently: people, places, organisations, works, products, \
+and the terms of the field. Give each the one translation into {language} to use for it \
+throughout the document; where {language} keeps a name as it is written, give it \
+unchanged. List at most {terms}, those that recur most.
 """
 
 logger = logging.getLogger(__name__)
@@ -193,11 +208,13 @@ Course = Annotated[Running | Stopped | Translated | Unneeded, Field(discriminato
 
 
 class TranslationRecord(BaseModel):
-    # A translation of one document into one language: the title the document goes by, how
-    # many runs it was started in, how it stands, and what it has taken of its models.
+    # A translation of one document into one language: the title the document goes by and
+    # the translations of its terms, how many runs it was started in, how it stands, and what
+    # it has taken of its models.
     document_id: str
     language: str
     title: str
+    terms: list[Term]
     runs: int
     course: Course
     input_tokens: int
@@ -221,16 +238,20 @@ class RunningTranslation(BaseModel):
     run: int
 
 
-class LanguageJudgement(BaseModel):
+class Survey(BaseModel):
+    # What a sample of a document tells before it is translated: its language, whether that
+    # is the one it is to be translated into, and else its terms.
     language: str
     written_in_asked_language: bool
+    terms: list[Term]
 
 
 class Work(BaseModel):
     # Blocks of a document to translate, by their numbers, with the title the document goes
-    # by.
+    # by and its terms.
     document: Document
     title: str
+    terms: list[Term]
     numbers: list[BlockNumber]
 
 
@@ -335,6 +356,7 @@ def passages_of(work: Work, wordings: list[list[Wording]]) -> Passages:
     after = BLOCKS_BETWEEN.join(block.text for block in blocks[work.numbers[-1] + 1 :])
     return Passages(
         title=work.title,
+        terms=work.terms,
         before=before[len(before) - CONTEXT_CHARACTERS :] if before else "",
         wordings=[wording for block in wordings for wording in block],
         after=after[:CONTEXT_CHARACTERS],
@@ -355,10 +377,12 @@ def requests_of(document: Document, numbers: list[BlockNumber]) -> list[list[Blo
     return requests
 
 
-def language_sample(document: Document) -> str:
+def document_sample(document: Document) -> str:
+    # Every so many of the blocks that are translated, so that what they hold together comes
+    # near the size of a sample.
     texts = [document.blocks[number].text for number in translated_numbers(document)]
-    stride = ceil(len(texts) / SAMPLE_BLOCKS)
-    return SAMPLE_BETWEEN.join(text[:SAMPLE_BLOCK_CHARACTERS] for text in texts[::stride])
+    stride = ceil(sum(map(len, texts)) / SAMPLE_CHARACTERS)
+    return SAMPLE_BETWEEN.join(texts[::stride])[:SAMPLE_CHARACTERS]
 
 
 def progress_of(record: TranslationRecord, document: Document, kept: int) -> Progress:
@@ -621,6 +645,7 @@ class Translator:
                 document_id=holding.document.id,
                 language=self.language,
                 title=holding.title,
+                terms=[],
                 runs=1,
                 course=Running(),
                 input_tokens=0,
@@ -643,6 +668,7 @@ class Translator:
                 document_id=holding.document.id,
                 language=self.language,
                 title=holding.title,
+                terms=[],
                 runs=1 + max((record.runs for record in earlier), default=0),
                 course=Running(),
                 input_tokens=0,
@@ -656,14 +682,20 @@ class Translator:
     def retranslated(self, owner: str, item_id: str, block_number: BlockNumber) -> TranslatedBlock:
         # Translates one block again with the model that writes digests, and keeps it in
         # place of its earlier translation. A block that is never translated has none.
-        with self.shelves(owner) as (library, _):
+        with self.shelves(owner) as (library, shelf):
             holding = library.holding(item_id)
+            records = shelf.records(holding.document.id, self.language)
         blocks = holding.document.blocks
         if block_number >= len(blocks) or not is_translated(blocks[block_number]):
             raise NotInLibrary(NOT_TRANSLATED.format(block_number=block_number, item_id=item_id))
         kept: list[TranslatedBlock] = []
         keep = partial(self.keep_again, owner, holding, kept)
-        work = Work(document=holding.document, title=holding.title, numbers=[block_number])
+        work = Work(
+            document=holding.document,
+            title=holding.title,
+            terms=[term for record in records for term in record.terms],
+            numbers=[block_number],
+        )
         translate_blocks(self.retranslating(), self.language, work, keep, Event())
         [block] = kept
         return block
@@ -686,6 +718,7 @@ class Translator:
                 document_id=document_id,
                 language=self.language,
                 title=holding.title,
+                terms=[],
                 runs=0,
                 course=Stopped(reason=UNASKED_BLOCKS),
                 input_tokens=0,
@@ -718,6 +751,15 @@ class Translator:
                     shelf.add_block(document_id, self.language, block)
         return current and not self.closing.is_set()
 
+    def keep_survey(
+        self, owner: str, document_id: str, run: int, survey: StructuredCompletion[Survey]
+    ) -> None:
+        with self.turn, self.shelves(owner) as (_, shelf):
+            records = shelf.records(document_id, self.language)
+            for record in records if is_current(records, run) else []:
+                surveyed = record.model_copy(update={"terms": survey.output.terms})
+                shelf.keep_record(with_tokens(surveyed, survey.input_tokens, survey.output_tokens))
+
     def course_changed(self, owner: str, document_id: str, run: int, course: Course) -> None:
         with self.turn, self.shelves(owner) as (_, shelf):
             records = shelf.records(document_id, self.language)
@@ -729,8 +771,9 @@ class Translator:
         finished.add_done_callback(partial(self.record_failure, owner, document_id, run))
 
     def translate(self, owner: str, document_id: str, run: int) -> None:
-        # One run of a translation. The language of a document of which nothing is kept is
-        # judged first; the blocks not kept are then asked for, several requests at once.
+        # One run of a translation. A document of which nothing is kept is surveyed first, for
+        # its language and its terms; the blocks not kept are then asked for, several requests
+        # at once.
         with self.shelves(owner) as (_, shelf):
             records = shelf.records(document_id, self.language)
             document = shelf.document(document_id)
@@ -738,10 +781,14 @@ class Translator:
         if not is_current(records, run):
             return
         pending = [number for number in translated_numbers(document) if number not in kept]
-        keep = partial(self.keep_in_run, owner, document_id, run)
-        if pending and not kept and self.is_in_language(document, keep):
-            self.course_changed(owner, document_id, run, Unneeded())
-            return
+        terms = records[0].terms
+        if pending and not kept:
+            survey = self.survey(document)
+            self.keep_survey(owner, document_id, run, survey)
+            if survey.output.written_in_asked_language:
+                self.course_changed(owner, document_id, run, Unneeded())
+                return
+            terms = survey.output.terms
         model = self.translating()
         with ThreadPoolExecutor(
             max_workers=REQUESTS_AT_ONCE, thread_name_prefix="translation-request"
@@ -751,8 +798,8 @@ class Translator:
                     translate_blocks,
                     model,
                     self.language,
-                    Work(document=document, title=records[0].title, numbers=numbers),
-                    keep,
+                    Work(document=document, title=records[0].title, terms=terms, numbers=numbers),
+                    partial(self.keep_in_run, owner, document_id, run),
                     self.closing,
                 )
                 for numbers in requests_of(document, pending)
@@ -770,18 +817,21 @@ class Translator:
         if not self.closing.is_set() and set(translated_numbers(document)) <= kept:
             self.course_changed(owner, document_id, run, Translated())
 
-    def is_in_language(self, document: Document, keep: Keeper) -> bool:
+    def survey(self, document: Document) -> StructuredCompletion[Survey]:
         # The model is asked about a sample of the document: a script tells no language
         # apart from another written in it, and the language is named as a person names it.
         completion = self.translating().structured(
-            instructions=JUDGE_INSTRUCTIONS.format(language=self.language),
-            prompt=language_sample(document),
-            output=LanguageJudgement,
+            instructions=SURVEY_INSTRUCTIONS.format(language=self.language, terms=SURVEY_TERMS),
+            prompt=document_sample(document),
+            output=Survey,
         )
-        keep([], completion.input_tokens, completion.output_tokens)
-        judged = completion.output
-        logger.info("document %s is judged to be written in %s", document.id, judged.language)
-        return judged.written_in_asked_language
+        logger.info(
+            "document %s is judged to be written in %s, with %d terms",
+            document.id,
+            completion.output.language,
+            len(completion.output.terms),
+        )
+        return completion
 
     def record_failure(
         self, owner: str, document_id: str, run: int, finished: Future[None]
