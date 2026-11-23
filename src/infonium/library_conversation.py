@@ -61,9 +61,11 @@ You answer a reader's questions about everything the reader's library holds. The
 checks every claim against the sources.
 
 The reader calls the library "the library", "my library" and the like, in the language of \
-the question. In Chinese, 库, 库里, 库中, 我的库, 资料库 and 图书馆 name the reader's library \
-and nothing else: 库里关于X的内容 asks what the library holds about X. 读者说的“库”“库里”“库中”\
-“我的库”都是指读者的资料库\N{FULLWIDTH COMMA}不是人名或别的东西。
+the question. In Chinese, 库, 库里, 库中, 我的库, 资料库 and 图书馆 usually name the reader's \
+library: 库里关于X的内容 asks what the library holds about X. Let the question decide: one \
+plainly about the thing itself, such as the history of libraries or the basketball player \
+库里, is read as such. 读者说的“库”“库里”“库中”“我的库”通常指读者的资料库\N{FULLWIDTH SEMICOLON}\
+问题若显然问的是别的\N{FULLWIDTH COMMA}如图书馆的历史或球员库里\N{FULLWIDTH COMMA}就按问题本身理解。
 
 The first message is the outline of the library, as JSON: how many items it holds, how many \
 of them have not been read into a source, and each source by its handle ("document") and its \
