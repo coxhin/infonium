@@ -201,16 +201,21 @@ PROXY_SERVER_FLAG = "--proxy-server={scheme}://{host}:{port}"
 
 
 class RenderedPage(BaseModel):
-    # A page as a browser built it: its HTML once its scripts have run, kept as a file, and
-    # the address the browser ended at.
+    # A page as a browser built it: its HTML once its scripts have run, kept as a file, the
+    # address the browser ended at, and whether a change of this machine's network broke off
+    # the attempt that was kept, as it broke off every attempt that was taken. Such a page may
+    # hold less than the page does, or nothing to read.
     file: Path
     address: str
+    broken_off_by_network: bool
 
 
 class TakenPage(BaseModel):
-    # The HTML of a page as its browser holds it, and the address the browser ended at.
+    # The HTML of a page as its browser holds it, the address the browser ended at, and
+    # whether a change of this machine's network broke the attempt off.
     content: str
     address: str
+    broken_off_by_network: bool = False
 
 
 class FailedHop(BaseModel):
@@ -227,6 +232,7 @@ class RenderingReportKind(StrEnum):
 class CompletedRendering(Tagged):
     kind: Literal[RenderingReportKind.COMPLETED] = RenderingReportKind.COMPLETED
     address: str
+    broken_off_by_network: bool
 
 
 class AbortedRendering(Tagged):
@@ -410,7 +416,8 @@ class PageRendering:
                 return taken[-1]
         if not taken:
             raise failures[-1]
-        return max(taken, key=lambda page: len(page.content))
+        fullest = max(taken, key=lambda page: len(page.content))
+        return fullest.model_copy(update={"broken_off_by_network": True})
 
     def report(self, work: Path, deadline: float) -> RenderingReport:
         # How the rendering of the page ends: completed, with the page kept in the work
@@ -452,7 +459,9 @@ class PageRendering:
         if len(kept) > RENDERED_LIMIT_BYTES:
             return AbortedRendering(reason=OVERSIZE_SOURCE.format(source=self.url))
         (work / RENDERED_FILE).write_bytes(kept)
-        return CompletedRendering(address=taken.address)
+        return CompletedRendering(
+            address=taken.address, broken_off_by_network=taken.broken_off_by_network
+        )
 
 
 def remove_rendering(work: Path, reported: Event) -> None:
@@ -554,11 +563,11 @@ def rendered_page(url: str, directory: Path, browser: Path) -> RenderedPage:
     file = directory / RENDERED_FILE
     with TemporaryDirectory(dir=directory) as work:
         match reported_rendering(url, Path(work), program):
-            case CompletedRendering(address=address):
+            case CompletedRendering(address=address, broken_off_by_network=broken):
                 (Path(work) / RENDERED_FILE).replace(file)
             case AbortedRendering(reason=reason):
                 raise UnreadableSource(reason)
-    return RenderedPage(file=file, address=address)
+    return RenderedPage(file=file, address=address, broken_off_by_network=broken)
 
 
 if __name__ == "__main__":
