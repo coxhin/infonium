@@ -280,11 +280,16 @@ def quiet(app: App) -> None:
 
 def long_paragraphs(count: int, extra: Callable[[int], str] = lambda number: "") -> list[Block]:
     # Paragraphs of a long document, each told apart from every other by its first words and
-    # its last, and each with what the function given puts after its first words.
+    # its last, and each with what the function given puts after its first words. Each
+    # document's paragraphs name it, so that a request that a translation of an earlier test
+    # still sends to the stand-in is never taken for one of this document.
     filler = " ".join(WORDS[number % 4] for number in range(LONG_PARAGRAPH_WORDS))
+    document = next(names)
     return [
         Paragraph(
-            text=f"Paragraph {number} begins {extra(number)}{filler} ends {number}.", marks=[]
+            text=f"Paragraph {number} begins {extra(number)}of document {document} {filler} "
+            f"ends {number}.",
+            marks=[],
         )
         for number in range(count)
     ]
