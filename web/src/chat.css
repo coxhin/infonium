@@ -61,8 +61,41 @@
   margin: 0 0 0.6rem;
 }
 
+/* The sources a library answer cites, each title cut to a line of its own width. */
+.answer .sources {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow-wrap: normal;
+}
+
+.answer .sources span {
+  display: inline-block;
+  max-width: 100%;
+  margin-right: 0.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.answer .sources span::before {
+  content: "《";
+}
+
+.answer .sources span::after {
+  content: "》";
+}
+
 .answer .spent {
   margin-top: 0.3rem;
+}
+
+.draft .searched {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .draft .searched,

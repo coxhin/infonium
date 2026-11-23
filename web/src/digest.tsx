@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ensureDigest, rewriteDigest, type Digest } from "./client";
-import { Citations, type Citing } from "./citing";
+import { Citations, LostCitations, type Citing } from "./citing";
 import { useLoaded } from "./loading";
 import "./digest.css";
 
@@ -20,11 +20,7 @@ function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
                   titleOf={(anchor) => anchor.quote}
                   onPoint={citing.point}
                 />
-                {statement.anchors.length === 0 && (
-                  <span className="unsourced" title="模型给出的引句在原文里找不到">
-                    无出处
-                  </span>
-                )}
+                <LostCitations statement={statement} citesAll />
               </li>
             ))}
           </ul>

@@ -15,7 +15,7 @@ import pytest
 import sqlite_vec
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from infonium import library, search
 from infonium.document import HTML_MEDIA_TYPE, Block, Heading, Paragraph, document_of
@@ -34,6 +34,7 @@ from infonium.search import BlockIndex, FoundBlock, FoundBy
 from tests.embedding_standin import (
     CONCEPT_WORDS,
     EMBEDDING_BASE_URL,
+    EMBEDDING_HOST,
     EMBEDDING_KEY,
     EMBEDDING_MODEL,
     OTHER_EMBEDDING_MODEL,
@@ -47,7 +48,7 @@ from tests.service import SITE, App, article
 OTHER_OWNER = "another-reader"
 # The index's rounds, lowered from ten seconds so that a test waits a fraction of one for the
 # work a round does; and how long a test waits for that work at most.
-ROUND_SECONDS = 0.1
+ROUND_SECONDS = 0.02
 APART_SECONDS = 3600.0
 WAIT_SECONDS = 20.0
 POLL_SECONDS = 0.05
@@ -57,6 +58,8 @@ QUERY_WAIT_SECONDS = 1.0
 # keep the file busy for longer than it.
 LOWERED_PATIENCE = "PRAGMA busy_timeout = 100"
 BUSY_SECONDS = 1.0
+# Rounds of the index enough for it to finish what it was given.
+SETTLING_ROUNDS = 10
 FOUND_BY_WORDS = frozenset({FoundBy.ALL_WORDS, FoundBy.ALL_WORDS_AND_MEANING})
 FOUND_BY_MEANING = frozenset({FoundBy.MEANING, FoundBy.ALL_WORDS_AND_MEANING})
 # The index's own tables are told from the library's by their names; FTS5 keeps a virtual
@@ -64,6 +67,9 @@ FOUND_BY_MEANING = frozenset({FoundBy.MEANING, FoundBy.ALL_WORDS_AND_MEANING})
 INDEX_TABLES = "search%"
 FTS_SHADOWS = ("_data", "_idx", "_content", "_docsize", "_config")
 ENGINE_AWAY = ("refused", "429", "500", "502", "503")
+# What the index's failure says, in words of any wording of it: the search failed, and
+# infonium is to be started again.
+INDEX_FAILURE_WORDS = ("search", "fail", "start")
 ENGINE_FAULTS = (HTTPStatus.BAD_REQUEST, HTTPStatus.UNAUTHORIZED, HTTPStatus.NOT_FOUND)
 # A limit above the number of blocks of any library a test makes.
 EVERY_BLOCK = 10_000
@@ -141,25 +147,41 @@ def paragraphs(texts: list[str]) -> list[Block]:
     return [Paragraph(text=text, marks=[]) for text in texts]
 
 
+class Keeping(BaseModel):
+    # A document to keep for the item of an address, under a title.
+    url: str
+    title: str
+    blocks: list[Block]
+
+
+def kept_documents(store: LibraryStore, owner: str, keepings: list[Keeping]) -> list[Kept]:
+    # The documents kept in one transaction, each for its item as a reading that settled
+    # keeps it.
+    now = datetime.now(UTC)
+    kept: list[Kept] = []
+    with store.library(owner) as held:
+        for keeping in keepings:
+            item_id = item_identity(owner, keeping.url)
+            document = document_of(
+                item_id=item_id,
+                extractor="test",
+                snapshot="0" * 64,
+                media_type=HTML_MEDIA_TYPE,
+                blocks=keeping.blocks,
+            )
+            reading = Read(title=keeping.title, document=document.id, attempt=Settled())
+            origin = Link(url=keeping.url)
+            held.keep_item(Item(id=item_id, origin=origin, added=now, reading=reading))
+            held.keep_document(document, now)
+            texts = [block.text for block in keeping.blocks]
+            kept.append(Kept(item=item_id, document=document.id, title=keeping.title, blocks=texts))
+    return kept
+
+
 def kept_document(
     store: LibraryStore, owner: str, url: str, title: str, blocks: list[Block]
 ) -> Kept:
-    item_id = item_identity(owner, url)
-    document = document_of(
-        item_id=item_id,
-        extractor="test",
-        snapshot="0" * 64,
-        media_type=HTML_MEDIA_TYPE,
-        blocks=blocks,
-    )
-    now = datetime.now(UTC)
-    reading = Read(title=title, document=document.id, attempt=Settled())
-    with store.library(owner) as kept:
-        kept.keep_item(Item(id=item_id, origin=Link(url=url), added=now, reading=reading))
-        kept.keep_document(document, now)
-    return Kept(
-        item=item_id, document=document.id, title=title, blocks=[block.text for block in blocks]
-    )
+    return kept_documents(store, owner, [Keeping(url=url, title=title, blocks=blocks)])[0]
 
 
 def read_page(app: App, name: str, title: str, texts: list[str]) -> Kept:
@@ -245,23 +267,23 @@ def concept_word(concept: Concept, language: str) -> str:
 def keep_village(store: LibraryStore, owner: str = LOCAL_OWNER) -> dict[Concept, list[Kept]]:
     # For each concept, a document in each of five languages whose only block names it; and a
     # document that names none.
-    village = {
-        concept: [
-            kept_document(
-                store,
-                owner,
-                f"{SITE}/village/{concept}/{language}",
-                f"Village notes {number}",
-                paragraphs([sentence.format(concept_word(concept, language))]),
-            )
-            for number, (language, sentence) in enumerate(SENTENCES.items())
-        ]
+    keepings = [
+        Keeping(
+            url=f"{SITE}/village/{concept}/{language}",
+            title=f"Village notes {number}",
+            blocks=paragraphs([sentence.format(concept_word(concept, language))]),
+        )
         for concept in Concept
-    }
-    kept_document(
-        store, owner, f"{SITE}/village/square", "Village square", paragraphs(list(NEUTRAL))
+        for number, (language, sentence) in enumerate(SENTENCES.items())
+    ]
+    square = Keeping(
+        url=f"{SITE}/village/square", title="Village square", blocks=paragraphs(list(NEUTRAL))
     )
-    return village
+    kept = kept_documents(store, owner, [*keepings, square])
+    return {
+        concept: kept[number * len(SENTENCES) : (number + 1) * len(SENTENCES)]
+        for number, concept in enumerate(Concept)
+    }
 
 
 def chinese_question(concept: Concept) -> str:
@@ -405,21 +427,22 @@ def test_a_korean_word_is_found_in_the_forms_it_is_used_in(
 )
 @FEW_EXAMPLES
 def test_no_character_of_a_query_is_search_syntax(
-    embedder: EmbeddingStandin, asked: list[str], syntax: list[str]
+    library_alone: tuple[LibraryStore, BlockIndex], asked: list[str], syntax: list[str]
 ) -> None:
     # Each block holds the query's words but one, or begins one of them; a block that held
-    # every word only by a reading of the query as syntax would be found by every word.
+    # every word only by a reading of the query as syntax would be found by every word. The
+    # words are made the example's own, so that no block of another example holds them all.
+    store, index = library_alone
+    own = uuid4().hex[:8]
+    asked = [f"{word}{own}" for word in asked]
     query = f" {syntax[0]} ".join(asked) + "".join(syntax[1:])
     texts = [
         *(" ".join(word for word in asked if word != left) + " stays here" for left in asked),
         " ".join(f"{word}s" for word in asked) + " stays here",
     ]
     whole = " ".join(words_of(query))
-    with own_index() as (store, index):
-        kept = kept_document(
-            store, LOCAL_OWNER, f"{SITE}/syntax", "Syntax", paragraphs([*texts, whole])
-        )
-        found = index.search(LOCAL_OWNER, query, len(texts) + 1)
+    kept = kept_document(store, LOCAL_OWNER, example_url(), "Syntax", paragraphs([*texts, whole]))
+    found = index.search(LOCAL_OWNER, query, len(texts) + 1)
     judge_ranking(found, query, len(texts) + 1, holders=1)
     assert places_found_by(found, FOUND_BY_WORDS) == [kept.place(len(texts))], (
         f"the query {query!r} was not taken as plain words: {shown(found)}"
@@ -442,14 +465,24 @@ QUERIES = st.one_of(
 )
 
 
+class Village(BaseModel):
+    # The service, and the village's documents in its library.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    app: App
+    documents: dict[Concept, list[Kept]]
+
+
 @pytest.fixture
-def village(app: App, embedder: EmbeddingStandin) -> dict[Concept, list[Kept]]:
-    # The village's documents in the service's library, each found by its meaning.
+def settled_village(start_app: Callable[..., App], embedder: EmbeddingStandin) -> Village:
+    # The service started with the engine up, so that its first request is answered, and the
+    # village's documents in its library, each found by its meaning.
     embedder.bring_up()
+    app = start_app()
     kept = keep_village(app.store)
     for concept in Concept:
         wait_for_meaning(app.index, chinese_question(concept), village_places(kept, concept))
-    return kept
+    return Village(app=app, documents=kept)
 
 
 @given(query=QUERIES)
@@ -457,10 +490,11 @@ def village(app: App, embedder: EmbeddingStandin) -> dict[Concept, list[Kept]]:
 @example(query="?!…")
 @EXAMPLES
 def test_any_query_is_answered_and_leaves_the_index_at_work(
-    app: App, village: dict[Concept, list[Kept]], query: str
+    settled_village: Village, query: str
 ) -> None:
     # A query that the engine refused would end the index's work, and every later search with
     # it.
+    app, village = settled_village.app, settled_village.documents
     app.index.search(LOCAL_OWNER, query, 10)
     question = chinese_question(Concept.FERRY)
     assert found_by_meaning_first(app.index, question, village_places(village, Concept.FERRY)), (
@@ -483,9 +517,8 @@ def test_a_query_holding_the_nul_character_fails_nothing(
 # R2: by meaning, across languages.
 
 
-def test_a_question_finds_its_answer_in_every_language_by_meaning(
-    app: App, village: dict[Concept, list[Kept]]
-) -> None:
+def test_a_question_finds_its_answer_in_every_language_by_meaning(settled_village: Village) -> None:
+    app, village = settled_village.app, settled_village.documents
     for concept in Concept:
         expected = village_places(village, concept)
         for question in (chinese_question(concept), ENGLISH_QUESTION.format(concept.value)):
@@ -526,14 +559,14 @@ HARBOUR = [
 
 @pytest.mark.parametrize("away", [*ENGINE_AWAY, "slow"])
 def test_without_the_engine_a_reading_settles_and_is_found_by_its_words(
-    app: App,
     embedder: EmbeddingStandin,
-    village: dict[Concept, list[Kept]],
+    settled_village: Village,
     monkeypatch: pytest.MonkeyPatch,
     away: str,
 ) -> None:
     # The engine goes away from a library whose blocks have vectors, so that every search
     # would ask it for the vector of its query.
+    app = settled_village.app
     monkeypatch.setattr(search, "QUERY_TIMEOUT_SECONDS", QUERY_WAIT_SECONDS)
     make_away(embedder, away)
     kept = read_page(app, "harbour", "Harbour notes", HARBOUR)
@@ -548,8 +581,9 @@ def test_without_the_engine_a_reading_settles_and_is_found_by_its_words(
 
 @pytest.mark.parametrize("away", ENGINE_AWAY)
 def test_blocks_read_while_the_engine_is_away_get_their_vectors_once_it_is_back(
-    app: App, embedder: EmbeddingStandin, village: dict[Concept, list[Kept]], away: str
+    embedder: EmbeddingStandin, settled_village: Village, away: str
 ) -> None:
+    app, village = settled_village.app, settled_village.documents
     make_away(embedder, away)
     kept = read_page(app, "harbour", "Harbour notes", HARBOUR)
     question = chinese_question(Concept.FERRY)
@@ -575,11 +609,27 @@ def search_failure(index: BlockIndex, query: str, status: HTTPStatus) -> openai.
                 f"after the engine answered {status.value}, the index's failure has another "
                 f"cause than the engine's answer: {cause!r}"
             )
+        said = str(failure).casefold()
+        assert all(word in said for word in INDEX_FAILURE_WORDS), (
+            f"the index's failure does not say that the search failed and that infonium must be "
+            f"started again: {failure}"
+        )
+        assert EMBEDDING_HOST not in said and "://" not in said, (
+            f"the index's failure names an address of the engine: {failure}"
+        )
         return cause
     pytest.fail(
         f"after the engine answered {status.value}, a search answered as if the library held "
         f"no more than {shown(found)}"
     )
+
+
+def search_fails(index: BlockIndex, query: str) -> bool:
+    try:
+        index.search(LOCAL_OWNER, query, 5)
+    except search.IndexFailed:
+        return True
+    return False
 
 
 @pytest.mark.parametrize("status", ENGINE_FAULTS)
@@ -596,11 +646,37 @@ def test_an_engine_that_fails_otherwise_ends_the_index_and_every_later_search_sa
         lambda: "the index did not ask the engine for the vectors of a block",
     )
     embedder.fail_with(None)
+    # The stand-in tells its answer before the index has read it; from the first search that
+    # fails on, every later one must.
+    wait_until(
+        lambda: search_fails(app.index, "village"),
+        lambda: f"after the engine answered {status.value}, searches went on answering",
+    )
     for question in (chinese_question(Concept.FERRY), "village", "village"):
         failure = search_failure(app.index, question, status)
         assert failure.status_code == status, (
             f"after the engine answered {status.value}, a search raised another failure: {failure}"
         )
+
+
+@pytest.mark.parametrize("status", ENGINE_FAULTS)
+def test_an_engine_that_refuses_a_query_fails_the_search_with_the_index_failure(
+    embedder: EmbeddingStandin, settled_village: Village, status: HTTPStatus
+) -> None:
+    # The library holds vectors and the index has nothing left to give the engine, so the
+    # request the engine refuses is the query's own.
+    app = settled_village.app
+    embedder.fail_with(status)
+    question = chinese_question(Concept.FERRY)
+    failure = search_failure(app.index, question, status)
+    assert failure.status_code == status, (
+        f"after the engine answered {status.value} to a query, the search raised another "
+        f"failure: {failure}"
+    )
+    refused = [asked.texts for asked in embedder.asked() if asked.status == status]
+    assert refused == [[question]], (
+        f"the engine's refusal that the search raised was not of the query alone: {refused}"
+    )
 
 
 def test_a_busy_library_file_is_waited_out_and_the_index_works_on(
@@ -609,18 +685,27 @@ def test_a_busy_library_file_is_waited_out_and_the_index_works_on(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    # The library is made before the patience is lowered, and nothing but the index writes to
+    # it afterwards, so that only the index's work meets the busy file.
+    store = LibraryStore(tmp_path / "data")
+    village = keep_village(store)
+    store.lock.release()
     monkeypatch.setattr(library, "AWAIT_WRITER", LOWERED_PATIENCE)
     app = start_app()
-    village = keep_village(app.store)
-    app.index.search(LOCAL_OWNER, "village", 1)
+    time.sleep(SETTLING_ROUNDS * ROUND_SECONDS)
     busy = sqlite3.connect(tmp_path / "data" / LIBRARY_FILE, isolation_level=None)
     busy.execute("BEGIN EXCLUSIVE")
     embedder.bring_up()
+    # The index has blocks waiting and an engine that answers for ten times its patience, so
+    # its work meets the busy file whatever step of it comes first.
     time.sleep(BUSY_SECONDS)
-    asked_while_busy = embedder.embedded()
     busy.execute("ROLLBACK")
     busy.close()
-    assert asked_while_busy, "the index asked the engine nothing while the library was busy"
+    wait_until(
+        lambda: village_forms(village) <= set(embedder.embedded()),
+        lambda: "after the library's file was busy, the index gave the engine no more blocks",
+    )
+    time.sleep(SETTLING_ROUNDS * ROUND_SECONDS)
     for concept in Concept:
         wait_for_meaning(app.index, chinese_question(concept), village_places(village, concept))
 
@@ -754,19 +839,105 @@ def test_a_heading_or_a_brief_block_is_found_only_by_every_word(
         judge_brief(index.search(LOCAL_OWNER, question, limit), question, briefs, set())
 
 
+# A word that many of the owner's blocks hold: the blocks that hold it and no rarer word of
+# the query, the block that holds a rare word alone, the block that holds both, and blocks
+# that hold neither; headings that hold the common word count among no blocks found by
+# meaning.
+COMMON_WORD = "cobalt"
+RARE_WORD = "heron"
+BOTH_WORDS = "cobalt heron amber dune"
+RARE_ONLY = "heron birch ember fjord"
+COMMON_ONLY = "cobalt garnet indigo amber"
+NEITHER = "amber birch dune"
+COMMON_HEADING = "cobalt notes"
+# The share and the number of the blocks found by meaning above which a word is common.
+COMMON_SHARE = 10
+COMMON_COUNT = 10
+MOST_COMMON_HOLDERS = 40
+
+
+@st.composite
+def common_library(draw: st.DrawFn) -> tuple[int, int, int]:
+    # The number of blocks that can be found by meaning, how many of them hold the common
+    # word, often on either side of where it becomes common, and the headings that hold it.
+    total = draw(st.integers(min_value=12, max_value=300))
+    edges = [COMMON_COUNT, COMMON_COUNT + 1, total // COMMON_SHARE, total // COMMON_SHARE + 1]
+    holders = draw(
+        st.one_of(
+            st.sampled_from(edges), st.integers(min_value=2, max_value=MOST_COMMON_HOLDERS)
+        ).filter(lambda count: 2 <= count <= min(MOST_COMMON_HOLDERS, total - 2))
+    )
+    return total, holders, draw(st.integers(min_value=0, max_value=4))
+
+
+def is_common(total: int, holders: int) -> bool:
+    return holders * COMMON_SHARE > total and holders > COMMON_COUNT
+
+
+@pytest.mark.parametrize("engine", ["away", "up"])
+@given(drawn=common_library())
+@FEW_EXAMPLES
+def test_a_block_is_not_found_by_some_words_for_a_common_word_alone(
+    library_alone: tuple[LibraryStore, BlockIndex],
+    embedder: EmbeddingStandin,
+    engine: str,
+    drawn: tuple[int, int, int],
+) -> None:
+    # Each example's library is that of an owner of its own. With the engine up, the blocks'
+    # own requests are held, so that every block competes by its words and the query alone is
+    # embedded.
+    store, index = library_alone
+    owner = f"owner-{uuid4().hex}"
+    total, holders, headings = drawn
+    texts = [BOTH_WORDS, RARE_ONLY, *[COMMON_ONLY] * (holders - 1)]
+    texts += [NEITHER] * (total - len(texts))
+    blocks = [*paragraphs(texts), *[Heading(level=2, text=COMMON_HEADING, marks=[])] * headings]
+    if engine == "up":
+        embedder.bring_up()
+        embedder.hold("Common notes")
+    kept = kept_document(store, owner, example_url(), "Common notes", blocks)
+    found = index.search(owner, f"{COMMON_WORD} {RARE_WORD}", EVERY_BLOCK)
+    alone = index.search(owner, COMMON_WORD, EVERY_BLOCK)
+    embedder.let_go()
+    common_only = {kept.place(number) for number in range(2, holders + 1)}
+    common = is_common(total, holders)
+    assert places_found_by(found, FOUND_BY_WORDS) == [kept.place(0)], (
+        f"the block that holds every word was not the one found by them: {shown(found)}"
+    )
+    assert kept.place(1) in places_found_by(found, frozenset({FoundBy.SOME_WORDS})), (
+        f"a block that holds a rare word of the query was not found by it: {shown(found)}"
+    )
+    shown_common = common_only & set(places(found))
+    assert not common or not shown_common, (
+        f"with {holders} of {total} blocks holding {COMMON_WORD!r}, a block was found for that "
+        f"common word alone: {shown(found)}"
+    )
+    assert common or shown_common, (
+        f"with {holders} of {total} blocks holding {COMMON_WORD!r}, no block was found by that "
+        f"word that is not common: {shown(found)}"
+    )
+    assert set(places_found_by(alone, FOUND_BY_WORDS)) >= common_only | {kept.place(0)}, (
+        f"a block that holds every word of the query {COMMON_WORD!r} was not found by it: "
+        f"{shown(alone)}"
+    )
+
+
 # R5: whose blocks.
 
 
 @pytest.fixture
-def two_villages(app: App, embedder: EmbeddingStandin) -> dict[str, dict[Concept, list[Kept]]]:
+def two_villages(
+    start_app: Callable[..., App], embedder: EmbeddingStandin
+) -> tuple[App, dict[str, dict[Concept, list[Kept]]]]:
     # The same village in the libraries of two owners, each found by its meaning.
     embedder.bring_up()
+    app = start_app()
     villages = {owner: keep_village(app.store, owner) for owner in (LOCAL_OWNER, OTHER_OWNER)}
     for owner, village in villages.items():
         for concept in Concept:
             expected = village_places(village, concept)
             wait_for_meaning(app.index, chinese_question(concept), expected, owner)
-    return villages
+    return app, villages
 
 
 @given(
@@ -777,9 +948,10 @@ def two_villages(app: App, embedder: EmbeddingStandin) -> dict[str, dict[Concept
 )
 @EXAMPLES
 def test_a_search_finds_only_blocks_of_the_owners_library(
-    app: App, two_villages: dict[str, dict[Concept, list[Kept]]], query: str
+    two_villages: tuple[App, dict[str, dict[Concept, list[Kept]]]], query: str
 ) -> None:
-    for owner in two_villages:
+    app, villages = two_villages
+    for owner in villages:
         with app.store.library(owner) as kept:
             own_items = {item.id for item in kept.items()}
         found = app.index.search(owner, query, EVERY_BLOCK)
@@ -857,8 +1029,9 @@ ZORBEL = "The zorbel crossing was counted twice each winter by the keeper."
 
 
 def test_a_block_without_a_vector_competes_by_some_of_its_words(
-    app: App, embedder: EmbeddingStandin, village: dict[Concept, list[Kept]]
+    embedder: EmbeddingStandin, settled_village: Village
 ) -> None:
+    app, village = settled_village.app, settled_village.documents
     embedder.hold("keeper")
     kept = read_page(app, "zorbel", "Crossing notes", [ZORBEL])
     query = f"zorbel {concept_word(Concept.FERRY, 'en')} lighthouse"
@@ -903,8 +1076,9 @@ def test_a_library_made_before_the_index_is_indexed_when_the_service_starts(
 
 
 def test_a_vector_is_kept_only_for_the_text_it_was_made_of_when_an_item_is_read_again(
-    app: App, embedder: EmbeddingStandin, village: dict[Concept, list[Kept]]
+    embedder: EmbeddingStandin, settled_village: Village
 ) -> None:
+    app, village = settled_village.app, settled_village.documents
     embedder.hold("quillmoor")
     first = read_page(app, "crossing", "Crossing notes", FERRY_CROSSING)
     wait_until(

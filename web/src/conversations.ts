@@ -6,7 +6,7 @@ import {
   forgetLibraryConversation,
   readItemConversation,
   readLibraryConversation,
-  RefusedQuestion,
+  Refused,
   UnreachedService,
   type ChatEvent,
   type Conversation,
@@ -58,9 +58,10 @@ const UNREAD: Chat = {
 const CUT_OFF = "连接中断，回答没有写完。";
 const UNREACHED = "连不上服务，问题没有发出。";
 const NOT_READ_AGAIN = "对话也没能重新读取，刷新页面可以再读一次。";
-// The service refuses a question about a conversation that is answering another.
+// The service refuses a question, or a clearing, of a conversation that is answering.
 const ANSWERING_STATUS = 409;
 const ANSWERING = "这段对话正在回答另一个问题，等它答完再问。";
+const CLEARING_WHILE_ANSWERING = "这段对话正在回答一个问题，答完后才能清空。";
 // A reading after a broken connection is tried this many times, this far apart, since the
 // connection may break when this machine's network changes, which settles within a second.
 const REREADS = 3;
@@ -271,7 +272,7 @@ export function useConversations(): Conversations {
       }
       cutOff(scope, question);
     } catch (error) {
-      if (error instanceof RefusedQuestion) {
+      if (error instanceof Refused) {
         const reason =
           error.status === ANSWERING_STATUS ? ANSWERING : `问题没有被接受：${error.message}`;
         update(scope, (chat) => givenBack(chat, question, reason));
@@ -317,7 +318,10 @@ export function useConversations(): Conversations {
         update(scope, (chat) => ({
           ...chat,
           forgetting: "idle",
-          problem: `没有清空：${reasonOf(error)}`,
+          problem:
+            error instanceof Refused && error.status === ANSWERING_STATUS
+              ? CLEARING_WHILE_ANSWERING
+              : `没有清空：${reasonOf(error)}`,
         })),
     );
   }
