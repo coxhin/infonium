@@ -317,10 +317,19 @@ def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
         )
 
 
-class Library:
+class OwnerTransaction:
+    # One transaction on the library's database, and the owner on whose behalf it reads and
+    # writes. Every store of rows is built on one, the library's own and those that other
+    # modules keep in tables of theirs, and holds each of its queries to that owner.
     def __init__(self, connection: sqlalchemy.Connection, owner: str) -> None:
         self.connection = connection
         self.owner = owner
+
+
+class Library:
+    def __init__(self, transaction: OwnerTransaction) -> None:
+        self.connection = transaction.connection
+        self.owner = transaction.owner
 
     def keep_item(self, item: Item) -> None:
         self.connection.execute(
@@ -438,9 +447,14 @@ class LibraryStore:
             bring_up_to_date(connection)
 
     @contextmanager
-    def library(self, owner: str) -> Iterator[Library]:
+    def transaction(self, owner: str) -> Iterator[OwnerTransaction]:
         with self.engine.begin() as connection:
-            yield Library(connection=connection, owner=owner)
+            yield OwnerTransaction(connection=connection, owner=owner)
+
+    @contextmanager
+    def library(self, owner: str) -> Iterator[Library]:
+        with self.transaction(owner) as transaction:
+            yield Library(transaction)
 
     def underway(self) -> list[UnderwayItem]:
         with self.engine.begin() as connection:
