@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureTranslation,
+  RefusedRequest,
   readTranslation,
   retranslateBlock,
   translateAnew,
@@ -36,6 +37,27 @@ export type TranslationState = {
 type Kept = { translation: Translation; blocks: ReadonlyMap<number, TranslatedBlock> };
 
 const NO_BLOCKS: ReadonlyMap<number, TranslatedBlock> = new Map();
+
+// Why translating one block again was refused, by the status of the refusal, in words a reader
+// understands. A failure of the model keeps the service's own words after it, as they vary.
+const NOT_ASKED_STATUS = 409;
+const NEVER_TRANSLATED_STATUS = 404;
+const MODEL_FAILED_STATUS = 502;
+const AGAIN_REFUSALS: Record<number, string> = {
+  [NOT_ASKED_STATUS]: "这篇的译文还没有请求过，或被判断为不用翻译，所以没有可以重译的段落。",
+  [NEVER_TRANSLATED_STATUS]: "这一段不做翻译（例如代码或公式），所以没法重译。",
+  [MODEL_FAILED_STATUS]: "模型这次没有给出可用的译文，可以稍后再试。",
+};
+
+function againFailed(error: unknown): string {
+  if (error instanceof RefusedRequest) {
+    const said = AGAIN_REFUSALS[error.status];
+    if (said !== undefined) {
+      return error.status === MODEL_FAILED_STATUS ? `${said}服务说：${error.message}` : said;
+    }
+  }
+  return reasonOf(error);
+}
 
 function isUnderway(translation: Translation | null): boolean {
   return translation?.progress.kind === "translating";
@@ -165,7 +187,7 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
         },
         (error: unknown) =>
           setAgain((before) =>
-            withValue(before, epoch, blockNumber, { state: "failed", reason: reasonOf(error) }),
+            withValue(before, epoch, blockNumber, { state: "failed", reason: againFailed(error) }),
           ),
       );
     },
