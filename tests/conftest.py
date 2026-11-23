@@ -1,13 +1,28 @@
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from functools import cache
 from pathlib import Path
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
 from hypothesis import settings
+from pydantic import SecretStr
 
+from infonium import api, intake, speech
+from infonium.language_model import LanguageModel, WireApi, endable_openai_model, openai_model
+from infonium.library import LibraryStore
 from infonium.settings import Settings
 from tests import pdf_engine_standin
+from tests.model_standin import (
+    MODEL_BASE_URL,
+    MODEL_KEY,
+    STANDIN_MODEL,
+    ModelStandin,
+    model_standin,
+)
+from tests.service import LOWERED_FETCH_BYTES, LOWERED_FETCH_SECONDS, App, Site, digest_reply
 
 # The examples of a property run as fast as the extractor and the parsers they call, whose
 # first calls load what they keep; a deadline per example would fail them at random.
@@ -22,6 +37,17 @@ MARKED_PROGRAMS = {
     "ffmpeg": (Path("ffmpeg"), Path("ffprobe")),
     "mineru": (APP_SETTINGS.pdf_engine,),
 }
+# The variables by which a client of the openai package finds its endpoint, and those that
+# would send its connections through a proxy.
+MODEL_ADDRESS = {"OPENAI_BASE_URL": MODEL_BASE_URL, "OPENAI_API_KEY": MODEL_KEY}
+PROXY_VARIABLES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 SETTING_HINT = {
     "chrome": "set INFONIUM_BROWSER or put google-chrome on the PATH",
     "ffmpeg": "put ffmpeg and ffprobe on the PATH",
@@ -70,3 +96,73 @@ def standin_pdf_engine(tmp_path: Path) -> Callable[[str], Path]:
         return engine
 
     return engine_for
+
+
+@pytest.fixture(scope="session")
+def served_model() -> Iterator[ModelStandin]:
+    with model_standin() as standin:
+        yield standin
+
+
+@pytest.fixture
+def model(served_model: ModelStandin, monkeypatch: pytest.MonkeyPatch) -> ModelStandin:
+    # The stand-in model, answering digests until a test tells it otherwise, and the openai
+    # package's clients sent to it.
+    served_model.reset(digest_reply)
+    for name, value in MODEL_ADDRESS.items():
+        monkeypatch.setenv(name, value)
+    for name in PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    return served_model
+
+
+@pytest.fixture
+def start_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    standin_pdf_engine: Callable[[str], Path],
+    model: ModelStandin,
+) -> Iterator[Callable[..., App]]:
+    # Starts the service on the test's library, its models speaking the wire API given.
+    site = Site()
+    monkeypatch.setattr(httpx, "stream", site.stream)
+    monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
+    monkeypatch.setattr(intake, "FETCH_LIMIT_BYTES", LOWERED_FETCH_BYTES)
+    engines = intake.Engines(
+        pdf=standin_pdf_engine("trap"),
+        recogniser=speech.Recogniser(
+            base_url="https://speech.test/v1", api_key=SecretStr("unused"), model="none"
+        ),
+        browser=Path("no-such-browser"),
+    )
+    started: list[App] = []
+
+    def start(wire_api: WireApi = WireApi.RESPONSES) -> App:
+        @cache
+        def language_model() -> LanguageModel:
+            return openai_model(name=STANDIN_MODEL, wire_api=wire_api)
+
+        @cache
+        def answering_model() -> LanguageModel:
+            return endable_openai_model(name=STANDIN_MODEL, wire_api=wire_api)
+
+        store = LibraryStore(tmp_path / "data")
+        reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
+        monkeypatch.setattr(api, "library_store", lambda: store)
+        monkeypatch.setattr(api, "intake", lambda: reader)
+        monkeypatch.setattr(api, "language_model", language_model)
+        monkeypatch.setattr(api, "answering_model", answering_model)
+        client = TestClient(api.app)
+        client.__enter__()
+        started.append(App(client, store, site, model))
+        return started[-1]
+
+    yield start
+    for app in started:
+        if app.running:
+            app.client.__exit__(None, None, None)
+
+
+@pytest.fixture
+def app(start_app: Callable[..., App]) -> App:
+    return start_app()
