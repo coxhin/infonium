@@ -1,0 +1,171 @@
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.chat .scopes {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem 0.2rem;
+}
+
+.chat .scopes button {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 1rem;
+}
+
+.chat .scopes button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.chat .scopes button:disabled {
+  opacity: 0.45;
+}
+
+.chat-scope {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-scope[hidden] {
+  display: none;
+}
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem 1.2rem 1rem;
+}
+
+.thread article {
+  margin-bottom: 1.2rem;
+}
+
+.thread .question {
+  margin: 0.6rem 0 0.5rem;
+  padding: 0.4rem 0.7rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  white-space: pre-wrap;
+}
+
+.answer p {
+  margin: 0 0 0.6rem;
+}
+
+.answer .spent {
+  margin-top: 0.3rem;
+}
+
+.draft .searched,
+.draft .writing {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.draft .writing::after {
+  content: "▍";
+  margin-left: 0.2rem;
+  animation: blink 1s steps(2) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draft .writing::after {
+    animation: none;
+  }
+}
+
+button.quiet {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.5rem;
+}
+
+.chat .forget {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.2rem 1.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+.chat .forget button {
+  font-size: 0.8rem;
+  padding: 0.05rem 0.5rem;
+  background: none;
+}
+
+.chat .confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat .confirm .danger {
+  color: var(--failure);
+  border-color: var(--failure);
+}
+
+.composer {
+  padding: 0 1.2rem 0.8rem;
+}
+
+.composer .status {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.85rem;
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 3.5rem;
+  max-height: 40vh;
+  font: inherit;
+  color: inherit;
+  line-height: 1.5;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+}
+
+.composer .send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.composer small {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* In one column the page scrolls; the conversation keeps a height of its own so that the box
+   stays near it. */
+@media (max-width: 64rem) {
+  .chat {
+    height: auto;
+  }
+
+  .thread {
+    flex: none;
+    max-height: 60vh;
+  }
+}
