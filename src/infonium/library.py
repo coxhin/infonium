@@ -38,6 +38,13 @@ NOT_UNDERWAY = "no reading of the item is under way"
 ALREADY_UNDERWAY = "a reading of the item is under way already"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
+# Several threads write to the library's file: the readings, and the work other modules do in
+# the background on tables of their own. With a write-ahead log one writes while the others
+# read, which the file remembers once it is set; and a writer that finds another at work waits
+# for it this long before it fails.
+WRITE_AHEAD = "PRAGMA journal_mode = WAL"
+WRITER_PATIENCE_MILLISECONDS = 30_000
+AWAIT_WRITER = f"PRAGMA busy_timeout = {WRITER_PATIENCE_MILLISECONDS}"
 TIMESTAMP = TypeAdapter(AwareDatetime)
 
 metadata = sqlalchemy.MetaData()
@@ -273,8 +280,10 @@ def replacing_insert(
     )
 
 
-def enforce_foreign_keys(connection: sqlite3.Connection, record: object) -> None:
-    connection.execute(ENFORCE_FOREIGN_KEYS)
+def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
+    # What every connection to the library's file is given before it is used.
+    for setting in (ENFORCE_FOREIGN_KEYS, WRITE_AHEAD, AWAIT_WRITER):
+        connection.execute(setting)
 
 
 def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
@@ -441,7 +450,7 @@ class LibraryStore:
         self.lock = FileLock(directory / LOCK_FILE)
         self.lock.acquire(timeout=0)
         self.engine = sqlalchemy.create_engine(f"sqlite:///{directory / LIBRARY_FILE}")
-        sqlalchemy.event.listen(self.engine, CONNECT, enforce_foreign_keys)
+        sqlalchemy.event.listen(self.engine, CONNECT, set_up_connection)
         metadata.create_all(self.engine)
         with self.engine.begin() as connection:
             bring_up_to_date(connection)
