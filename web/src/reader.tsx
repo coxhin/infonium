@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
-import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
+import { BLOCK_ATTRIBUTE, SourceBlock } from "./blocks";
+import { unitOffset, unitOffsets } from "./blocktext";
 import { originLabel } from "./entry";
 import { FORMULA_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";

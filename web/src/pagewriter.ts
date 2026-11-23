@@ -1,5 +1,5 @@
-import { unitOffset, unitOffsets } from "./blocks";
-import type { Block, Mark, PageBlocks, Style, TranslatedBlock } from "./client";
+import { cellTexts, cutAtMarks, STYLE_ELEMENTS } from "./blocktext";
+import type { Block, Mark, PageBlocks, TranslatedBlock } from "./client";
 import type { Setting } from "./setting";
 
 // What infonium adds to the page goes in an element of a name of its own: the service takes
@@ -7,16 +7,6 @@ import type { Setting } from "./setting";
 // page's. Unknown to the page's stylesheet, it is styled by infonium's alone.
 const TRANSLATION_ELEMENT = "infonium-translation";
 const POINTED_HIGHLIGHT = "infonium-pointed";
-// The same elements as the reader's text uses for the marks, in blocks.tsx, of which this is a
-// copy until the two are joined.
-const STYLE_ELEMENTS: Record<Style, string> = {
-  strong: "strong",
-  emphasis: "em",
-  underline: "u",
-  code: "code",
-  subscript: "sub",
-  superscript: "sup",
-};
 const LINK_ELEMENT = "a";
 const AREA_ELEMENT = "area";
 const FORMULA_ELEMENT = "code";
@@ -300,26 +290,17 @@ function markElement(page: Document, mark: Mark): Element {
 
 // The text as the page's own elements: cut wherever a mark starts or ends, each piece inside
 // the elements of the marks that hold it, the first mark innermost, as the reader draws it.
-// The cutting is a copy of piecesOf in blocks.tsx until the two are joined.
 function markedNodes(page: Document, text: string, marks: Mark[]): Node[] {
-  const offsets = unitOffsets(text);
-  const spans = marks.map((mark) => ({
-    mark,
-    start: unitOffset(offsets, mark.start),
-    end: unitOffset(offsets, mark.end),
-  }));
-  const cuts = [
-    ...new Set([0, text.length, ...spans.flatMap((span) => [span.start, span.end])]),
-  ].sort((first, second) => first - second);
-  return cuts.slice(0, -1).flatMap((start, index) => {
-    const end = cuts[index + 1] ?? text.length;
-    const inside = spans.filter((span) => span.start <= start && end <= span.end);
-    return inside.reduce<Node[]>((content, span) => {
-      const element = markElement(page, span.mark);
-      element.append(...content);
-      return [element];
-    }, linesOf(page, text.slice(start, end)));
-  });
+  return cutAtMarks(text, marks).flatMap((piece) =>
+    piece.marks.reduce<Node[]>(
+      (content, mark) => {
+        const element = markElement(page, mark);
+        element.append(...content);
+        return [element];
+      },
+      linesOf(page, piece.text),
+    ),
+  );
 }
 
 function translatedNodes(page: Document, translated: TranslatedBlock): Node[] {
@@ -331,12 +312,6 @@ function translatedNodes(page: Document, translated: TranslatedBlock): Node[] {
 
 function translatedText(translated: TranslatedBlock): string {
   return translated.segments.map((segment) => segment.text).join(SEGMENT_GAP);
-}
-
-// A table's text as rows of cells, split as TableForm in blocks.tsx splits it, of which this is
-// a copy until the two are joined.
-function cellTexts(block: Block & { kind: "table" }, text: string): string[][] {
-  return text.split(block.row_separator).map((row) => row.split(block.cell_separator));
 }
 
 type Cell = { element: Element; row: number; cell: number };

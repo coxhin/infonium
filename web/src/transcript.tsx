@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { MarkedText, unitOffset, unitOffsets } from "./blocks";
+import { MarkedText } from "./blocks";
+import { unitOffset, unitOffsets } from "./blocktext";
 import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./client";
 import type { Clock } from "./player";
 import { inView, scrollerOf } from "./scrolling";
