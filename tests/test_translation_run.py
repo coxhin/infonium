@@ -48,6 +48,7 @@ from tests.translation_standin import (
     kept,
     kept_document,
     long_paragraphs,
+    marked,
     passage_requests,
     passages_asked,
     passages_reply,
@@ -72,7 +73,9 @@ REFUSED_REQUEST = Rejection(
 # takes outnumber those a translation runs at once.
 SEVERAL_REQUESTS_PARAGRAPHS = 40
 MANY_REQUESTS_PARAGRAPHS = 150
-TERM = "Quillmoor"
+# Terms of the survey, and the forms in which passages use them: as written, and inflected
+# as Finnish inflects a name.
+TERMS_USED = [("Quillmoor", "Quillmoor"), ("Phobos", "Phoboksen")]
 TERM_TRANSLATION = "奎尔穆尔港"
 # What the model that writes digests puts before a block it translates again.
 AGAIN = "再"
@@ -159,10 +162,7 @@ def test_requests_of_one_document_run_several_at_a_time_and_no_more_than_a_bound
 
 
 def wrong_reply(kind: str) -> Responder:
-    # A reply that cannot be used for a request of two blocks, one passage each.
-    def answers(asked: Asked, passages: list[Passage]) -> Reply:
-        return passages_reply(passages, lambda passage: f"{TRANSLATED}{passage.text}")
-
+    # A reply that cannot be used for any block of a request of two blocks.
     def respond(asked: Asked) -> Reply | Rejection:
         passages = passages_asked(asked)
         match kind:
@@ -174,14 +174,9 @@ def wrong_reply(kind: str) -> Responder:
                 return Reply(pieces=['{"blocks": ['], finish=Finish.CUT_SHORT)
             case "unparsable":
                 return Reply(pieces=["The ferry left at nine."])
-            case "a passage missing":
-                return answers(asked, passages[:-1])
-            case "a passage not asked":
-                stray = passages[-1].model_copy(update={"number": passages[-1].number + 7})
-                return answers(asked, [*passages, stray])
             case _:
                 moved = passages[-1].model_copy(update={"block": passages[0].block})
-                return answers(asked, [*passages[:-1], moved])
+                return passages_reply([*passages[:-1], moved], marked)
 
     return respond
 
@@ -191,33 +186,12 @@ WRONG_REPLIES = (
     "failed",
     "cut short",
     "unparsable",
-    "a passage missing",
-    "a passage not asked",
     "a passage under another block",
 )
 
 
-PARTLY_KEPT = pytest.mark.xfail(
-    reason="R5: of a reply that leaves out a block's passage or adds one not asked, the part "
-    "keeps the other block, which the reply answered rightly, where the reply is not to be kept",
-    strict=True,
-)
-
-
-@pytest.mark.parametrize(
-    ("kind", "wrong"),
-    [
-        pytest.param(
-            kind,
-            wrong,
-            marks=[PARTLY_KEPT]
-            if wrong == TRIES and kind in {"a passage missing", "a passage not asked"}
-            else [],
-        )
-        for kind in WRONG_REPLIES
-        for wrong in (1, TRIES)
-    ],
-)
+@pytest.mark.parametrize("kind", WRONG_REPLIES)
+@pytest.mark.parametrize("wrong", [1, TRIES])
 def test_a_request_is_tried_three_times(app: App, kind: str, wrong: int) -> None:
     blocks: list[Block] = [
         Paragraph(text="harbour ledger quorvex", marks=[]),
@@ -240,7 +214,76 @@ def test_a_request_is_tried_three_times(app: App, kind: str, wrong: int) -> None
         )
         assert view["progress"]["kind"] == "stopped" and view["blocks"] == [], (
             f"a request that failed {TRIES} times did not stop the translation with nothing kept "
-            f"of it: {view}"
+            f"of it: {view['progress']}, {len(view['blocks'])} blocks kept"
+        )
+
+
+# A request of two blocks whose reply answers the paragraph rightly and the table wrongly:
+# the table's cells, and what the reply puts before a cell's answer when it is wrong.
+CELLS = ("zindlap", "évier")
+WRONGLY = "错"
+PARTLY_WRONG = ("a cell's passage missing", "a passage not asked")
+
+
+def partly_wrong(kind: str) -> Responder:
+    def wording(passage: Passage) -> str:
+        return f"{WRONGLY}{passage.text}" if plain(passage.text) in CELLS else marked(passage)
+
+    def respond(asked: Asked) -> Reply | Rejection:
+        passages = passages_asked(asked)
+        cells = [passage for passage in passages if plain(passage.text) in CELLS]
+        match kind:
+            case "a cell's passage missing":
+                return passages_reply([one for one in passages if one != cells[-1]], wording)
+            case _:
+                stray = cells[-1].model_copy(update={"number": passages[-1].number + 7})
+                return passages_reply([*passages, stray], wording)
+
+    return respond
+
+
+@pytest.mark.parametrize("kind", PARTLY_WRONG)
+@pytest.mark.parametrize("wrong", [1, TRIES])
+def test_a_replys_blocks_are_judged_one_by_one_and_only_the_wrong_asked_again(
+    app: App, kind: str, wrong: int
+) -> None:
+    paragraph = Paragraph(text="harbour ledger quorvex", marks=[])
+    blocks: list[Block] = [paragraph, Table(text="\t".join(CELLS))]
+    app.model.reset(first_replies(wrong, partly_wrong(kind), translating()))
+    document = kept(app, blocks)
+    asked_for(app, document.item_id)
+    view = settled(app, document.item_id)
+    requests = passage_requests(app)
+    first, *again = requests
+    assert {plain(passage.text) for passage in passages_asked(first)} == {paragraph.text, *CELLS}, (
+        "the first request does not carry both blocks"
+    )
+    kept_paragraph = [segment["text"] for segment in by_number(view).get(0, {}).get("segments", [])]
+    assert kept_paragraph == [f"{TRANSLATED}{paragraph.text}"], (
+        f"a block that a reply with {kind} answered rightly was not kept from that reply"
+    )
+    for asked in again:
+        assert sorted(plain(passage.text) for passage in passages_asked(asked)) == sorted(CELLS), (
+            f"a request asked again after a reply with {kind} does not carry only the block still "
+            "missing"
+        )
+    kept_texts = [segment["text"] for block in view["blocks"] for segment in block["segments"]]
+    assert not any(WRONGLY in text for text in kept_texts), (
+        f"something of a block that a reply with {kind} answered wrongly was kept"
+    )
+    if wrong < TRIES:
+        assert (view["progress"]["kind"], len(requests)) == ("translated", wrong + 1), (
+            f"the block answered wrongly {wrong} times was not asked again until it was answered: "
+            f"{len(requests)} requests, {view['progress']}"
+        )
+    else:
+        assert (view["progress"]["kind"], len(requests), set(by_number(view))) == (
+            "stopped",
+            TRIES,
+            {0},
+        ), (
+            f"a block answered wrongly every time was asked {len(requests)} times, not {TRIES}, "
+            f"or the translation did not stop with it missing: {view['progress']}"
         )
 
 
@@ -271,22 +314,26 @@ def test_the_survey_is_tried_three_times(app: App, wrong: int) -> None:
         assert passage_requests(app) == [], "passages were sent though the survey failed"
 
 
-def test_a_request_carries_the_terms_its_passages_use(app: App) -> None:
+@pytest.mark.parametrize(("term", "used"), TERMS_USED)
+def test_a_request_carries_the_terms_its_passages_use_in_any_form(
+    app: App, term: str, used: str
+) -> None:
     def mentioning(number: int) -> str:
-        return f"{TERM} " if number % 6 == 0 else ""
+        return f"{used} " if number % 6 == 0 else ""
 
-    app.model.reset(translating(survey=survey_reply(terms={TERM: TERM_TRANSLATION})))
+    app.model.reset(translating(survey=survey_reply(terms={term: TERM_TRANSLATION})))
     document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS, mentioning))
     translated_whole(app, document.item_id)
     using = [
         asked
         for asked in passage_requests(app)
-        if any(TERM in passage.text for passage in passages_asked(asked))
+        if any(used in passage.text for passage in passages_asked(asked))
     ]
-    assert using, "no request carried a passage that uses the term"
+    assert using, f"no request carried a passage that uses {used}"
     for asked in using:
         assert TERM_TRANSLATION in asked.text(), (
-            f"a request whose passages use {TERM} does not carry the translation the survey gave it"
+            f"a request whose passages use {term} as {used} does not carry the translation the "
+            "survey gave the term"
         )
 
 
@@ -342,20 +389,7 @@ ONE_PASSAGE_REPLIES: dict[str, tuple[list[Block], Callable[[Passage], str]]] = {
 }
 
 
-SHORT_CELLS_REFUSED = pytest.mark.xfail(
-    reason="R5 as amended after the third review: a table whose cells are answered in two "
-    "characters is refused three times, and the part is being mended",
-    strict=False,
-)
-
-
-@pytest.mark.parametrize(
-    "kind",
-    [
-        pytest.param(kind, marks=[SHORT_CELLS_REFUSED] if kind.startswith("a table") else [])
-        for kind in sorted(ONE_PASSAGE_REPLIES)
-    ],
-)
+@pytest.mark.parametrize("kind", sorted(ONE_PASSAGE_REPLIES))
 def test_a_block_of_one_passage_is_never_refused_for_the_length_or_likeness_of_its_answer(
     app: App, kind: str
 ) -> None:

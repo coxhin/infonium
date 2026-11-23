@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from infonium.document import Block, Document, Paragraph, document_of
 from infonium.library import LOCAL_OWNER, Item, LibraryStore, Link, Read, Settled, item_identity
 from tests.model_standin import TRANSLATION_MODEL, Asked, Rejection, Reply, Responder
-from tests.service import POLL_SECONDS, SETTLE_SECONDS, SITE, App, digest_reply
+from tests.service import SETTLE_SECONDS, SITE, App, digest_reply
 
 # What the translating model is asked, read as the part writes it: the first request of a
 # translation asks for a survey of the document in a form of its own name; every other asks
@@ -58,7 +58,10 @@ WORDS = (
 # How often a request of a translation is tried.
 TRIES = 3
 # How long a test lets the translator go on before it judges that something did not happen.
-QUIET_SECONDS = 1.0
+QUIET_SECONDS = 0.3
+# How often a test looks at a translation it waits for: a translation of a made-up document
+# takes some tens of milliseconds, and the properties wait for hundreds of them.
+TRANSLATION_POLL_SECONDS = 0.01
 # A paragraph of a long document: long enough that a request holds a few of them.
 LONG_PARAGRAPH_WORDS = 80
 names = itertools.count()
@@ -227,7 +230,7 @@ def settled(app: App, item_id: str) -> dict[str, Any]:
             return view
         if time.monotonic() > deadline:
             pytest.fail(f"a translation did not end in time: {view['progress']}")
-        time.sleep(POLL_SECONDS)
+        time.sleep(TRANSLATION_POLL_SECONDS)
 
 
 def translated_whole(app: App, item_id: str) -> dict[str, Any]:
@@ -263,7 +266,7 @@ def wait_for(condition: Callable[[], bool], what: str) -> None:
     while not condition():
         if time.monotonic() > deadline:
             pytest.fail(f"the test waited in vain for {what}")
-        time.sleep(POLL_SECONDS)
+        time.sleep(TRANSLATION_POLL_SECONDS)
 
 
 def quiet(app: App) -> None:

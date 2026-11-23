@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Callable
 from typing import Any
 
@@ -304,29 +305,40 @@ def test_a_table_is_translated_cell_by_cell_in_its_grid(app: App, grid: list[lis
     )
 
 
-BREAKS = {"cell": "\t", "row": "\n"}
+# What the model may write between two words of a cell's answer: a space, or one of the
+# table's separators.
+GAPS = (" ", "\t", "\n")
 
 
-@pytest.mark.xfail(
-    reason="R3: a reply that puts a row or cell separator in a cell is kept, the separator "
-    "turned into a space, where the brief says it is not kept",
-    strict=True,
+@given(
+    grid=grids.filter(lambda grid: any(" " in cell for row in grid for cell in row)),
+    gaps=st.lists(st.sampled_from(GAPS), min_size=1, max_size=6).filter(
+        lambda gaps: set(gaps) != {" "}
+    ),
 )
-@pytest.mark.parametrize("separator", sorted(BREAKS))
-def test_a_reply_that_breaks_a_tables_grid_is_not_kept(app: App, separator: str) -> None:
-    grid = [["harbour", "ledger"], ["quorvex", "zindlap"]]
-
+@EXAMPLES
+def test_a_separator_inside_a_cells_answer_is_folded_into_a_space(
+    app: App, grid: list[list[str]], gaps: list[str]
+) -> None:
     def broken(passage: Passage) -> str:
-        return f"{TRANSLATED}{passage.text}{BREAKS[separator]}{passage.text}"
+        words = passage.text.split(" ")
+        between = ["", *itertools.islice(itertools.cycle(gaps), len(words) - 1)]
+        return TRANSLATED + "".join(
+            f"{gap}{word}" for gap, word in zip(between, words, strict=True)
+        )
 
-    app.model.reset(first_replies(1, translating(broken), translating()))
+    app.model.reset(translating(broken))
     document = kept(app, [table_of(grid)])
     [block] = translated_whole(app, document.item_id)["blocks"]
-    assert grid_of(block["segments"][0]["text"]) == [
-        [f"{TRANSLATED}{cell}" for cell in row] for row in grid
-    ], f"a reply that put a {separator} separator in a cell was kept"
-    assert len(passage_requests(app)) == 2, (
-        f"a reply that broke a table's grid was not asked for again: {len(passage_requests(app))}"
+    translated = grid_of(block["segments"][0]["text"])
+    assert [len(row) for row in translated] == [len(row) for row in grid], (
+        f"a cell's answer that holds a separator broke the table's grid: {translated}"
+    )
+    assert translated == [
+        [f"{TRANSLATED}{cell}" if cell else "" for cell in row] for row in grid
+    ], f"a separator inside a cell's answer was not folded into a space: {translated}"
+    assert len(passage_requests(app)) == 1, (
+        "a cell's answer that holds a separator was asked for again, where it is folded and kept"
     )
 
 
@@ -464,23 +476,9 @@ def garbled_once(
     return block, len(passage_requests(app))
 
 
-UNPAIRED_KEPT = pytest.mark.xfail(
-    reason="R4 as amended after the third review: a reply in which one tag of a pair is lost is "
-    "kept, the other tag taken out of its text and the mark dropped, where it is to be asked "
-    "for again",
-    strict=False,
-)
-
-
-@pytest.mark.parametrize(
-    "garbling",
-    [
-        pytest.param(name, marks=[UNPAIRED_KEPT] if name.endswith("lost") else [])
-        for name in sorted(UNPAIRED)
-    ],
-)
+@pytest.mark.parametrize("garbling", sorted(UNPAIRED))
 @given(paragraph=marked_paragraph(), data=st.data())
-@UNSHRUNK_EXAMPLES
+@FEW_EXAMPLES
 def test_a_reply_in_which_one_of_its_passages_tags_stands_unpaired_is_asked_again(
     app: App, garbling: str, paragraph: Paragraph, data: st.DataObject
 ) -> None:
@@ -529,9 +527,12 @@ SOURCE_BRACKETS = (
     ("a1", "[0, 1)"),
     ("〈f2〉", "\\alpha"),
 )
-MENDED_BRACKETS = pytest.mark.xfail(
-    reason="R4 as amended after the third review: the part refuses a reply that holds bracketed "
-    "text of the source's own, and is being mended",
+# A tag's word that the source writes in brackets of its own, as a reply keeps it.
+TAG_WORD_IN_BRACKETS = frozenset({"《F1》", "〈f2〉"})
+TAG_WORD_REFUSED = pytest.mark.xfail(
+    reason="R4 as amended after the third review: a reply that keeps a word of the source's own "
+    "text, written in brackets, that is also the word of one of the passage's tags (《F1》 beside "
+    "the tag f1) is refused three times, where the source's own text is kept",
     strict=False,
 )
 
@@ -539,7 +540,7 @@ MENDED_BRACKETS = pytest.mark.xfail(
 @pytest.mark.parametrize(
     ("bracketed", "formula"),
     [
-        pytest.param(*case, marks=[] if case[0] == "a1" else [MENDED_BRACKETS])
+        pytest.param(*case, marks=[TAG_WORD_REFUSED] if case[0] in TAG_WORD_IN_BRACKETS else [])
         for case in SOURCE_BRACKETS
     ],
 )
