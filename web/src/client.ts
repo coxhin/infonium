@@ -62,13 +62,24 @@ async function done(request: Promise<{ error?: Refusal; response: Response }>): 
   }
 }
 
+// The service answered a question with a status other than success, so it began no answer.
+// Any other failure of a question is a connection that broke.
+export class RefusedQuestion extends Error {}
+
 // The events of one question, read as they arrive: each is one line of JSON.
 async function* eventLines(
-  request: Promise<{ data?: ReadableStream<Uint8Array> | null; error?: Refusal }>,
+  request: Promise<{
+    data?: ReadableStream<Uint8Array> | null;
+    error?: Refusal;
+    response: Response;
+  }>,
 ): AsyncGenerator<ChatEvent> {
-  const { data, error } = await request;
+  const { data, error, response } = await request;
+  if (!response.ok) {
+    throw new RefusedQuestion(refusalText(error));
+  }
   if (data === undefined || data === null) {
-    throw new Error(refusalText(error));
+    throw new Error("服务没有送来任何内容");
   }
   const arriving = data.getReader();
   const decoder = new TextDecoder();

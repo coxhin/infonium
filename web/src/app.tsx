@@ -91,12 +91,17 @@ export function App() {
   const entries = useWatched(listItems, String(imports), (listed) => listed.some(isBeingRead));
   const { seating, seated, pointer } = useSeating();
   const [opening, setOpening] = useState<Opening>();
-  // An item is opened for a passage once; opened again another way, it opens at its start.
+  // An item is opened for a passage once: the passage is given to the first reader of the item
+  // that comes on show, and to no reader made after it. An item opened another way opens at
+  // its start.
   useEffect(() => {
-    if (opening !== undefined && opening.itemId !== selected) {
+    if (
+      opening !== undefined &&
+      (opening.itemId !== selected || seated?.itemId === opening.itemId)
+    ) {
       setOpening(undefined);
     }
-  }, [selected]);
+  }, [selected, seated?.life]);
 
   function openAt(itemId: string, anchor: Anchor) {
     setOpening({ itemId, anchor });

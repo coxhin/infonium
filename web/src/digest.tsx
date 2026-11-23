@@ -4,8 +4,6 @@ import { Citations, type Citing } from "./citing";
 import { useLoaded } from "./loading";
 import "./digest.css";
 
-export type { Pointer } from "./citing";
-
 function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
   return (
     <>
@@ -48,10 +46,18 @@ export function DigestPanel({ itemId, citing }: { itemId: string; citing: Citing
     () => (round === 0 ? ensureDigest(itemId) : rewriteDigest(itemId)),
     `${itemId}:${round}`,
   );
+
+  // The chips of the digest that is written anew are gone, so the passage one of them showed
+  // is taken off show with them.
+  function rewrite() {
+    citing.hide();
+    setRound(round + 1);
+  }
+
   return (
     <div className="digest">
       <header>
-        <button disabled={digest.state === "loading"} onClick={() => setRound(round + 1)}>
+        <button disabled={digest.state === "loading"} onClick={rewrite}>
           重新生成
         </button>
       </header>

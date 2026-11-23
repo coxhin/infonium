@@ -6,8 +6,10 @@ import {
   forgetLibraryConversation,
   readItemConversation,
   readLibraryConversation,
+  RefusedQuestion,
   type ChatEvent,
   type Conversation,
+  type Turn,
 } from "./client";
 import { reasonOf, type Loaded } from "./loading";
 
@@ -20,14 +22,20 @@ export type Pending = { question: string; searches: string[]; statements: string
 
 export type Forgetting = "idle" | "confirming" | "underway";
 
-// All the chat holds of one conversation, kept while another is on show.
+// All the chat holds of one conversation, kept while another is on show. What is heard is
+// told to a screen reader once: the latest answer that arrived.
 export type Chat = {
   conversation: Loaded<Conversation>;
   pending: Pending | undefined;
   typed: string;
   problem: string | undefined;
   forgetting: Forgetting;
+  heard: string;
 };
+
+// Where a conversation is scrolled to, and whether it follows what is newest. It outlives the
+// view of the conversation, which is made anew when its item is opened again.
+export type Place = { top: number; following: boolean };
 
 const LIBRARY_KEY = "library";
 const UNREAD: Chat = {
@@ -36,6 +44,7 @@ const UNREAD: Chat = {
   typed: "",
   problem: undefined,
   forgetting: "idle",
+  heard: "",
 };
 const CUT_OFF = "连接中断，回答没有写完";
 
@@ -70,8 +79,13 @@ function withTurns(chat: Chat, conversation: Conversation): Chat {
   return { ...chat, conversation: { state: "ready", value: conversation } };
 }
 
+function heardOf(turn: Turn): string {
+  return `回答已写好：${turn.answer.statements.map((statement) => statement.text).join(" ")}`;
+}
+
 export type Conversations = {
   chatOf: (scope: Scope) => Chat;
+  placeOf: (scope: Scope) => Place;
   read: (scope: Scope) => void;
   type: (scope: Scope, text: string) => void;
   ask: (scope: Scope) => void;
@@ -91,6 +105,7 @@ export function useConversations(): Conversations {
   const [chats, setChats] = useState<ReadonlyMap<string, Chat>>(new Map());
   // A conversation is read once, when it is first shown, and again only when asked to.
   const requested = useRef(new Set<string>());
+  const places = useRef(new Map<string, Place>());
 
   function update(scope: Scope, change: (chat: Chat) => Chat) {
     const key = scopeKey(scope);
@@ -101,12 +116,29 @@ export function useConversations(): Conversations {
     return chats.get(scopeKey(scope)) ?? UNREAD;
   }
 
+  function placeOf(scope: Scope): Place {
+    const key = scopeKey(scope);
+    const place = places.current.get(key) ?? { top: 0, following: true };
+    places.current.set(key, place);
+    return place;
+  }
+
+  // After a connection broke, the service may still have kept the answer, so the
+  // conversation is read again. The one on show stays when it cannot be.
   function reread(scope: Scope) {
     readConversation(scope).then(
       (conversation) => update(scope, (chat) => withTurns(chat, conversation)),
-      // The conversation on show stays; the reason for the latest failure is already said.
-      () => undefined,
+      (error: unknown) =>
+        update(scope, (chat) => ({
+          ...chat,
+          problem: `${chat.problem ?? ""}对话也没能重新读取：${reasonOf(error)}`,
+        })),
     );
+  }
+
+  function cutOff(scope: Scope, question: string, reason: string) {
+    update(scope, (chat) => givenBack(chat, question, `${CUT_OFF}${reason}。`));
+    reread(scope);
   }
 
   function read(scope: Scope) {
@@ -127,10 +159,8 @@ export function useConversations(): Conversations {
   }
 
   async function answer(scope: Scope, question: string) {
-    let heard = false;
     try {
       for await (const event of asked(scope, question)) {
-        heard = true;
         switch (event.kind) {
           case "drafted":
             update(scope, (chat) =>
@@ -152,6 +182,7 @@ export function useConversations(): Conversations {
               return {
                 ...withTurns(chat, { turns: [...turns, event.turn] }),
                 pending: undefined,
+                heard: heardOf(event.turn),
               };
             });
             return;
@@ -160,16 +191,12 @@ export function useConversations(): Conversations {
             return;
         }
       }
-      update(scope, (chat) => givenBack(chat, question, `${CUT_OFF}。`));
-      reread(scope);
+      cutOff(scope, question, "");
     } catch (error) {
-      // A refusal comes before any event; a failure after one is a connection cut off, after
-      // which the service may still have kept the answer.
-      if (heard) {
-        update(scope, (chat) => givenBack(chat, question, `${CUT_OFF}：${reasonOf(error)}`));
-        reread(scope);
+      if (error instanceof RefusedQuestion) {
+        update(scope, (chat) => givenBack(chat, question, `问题没有被接受：${error.message}`));
       } else {
-        update(scope, (chat) => givenBack(chat, question, `问题没有被接受：${reasonOf(error)}`));
+        cutOff(scope, question, `：${reasonOf(error)}`);
       }
     }
   }
@@ -206,6 +233,7 @@ export function useConversations(): Conversations {
 
   return {
     chatOf,
+    placeOf,
     read,
     type: (scope, text) => update(scope, (chat) => ({ ...chat, typed: text })),
     ask,

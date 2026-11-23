@@ -7,7 +7,7 @@ import {
   type PagePlace,
   type TimePlace,
 } from "./client";
-import type { Pointer } from "./digest";
+import type { Pointer } from "./citing";
 import { itemTitle } from "./entry";
 import { reasonOf } from "./loading";
 import { PageViewer } from "./pages";

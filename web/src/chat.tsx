@@ -2,9 +2,9 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import type { Anchor, Turn } from "./client";
 import { Citations, type Citing } from "./citing";
@@ -15,11 +15,13 @@ import {
   type Chat,
   type Conversations,
   type Pending,
+  type Place,
   type Scope,
 } from "./conversations";
+import type { Seat } from "./seat";
 import "./chat.css";
 
-type ScopeKind = Scope["kind"];
+export type ScopeKind = Scope["kind"];
 const SCOPE_NAMES: Record<ScopeKind, string> = { item: "本文", library: "整个库" };
 const INVITATIONS: Record<ScopeKind, string> = {
   item: "问一个关于这一篇的问题。回答里的每一句都附上原文的出处。",
@@ -37,8 +39,6 @@ const FOLLOWING_SLACK = 24;
 // item, which is then opened at it.
 export type Opener = (itemId: string, anchor: Anchor) => void;
 
-type Seen = { itemId: string | undefined; documentId: string | undefined };
-
 function Spent({ answer }: { answer: Turn["answer"] }) {
   return (
     <footer className="spent">
@@ -51,12 +51,12 @@ function Spent({ answer }: { answer: Turn["answer"] }) {
 function Answer({
   turn,
   citing,
-  seen,
+  seat,
   onOpen,
 }: {
   turn: Turn;
   citing: Citing;
-  seen: Seen;
+  seat: Seat | undefined;
   onOpen: Opener;
 }) {
   const { answer } = turn;
@@ -65,7 +65,7 @@ function Answer({
 
   function titleOf(anchor: Anchor): string {
     const source = sourceOf(anchor);
-    return anchor.document_id === seen.documentId || source === undefined
+    return anchor.document_id === seat?.documentId || source === undefined
       ? anchor.quote
       : `${anchor.quote}\n——《${source.title}》`;
   }
@@ -73,13 +73,16 @@ function Answer({
   function point(anchor: Anchor) {
     const source = sourceOf(anchor);
     // A passage of the item on show, even of a document it no longer shows, is looked for in
-    // the reader, which says when it is not there.
-    if (anchor.document_id === seen.documentId || source?.item === seen.itemId) {
+    // the reader, which says when it is not there. A passage of the item that is opening, whose
+    // reader is not on show yet, is shown once it is.
+    if (
+      seat !== undefined &&
+      (anchor.document_id === seat.documentId || source?.item === seat.itemId)
+    ) {
       citing.point(anchor);
     } else if (source === undefined) {
       citing.fail("回答没有说这段引文出自哪一篇");
     } else {
-      citing.pointedElsewhere(anchor);
       onOpen(source.item, anchor);
     }
   }
@@ -123,30 +126,31 @@ function Question({ children }: { children: ReactNode }) {
 }
 
 // The turns of a conversation, followed by the question being answered. It follows what is
-// newest unless the reader has scrolled away from the end, and keeps its place while hidden.
+// newest unless the reader has scrolled away from the end, and keeps its place while hidden
+// and while its item is closed.
 function Thread({
   chat,
   kind,
   shown,
+  place,
   onRetry,
   children,
 }: {
   chat: Chat;
   kind: ScopeKind;
   shown: boolean;
+  place: Place;
   onRetry: () => void;
   children: (turn: Turn) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
-  const place = useRef(0);
   const { conversation, pending } = chat;
 
   function scrolled() {
     const element = scroller.current;
     if (element !== null && shown) {
-      place.current = element.scrollTop;
-      following.current =
+      place.top = element.scrollTop;
+      place.following =
         element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOWING_SLACK;
     }
   }
@@ -154,14 +158,14 @@ function Thread({
   // A question just sent is followed whatever the reader was looking at.
   useLayoutEffect(() => {
     if (pending !== undefined && pending.statements.length === 0) {
-      following.current = true;
+      place.following = true;
     }
   }, [pending?.question]);
 
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element !== null && shown) {
-      element.scrollTop = following.current ? element.scrollHeight : place.current;
+      element.scrollTop = place.following ? element.scrollHeight : place.top;
     }
   });
 
@@ -208,16 +212,40 @@ function Forget({
   chat,
   scope,
   conversations,
+  questionBox,
 }: {
   chat: Chat;
   scope: Scope;
   conversations: Conversations;
+  questionBox: RefObject<HTMLTextAreaElement | null>;
 }) {
+  const forgetButton = useRef<HTMLButtonElement>(null);
+  const cancelled = useRef(false);
   const empty = chat.conversation.state !== "ready" || chat.conversation.value.turns.length === 0;
+
+  // The control that was pressed goes away, so the focus is put where the reader goes on.
+  useLayoutEffect(() => {
+    if (cancelled.current && chat.forgetting === "idle") {
+      cancelled.current = false;
+      forgetButton.current?.focus();
+    }
+  }, [chat.forgetting]);
+
+  function cancel() {
+    cancelled.current = true;
+    conversations.setForgetting(scope, "idle");
+  }
+
+  function confirm() {
+    questionBox.current?.focus();
+    conversations.forget(scope);
+  }
+
   switch (chat.forgetting) {
     case "idle":
       return (
         <button
+          ref={forgetButton}
           className="quiet"
           disabled={empty || chat.pending !== undefined}
           onClick={() => conversations.setForgetting(scope, "confirming")}
@@ -227,12 +255,17 @@ function Forget({
       );
     case "confirming":
       return (
-        <span className="confirm" role="group" aria-label="确认清空">
+        <span
+          className="confirm"
+          role="group"
+          aria-label="确认清空"
+          onKeyDown={(event) => event.key === "Escape" && cancel()}
+        >
           清空这段对话？
-          <button className="danger" onClick={() => conversations.forget(scope)}>
+          <button className="danger" onClick={confirm}>
             清空
           </button>
-          <button autoFocus onClick={() => conversations.setForgetting(scope, "idle")}>
+          <button autoFocus onClick={cancel}>
             取消
           </button>
         </span>
@@ -246,10 +279,12 @@ function Composer({
   chat,
   scope,
   conversations,
+  questionBox,
 }: {
   chat: Chat;
   scope: Scope;
   conversations: Conversations;
+  questionBox: RefObject<HTMLTextAreaElement | null>;
 }) {
   function keyed(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Enter while an input method is composing picks a candidate; it sends nothing.
@@ -273,6 +308,7 @@ function Composer({
         </p>
       )}
       <textarea
+        ref={questionBox}
         aria-label={`提问：${SCOPE_NAMES[scope.kind]}`}
         placeholder={PLACEHOLDERS[scope.kind]}
         rows={3}
@@ -296,17 +332,18 @@ function ChatScope({
   shown,
   conversations,
   citing,
-  seen,
+  seat,
   onOpen,
 }: {
   scope: Scope;
   shown: boolean;
   conversations: Conversations;
   citing: Citing;
-  seen: Seen;
+  seat: Seat | undefined;
   onOpen: Opener;
 }) {
   const chat = conversations.chatOf(scope);
+  const questionBox = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (shown) {
       conversations.read(scope);
@@ -315,41 +352,58 @@ function ChatScope({
 
   return (
     <div className="chat-scope" hidden={!shown}>
-      <Thread chat={chat} kind={scope.kind} shown={shown} onRetry={() => conversations.read(scope)}>
-        {(turn) => <Answer turn={turn} citing={citing} seen={seen} onOpen={onOpen} />}
+      <Thread
+        chat={chat}
+        kind={scope.kind}
+        shown={shown}
+        place={conversations.placeOf(scope)}
+        onRetry={() => conversations.read(scope)}
+      >
+        {(turn) => <Answer turn={turn} citing={citing} seat={seat} onOpen={onOpen} />}
       </Thread>
+      {/* An answer that has arrived is told to a screen reader once, not as it grows. */}
+      <p className="heard" role="status">
+        {chat.heard}
+      </p>
       <div className="forget">
-        <Forget chat={chat} scope={scope} conversations={conversations} />
+        <Forget
+          chat={chat}
+          scope={scope}
+          conversations={conversations}
+          questionBox={questionBox}
+        />
       </div>
-      <Composer chat={chat} scope={scope} conversations={conversations} />
+      <Composer
+        chat={chat}
+        scope={scope}
+        conversations={conversations}
+        questionBox={questionBox}
+      />
     </div>
   );
 }
 
 // The chat about the item on show or about the whole library. With no item on show, only the
-// library can be asked.
+// library can be asked, whatever was chosen.
 export function ChatPanel({
   itemId,
-  documentId,
+  seat,
+  scope,
+  onScope,
   shown,
   citing,
   onOpen,
 }: {
   itemId: string | undefined;
-  documentId: string | undefined;
+  seat: Seat | undefined;
+  scope: ScopeKind;
+  onScope: (scope: ScopeKind) => void;
   shown: boolean;
   citing: Citing;
   onOpen: Opener;
 }) {
   const conversations = useConversations();
-  const [chosen, setChosen] = useState<ScopeKind>("item");
-  useEffect(() => {
-    if (itemId === undefined) {
-      setChosen("library");
-    }
-  }, [itemId]);
-  const kind: ScopeKind = itemId === undefined ? "library" : chosen;
-  const seen: Seen = { itemId, documentId };
+  const kind: ScopeKind = itemId === undefined ? "library" : scope;
 
   return (
     <div className="chat">
@@ -359,7 +413,7 @@ export function ChatPanel({
             key={name}
             aria-pressed={kind === name}
             disabled={name === "item" && itemId === undefined}
-            onClick={() => setChosen(name)}
+            onClick={() => onScope(name)}
           >
             {SCOPE_NAMES[name]}
           </button>
@@ -372,7 +426,7 @@ export function ChatPanel({
           shown={shown && kind === "item"}
           conversations={conversations}
           citing={citing}
-          seen={seen}
+          seat={seat}
           onOpen={onOpen}
         />
       )}
@@ -381,7 +435,7 @@ export function ChatPanel({
         shown={shown && kind === "library"}
         conversations={conversations}
         citing={citing}
-        seen={seen}
+        seat={seat}
         onOpen={onOpen}
       />
     </div>

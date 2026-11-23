@@ -8,16 +8,18 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { ChatPanel, type Opener } from "./chat";
+import type { Anchor } from "./client";
+import { ChatPanel, type Opener, type ScopeKind } from "./chat";
 import { useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
+import type { Seat } from "./seat";
 import "./side.css";
 
-// The item whose document is on show in the reader, and that document.
-type Seat = { itemId: string; documentId: string };
+// What the reader tells of itself: its item and the document it shows.
+type Shown = { itemId: string; documentId: string };
 
 type Seating = {
-  seat: (seat: Seat) => void;
+  seat: (shown: Shown) => Seat;
   unseat: (seat: Seat) => void;
   pointer: RefObject<Pointer | undefined>;
 };
@@ -33,14 +35,18 @@ const NOT_ON_SHOW = "原文还没有打开";
 export function useSeating(): { seating: Seating; seated: Seat | undefined; pointer: Pointer } {
   const [seated, setSeated] = useState<Seat>();
   const current = useRef<Pointer>(undefined);
+  const lives = useRef(0);
   const seating = useMemo<Seating>(
     () => ({
-      seat: setSeated,
+      seat: (shown) => {
+        lives.current += 1;
+        const seat = { ...shown, life: lives.current };
+        setSeated(seat);
+        return seat;
+      },
       unseat: (left) => {
         current.current = undefined;
-        setSeated((held) =>
-          held?.itemId === left.itemId && held.documentId === left.documentId ? undefined : held,
-        );
+        setSeated((held) => (held?.life === left.life ? undefined : held));
       },
       pointer: current,
     }),
@@ -83,8 +89,7 @@ export function SidePanel({
     seating.pointer.current = pointer;
   });
   useLayoutEffect(() => {
-    const seat = { itemId, documentId };
-    seating.seat(seat);
+    const seat = seating.seat({ itemId, documentId });
     return () => seating.unseat(seat);
   }, [itemId, documentId]);
   return null;
@@ -115,18 +120,22 @@ export function SideColumn({
   pointer: Pointer;
   onOpen: Opener;
 }) {
+  // What the reader chose. With no item open, the library's chat is on show without being
+  // chosen, so that an item opened from the list shows what was chosen before.
   const [chosen, setChosen] = useState<Tab>("digest");
+  const [chosenScope, setChosenScope] = useState<ScopeKind>("item");
   const tab: Tab = selected === undefined ? "chat" : chosen;
   // Until the reader shows the selected item, the column points at nothing.
   const seat = seated?.itemId === selected ? seated : undefined;
-  const citing = useCiting(pointer, seat?.documentId);
+  const citing = useCiting(pointer, seat);
 
-  // With no item open the chat is on show, and it stays so when a citation opens an item.
-  useEffect(() => {
-    if (selected === undefined) {
-      setChosen("chat");
-    }
-  }, [selected]);
+  // A citation that opens an item leaves the reader in the conversation it was pressed in.
+  function openAt(itemId: string, anchor: Anchor) {
+    setChosen("chat");
+    setChosenScope("library");
+    citing.awaitOpening(anchor, itemId);
+    onOpen(itemId, anchor);
+  }
 
   // A digest may take a model call to write, so it is asked for only once its tab is shown,
   // and then kept while the item stays open.
@@ -182,10 +191,12 @@ export function SideColumn({
       >
         <ChatPanel
           itemId={selected}
-          documentId={seat?.documentId}
+          seat={seat}
+          scope={chosenScope}
+          onScope={setChosenScope}
           shown={tab === "chat"}
           citing={citing}
-          onOpen={onOpen}
+          onOpen={openAt}
         />
       </div>
       <div
