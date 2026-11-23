@@ -652,15 +652,7 @@ def test_nothing_in_the_served_page_can_run_or_load_another_page(app: App, page:
 @pytest.mark.parametrize(
     "picture",
     [
-        pytest.param(
-            "<img src='a.png' srcset='a.png 1x, javascript:x() 2x'>",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="a javascript: address among the candidates of a picture's srcset is "
-                "left in the served page; R2 asks for none in any attribute (a browser does not "
-                "run it from there)",
-            ),
-        ),
+        "<img src='a.png' srcset='a.png 1x, javascript:x() 2x'>",
         "<picture><source srcset='javascript:x()'><img src='a.png'></picture>",
     ],
 )
@@ -826,17 +818,6 @@ def doctype_of(page_html: str) -> str | None:
     return None if declared is None else " ".join(declared.group(1).split()).lower()
 
 
-def dropped(doctype: str, mode: str) -> object:
-    return pytest.param(
-        doctype,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=f"the declaration is left out of the served page, which a browser then lays "
-            f"out in quirks mode; with the declaration it is laid out in {mode} mode",
-        ),
-    )
-
-
 KEPT_DOCTYPES = (
     "<!DOCTYPE html>",
     "<!doctype html>",
@@ -863,23 +844,13 @@ def test_the_page_keeps_its_document_type(app: App) -> None:
 @pytest.mark.parametrize(
     "doctype",
     [
-        dropped(
-            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" '
-            '"http://www.w3.org/TR/html4/strict.dtd">',
-            "standards",
-        ),
-        dropped(
-            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
-            '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
-            "standards",
-        ),
-        dropped(
-            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
-            '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">',
-            "limited-quirks",
-        ),
-        dropped('<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">', "quirks"),
-        dropped('<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">', "quirks"),
+        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">',
+        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">',
+        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">',
     ],
 )
 def test_the_page_keeps_a_document_type_of_an_older_kind(app: App, doctype: str) -> None:
