@@ -71,7 +71,8 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 - A page whose HTML holds 200 words or more, menus and links included, is read from its HTML and never opened in a browser.
 - A page of fewer than 200 words waits while it is opened in a browser, 90 seconds at most: the three such pages of a survey of 30 sites took 5 to 26 seconds.
 - Of the HTML and the page the browser builds, the one with more words is kept, even when those words are menus and links.
-- Without Chrome, a page whose HTML only asks for JavaScript may be read as that one line.
+- When the browser is missing or cannot render a page, the page is read from its HTML alone, and one with no text there fails with the browser's reason.
+- A page whose HTML only asks for JavaScript may then be read as that one line.
 - A page in the browser may take 3 GiB of memory, counted over the browser and the programs that drive it, and 1 GiB of disk, and may pass the memory bound by about 1.5 GiB, and the disk bound by what it writes in about 2 seconds, before it is ended.
 - Nothing but its 90 seconds bounds the processor time a page takes in the browser, on every core the browser uses, and watching it costs infonium about an eighth of a core.
 - A page in the browser reaches only public addresses, not this machine, a network one of its interfaces stands in, or the ranges set aside for special uses, but it can have this machine's resolver look up any name.
