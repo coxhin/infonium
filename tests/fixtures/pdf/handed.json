@@ -1,0 +1,27 @@
+{
+ "made_by": "commit 6facef0 (branch hybrid-scans)",
+ "options": [
+  "-b",
+  "hybrid-engine",
+  "-m",
+  "auto"
+ ],
+ "samples": {
+  "marks_digital": "1726695b612dd2eaeeb79730e5594cb489ea52303f1e8dd2a19b3abd557e4653",
+  "trap": "bd83c539c6686cf3f844c6077b7462c9893fb8d15d33125f7387cff877a4febc",
+  "scripts2_digital": "3d907a7ddf1269f73340271c5471c66d32ce3edc9e1308ee38d90e40fbcf9909",
+  "vertical_digital": "2b50502859ce80f315c40f4a2abaadbbb2c7f0fab880db2be13cf571ac29e492",
+  "vertical_scan": "d74a5ed5475906a6e2d5daa2233f0934d3fed14a998833a22366138335d04e12",
+  "special": "676f432a25fd2a8a7275663c090d6a2ea8767b05be4ce331bb7e210416eb6af3",
+  "turned_digital": "76a158ece7142a27965c2d5478ab7fe6edfea0fcbaf583ae26fb3d64212553e5",
+  "marks_scan": "8cc71772a4304dcb86a5b43f47f9f97cd77c14813fa2d04dc55331db3275f7ae",
+  "harsh": "ce97b685082562d9ce3402a3ed97ee33ac31e981f4b5556ebda57192a96d00b7",
+  "scripts_digital": "d259b1ed57b9dd7b6ac197b8dcd5221e0aeb77eaf2c563359fed943b9ce87948",
+  "odd_scan": "bd2eb370001a9512a8f009fcb7b68b6c7a54f09b7ec720f62c68d9e9d1a53427",
+  "magazine": "85277975f67eb9a48c026ed4a8ba773371754c2eeea713e1fad6ef556ae4d7ee",
+  "article_I": "91a50dca96a739af4f2c27507108f1debfe38bb4569a9b8a2cf7d30a312cc562",
+  "turned_scan": "80830d1aee44c8964e0a6c1355658b45cb191c71ff9e0852edf3416b2a9d354e",
+  "mixed_layers": "d8e7af22f55a03dd0a2ddacdf1b80e3ea676115e5e725dfd0b35a9c36044f666",
+  "regress": "94af86ccf6c1a84cf05cdef5e0e41479fa79a936795fc7951b633c07e1f15edc"
+ }
+}

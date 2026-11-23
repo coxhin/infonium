@@ -1,0 +1,336 @@
+{
+ "title": "1. Circulation",
+ "blocks": [
+  {
+   "kind": "paragraph",
+   "text": "Subscribers by region, 2024",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 27,
+     "page": 0,
+     "left": 0.16666666666666666,
+     "top": 0.1919191919191919,
+     "width": 0.26307189542483667,
+     "height": 0.01767676767676768
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "1. Circulation",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.09217171717171717,
+     "width": 0.16993464052287582,
+     "height": 0.022727272727272735
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The paper edition still leads everywhere but in one district, where the two editions have changed places since the last count.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.1388888888888889,
+     "width": 0.7434640522875816,
+     "height": 0.013888888888888895
+    },
+    {
+     "kind": "page",
+     "start": 105,
+     "end": 126,
+     "page": 0,
+     "left": 0.11601307189542484,
+     "top": 0.15782828282828282,
+     "width": 0.14052287581699344,
+     "height": 0.012626262626262624
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Source: Halden Survey",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 21,
+     "page": 0,
+     "left": 0.16830065359477125,
+     "top": 0.4318181818181818,
+     "width": 0.12254901960784315,
+     "height": 0.011363636363636354
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Figure 1. Paid circulation of the two editions.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 47,
+     "page": 0,
+     "left": 0.3562091503267974,
+     "top": 0.45707070707070707,
+     "width": 0.284313725490196,
+     "height": 0.012626262626262652
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Every release of the classifier goes through the same loop, and a release that does badly in the last step returns to the second one.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 106,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.4898989898989899,
+     "width": 0.7401960784313725,
+     "height": 0.01641414141414138
+    },
+    {
+     "kind": "page",
+     "start": 107,
+     "end": 133,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.5113636363636364,
+     "width": 0.18627450980392157,
+     "height": 0.012626262626262652
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Figure 2. The loop a release goes through.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 42,
+     "page": 0,
+     "left": 0.36437908496732024,
+     "top": 0.7424242424242424,
+     "width": 0.26633986928104575,
+     "height": 0.012626262626262652
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "2. The reader's accou nt",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 24,
+     "page": 1,
+     "left": 0.11437908496732026,
+     "top": 0.09343434343434344,
+     "width": 0.29411764705882354,
+     "height": 0.021464646464646464
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The page for safety options was redrawn in the spring. It now shows the state of each option in plain words instead of a switch",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 101,
+     "page": 1,
+     "left": 0.11601307189542484,
+     "top": 0.1388888888888889,
+     "width": 0.7205882352941176,
+     "height": 0.013888888888888895
+    },
+    {
+     "kind": "page",
+     "start": 102,
+     "end": 127,
+     "page": 1,
+     "left": 0.11764705882352941,
+     "top": 0.15782828282828282,
+     "width": 0.18627450980392155,
+     "height": 0.012626262626262624
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Figure 3. The redrawn page as a member sees it.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 47,
+     "page": 1,
+     "left": 0.3464052287581699,
+     "top": 0.45707070707070707,
+     "width": 0.303921568627451,
+     "height": 0.012626262626262652
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Two figures from the spring survey were printed on the back cover of the annual report and the board quoted both of them at the general meeting.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 100,
+     "page": 1,
+     "left": 0.11437908496732026,
+     "top": 0.4911616161616162,
+     "width": 0.7385620915032679,
+     "height": 0.015151515151515083
+    },
+    {
+     "kind": "page",
+     "start": 101,
+     "end": 144,
+     "page": 1,
+     "left": 0.11437908496732026,
+     "top": 0.51010101010101,
+     "width": 0.3137254901960784,
+     "height": 0.015151515151515249
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "73％",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 3,
+     "page": 1,
+     "left": 0.17320261437908496,
+     "top": 0.5618686868686869,
+     "width": 0.20588235294117646,
+     "height": 0.0744949494949495
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "4.2 h",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 1,
+     "left": 0.5179738562091504,
+     "top": 0.5631313131313131,
+     "width": 0.2287581699346405,
+     "height": 0.0719696969696969
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "of readers finish the first chapter",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 35,
+     "page": 1,
+     "left": 0.1830065359477124,
+     "top": 0.6578282828282829,
+     "width": 0.25326797385620914,
+     "height": 0.018939393939393923
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "average listening per week",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 26,
+     "page": 1,
+     "left": 0.5277777777777778,
+     "top": 0.6590909090909091,
+     "width": 0.2124183006535948,
+     "height": 0.017676767676767735
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Based on 1,940 answers collected in March",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 41,
+     "page": 1,
+     "left": 0.35947712418300654,
+     "top": 0.7209595959595959,
+     "width": 0.27614379084967317,
+     "height": 0.012626262626262652
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Figure 4. The back cover of the annual report.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 46,
+     "page": 1,
+     "left": 0.3545751633986928,
+     "top": 0.76010101010101,
+     "width": 0.28758169934640526,
+     "height": 0.012626262626262652
+    }
+   ]
+  }
+ ]
+}

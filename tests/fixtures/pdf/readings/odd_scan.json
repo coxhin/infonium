@@ -1,0 +1,936 @@
+{
+ "title": "odd_scan",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "1. A note in a script face",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 26,
+     "page": 0,
+     "left": 0.095,
+     "top": 0.09,
+     "width": 0.24400000000000002,
+     "height": 0.019000000000000003
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Dear Ilse, the keys are with the neighbour at number twelve. Please water the fig tree on Thursdays and leave the post on the hall table. We are back on the twenty-eighth.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 81,
+     "page": 0,
+     "left": 0.095,
+     "top": 0.11799999999999998,
+     "width": 0.799,
+     "height": 0.01900000000000003
+    },
+    {
+     "kind": "page",
+     "start": 81,
+     "end": 156,
+     "page": 0,
+     "left": 0.095,
+     "top": 0.145,
+     "width": 0.727,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 156,
+     "end": 171,
+     "page": 0,
+     "left": 0.093,
+     "top": 0.172,
+     "width": 0.151,
+     "height": 0.02100000000000002
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "2. An ornament between two paragraphs",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 37,
+     "page": 0,
+     "left": 0.096,
+     "top": 0.21,
+     "width": 0.4029999999999999,
+     "height": 0.01899999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The first part of the story ends at the river, where the travellers wait for the morning ferry.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 95,
+     "page": 0,
+     "left": 0.095,
+     "top": 0.23599999999999996,
+     "width": 0.686,
+     "height": 0.020000000000000046
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The second part begins a year later, in a town none of them had meant to see again.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 83,
+     "page": 0,
+     "left": 0.095,
+     "top": 0.326,
+     "width": 0.634,
+     "height": 0.016000000000000014
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "3. A grid of figures",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 20,
+     "page": 0,
+     "left": 0.097,
+     "top": 0.361,
+     "width": 0.18899999999999997,
+     "height": 0.01899999999999996
+    }
+   ]
+  },
+  {
+   "kind": "table",
+   "text": "4812\t0391\t7720\t1045\t9936\t2208\t5571\t6630\t0184\t7359\n1207\t8845\t3310\t6692\t0478\t9153\t2764\t5009\t8821\t4436\n9051\t2276\t6648\t0913\t7385\t1120\t4497\t8062\t3359\t5714\n3368\t7401\t1925\t5580\t8247\t0639\t6112\t9974\t2503\t4860\n5740\t0192\t8836\t4471\t2059\t7718\t3304\t1695\t6927\t8083",
+   "row_separator": "\n",
+   "cell_separator": "\t",
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 249,
+     "page": 0,
+     "left": 0.09640522875816994,
+     "top": 0.3813131313131313,
+     "width": 0.5522875816993464,
+     "height": 0.07828282828282829
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "4. A stamp across the text",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 26,
+     "page": 0,
+     "left": 0.097,
+     "top": 0.477,
+     "width": 0.263,
+     "height": 0.01800000000000007
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The clerk entered the parcel in the ledger and passed it to the sorting room without delay.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 91,
+     "page": 0,
+     "left": 0.098,
+     "top": 0.5,
+     "width": 0.677,
+     "height": 0.020000000000000018
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "5. A bar code and a signature",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 29,
+     "page": 0,
+     "left": 0.099,
+     "top": 0.642,
+     "width": 0.29200000000000004,
+     "height": 0.018000000000000016
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "6. A chorus that repeats",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 24,
+     "page": 1,
+     "left": 0.096,
+     "top": 0.091,
+     "width": 0.23900000000000002,
+     "height": 0.019000000000000003
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.095,
+     "top": 0.11499999999999999,
+     "width": 0.78,
+     "height": 0.018000000000000016
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.092,
+     "top": 0.137,
+     "width": 0.11199999999999999,
+     "height": 0.01899999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.095,
+     "top": 0.161,
+     "width": 0.7809999999999999,
+     "height": 0.01899999999999999
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.094,
+     "top": 0.18400000000000002,
+     "width": 0.10900000000000001,
+     "height": 0.016999999999999987
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.096,
+     "top": 0.207,
+     "width": 0.7799999999999999,
+     "height": 0.017000000000000043
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.095,
+     "top": 0.22799999999999998,
+     "width": 0.10999999999999999,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.095,
+     "top": 0.252,
+     "width": 0.7820000000000001,
+     "height": 0.018000000000000016
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.095,
+     "top": 0.272,
+     "width": 0.10999999999999999,
+     "height": 0.020999999999999963
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.097,
+     "top": 0.297,
+     "width": 0.781,
+     "height": 0.018000000000000016
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.096,
+     "top": 0.32,
+     "width": 0.10899999999999999,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Row the boat across the water, row it slow and row it far, row until the lights are fading and we see the morning star.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 104,
+     "page": 1,
+     "left": 0.097,
+     "top": 0.3449999999999999,
+     "width": 0.781,
+     "height": 0.01700000000000007
+    },
+    {
+     "kind": "page",
+     "start": 104,
+     "end": 119,
+     "page": 1,
+     "left": 0.096,
+     "top": 0.365,
+     "width": 0.10999999999999999,
+     "height": 0.020000000000000018
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "7. A form with the same line many times",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 39,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.4,
+     "width": 0.3949999999999999,
+     "height": 0.01799999999999996
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.42499999999999993,
+     "width": 0.055999999999999994,
+     "height": 0.015000000000000069
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.44,
+     "width": 0.066,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 12,
+     "page": 1,
+     "left": 0.385,
+     "top": 0.42299999999999993,
+     "width": 0.19599999999999995,
+     "height": 0.01600000000000007
+    },
+    {
+     "kind": "page",
+     "start": 12,
+     "end": 17,
+     "page": 1,
+     "left": 0.582,
+     "top": 0.42299999999999993,
+     "width": 0.07300000000000006,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 17,
+     "end": 23,
+     "page": 1,
+     "left": 0.676,
+     "top": 0.424,
+     "width": 0.09199999999999997,
+     "height": 0.01200000000000001
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.455,
+     "width": 0.066,
+     "height": 0.013999999999999957
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 13,
+     "page": 1,
+     "left": 0.386,
+     "top": 0.438,
+     "width": 0.18299999999999994,
+     "height": 0.01599999999999996
+    },
+    {
+     "kind": "page",
+     "start": 13,
+     "end": 18,
+     "page": 1,
+     "left": 0.584,
+     "top": 0.439,
+     "width": 0.07100000000000006,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 18,
+     "end": 23,
+     "page": 1,
+     "left": 0.686,
+     "top": 0.44,
+     "width": 0.07899999999999996,
+     "height": 0.010000000000000064
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.4699999999999999,
+     "width": 0.05299999999999999,
+     "height": 0.015000000000000069
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.387,
+     "top": 0.453,
+     "width": 0.05499999999999999,
+     "height": 0.01599999999999996
+    },
+    {
+     "kind": "page",
+     "start": 10,
+     "end": 23,
+     "page": 1,
+     "left": 0.585,
+     "top": 0.453,
+     "width": 0.06900000000000006,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.485,
+     "width": 0.063,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 12,
+     "page": 1,
+     "left": 0.387,
+     "top": 0.468,
+     "width": 0.18199999999999994,
+     "height": 0.01599999999999996
+    },
+    {
+     "kind": "page",
+     "start": 12,
+     "end": 17,
+     "page": 1,
+     "left": 0.584,
+     "top": 0.468,
+     "width": 0.07200000000000006,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 17,
+     "end": 23,
+     "page": 1,
+     "left": 0.672,
+     "top": 0.469,
+     "width": 0.09699999999999998,
+     "height": 0.01100000000000001
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.5,
+     "width": 0.056999999999999995,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 12,
+     "page": 1,
+     "left": 0.388,
+     "top": 0.484,
+     "width": 0.17799999999999994,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 12,
+     "end": 17,
+     "page": 1,
+     "left": 0.584,
+     "top": 0.484,
+     "width": 0.07200000000000006,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 17,
+     "end": 23,
+     "page": 1,
+     "left": 0.685,
+     "top": 0.485,
+     "width": 0.08099999999999996,
+     "height": 0.010000000000000064
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.516,
+     "width": 0.062,
+     "height": 0.014000000000000012
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 12,
+     "page": 1,
+     "left": 0.388,
+     "top": 0.498,
+     "width": 0.17599999999999993,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 12,
+     "end": 17,
+     "page": 1,
+     "left": 0.585,
+     "top": 0.498,
+     "width": 0.07300000000000006,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 17,
+     "end": 23,
+     "page": 1,
+     "left": 0.674,
+     "top": 0.49900000000000005,
+     "width": 0.09199999999999997,
+     "height": 0.010999999999999954
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Name: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.53,
+     "width": 0.065,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 1,
+     "left": 0.388,
+     "top": 0.513,
+     "width": 0.05399999999999999,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 6,
+     "end": 14,
+     "page": 1,
+     "left": 0.585,
+     "top": 0.514,
+     "width": 0.07100000000000006,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 14,
+     "end": 23,
+     "page": 1,
+     "left": 0.685,
+     "top": 0.515,
+     "width": 0.08099999999999996,
+     "height": 0.010000000000000009
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Date: ____ Signed: ____",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 11,
+     "page": 1,
+     "left": 0.388,
+     "top": 0.528,
+     "width": 0.17999999999999994,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 11,
+     "end": 23,
+     "page": 1,
+     "left": 0.585,
+     "top": 0.529,
+     "width": 0.18700000000000006,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "8. Symbols of sums",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 18,
+     "page": 1,
+     "left": 0.099,
+     "top": 0.562,
+     "width": 0.19999999999999998,
+     "height": 0.017999999999999905
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "\\sum \\int \\partial \\sqrt{} \\approx \\neq \\leq \\geq \\infty \\in \\notin \\subset \\supset \\cup \\cap \\forall \\exists \\nabla \\pm \\times \\div \\rightarrow \\leftarrow \\leftrightarrow \\Rightarrow \\alpha \\beta \\gamma \\delta \\varepsilon \\theta \\lambda \\mu \\pi \\sigma \\varphi \\omega",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 267,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.586,
+     "width": 0.628,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "9. Very small print",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 19,
+     "page": 1,
+     "left": 0.1,
+     "top": 0.623,
+     "width": 0.18399999999999997,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The carrier accepts no liability for loss or delay arising from causes beyond its control, including weather, strikes, the acts of public authorities and the failure of connecting services. Claims must be made in writing within fourteen days of the date of travel and must be accompanied by the original ticket. Refunds are paid only to the account from which the fare was paid. The carrier may change the timetable without notice. Luggage is carried at the owner's risk unless it has been registered and the fee paid at the station of departure.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 218,
+     "page": 1,
+     "left": 0.1,
+     "top": 0.645,
+     "width": 0.775,
+     "height": 0.010000000000000009
+    },
+    {
+     "kind": "page",
+     "start": 218,
+     "end": 442,
+     "page": 1,
+     "left": 0.1,
+     "top": 0.653,
+     "width": 0.7959999999999999,
+     "height": 0.0129999999999999
+    },
+    {
+     "kind": "page",
+     "start": 442,
+     "end": 546,
+     "page": 1,
+     "left": 0.098,
+     "top": 0.664,
+     "width": 0.368,
+     "height": 0.01100000000000001
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "10. One very large word",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 23,
+     "page": 1,
+     "left": 0.102,
+     "top": 0.691,
+     "width": 0.23600000000000004,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "NIGHT",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 1,
+     "left": 0.096,
+     "top": 0.72,
+     "width": 0.5850000000000001,
+     "height": 0.127
+    }
+   ]
+  }
+ ]
+}

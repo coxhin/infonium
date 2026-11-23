@@ -1,0 +1,604 @@
+{
+ "title": "scripts2.html",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Polish",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 0,
+     "left": 0.1111111111111111,
+     "top": 0.09974747474747475,
+     "width": 0.07026143790849673,
+     "height": 0.018939393939393936
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Nocny pociąg odjeżdża z Wiednia o 21:40 i przyjeżdża do Wenecji o świcie. Podróżni jedzą kolację w wagonie restauracyjnym, gdzie podaje się świeży makaron i mocną kawę.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 88,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.12878787878787878,
+     "width": 0.7222222222222222,
+     "height": 0.01641414141414141
+    },
+    {
+     "kind": "page",
+     "start": 89,
+     "end": 168,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.1527777777777778,
+     "width": 0.6601307189542484,
+     "height": 0.01641414141414141
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Turkish",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.18813131313131312,
+     "width": 0.07843137254901959,
+     "height": 0.01893939393939395
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Gece treni Viyana'dan 21:40'ta kalkar ve şafakta Venedik'e varır. Yolcular yemekli vagonda akşam yemeği yer; taze makarna ve sert kahve servis edilir.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 90,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.22095959595959597,
+     "width": 0.7173202614379085,
+     "height": 0.015151515151515138
+    },
+    {
+     "kind": "page",
+     "start": 91,
+     "end": 150,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.24368686868686867,
+     "width": 0.46732026143790856,
+     "height": 0.015151515151515138
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Vietnamese",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 10,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.2803030303030303,
+     "width": 0.12091503267973856,
+     "height": 0.01767676767676768
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Chuyến tàu đêm rời Viên lúc 21 giờ 40 và đến Venice lúc bình minh. Hành khách ăn tối trong toa nhà hàng, nơi phục vụ mì tươi và cà phê đậm.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 94,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.30934343434343436,
+     "width": 0.7647058823529411,
+     "height": 0.01641414141414138
+    },
+    {
+     "kind": "page",
+     "start": 95,
+     "end": 139,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.33207070707070707,
+     "width": 0.35947712418300654,
+     "height": 0.01767676767676768
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Mongolian",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 9,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.369949494949495,
+     "width": 0.10784313725490195,
+     "height": 0.018939393939393923
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Шөнийн галт тэрэг Венагаас 21:40 цагт хөдөлж, үүрээр Венецид хүрнэ. Зорчигчид ресторан вагонд оройн хоол иднэ.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 77,
+     "page": 0,
+     "left": 0.1111111111111111,
+     "top": 0.398989898989899,
+     "width": 0.6977124183006536,
+     "height": 0.018939393939393923
+    },
+    {
+     "kind": "page",
+     "start": 78,
+     "end": 110,
+     "page": 0,
+     "left": 0.1111111111111111,
+     "top": 0.42297979797979796,
+     "width": 0.28594771241830064,
+     "height": 0.018939393939393978
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Hebrew",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.4595959595959596,
+     "width": 0.08006535947712419,
+     "height": 0.018939393939393923
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "רכבת הלילה יוצאת מווינה בשעה 21:40 ומגיעה לוונציה עם שחר. הנוסעים אוכלים ארוחת ערב בקרון המסעדה.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 88,
+     "page": 0,
+     "left": 0.1437908496732026,
+     "top": 0.48484848484848486,
+     "width": 0.7418300653594772,
+     "height": 0.023989898989899006
+    },
+    {
+     "kind": "page",
+     "start": 89,
+     "end": 96,
+     "page": 0,
+     "left": 0.8104575163398693,
+     "top": 0.5138888888888888,
+     "width": 0.07352941176470584,
+     "height": 0.018939393939394034
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Georgian",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 8,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.5492424242424242,
+     "width": 0.09477124183006537,
+     "height": 0.02020202020202022
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "ღამის მატარებელი ვენიდან 21:40 საათზე გადის და გამთენიისას ვენეციაში ჩადის. მგზავრები ვახშმობენ ვაგონ-რესტორანში.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 75,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.5795454545454546,
+     "width": 0.761437908496732,
+     "height": 0.017676767676767624
+    },
+    {
+     "kind": "page",
+     "start": 76,
+     "end": 113,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.6022727272727273,
+     "width": 0.39052287581699346,
+     "height": 0.017676767676767624
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Armenian",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 8,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.6414141414141414,
+     "width": 0.09967320261437908,
+     "height": 0.016414141414141437
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Գիշերային գնացքը Վիեննայից մեկնում է ժամը 21:40-ին և լուսաբացին հասնում Վենետիկ։ Ուղևորները ընթրում են վագոն-ռեստորանում",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 63,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.6704545454545454,
+     "width": 0.7124183006535947,
+     "height": 0.016414141414141437
+    },
+    {
+     "kind": "page",
+     "start": 64,
+     "end": 120,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.6931818181818182,
+     "width": 0.6797385620915032,
+     "height": 0.015151515151515138
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Amharic",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 0,
+     "left": 0.1111111111111111,
+     "top": 0.7297979797979798,
+     "width": 0.08986928104575165,
+     "height": 0.02020202020202022
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "የሌሊት ባቡር ከቪየና በ21:40 ይነሳል እና ጎህ ሲቀድ ቬኒስ ይደርሳል። ተሳፋሪዎች በምግብ ቤት ፉርጎ ውስጥ እራት ይበላሉ።",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 69,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.7588383838383839,
+     "width": 0.7320261437908496,
+     "height": 0.018939393939393923
+    },
+    {
+     "kind": "page",
+     "start": 70,
+     "end": 79,
+     "page": 0,
+     "left": 0.11274509803921569,
+     "top": 0.7840909090909091,
+     "width": 0.10130718954248365,
+     "height": 0.015151515151515138
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Tamil",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 0,
+     "left": 0.10947712418300654,
+     "top": 0.8207070707070707,
+     "width": 0.06209150326797386,
+     "height": 0.02020202020202022
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "இரவு ரயி ல் வி யன்னா வி லிருந்து 21:40 மணி க்குப் புறப்பட்டு வி டியற்கா லை யி ல் வெ னி ஸை அடை கி றது. பயணி கள் உணவக வண்டியி ல் இரவு உணவு உண்கி றா ர்கள்.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 60,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.8497474747474747,
+     "width": 0.5964052287581699,
+     "height": 0.02020202020202022
+    },
+    {
+     "kind": "page",
+     "start": 61,
+     "end": 126,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.8737373737373737,
+     "width": 0.7647058823529411,
+     "height": 0.016414141414141437
+    },
+    {
+     "kind": "page",
+     "start": 127,
+     "end": 152,
+     "page": 0,
+     "left": 0.11437908496732026,
+     "top": 0.8964646464646465,
+     "width": 0.29248366013071897,
+     "height": 0.016414141414141326
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Bengali",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 1,
+     "left": 0.11274509803921569,
+     "top": 0.0845959595959596,
+     "width": 0.08006535947712419,
+     "height": 0.018939393939393936
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "রা তে র ট্রে ন ভি য়ে না থে কে ২১:৪০ মি নি টে ছা ড়ে এবং ভো রে ভে নি সে পৌঁ ছা য়। যা ত্রী রা রে স্তো রাঁ কা মরা য় রা তে র খা বা র খা ন।",
+   "marks": [
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 15,
+     "end": 17
+    },
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 37,
+     "end": 42
+    },
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 66,
+     "end": 68
+    }
+   ],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 115,
+     "page": 1,
+     "left": 0.11274509803921569,
+     "top": 0.1111111111111111,
+     "width": 0.7679738562091503,
+     "height": 0.01893939393939395
+    },
+    {
+     "kind": "page",
+     "start": 116,
+     "end": 137,
+     "page": 1,
+     "left": 0.11437908496732026,
+     "top": 0.13762626262626262,
+     "width": 0.14215686274509803,
+     "height": 0.015151515151515166
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Khmer",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 1,
+     "left": 0.11274509803921569,
+     "top": 0.17424242424242425,
+     "width": 0.07026143790849672,
+     "height": 0.018939393939393923
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "រថភ្លើ ងពេ លយប់ ចេ ញ ពី ទី ក្រុ ងវី យែ យែ ននៅ ម៉ោ ង 21:40 ហើ យទៅ ដ ល់ ទី ក្រុ ងវេ នី សនៅ ពេ លព្រឹ កព្រ លឹ ម។",
+   "marks": [
+    {
+     "kind": "style",
+     "style": "subscript",
+     "start": 27,
+     "end": 31
+    },
+    {
+     "kind": "style",
+     "style": "subscript",
+     "start": 73,
+     "end": 77
+    },
+    {
+     "kind": "style",
+     "style": "subscript",
+     "start": 93,
+     "end": 97
+    },
+    {
+     "kind": "style",
+     "style": "subscript",
+     "start": 99,
+     "end": 102
+    }
+   ],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 108,
+     "page": 1,
+     "left": 0.11274509803921569,
+     "top": 0.20202020202020202,
+     "width": 0.6993464052287581,
+     "height": 0.01893939393939395
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Tibetan",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 1,
+     "left": 0.11274509803921569,
+     "top": 0.24242424242424243,
+     "width": 0.07679738562091502,
+     "height": 0.021464646464646464
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "མཚན་མོ འི་མེ་འཁོར་ནི་ཝི་ཨེ་ན་ནས་ཆུ་ཚོད་ 21:40 ལ་ཐོན་ནས་ཐོ་རངས་ལ་ཝེ་ནི་སི་ལ་འབྱོར།",
+   "marks": [
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 14,
+     "end": 16
+    },
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 48,
+     "end": 50
+    },
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 55,
+     "end": 57
+    },
+    {
+     "kind": "style",
+     "style": "superscript",
+     "start": 76,
+     "end": 79
+    }
+   ],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 81,
+     "page": 1,
+     "left": 0.11437908496732026,
+     "top": 0.2638888888888889,
+     "width": 0.6045751633986928,
+     "height": 0.02651515151515149
+    }
+   ]
+  }
+ ]
+}

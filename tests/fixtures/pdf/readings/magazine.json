@@ -1,0 +1,827 @@
+{
+ "title": "magazine_scan",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 1,
+   "text": "The Night Train Comes Back",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 0,
+     "left": 0.061,
+     "top": 0.05899999999999999,
+     "width": 0.4079999999999999,
+     "height": 0.055
+    },
+    {
+     "kind": "page",
+     "start": 14,
+     "end": 26,
+     "page": 0,
+     "left": 0.061,
+     "top": 0.11,
+     "width": 0.338,
+     "height": 0.051000000000000004
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "After decades of decline, sleeper services are returning to Europe's rails, and the people who ride them say it is about more than saving on a hotel room.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 82,
+     "page": 0,
+     "left": 0.06,
+     "top": 0.17,
+     "width": 0.823,
+     "height": 0.020999999999999963
+    },
+    {
+     "kind": "page",
+     "start": 82,
+     "end": 154,
+     "page": 0,
+     "left": 0.06,
+     "top": 0.195,
+     "width": 0.726,
+     "height": 0.01899999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "BY MARTA JENSEN",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 15,
+     "page": 0,
+     "left": 0.062000000000000006,
+     "top": 0.23499999999999996,
+     "width": 0.136,
+     "height": 0.016000000000000042
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "A refitted sleeper car waits at Vienna's main station. Photograph by Lukas Brandt.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 82,
+     "page": 0,
+     "left": 0.06372549019607843,
+     "top": 0.4027777777777778,
+     "width": 0.5408496732026143,
+     "height": 0.01641414141414138
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The last time Anna Kovac took the sleeper from Vienna to Venice, she was nineteen and the carriages smelled of diesel and oranges. This spring she made the trip again, in a refitted cabin with a reading lamp, a folding desk and a door that locks. Nothing about the route had changed, except that people had once decided to give it up.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 2,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.444,
+     "width": 0.07400000000000001,
+     "height": 0.061
+    },
+    {
+     "kind": "page",
+     "start": 2,
+     "end": 38,
+     "page": 0,
+     "left": 0.141,
+     "top": 0.445,
+     "width": 0.344,
+     "height": 0.014999999999999958
+    },
+    {
+     "kind": "page",
+     "start": 38,
+     "end": 74,
+     "page": 0,
+     "left": 0.142,
+     "top": 0.466,
+     "width": 0.34299999999999997,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 74,
+     "end": 110,
+     "page": 0,
+     "left": 0.141,
+     "top": 0.486,
+     "width": 0.344,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 110,
+     "end": 154,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.507,
+     "width": 0.418,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 154,
+     "end": 198,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.527,
+     "width": 0.4169999999999999,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 198,
+     "end": 242,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.547,
+     "width": 0.4169999999999999,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 242,
+     "end": 286,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.566,
+     "width": 0.416,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 286,
+     "end": 330,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.587,
+     "width": 0.417,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 330,
+     "end": 334,
+     "page": 0,
+     "left": 0.062000000000000006,
+     "top": 0.609,
+     "width": 0.039,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Between 2010 and 2020 operators across the continent closed more than a dozen overnight routes. Cheap flights had made them look like relics, and replacing the worn rolling stock seemed impossible to justify. Then the arithmetic shifted. Fuel prices climbed, airports grew crowded, and a generation of travellers began to count the carbon in an itinerary as carefully as the euros.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 42,
+     "page": 0,
+     "left": 0.089,
+     "top": 0.625,
+     "width": 0.397,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 42,
+     "end": 86,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.647,
+     "width": 0.417,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 86,
+     "end": 130,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.667,
+     "width": 0.417,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 130,
+     "end": 173,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.687,
+     "width": 0.417,
+     "height": 0.0129999999999999
+    },
+    {
+     "kind": "page",
+     "start": 173,
+     "end": 217,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.706,
+     "width": 0.41800000000000004,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 217,
+     "end": 261,
+     "page": 0,
+     "left": 0.069,
+     "top": 0.726,
+     "width": 0.416,
+     "height": 0.014000000000000123
+    },
+    {
+     "kind": "page",
+     "start": 261,
+     "end": 305,
+     "page": 0,
+     "left": 0.069,
+     "top": 0.747,
+     "width": 0.41700000000000004,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 305,
+     "end": 349,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.767,
+     "width": 0.417,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 349,
+     "end": 381,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.7869999999999999,
+     "width": 0.304,
+     "height": 0.015000000000000235
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Austria's national railway was the first to bet on a revival. It bought used carriages from a bankrupt competitor, rebuilt them, and filled them within a season. Sweden, France and Italy followed, each wary of repeating the mistakes of the past. The cabins must be quiet, the timetable must make sense, and the price must not feel like a punishment.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 43,
+     "page": 0,
+     "left": 0.091,
+     "top": 0.805,
+     "width": 0.3979999999999999,
+     "height": 0.015999999999999903
+    },
+    {
+     "kind": "page",
+     "start": 43,
+     "end": 88,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.826,
+     "width": 0.419,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 88,
+     "end": 133,
+     "page": 0,
+     "left": 0.069,
+     "top": 0.8459999999999999,
+     "width": 0.419,
+     "height": 0.015000000000000235
+    },
+    {
+     "kind": "page",
+     "start": 133,
+     "end": 178,
+     "page": 0,
+     "left": 0.069,
+     "top": 0.866,
+     "width": 0.419,
+     "height": 0.014999999999999902
+    },
+    {
+     "kind": "page",
+     "start": 178,
+     "end": 223,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.886,
+     "width": 0.421,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 224,
+     "end": 271,
+     "page": 0,
+     "left": 0.511,
+     "top": 0.442,
+     "width": 0.42000000000000004,
+     "height": 0.01799999999999996
+    },
+    {
+     "kind": "page",
+     "start": 271,
+     "end": 317,
+     "page": 0,
+     "left": 0.513,
+     "top": 0.464,
+     "width": 0.41800000000000004,
+     "height": 0.01599999999999996
+    },
+    {
+     "kind": "page",
+     "start": 317,
+     "end": 349,
+     "page": 0,
+     "left": 0.511,
+     "top": 0.484,
+     "width": 0.28700000000000003,
+     "height": 0.016000000000000014
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Not everyone is convinced. Critics note that a sleeper berth costs several times what a seat does to run, and that subsidies will be needed for years. Supporters reply that a flight does not pay for the damage it does either.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 45,
+     "page": 0,
+     "left": 0.535,
+     "top": 0.503,
+     "width": 0.397,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 45,
+     "end": 93,
+     "page": 0,
+     "left": 0.514,
+     "top": 0.524,
+     "width": 0.41800000000000004,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 93,
+     "end": 140,
+     "page": 0,
+     "left": 0.514,
+     "top": 0.544,
+     "width": 0.41700000000000004,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 140,
+     "end": 188,
+     "page": 0,
+     "left": 0.514,
+     "top": 0.564,
+     "width": 0.41800000000000004,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 188,
+     "end": 225,
+     "page": 0,
+     "left": 0.512,
+     "top": 0.585,
+     "width": 0.32799999999999985,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "For Kovac the argument is beside the point.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 43,
+     "page": 0,
+     "left": 0.532,
+     "top": 0.603,
+     "width": 0.399,
+     "height": 0.018000000000000016
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "\"People are not buying a bed. They are buying the hours in between.\"",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 34,
+     "page": 0,
+     "left": 0.522,
+     "top": 0.64,
+     "width": 0.39500000000000013,
+     "height": 0.02300000000000002
+    },
+    {
+     "kind": "page",
+     "start": 34,
+     "end": 68,
+     "page": 0,
+     "left": 0.519,
+     "top": 0.6659999999999999,
+     "width": 0.399,
+     "height": 0.02300000000000002
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "She woke at dawn on the Venice causeway, the lagoon grey and still outside her window, and understood why she had come back.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 45,
+     "page": 0,
+     "left": 0.513,
+     "top": 0.708,
+     "width": 0.42100000000000004,
+     "height": 0.016999999999999904
+    },
+    {
+     "kind": "page",
+     "start": 45,
+     "end": 90,
+     "page": 0,
+     "left": 0.514,
+     "top": 0.7289999999999999,
+     "width": 0.42000000000000004,
+     "height": 0.016000000000000125
+    },
+    {
+     "kind": "page",
+     "start": 90,
+     "end": 124,
+     "page": 0,
+     "left": 0.513,
+     "top": 0.749,
+     "width": 0.31699999999999995,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 1,
+   "text": "A Winter in the Archive",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 23,
+     "page": 1,
+     "left": 0.06,
+     "top": 0.064,
+     "width": 0.5209999999999999,
+     "height": 0.040999999999999995
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "BY PETER LINDQVIST",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 18,
+     "page": 1,
+     "left": 0.062000000000000006,
+     "top": 0.126,
+     "width": 0.155,
+     "height": 0.014999999999999986
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "In the winter of 1987 a small team of archivists began to catalogue the papers of a provincial court that had been closed for almost a century. The boxes arrived in the back of a delivery van, tied with string and smelling of damp. Nobody expected much. Court records are mostly dull, and these were dull in the ordinary ways: wills, land disputes, complaints about fences. Then, in the fourth week, someone opened a ledger that did not belong. It held the daily weather, noted in a careful hand, for thirty-one years. The clerk who kept it had no instructions to do so. He had simply looked out of his window each morning and written down what he saw. Climate scientists later used his figures to test models of a century they had no other records for. The archivists, who had come for the lawsuits, found themselves arguing about rainfall.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 66,
+     "page": 1,
+     "left": 0.068,
+     "top": 0.22899999999999998,
+     "width": 0.593,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 66,
+     "end": 132,
+     "page": 1,
+     "left": 0.064,
+     "top": 0.25,
+     "width": 0.597,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 132,
+     "end": 198,
+     "page": 1,
+     "left": 0.066,
+     "top": 0.271,
+     "width": 0.593,
+     "height": 0.012999999999999956
+    },
+    {
+     "kind": "page",
+     "start": 198,
+     "end": 264,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.29,
+     "width": 0.5940000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 264,
+     "end": 330,
+     "page": 1,
+     "left": 0.066,
+     "top": 0.31,
+     "width": 0.593,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 330,
+     "end": 396,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.33099999999999996,
+     "width": 0.5960000000000001,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 396,
+     "end": 462,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.35,
+     "width": 0.5960000000000001,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 462,
+     "end": 529,
+     "page": 1,
+     "left": 0.066,
+     "top": 0.37000000000000005,
+     "width": 0.595,
+     "height": 0.014999999999999958
+    },
+    {
+     "kind": "page",
+     "start": 529,
+     "end": 594,
+     "page": 1,
+     "left": 0.067,
+     "top": 0.39,
+     "width": 0.593,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 594,
+     "end": 660,
+     "page": 1,
+     "left": 0.066,
+     "top": 0.411,
+     "width": 0.593,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 660,
+     "end": 726,
+     "page": 1,
+     "left": 0.068,
+     "top": 0.43,
+     "width": 0.591,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 726,
+     "end": 792,
+     "page": 1,
+     "left": 0.066,
+     "top": 0.451,
+     "width": 0.595,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 792,
+     "end": 841,
+     "page": 1,
+     "left": 0.064,
+     "top": 0.4699999999999999,
+     "width": 0.44,
+     "height": 0.01600000000000007
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "AT A GLANCE",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 11,
+     "page": 1,
+     "left": 0.712,
+     "top": 0.206,
+     "width": 0.10699999999999998,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 1,
+   "continues": false,
+   "text": "Ledger found: week four",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 23,
+     "page": 1,
+     "left": 0.712,
+     "top": 0.232,
+     "width": 0.18300000000000005,
+     "height": 0.015999999999999986
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 2,
+   "continues": false,
+   "text": "Entries: 31 years of daily weather",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 25,
+     "page": 1,
+     "left": 0.714,
+     "top": 0.255,
+     "width": 0.17800000000000005,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 25,
+     "end": 34,
+     "page": 1,
+     "left": 0.731,
+     "top": 0.273,
+     "width": 0.061000000000000054,
+     "height": 0.01599999999999996
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 3,
+   "continues": false,
+   "text": "Author: an unnamed court clerk",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 25,
+     "page": 1,
+     "left": 0.715,
+     "top": 0.297,
+     "width": 0.19300000000000006,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 25,
+     "end": 30,
+     "page": 1,
+     "left": 0.731,
+     "top": 0.313,
+     "width": 0.041000000000000036,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 4,
+   "continues": false,
+   "text": "Later use: climate model tests",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 25,
+     "page": 1,
+     "left": 0.715,
+     "top": 0.338,
+     "width": 0.18300000000000005,
+     "height": 0.014999999999999958
+    },
+    {
+     "kind": "page",
+     "start": 25,
+     "end": 30,
+     "page": 1,
+     "left": 0.731,
+     "top": 0.355,
+     "width": 0.040000000000000036,
+     "height": 0.015000000000000069
+    }
+   ]
+  }
+ ]
+}

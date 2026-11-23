@@ -1,0 +1,198 @@
+{
+ "title": "marks.html",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Fees and marks",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.10984848484848485,
+     "width": 0.2222222222222222,
+     "height": 0.02272727272727272
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "A berth costs $25 a night, or $150 for the week, and children under 12 pay 50% of that. The 2019 report by Hall & Marsh put the average fare at $38.40, about 7% below the fare of 2018. Write to desk_3@nordbahn.example with the reference #A-204, or ring *55 from a station telephone.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 91,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.1553030303030303,
+     "width": 0.7205882352941176,
+     "height": 0.01893939393939395
+    },
+    {
+     "kind": "page",
+     "start": 92,
+     "end": 184,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.17929292929292928,
+     "width": 0.738562091503268,
+     "height": 0.016414141414141437
+    },
+    {
+     "kind": "page",
+     "start": 185,
+     "end": 271,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.20075757575757575,
+     "width": 0.7107843137254902,
+     "height": 0.016414141414141437
+    },
+    {
+     "kind": "page",
+     "start": 272,
+     "end": 282,
+     "page": 0,
+     "left": 0.12418300653594772,
+     "top": 0.22474747474747475,
+     "width": 0.08333333333333334,
+     "height": 0.01641414141414141
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The ticket reads \"Wien Hbf > Venezia S.L.\" and the fine print says: valid for one journey [not transferable] {class B} ~ 14 hours. A backslash \\ and a caret ^ appear in the booking code B\\7^K, and the back-tick ` marks a seat by the window.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 94,
+     "page": 0,
+     "left": 0.12418300653594772,
+     "top": 0.2588383838383838,
+     "width": 0.7369281045751634,
+     "height": 0.01767676767676768
+    },
+    {
+     "kind": "page",
+     "start": 95,
+     "end": 185,
+     "page": 0,
+     "left": 0.12418300653594772,
+     "top": 0.2815656565656566,
+     "width": 0.704248366013072,
+     "height": 0.01767676767676768
+    },
+    {
+     "kind": "page",
+     "start": 186,
+     "end": 240,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.3042929292929293,
+     "width": 0.434640522875817,
+     "height": 0.015151515151515138
+    }
+   ]
+  },
+  {
+   "kind": "table",
+   "text": "Item\tPrice\tNote\nSeat\t$19.00\t50% refund\nCouchette\t$45.50\tbed & breakfast\nSleeper\t$1,300\tcabin #2 only",
+   "row_separator": "\n",
+   "cell_separator": "\t",
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 100,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.33585858585858586,
+     "width": 0.380718954248366,
+     "height": 0.13383838383838387
+    }
+   ]
+  },
+  {
+   "kind": "code",
+   "text": "export FARE_HOME=$HOME/fares\necho \"Total: $total (tax 7%)\"\nprice = cost * 1.2 # in $\ngrep -c '^A_[0-9]*'$ \"$FARE_HOME/log.txt\"",
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 28,
+     "page": 0,
+     "left": 0.13398692810457516,
+     "top": 0.4936868686868687,
+     "width": 0.4297385620915033,
+     "height": 0.02051767676767674
+    },
+    {
+     "kind": "page",
+     "start": 29,
+     "end": 58,
+     "page": 0,
+     "left": 0.13398692810457516,
+     "top": 0.5142045454545454,
+     "width": 0.4297385620915033,
+     "height": 0.020517676767676796
+    },
+    {
+     "kind": "page",
+     "start": 59,
+     "end": 84,
+     "page": 0,
+     "left": 0.13398692810457516,
+     "top": 0.5347222222222222,
+     "width": 0.4297385620915033,
+     "height": 0.020517676767676796
+    },
+    {
+     "kind": "page",
+     "start": 85,
+     "end": 126,
+     "page": 0,
+     "left": 0.13398692810457516,
+     "top": 0.555239898989899,
+     "width": 0.4297385620915033,
+     "height": 0.020517676767676796
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Ten dollars is written $10, and a price range is written $10-$12. An amount with no figure, as in \"paid in $\", keeps the sign too.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 94,
+     "page": 0,
+     "left": 0.12581699346405228,
+     "top": 0.5997474747474747,
+     "width": 0.7320261437908496,
+     "height": 0.018939393939394034
+    },
+    {
+     "kind": "page",
+     "start": 95,
+     "end": 130,
+     "page": 0,
+     "left": 0.12418300653594772,
+     "top": 0.6237373737373737,
+     "width": 0.26143790849673204,
+     "height": 0.015151515151515138
+    }
+   ]
+  }
+ ]
+}

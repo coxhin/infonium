@@ -1,0 +1,615 @@
+{
+ "title": "scripts.html",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "French",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 0,
+     "left": 0.113,
+     "top": 0.101,
+     "width": 0.075,
+     "height": 0.02099999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Le train de nuit quitte Vienne à 21 h 40 et arrive à Venise au lever du soleil. Les voyageurs dînent dans le wagon-restaurant, où l'on sert des pâtes fraîches et un café très serré. À l'aube, la lagune apparaît derrière les vitres embuées, et chacun cherche déjà son appareil photo.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 101,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.132,
+     "width": 0.7739999999999999,
+     "height": 0.017999999999999988
+    },
+    {
+     "kind": "page",
+     "start": 101,
+     "end": 201,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.155,
+     "width": 0.773,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 201,
+     "end": 282,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.178,
+     "width": 0.62,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Spanish",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 0,
+     "left": 0.111,
+     "top": 0.217,
+     "width": 0.08800000000000001,
+     "height": 0.019999999999999962
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "El tren nocturno sale de Viena a las 21:40 y llega a Venecia al amanecer. ¿Quién no ha soñado con dormirse en una ciudad y despertar en otra? Los niños menores de doce años pagan la mitad, y el desayuno está incluido en el precio del billete.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 96,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.249,
+     "width": 0.7719999999999999,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 96,
+     "end": 192,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.272,
+     "width": 0.77,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 192,
+     "end": 242,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.294,
+     "width": 0.399,
+     "height": 0.016000000000000014
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Finnish",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 0,
+     "left": 0.113,
+     "top": 0.33299999999999996,
+     "width": 0.079,
+     "height": 0.020000000000000018
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Yöjuna lähtee Wienistä kello 21.40 ja saapuu Venetsiaan auringon noustessa. Matkustajat syövät illallista ravintolavaunussa, jossa tarjoillaan tuoretta pastaa ja vahvaa kahvia. Aamulla laguuni näkyy huurteisten ikkunoiden takaa, ja jokainen etsii jo kameraansa.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 97,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.365,
+     "width": 0.7719999999999999,
+     "height": 0.014999999999999958
+    },
+    {
+     "kind": "page",
+     "start": 97,
+     "end": 194,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.387,
+     "width": 0.7739999999999999,
+     "height": 0.01600000000000007
+    },
+    {
+     "kind": "page",
+     "start": 194,
+     "end": 261,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.409,
+     "width": 0.538,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "German",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 0,
+     "left": 0.11500000000000002,
+     "top": 0.45000000000000007,
+     "width": 0.07999999999999999,
+     "height": 0.018999999999999906
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Der Nachtzug verlässt Wien um 21.40 Uhr und erreicht Venedig bei Sonnenaufgang. Im Speisewagen gibt es frische Nudeln und starken Kaffee für müde Gäste. Über Nacht fährt der Zug durch die Alpen, während die Reisenden in ihren Kojen schlafen.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 91,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.48,
+     "width": 0.7719999999999999,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 91,
+     "end": 181,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.5,
+     "width": 0.771,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 181,
+     "end": 241,
+     "page": 0,
+     "left": 0.113,
+     "top": 0.524,
+     "width": 0.512,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Russian",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.564,
+     "width": 0.084,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Ночной поезд отправляется из Вены в 21:40 и прибывает в Венецию на рассвете. Пассажиры ужинают в вагоне-ресторане, где подают свежую пасту и крепкий кофе. Утром за запотевшими окнами появляется лагуна, и каждый уже ищет свой фотоаппарат.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 82,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.592,
+     "width": 0.7739999999999999,
+     "height": 0.02300000000000002
+    },
+    {
+     "kind": "page",
+     "start": 82,
+     "end": 164,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.619,
+     "width": 0.7719999999999999,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 164,
+     "end": 237,
+     "page": 0,
+     "left": 0.111,
+     "top": 0.642,
+     "width": 0.6910000000000001,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Greek",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 0,
+     "left": 0.113,
+     "top": 0.679,
+     "width": 0.06499999999999999,
+     "height": 0.019999999999999907
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Το νυχτερινό τρένο αναχωρεί από τη Βιέννη στις 21:40 και φτάνει στη Βενετία την αυγή. Οι επιβάτες δειπνούν στο βαγόνι-εστιατόριο, όπου σερβίρονται φρέσκα ζυμαρικά και δυνατός καφές.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 87,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.711,
+     "width": 0.7719999999999999,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 87,
+     "end": 175,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.734,
+     "width": 0.7719999999999999,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 175,
+     "end": 181,
+     "page": 0,
+     "left": 0.11199999999999999,
+     "top": 0.755,
+     "width": 0.05700000000000002,
+     "height": 0.018000000000000016
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Japanese",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 8,
+     "page": 0,
+     "left": 0.114,
+     "top": 0.796,
+     "width": 0.09799999999999999,
+     "height": 0.017999999999999905
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "夜行列車は午後9時40分にウィーンを出発し、夜明けにヴェネツィアに到着します。乗客は食堂車で夕食をとり、焼きたてのパンと濃いコーヒーを楽しみます。朝になると、曇った窓の向こうに潟が見えてきて、誰もがカメラを探しはじめます。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 40,
+     "page": 0,
+     "left": 0.11500000000000002,
+     "top": 0.824,
+     "width": 0.77,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 40,
+     "end": 80,
+     "page": 0,
+     "left": 0.11500000000000002,
+     "top": 0.8459999999999999,
+     "width": 0.77,
+     "height": 0.018000000000000127
+    },
+    {
+     "kind": "page",
+     "start": 80,
+     "end": 111,
+     "page": 0,
+     "left": 0.11500000000000002,
+     "top": 0.8690000000000001,
+     "width": 0.594,
+     "height": 0.016999999999999904
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Korean",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.085,
+     "width": 0.075,
+     "height": 0.02099999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "야간열차는 오후 9시 40분에 빈을 출발하여 새벽에 베네치아에 도착합니다. 승객들은 식당차에서 저녁을 먹고, 갓 구운 빉과 진한 커피를 즐겁니다.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 51,
+     "page": 1,
+     "left": 0.11500000000000002,
+     "top": 0.11300000000000002,
+     "width": 0.77,
+     "height": 0.016999999999999987
+    },
+    {
+     "kind": "page",
+     "start": 51,
+     "end": 81,
+     "page": 1,
+     "left": 0.11500000000000002,
+     "top": 0.136,
+     "width": 0.44600000000000006,
+     "height": 0.016999999999999987
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Traditional Chinese",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 19,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.177,
+     "width": 0.198,
+     "height": 0.018000000000000016
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "夜車於晚上九時四十分離開維也納，黎明時分抵達威尼斯。乘客在餐車用晚餐，品嚐新鮮的麵條與濃郁的咖啡。清晨，瀉湖在起霧的車窗後出現，每個人都開始找自己的相機。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 39,
+     "page": 1,
+     "left": 0.116,
+     "top": 0.208,
+     "width": 0.768,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 39,
+     "end": 77,
+     "page": 1,
+     "left": 0.11699999999999999,
+     "top": 0.22999999999999998,
+     "width": 0.7359999999999999,
+     "height": 0.01200000000000001
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Arabic",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 6,
+     "page": 1,
+     "left": 0.11199999999999999,
+     "top": 0.269,
+     "width": 0.07200000000000001,
+     "height": 0.020999999999999963
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "يعادر القطار الليلي فيينا في الساعة 40:21، ويصل إلى البن dqية عند الفجر. يتناول الركاب العشاء في عربة المطعم حيث تقدم المعرونة الطازجة والقهوة القوية.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 101,
+     "page": 1,
+     "left": 0.11199999999999999,
+     "top": 0.3,
+     "width": 0.7739999999999999,
+     "height": 0.02300000000000002
+    },
+    {
+     "kind": "page",
+     "start": 101,
+     "end": 150,
+     "page": 1,
+     "left": 0.512,
+     "top": 0.32700000000000007,
+     "width": 0.372,
+     "height": 0.021999999999999853
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Thai",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 4,
+     "page": 1,
+     "left": 0.11199999999999999,
+     "top": 0.371,
+     "width": 0.049000000000000016,
+     "height": 0.019000000000000017
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "รถไฟกลางคืนออกจากเวียนนาเวลา 21.40 น. และถึงเวนิสตอนรุ่งทาง ผู้โดยสารรับประทานอาหารค่ําในตู้เสบียงซึ่งมีพาสตําสดและกาแฟเข้มข้น",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 88,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.396,
+     "width": 0.771,
+     "height": 0.019999999999999962
+    },
+    {
+     "kind": "page",
+     "start": 88,
+     "end": 126,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.42,
+     "width": 0.33,
+     "height": 0.018000000000000016
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Hindi",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 5,
+     "page": 1,
+     "left": 0.11199999999999999,
+     "top": 0.463,
+     "width": 0.05700000000000002,
+     "height": 0.01899999999999996
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "रात की ट्रेन 21:40 बजे वियना से रवाना होती है और भोर में वेनिस पहुँचती है। यात्री भोजन यान में रात का खाना खाते हैं, जहाँ ताज़ा पास्ता और कड़क कॉफ्री परोसी जाती है।",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 107,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.491,
+     "width": 0.7719999999999999,
+     "height": 0.019000000000000017
+    },
+    {
+     "kind": "page",
+     "start": 107,
+     "end": 164,
+     "page": 1,
+     "left": 0.114,
+     "top": 0.514,
+     "width": 0.41000000000000003,
+     "height": 0.019000000000000017
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,1336 @@
+{
+ "title": "regress_scan",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 1 one long paragraph",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 25,
+     "page": 0,
+     "left": 0.063,
+     "top": 0.07,
+     "width": 0.371,
+     "height": 0.03
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The last time Anna Kovac took the sleeper from Vienna to Venice, she was nineteen and the carriages smelled of diesel and oranges. This spring she made the trip again, in a refitted cabin with a reading lamp, a folding desk and a door that locks. Nothing about the route had changed, except that people had once decided to give it up. Between 2010 and 2020 operators across the continent closed more than a dozen overnight routes. Cheap flights had made them look like relics, and replacing the worn rolling stock seemed impossible to justify. Then the arithmetic shifted. Fuel prices climbed, airports grew crowded, and a generation of travellers began to count the carbon in an itinerary as carefully as the euros. Austria's national railway was the first to bet on a revival. It bought used carriages from a bankrupt competitor, rebuilt them, and filled them within a season. Sweden, France and Italy followed, each wary of repeating the mistakes of the past. The cabins must be quiet, the timetable must make sense, and the price must not feel like a punishment. A sleeper berth costs several times what a seat does to run. A carriage that carries sixty people by day carries only twenty-four at night, and it spends the small hours standing in sidings while crews rest. Operators say a typical overnight train needs a public subsidy of about forty euros for each passenger it carries, roughly the price of the ticket itself. Supporters answer that a flight does not pay for the damage it does either. They point to a study of the Vienna to Brussels corridor, where a night train would emit one fifth of the carbon of the same journey by air, and where more than nine in ten travellers said they would choose it if the fare were within a quarter of the cheapest flight. On the night of her trip Kovac left Vienna at 21:40 and was asleep before Graz. The attendant, a retired schoolteacher named Pavel Horak, had made up her bunk with a wool blanket and left a bottle of water and a card with the breakfast hours. He said the youngest passengers were the most grateful, because they had never travelled any other way than by plane. The next morning the train ran along the edge of the lagoon, which was grey and still, and arrived in Venice eleven minutes early. Kovac, who had slept better than she had for months, ate a roll in the carriage and watched the water slide by. She said she would take the sleeper again in the autumn, and that she had already booked a berth for her mother. Operators are learning that the product is as much hotel as railway. The new cabins have blackout blinds, sound-proofed doors and small washbasins, and the most expensive carry a shower. Booking systems now sell",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 103,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.138,
+     "width": 0.8680000000000001,
+     "height": 0.012999999999999984
+    },
+    {
+     "kind": "page",
+     "start": 103,
+     "end": 206,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.156,
+     "width": 0.8660000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 206,
+     "end": 310,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.175,
+     "width": 0.8660000000000001,
+     "height": 0.014999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 310,
+     "end": 413,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.195,
+     "width": 0.8660000000000001,
+     "height": 0.013999999999999985
+    },
+    {
+     "kind": "page",
+     "start": 413,
+     "end": 516,
+     "page": 0,
+     "left": 0.065,
+     "top": 0.215,
+     "width": 0.8650000000000002,
+     "height": 0.011999999999999983
+    },
+    {
+     "kind": "page",
+     "start": 516,
+     "end": 619,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.233,
+     "width": 0.8660000000000001,
+     "height": 0.013999999999999985
+    },
+    {
+     "kind": "page",
+     "start": 619,
+     "end": 722,
+     "page": 0,
+     "left": 0.065,
+     "top": 0.252,
+     "width": 0.8640000000000001,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 722,
+     "end": 825,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.271,
+     "width": 0.8660000000000001,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 825,
+     "end": 928,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.29,
+     "width": 0.865,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 928,
+     "end": 1031,
+     "page": 0,
+     "left": 0.065,
+     "top": 0.309,
+     "width": 0.8650000000000002,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1031,
+     "end": 1134,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.328,
+     "width": 0.867,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1134,
+     "end": 1237,
+     "page": 0,
+     "left": 0.065,
+     "top": 0.3469999999999999,
+     "width": 0.8650000000000002,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 1237,
+     "end": 1340,
+     "page": 0,
+     "left": 0.066,
+     "top": 0.366,
+     "width": 0.865,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1340,
+     "end": 1443,
+     "page": 0,
+     "left": 0.066,
+     "top": 0.385,
+     "width": 0.865,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1443,
+     "end": 1546,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.404,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1546,
+     "end": 1649,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.42299999999999993,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 1649,
+     "end": 1751,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.442,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 1751,
+     "end": 1854,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.461,
+     "width": 0.863,
+     "height": 0.014999999999999958
+    },
+    {
+     "kind": "page",
+     "start": 1854,
+     "end": 1957,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.48,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 1957,
+     "end": 2060,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.5,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 2060,
+     "end": 2163,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.519,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 2163,
+     "end": 2266,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.539,
+     "width": 0.8640000000000001,
+     "height": 0.014000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 2266,
+     "end": 2368,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.557,
+     "width": 0.863,
+     "height": 0.014999999999999902
+    },
+    {
+     "kind": "page",
+     "start": 2368,
+     "end": 2471,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.576,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 2471,
+     "end": 2574,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.595,
+     "width": 0.8640000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 2574,
+     "end": 2677,
+     "page": 0,
+     "left": 0.068,
+     "top": 0.615,
+     "width": 0.863,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 2677,
+     "end": 2702,
+     "page": 0,
+     "left": 0.067,
+     "top": 0.636,
+     "width": 0.21200000000000002,
+     "height": 0.015000000000000013
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 2 dense Chinese",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 20,
+     "page": 1,
+     "left": 0.062000000000000006,
+     "top": 0.071,
+     "width": 0.311,
+     "height": 0.029000000000000012
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "城市的清晨总是从菜市场开始的。天还没有完全亮，卖豆腐的摊主已经把木板架好，一块一块地码上还冒着热气的豆腐。隔壁卖菜的大姐一边整理青菜，一边和熟客聊着昨晚的雨。这样的场景在这座城市里重复了几十年，几乎没有什么变化。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 40,
+     "page": 1,
+     "left": 0.104,
+     "top": 0.133,
+     "width": 0.807,
+     "height": 0.02099999999999999
+    },
+    {
+     "kind": "page",
+     "start": 40,
+     "end": 82,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.159,
+     "width": 0.843,
+     "height": 0.017999999999999988
+    },
+    {
+     "kind": "page",
+     "start": 82,
+     "end": 106,
+     "page": 1,
+     "left": 0.062000000000000006,
+     "top": 0.18700000000000003,
+     "width": 0.47300000000000003,
+     "height": 0.01799999999999996
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "但是变化其实一直在发生。2019年，市政府公布了一份改造计划，打算在三年内把全市47个露天市场全部搬进室内。计划书一共126页，其中提到“卫生”一词83次，提到“摊主”只有9次。很多摊主是从报纸上才知道这件事的。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 43,
+     "page": 1,
+     "left": 0.106,
+     "top": 0.216,
+     "width": 0.8130000000000001,
+     "height": 0.018000000000000016
+    },
+    {
+     "kind": "page",
+     "start": 43,
+     "end": 88,
+     "page": 1,
+     "left": 0.064,
+     "top": 0.243,
+     "width": 0.857,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 88,
+     "end": 106,
+     "page": 1,
+     "left": 0.063,
+     "top": 0.269,
+     "width": 0.333,
+     "height": 0.01899999999999996
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "王秀兰在这里卖了二十六年的菜。她说，室内市场的租金是现在的三倍，她算过，每天至少要多卖出40斤菜才能持平。“我不是不愿意搬，”她说，“我是怕搬过去以后，老顾客找不到我。”",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 41,
+     "page": 1,
+     "left": 0.107,
+     "top": 0.3,
+     "width": 0.805,
+     "height": 0.017000000000000015
+    },
+    {
+     "kind": "page",
+     "start": 41,
+     "end": 85,
+     "page": 1,
+     "left": 0.061,
+     "top": 0.32500000000000007,
+     "width": 0.881,
+     "height": 0.01999999999999985
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "研究城市史的学者认为，菜市场不只是买卖的地方，它还是邻里之间交换消息、彼此照看的场所。一位学者在调查中发现，常去同一个市场的老人，平均每天要和11个人说话；而只去超市的老人，这个数字是3。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 41,
+     "page": 1,
+     "left": 0.106,
+     "top": 0.357,
+     "width": 0.8069999999999999,
+     "height": 0.01700000000000007
+    },
+    {
+     "kind": "page",
+     "start": 41,
+     "end": 84,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.38199999999999995,
+     "width": 0.8450000000000002,
+     "height": 0.01800000000000007
+    },
+    {
+     "kind": "page",
+     "start": 84,
+     "end": 94,
+     "page": 1,
+     "left": 0.065,
+     "top": 0.409,
+     "width": 0.20400000000000001,
+     "height": 0.02100000000000002
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 3 figures",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 2,
+     "left": 0.062000000000000006,
+     "top": 0.069,
+     "width": 0.20700000000000002,
+     "height": 0.03299999999999999
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The company reported revenue of $4,318.6 million for 2023, up 12.7% from $3,832.1 million a year earlier. Operating margin narrowed to 8.45%, and net debt stood at 1.9 times earnings. It carried 27,408,551 passengers on 1,936 trains, of which 91.2% arrived within 5 minutes of schedule. The average fare fell from 64.90 euros to 61.35 euros. The survey, conducted between 3 March and 28 April 2024, drew 10,482 responses; 0.6% were discarded. Readers can call 020 7946 0958 or write to PO Box 1187, quoting reference KX-2024-0719. The report runs to 312 pages and costs 18.50 euros (ISBN 978-3-16-148410-0).",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 78,
+     "page": 2,
+     "left": 0.061,
+     "top": 0.136,
+     "width": 0.718,
+     "height": 0.017999999999999988
+    },
+    {
+     "kind": "page",
+     "start": 78,
+     "end": 156,
+     "page": 2,
+     "left": 0.064,
+     "top": 0.158,
+     "width": 0.714,
+     "height": 0.015999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 156,
+     "end": 233,
+     "page": 2,
+     "left": 0.064,
+     "top": 0.179,
+     "width": 0.7130000000000001,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 233,
+     "end": 311,
+     "page": 2,
+     "left": 0.064,
+     "top": 0.2,
+     "width": 0.714,
+     "height": 0.014999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 311,
+     "end": 388,
+     "page": 2,
+     "left": 0.064,
+     "top": 0.22,
+     "width": 0.714,
+     "height": 0.01599999999999996
+    },
+    {
+     "kind": "page",
+     "start": 388,
+     "end": 466,
+     "page": 2,
+     "left": 0.065,
+     "top": 0.242,
+     "width": 0.7130000000000001,
+     "height": 0.016000000000000014
+    },
+    {
+     "kind": "page",
+     "start": 466,
+     "end": 543,
+     "page": 2,
+     "left": 0.065,
+     "top": 0.263,
+     "width": 0.7130000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 543,
+     "end": 607,
+     "page": 2,
+     "left": 0.062000000000000006,
+     "top": 0.284,
+     "width": 0.589,
+     "height": 0.017000000000000015
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 4 a table",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 3,
+     "left": 0.062000000000000006,
+     "top": 0.07,
+     "width": 0.20700000000000002,
+     "height": 0.03
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Table 2. Overnight routes surveyed in 2024",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 42,
+     "page": 3,
+     "left": 0.06372549019607843,
+     "top": 0.13636363636363635,
+     "width": 0.39705882352941174,
+     "height": 0.01893939393939395
+    }
+   ]
+  },
+  {
+   "kind": "table",
+   "text": "Route\tDistance (km)\tFare (euros)\tOn time (%)\nVienna to Venice\t589\t64.90\t91.2\nVienna to Brussels\t1,104\t89.00\t84.7\nStockholm to Hamburg\t1,072\t74.50\t79.3\nParis to Barcelona\t1,038\t99.90\t88.1\nMilan to Palermo\t1,451\t58.20\t72.6",
+   "row_separator": "\n",
+   "cell_separator": "\t",
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 220,
+     "page": 3,
+     "left": 0.06699346405228758,
+     "top": 0.16414141414141414,
+     "width": 0.8071895424836601,
+     "height": 0.19444444444444442
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 5 small print and notes",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 28,
+     "page": 4,
+     "left": 0.064,
+     "top": 0.07,
+     "width": 0.398,
+     "height": 0.028999999999999998
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Night trains are sold in three classes. The cheapest is a seat that reclines; the next is a berth in a compartment shared by four or six travellers; the dearest is a private cabin with its own washbasin. Prices vary with the season and with how early the ticket is bought.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 82,
+     "page": 4,
+     "left": 0.062000000000000006,
+     "top": 0.136,
+     "width": 0.716,
+     "height": 0.016999999999999987
+    },
+    {
+     "kind": "page",
+     "start": 82,
+     "end": 164,
+     "page": 4,
+     "left": 0.063,
+     "top": 0.159,
+     "width": 0.7130000000000001,
+     "height": 0.014999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 164,
+     "end": 246,
+     "page": 4,
+     "left": 0.063,
+     "top": 0.18,
+     "width": 0.7130000000000001,
+     "height": 0.015000000000000013
+    },
+    {
+     "kind": "page",
+     "start": 246,
+     "end": 272,
+     "page": 4,
+     "left": 0.063,
+     "top": 0.201,
+     "width": 0.22599999999999998,
+     "height": 0.017999999999999988
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Fares are quoted per person for a berth in a shared compartment and include a light breakfast. Supplements apply for single occupancy and for travel on Fridays and Sundays. Tickets are refundable up to seven days before departure, less an administration charge of twelve euros. Timetables are subject to change without notice.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 98,
+     "page": 4,
+     "left": 0.064,
+     "top": 0.253,
+     "width": 0.5369999999999999,
+     "height": 0.010000000000000009
+    },
+    {
+     "kind": "page",
+     "start": 98,
+     "end": 196,
+     "page": 4,
+     "left": 0.065,
+     "top": 0.264,
+     "width": 0.536,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 196,
+     "end": 294,
+     "page": 4,
+     "left": 0.065,
+     "top": 0.278,
+     "width": 0.536,
+     "height": 0.009999999999999953
+    },
+    {
+     "kind": "page",
+     "start": 294,
+     "end": 326,
+     "page": 4,
+     "left": 0.064,
+     "top": 0.29,
+     "width": 0.175,
+     "height": 0.01200000000000001
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "1 Figures from the national railway's annual report, page 14.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 61,
+     "page": 4,
+     "left": 0.06862745098039216,
+     "top": 0.898989898989899,
+     "width": 0.3366013071895425,
+     "height": 0.015151515151515138
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "2 Excludes services suspended during engineering works.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 55,
+     "page": 4,
+     "left": 0.06862745098039216,
+     "top": 0.9141414141414141,
+     "width": 0.3202614379084967,
+     "height": 0.01388888888888884
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 6 mixed scripts and lists",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 30,
+     "page": 5,
+     "left": 0.062000000000000006,
+     "top": 0.07,
+     "width": 0.415,
+     "height": 0.03
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Transformer模型在2017年由Google的研究者提出，论文题目是Attention Is All You Need。此后几年，BERT、GPT等模型相继出现，参数量从1.1亿增长到1750亿。",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 47,
+     "page": 5,
+     "left": 0.063,
+     "top": 0.134,
+     "width": 0.706,
+     "height": 0.01899999999999999
+    },
+    {
+     "kind": "page",
+     "start": 47,
+     "end": 94,
+     "page": 5,
+     "left": 0.062000000000000006,
+     "top": 0.16,
+     "width": 0.707,
+     "height": 0.017999999999999988
+    },
+    {
+     "kind": "page",
+     "start": 94,
+     "end": 102,
+     "page": 5,
+     "left": 0.061,
+     "top": 0.18500000000000003,
+     "width": 0.128,
+     "height": 0.021999999999999964
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 1,
+   "continues": false,
+   "text": "训练数据：约45 TB的文本",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 5,
+     "left": 0.075,
+     "top": 0.22400000000000003,
+     "width": 0.26999999999999996,
+     "height": 0.020999999999999963
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 2,
+   "continues": false,
+   "text": "上下文长度: 2048个token",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 17,
+     "page": 5,
+     "left": 0.078,
+     "top": 0.252,
+     "width": 0.27399999999999997,
+     "height": 0.02100000000000002
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": false,
+   "depth": 0,
+   "position": 3,
+   "continues": false,
+   "text": "发布时间：2020年6月",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 12,
+     "page": 5,
+     "left": 0.077,
+     "top": 0.278,
+     "width": 0.235,
+     "height": 0.022999999999999965
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": true,
+   "depth": 0,
+   "position": 1,
+   "continues": false,
+   "text": "准备数据并清洗",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 7,
+     "page": 5,
+     "left": 0.068,
+     "top": 0.319,
+     "width": 0.17399999999999996,
+     "height": 0.02300000000000002
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": true,
+   "depth": 0,
+   "position": 2,
+   "continues": false,
+   "text": "预训练language model",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 17,
+     "page": 5,
+     "left": 0.069,
+     "top": 0.346,
+     "width": 0.253,
+     "height": 0.024000000000000077
+    }
+   ]
+  },
+  {
+   "kind": "list_item",
+   "ordered": true,
+   "depth": 0,
+   "position": 3,
+   "continues": false,
+   "text": "在下游任务上微调",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 8,
+     "page": 5,
+     "left": 0.069,
+     "top": 0.37400000000000005,
+     "width": 0.195,
+     "height": 0.022999999999999965
+    }
+   ]
+  },
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Page 7 lines that end in hyphens",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 32,
+     "page": 6,
+     "left": 0.064,
+     "top": 0.07,
+     "width": 0.452,
+     "height": 0.028999999999999998
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Long-distance travel changed quickly once the state-owned railways discovered that half-empty carriages cost almost as much to run as crowded ones. Managers who had specialised in high-speed services were suddenly responsible for overnight operations, and many of them considered the assignment a punishment. Nevertheless, passenger numbers improved, particularly on international connections where short-haul flights had become unreliable. Twenty-four refurbished carriages entered service in the autumn, each with sound-proofed compartments and individually controlled ventilation. Independent researchers subsequently interviewed approximately three hundred travellers about their experiences. Dissatisfaction concentrated on reservations: the well-known booking system frequently malfunctioned, and replacement confirmations occasionally disappeared altogether. Environmental organisations nonetheless recommended the trains enthusiastically, emphasising extraordinary reductions in emissions compared with conventional alternatives.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 29,
+     "page": 6,
+     "left": 0.065,
+     "top": 0.139,
+     "width": 0.244,
+     "height": 0.014999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 29,
+     "end": 57,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.16,
+     "width": 0.237,
+     "height": 0.011999999999999983
+    },
+    {
+     "kind": "page",
+     "start": 57,
+     "end": 85,
+     "page": 6,
+     "left": 0.065,
+     "top": 0.179,
+     "width": 0.241,
+     "height": 0.011999999999999983
+    },
+    {
+     "kind": "page",
+     "start": 85,
+     "end": 115,
+     "page": 6,
+     "left": 0.065,
+     "top": 0.198,
+     "width": 0.253,
+     "height": 0.011999999999999983
+    },
+    {
+     "kind": "page",
+     "start": 115,
+     "end": 144,
+     "page": 6,
+     "left": 0.065,
+     "top": 0.217,
+     "width": 0.244,
+     "height": 0.012999999999999984
+    },
+    {
+     "kind": "page",
+     "start": 144,
+     "end": 174,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.23599999999999996,
+     "width": 0.252,
+     "height": 0.01300000000000004
+    },
+    {
+     "kind": "page",
+     "start": 174,
+     "end": 200,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.255,
+     "width": 0.22699999999999998,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 200,
+     "end": 230,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.274,
+     "width": 0.246,
+     "height": 0.012999999999999956
+    },
+    {
+     "kind": "page",
+     "start": 230,
+     "end": 259,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.294,
+     "width": 0.249,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 259,
+     "end": 286,
+     "page": 6,
+     "left": 0.067,
+     "top": 0.312,
+     "width": 0.22999999999999998,
+     "height": 0.013000000000000067
+    },
+    {
+     "kind": "page",
+     "start": 286,
+     "end": 316,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.332,
+     "width": 0.252,
+     "height": 0.011999999999999955
+    },
+    {
+     "kind": "page",
+     "start": 316,
+     "end": 344,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.351,
+     "width": 0.235,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 344,
+     "end": 372,
+     "page": 6,
+     "left": 0.067,
+     "top": 0.37000000000000005,
+     "width": 0.238,
+     "height": 0.0119999999999999
+    },
+    {
+     "kind": "page",
+     "start": 372,
+     "end": 398,
+     "page": 6,
+     "left": 0.067,
+     "top": 0.389,
+     "width": 0.22599999999999998,
+     "height": 0.012000000000000066
+    },
+    {
+     "kind": "page",
+     "start": 398,
+     "end": 427,
+     "page": 6,
+     "left": 0.069,
+     "top": 0.408,
+     "width": 0.244,
+     "height": 0.013000000000000067
+    },
+    {
+     "kind": "page",
+     "start": 427,
+     "end": 456,
+     "page": 6,
+     "left": 0.068,
+     "top": 0.42699999999999994,
+     "width": 0.244,
+     "height": 0.013000000000000067
+    },
+    {
+     "kind": "page",
+     "start": 456,
+     "end": 484,
+     "page": 6,
+     "left": 0.067,
+     "top": 0.446,
+     "width": 0.239,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 484,
+     "end": 513,
+     "page": 6,
+     "left": 0.068,
+     "top": 0.465,
+     "width": 0.247,
+     "height": 0.012999999999999956
+    },
+    {
+     "kind": "page",
+     "start": 513,
+     "end": 542,
+     "page": 6,
+     "left": 0.066,
+     "top": 0.484,
+     "width": 0.243,
+     "height": 0.015000000000000069
+    },
+    {
+     "kind": "page",
+     "start": 543,
+     "end": 570,
+     "page": 6,
+     "left": 0.359,
+     "top": 0.138,
+     "width": 0.22399999999999998,
+     "height": 0.013999999999999985
+    },
+    {
+     "kind": "page",
+     "start": 570,
+     "end": 597,
+     "page": 6,
+     "left": 0.359,
+     "top": 0.158,
+     "width": 0.23299999999999998,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 597,
+     "end": 626,
+     "page": 6,
+     "left": 0.36,
+     "top": 0.177,
+     "width": 0.242,
+     "height": 0.013999999999999985
+    },
+    {
+     "kind": "page",
+     "start": 626,
+     "end": 653,
+     "page": 6,
+     "left": 0.359,
+     "top": 0.197,
+     "width": 0.22899999999999998,
+     "height": 0.012999999999999984
+    },
+    {
+     "kind": "page",
+     "start": 653,
+     "end": 683,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.215,
+     "width": 0.25,
+     "height": 0.012999999999999984
+    },
+    {
+     "kind": "page",
+     "start": 683,
+     "end": 710,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.23499999999999996,
+     "width": 0.22699999999999998,
+     "height": 0.012000000000000038
+    },
+    {
+     "kind": "page",
+     "start": 710,
+     "end": 738,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.254,
+     "width": 0.243,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 738,
+     "end": 762,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.273,
+     "width": 0.19700000000000006,
+     "height": 0.012999999999999956
+    },
+    {
+     "kind": "page",
+     "start": 762,
+     "end": 788,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.292,
+     "width": 0.22499999999999998,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 788,
+     "end": 818,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.311,
+     "width": 0.252,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 818,
+     "end": 845,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.33,
+     "width": 0.22499999999999998,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 845,
+     "end": 872,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.35,
+     "width": 0.22599999999999998,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 872,
+     "end": 901,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.369,
+     "width": 0.25,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 901,
+     "end": 930,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.387,
+     "width": 0.238,
+     "height": 0.013000000000000012
+    },
+    {
+     "kind": "page",
+     "start": 930,
+     "end": 959,
+     "page": 6,
+     "left": 0.362,
+     "top": 0.406,
+     "width": 0.243,
+     "height": 0.013999999999999957
+    },
+    {
+     "kind": "page",
+     "start": 959,
+     "end": 986,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.42499999999999993,
+     "width": 0.22799999999999998,
+     "height": 0.013000000000000067
+    },
+    {
+     "kind": "page",
+     "start": 986,
+     "end": 1015,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.445,
+     "width": 0.248,
+     "height": 0.01200000000000001
+    },
+    {
+     "kind": "page",
+     "start": 1015,
+     "end": 1037,
+     "page": 6,
+     "left": 0.361,
+     "top": 0.465,
+     "width": 0.18600000000000005,
+     "height": 0.011999999999999955
+    }
+   ]
+  }
+ ]
+}

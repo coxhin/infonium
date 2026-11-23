@@ -1,0 +1,110 @@
+{
+ "title": "trap",
+ "blocks": [
+  {
+   "kind": "heading",
+   "level": 2,
+   "text": "Weather ledger",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 14,
+     "page": 0,
+     "left": 0.061,
+     "top": 0.069,
+     "width": 0.22000000000000003,
+     "height": 0.031
+    }
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "The ledger records 4,812 days between 14 March 1887 and 3 November 1900. The clerk, ____ noted a frost of minus ____ degrees at ____ on 9 January 1895, and a flood that reached the ____ step of the ____ bridge on 2 June 1897. Rainfall for that year totalled 612 millimetres, against 540 the year before.",
+   "marks": [],
+   "places": [
+    {
+     "kind": "page",
+     "start": 0,
+     "end": 78,
+     "page": 0,
+     "left": 0.062000000000000006,
+     "top": 0.15,
+     "width": 0.6299999999999999,
+     "height": 0.018000000000000016
+    },
+    {
+     "kind": "page",
+     "start": 78,
+     "end": 96,
+     "page": 0,
+     "left": 0.064,
+     "top": 0.172,
+     "width": 0.144,
+     "height": 0.017999999999999988
+    },
+    {
+     "kind": "page",
+     "start": 96,
+     "end": 120,
+     "page": 0,
+     "left": 0.367,
+     "top": 0.171,
+     "width": 0.19500000000000006,
+     "height": 0.01699999999999996
+    },
+    {
+     "kind": "page",
+     "start": 120,
+     "end": 132,
+     "page": 0,
+     "left": 0.602,
+     "top": 0.168,
+     "width": 0.09899999999999998,
+     "height": 0.019999999999999962
+    },
+    {
+     "kind": "page",
+     "start": 132,
+     "end": 184,
+     "page": 0,
+     "left": 0.126,
+     "top": 0.192,
+     "width": 0.42300000000000004,
+     "height": 0.015999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 184,
+     "end": 197,
+     "page": 0,
+     "left": 0.586,
+     "top": 0.18899999999999997,
+     "width": 0.10199999999999998,
+     "height": 0.019000000000000017
+    },
+    {
+     "kind": "page",
+     "start": 197,
+     "end": 259,
+     "page": 0,
+     "left": 0.136,
+     "top": 0.212,
+     "width": 0.5,
+     "height": 0.014999999999999986
+    },
+    {
+     "kind": "page",
+     "start": 259,
+     "end": 303,
+     "page": 0,
+     "left": 0.062000000000000006,
+     "top": 0.232,
+     "width": 0.357,
+     "height": 0.017999999999999988
+    }
+   ]
+  }
+ ]
+}
