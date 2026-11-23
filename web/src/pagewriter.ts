@@ -36,6 +36,9 @@ const NEW_TAB_FEATURES = "noopener,noreferrer";
 const MIDDLE_BUTTON = 1;
 // A fragment that names no element of the page leads to its top, as in a browser.
 const TOP_FRAGMENT = "top";
+const PERCENT_ESCAPE = /^%([0-9a-f]{2})$/i;
+const ESCAPE_LENGTH = 3;
+const HEXADECIMAL = 16;
 const INLINE_DISPLAY = "inline";
 
 // A passage pointed at is marked in colours of its own, the same on any page, light or dark:
@@ -198,9 +201,29 @@ function withoutFragment(address: URL): string {
   return address.href.slice(0, address.href.length - address.hash.length);
 }
 
+// A fragment's name as a browser decodes it to find its place: each escape a byte, the bytes
+// read as UTF-8, a byte that is not part of a character read as a replacement character, so
+// that a fragment written wrongly names nothing instead of failing.
+function decodedFragment(fragment: string): string {
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  for (let at = 0; at < fragment.length; ) {
+    const escape = PERCENT_ESCAPE.exec(fragment.slice(at, at + ESCAPE_LENGTH));
+    if (escape?.[1] !== undefined) {
+      bytes.push(parseInt(escape[1], HEXADECIMAL));
+      at += ESCAPE_LENGTH;
+    } else {
+      const character = String.fromCodePoint(fragment.codePointAt(at) ?? 0);
+      bytes.push(...encoder.encode(character));
+      at += character.length;
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
 // Scrolls the page itself, and nothing around the frame, to the place a fragment names.
 function scrollToFragment(page: Document, fragment: string): void {
-  const name = decodeURIComponent(fragment);
+  const name = decodedFragment(fragment);
   const place = page.getElementById(name) ?? page.getElementsByName(name)[0] ?? null;
   const scroller = page.scrollingElement;
   if (scroller === null) {

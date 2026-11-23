@@ -27,6 +27,8 @@ const EMPTY = "原件的页面是空的";
 const OTHER_PAGE = "取回的不是这一篇的原件页面";
 const REPLACED = "原件的页面被别的内容换掉了";
 const ABOUT_BLANK = "about:blank";
+// The state of a document whose HTML is still being parsed.
+const PARSING = "loading";
 // How much of what the frame holds in place of the page is quoted in the reason.
 const QUOTED_LENGTH = 80;
 
@@ -137,9 +139,10 @@ export function WebpageView({
   const shownPointing = useRef<Pointed>(undefined);
   const settled = useRef<Document>(undefined);
 
-  // Takes what the frame holds once it holds something: the page is guarded and written into
-  // from the moment its document can be reached, before anything in it can be clicked; and
-  // from the moment it is left, it is a failure.
+  // Takes what the frame holds once it holds something: the page is guarded from the moment
+  // its document can be reached, before anything in it can be clicked; it is shown, written
+  // into and pointed into once it is parsed whole, since a page that arrives in parts holds
+  // only some of its blocks before then; and from the moment it is left, it is a failure.
   function settle(ended: boolean): boolean {
     const element = frame.current;
     if (element === null || ready === undefined) {
@@ -157,7 +160,13 @@ export function WebpageView({
           settled.current = holding.page;
           guardLinks(holding.page);
           holding.view.addEventListener("pagehide", () => setFailure(REPLACED));
-          setFramed(new FramedPage(holding.page, holding.view));
+          const { page, view } = holding;
+          const parsed = () => setFramed(new FramedPage(page, view));
+          if (page.readyState === PARSING) {
+            page.addEventListener("DOMContentLoaded", parsed, { once: true });
+          } else {
+            parsed();
+          }
         } else if (settled.current !== holding.page) {
           setFailure(REPLACED);
         }

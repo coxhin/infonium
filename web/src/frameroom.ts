@@ -3,8 +3,10 @@ import { scrollerOf, scrolls } from "./scrolling";
 
 // The reader around the frame: what scrolls in one column, where the window scrolls itself.
 const READER = "main";
-// A frame never shorter than this, in pixels, however little of the window is left for it.
-const SHORTEST_FRAME = 320;
+// A frame never shorter than this, in pixels, however little of the window is left for it:
+// enough for a few lines of a page. A phone in one column, 390 by 844 pixels with the column
+// beside the reader open, leaves 316.
+const SHORTEST_FRAME = 160;
 // A part of the frame in view smaller than this, in pixels, is no room to show a passage in;
 // the whole frame is taken instead.
 const LEAST_ROOM = 48;
