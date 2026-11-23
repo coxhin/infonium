@@ -227,7 +227,9 @@ class HeldProgram:
         # ended: stopped, it would never end. Where this process inherits the dead, as process
         # 1 of a container or a reaper of orphans does, the ended that became its children are
         # reaped by their numbers, each known to be the one that was ended, and no other child
-        # of this process is touched.
+        # of this process is touched. A process whose first thread has ended shows as ended
+        # while its other threads still end, and hands its children on only after them, so
+        # the ended are looked at until each is gone, for as long as an ending may take.
         os.kill(self.process.pid, signal.SIGSTOP)
         try:
             end_all(self.held)
@@ -235,7 +237,12 @@ class HeldProgram:
             self.process.kill()
             self.status()
             os.close(self.holding)
-        for process in self.seen:
-            with suppress(psutil.NoSuchProcess, ChildProcessError):
-                if process.is_running() and process.ppid() == os.getpid():
-                    os.waitpid(process.pid, os.WNOHANG)
+        began = time.monotonic()
+        while (ended := [process for process in self.seen if process.is_running()]) and (
+            time.monotonic() - began < ENDING_LIMIT_SECONDS
+        ):
+            for process in ended:
+                with suppress(psutil.NoSuchProcess, ChildProcessError):
+                    if process.ppid() == os.getpid():
+                        os.waitpid(process.pid, os.WNOHANG)
+            time.sleep(ENDING_WATCH_SECONDS)
