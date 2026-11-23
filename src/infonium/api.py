@@ -40,7 +40,7 @@ from infonium.digest import (
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
-from infonium.intake import Engines, Intake, failure_reason
+from infonium.intake import Engines, Intake
 from infonium.item_conversation import (
     ITEM_BUSY,
     ItemConversation,
@@ -76,6 +76,7 @@ from infonium.library_conversation import (
     library_turns,
 )
 from infonium.model_connection import Ending
+from infonium.reasons import failure_reason
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser

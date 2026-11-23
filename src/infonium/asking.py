@@ -6,11 +6,11 @@ from pydantic import BaseModel
 
 from infonium.document import BlockNumber, Document
 from infonium.glossary import Term
-from infonium.intake import failure_reason
 from infonium.language_model import (
     MODEL_FAILURES,
     LanguageModel,
 )
+from infonium.reasons import failure_reason
 from infonium.rendition import (
     PassageBlock,
     Passages,

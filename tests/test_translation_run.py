@@ -18,8 +18,8 @@ from infonium.document import (
     Table,
     TimePlace,
 )
-from infonium.intake import failure_reason
 from infonium.language_model import WireApi, openai_model
+from infonium.reasons import failure_reason
 from tests.model_standin import (
     INPUT_TOKENS,
     OUTPUT_TOKENS,
@@ -96,7 +96,7 @@ def paragraph_numbers(asked: Asked) -> list[int]:
 
 
 def refused_reason(app: App) -> str:
-    # How intake.failure_reason words the failure the model's interface raises for a refused
+    # How failure_reason words the failure the model's interface raises for a refused
     # request.
     app.model.reset(lambda asked: REFUSED_REQUEST)
     try:
@@ -599,7 +599,7 @@ def test_a_failed_passage_leaves_its_blocks_and_put_goes_on_with_them(app: App) 
     counts = {int(number) for number in NUMBER.findall(reason)}
     assert {missing, len(blocks)} <= counts and refused_reason(app) in reason, (
         f"the reason does not say that {missing} of {len(blocks)} blocks could not be translated "
-        f"and why the last failed, as intake.failure_reason words it: {reason!r}"
+        f"and why the last failed, as failure_reason words it: {reason!r}"
     )
     app.model.reset(translating())
     asked_for(app, document.item_id)

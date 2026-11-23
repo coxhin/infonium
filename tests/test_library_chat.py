@@ -11,9 +11,9 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
-from infonium.intake import failure_reason
 from infonium.language_model import WireApi, endable_openai_model
 from infonium.library import LOCAL_OWNER
+from infonium.reasons import failure_reason
 from infonium.search import IndexFailed
 from tests.conversation import (
     Asking,
@@ -855,7 +855,7 @@ def test_a_failure_of_the_model_leaves_the_question_unanswered_and_keeps_nothing
         assert reason.strip(), "an answer the model wrote in another form has no reason"
     else:
         assert reason == failure_reason(expected), (
-            f"Unanswered is not worded as intake.failure_reason words the failure: {reason!r}"
+            f"Unanswered is not worded as failure_reason words the failure: {reason!r}"
         )
     assert library_turns(app) == [], f"a reply that is {failure} left something kept"
 
