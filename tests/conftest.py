@@ -26,6 +26,7 @@ from tests.model_standin import (
     MODEL_BASE_URL,
     MODEL_KEY,
     STANDIN_MODEL,
+    TRANSLATION_MODEL,
     ModelStandin,
     model_standin,
 )
@@ -91,13 +92,18 @@ def pdf_engine() -> Path:
 
 
 @pytest.fixture
-def standin_pdf_engine(tmp_path: Path) -> Callable[[str], Path]:
+def standin_pdf_engine(tmp_path: Path) -> Callable[..., Path]:
     # The command of a stand-in for MinerU that replays the engine's stored results for a
-    # sample of the PDF fixtures.
-    def engine_for(sample: str) -> Path:
-        engine = tmp_path / f"mineru-{sample}"
+    # sample of the PDF fixtures, or the results given in their place.
+    def engine_for(sample: str, results: Path | None = None) -> Path:
+        named = (
+            sample
+            if results is None
+            else f"{sample}{pdf_engine_standin.RESULTS_SEPARATOR}{results}"
+        )
+        engine = tmp_path / f"mineru-{sample}{'' if results is None else '-changed'}"
         engine.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{pdf_engine_standin.__file__}" {sample} "$@"\n'
+            f'#!/bin/sh\nexec "{sys.executable}" "{pdf_engine_standin.__file__}" "{named}" "$@"\n'
         )
         engine.chmod(0o755)
         return engine
@@ -149,8 +155,9 @@ def start_app(
     model: ModelStandin,
     embedder: EmbeddingStandin,
 ) -> Iterator[Callable[..., App]]:
-    # Starts the service on the test's library, its models speaking the wire API given and its
-    # embedding engine the stand-in, by the name of the model given.
+    # Starts the service on the test's library, its models speaking the wire API given, its
+    # embedding engine the stand-in by the name of the model given, and translating into the
+    # language given.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
     monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
@@ -163,8 +170,14 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
+    # The service's own provider of its translator, called anew for each start.
+    made_translator = api.translator.__wrapped__
 
-    def start(wire_api: WireApi = WireApi.RESPONSES, embedding_model: str = EMBEDDING_MODEL) -> App:
+    def start(
+        wire_api: WireApi = WireApi.RESPONSES,
+        embedding_model: str = EMBEDDING_MODEL,
+        language: str = api.settings.language,
+    ) -> App:
         @cache
         def language_model() -> LanguageModel:
             return openai_model(name=STANDIN_MODEL, wire_api=wire_api)
@@ -188,6 +201,18 @@ def start_app(
         monkeypatch.setattr(api, "block_index", lambda: index)
         monkeypatch.setattr(api, "language_model", language_model)
         monkeypatch.setattr(api, "answering_model", answering_model)
+
+        @cache
+        def translation_model() -> LanguageModel:
+            return openai_model(name=TRANSLATION_MODEL, wire_api=wire_api)
+
+        # The translator is made anew for each start by the service's own provider, on the
+        # test's library and models; its translating model has a name of its own, so that the
+        # stand-in tells its requests from those of the model that writes digests.
+        monkeypatch.setattr(api, "translation_model", translation_model)
+        monkeypatch.setattr(api.settings, "language", language)
+        translating = made_translator()
+        monkeypatch.setattr(api, "translator", lambda: translating)
         client = TestClient(api.app)
         client.__enter__()
         started.append(App(client, store, site, model, index))
