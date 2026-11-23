@@ -146,21 +146,11 @@ export const Row = memo(function Row({
   );
 });
 
-// The service says why a translation stopped in its own words; where they say how many blocks
-// could not be translated, the reader is told so in Chinese, with the service's last failure.
-const BLOCKS_MISSING = /^(\d+) of (\d+) blocks? could not be translated; the last failure: (.*)$/s;
-const READ_AGAIN = "the item was read again into another document, which is translated apart";
-
+// Every stop is said the same way, with the service's own words for why: the protocol tells
+// the kinds of stop apart by no tag, and words matched against the service's sentences would
+// fall silent as soon as one of them is put otherwise.
 function stoppedReason(reason: string): string {
-  if (reason === READ_AGAIN) {
-    return "翻译停在了半路：这一篇已重新读取，新读到的内容另行翻译。";
-  }
-  const missing = BLOCKS_MISSING.exec(reason);
-  if (missing === null) {
-    return `翻译停在了半路。服务给出的原因：${reason}`;
-  }
-  const [, failed, total, last] = missing;
-  return `翻译停在了半路：${total} 段中有 ${failed} 段没能译出，这几段先显示原文。最后一次失败的原因：${last}`;
+  return `翻译停在了半路：已译的段落照常显示，没译的段落显示原文。服务给出的原因：${reason}`;
 }
 
 // How far the translation has come, and what can be done about it from there.

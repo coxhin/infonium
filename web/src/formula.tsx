@@ -1,5 +1,4 @@
-import { createElement, useCallback, useMemo, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createElement, useMemo, type ReactNode } from "react";
 import "./formula.css";
 
 // Formulas are set as MathML, which the browser draws itself, from the LaTeX a document
@@ -410,49 +409,44 @@ class Reading {
   }
 }
 
-// The MathML of a formula, or nothing where it cannot be set. A formula is a document's text,
-// and no text may take down the reader that shows it, so a fault in reading it, of any kind,
-// leaves it shown as its LaTeX.
-export function mathOf(latex: string, display: boolean): ReactNode | undefined {
+// What tells a formula in the page from text: the element that draws it carries its LaTeX in
+// this attribute, and the code that resolves anchors takes that element for one piece of the
+// block's text, its LaTeX, every offset of which lies at the element.
+export const FORMULA_ATTRIBUTE = "data-latex";
+
+// The body of a formula's MathML, or nothing where it cannot be set. A formula is a document's
+// text, and no text may take down the reader that shows it, so a fault in reading it, of any
+// kind, leaves it shown as its LaTeX.
+export function bodyOf(latex: string): ReactNode | undefined {
   try {
     const reading = new Reading(tokens(latex));
     const body = reading.sequence();
-    if (!reading.finished()) {
-      return undefined;
-    }
-    return math("math", { display: display ? "block" : "inline" }, body);
+    return reading.finished() ? body : undefined;
   } catch {
     return undefined;
   }
 }
 
-// What tells a formula's drawing apart from text: the code that resolves anchors passes over
-// what lies in an element carrying it, and reads the formula's LaTeX beside it instead.
-export const DRAWN_ATTRIBUTE = "data-drawn";
-
-// A formula: its LaTeX, kept in the page as text but out of sight, so that a block's element
-// still holds exactly its text and a selection or a copy yields it, and beside it the formula
-// as it is set. The drawing stands in a shadow root of its own, which neither a selection nor
-// the walk of a block's text enters. One that cannot be set is its LaTeX, in sight.
+// A formula, drawn at once with the rest of its block as one MathML element that says its
+// LaTeX of itself. One that cannot be set is its LaTeX, and says it too.
 export function Formula({ latex, display }: { latex: string; display: boolean }) {
-  const drawn = useMemo(() => mathOf(latex, display), [latex, display]);
-  const [root, setRoot] = useState<ShadowRoot>();
-  const host = useCallback((element: HTMLSpanElement | null) => {
-    if (element !== null) {
-      setRoot(element.shadowRoot ?? element.attachShadow({ mode: "open" }));
-    }
-  }, []);
-  if (drawn === undefined) {
-    return <code className="formula">{latex}</code>;
-  }
-  return (
-    <span className={display ? "formula display" : "formula"} title={latex}>
-      <span className="formula-source" aria-hidden="true">
+  const body = useMemo(() => bodyOf(latex), [latex]);
+  const said = { [FORMULA_ATTRIBUTE]: latex };
+  if (body === undefined) {
+    return (
+      <code className="formula" {...said}>
         {latex}
-      </span>
-      <span ref={host} {...{ [DRAWN_ATTRIBUTE]: "" }}>
-        {root !== undefined && createPortal(drawn, root)}
-      </span>
-    </span>
+      </code>
+    );
+  }
+  return math(
+    "math",
+    {
+      ...said,
+      display: display ? "block" : "inline",
+      className: display ? "formula display" : "formula",
+      title: latex,
+    },
+    body,
   );
 }

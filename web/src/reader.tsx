@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock, unitOffset, unitOffsets } from "./blocks";
 import { originLabel } from "./entry";
-import { DRAWN_ATTRIBUTE } from "./formula";
+import { FORMULA_ATTRIBUTE } from "./formula";
 import type { Clock } from "./player";
 import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
@@ -12,7 +12,6 @@ import type { TranslationState } from "./translation";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const ANCHOR_HIGHLIGHT = "anchor";
-const PLAIN_TEXT = "text/plain";
 const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
 const CHANGED = "原文已经变化，找不到这段引文";
 
@@ -55,7 +54,6 @@ export function Reader({
     <article
       className="reader"
       {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
-      onCopy={copySelectedText}
     >
       <header>
         {entry.origin.kind === "link" ? (
@@ -104,51 +102,72 @@ export function Reader({
   );
 }
 
-// The text nodes of a block's element that hold its text: all of them but those of a
-// formula's drawing, beside which the formula's own text is kept.
-function textsOf(blockElement: Element): TreeWalker {
-  return document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT, (node) =>
-    node.parentElement?.closest(`[${DRAWN_ATTRIBUTE}]`)
-      ? NodeFilter.FILTER_REJECT
-      : NodeFilter.FILTER_ACCEPT,
+// One piece of a block's text as its element holds it: a text node, or a formula, whose text is
+// the LaTeX it says of itself and whose every offset lies at the element that draws it.
+type TextPiece = { node: Text; text: string } | { formula: Element; text: string };
+
+// The pieces of a block's element that hold its text, in their order.
+function piecesOf(blockElement: Element): TextPiece[] {
+  const pieces: TextPiece[] = [];
+  const walker = document.createTreeWalker(
+    blockElement,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
   );
+  let node = walker.nextNode();
+  while (node !== null) {
+    if (node instanceof Element && node.hasAttribute(FORMULA_ATTRIBUTE)) {
+      pieces.push({ formula: node, text: node.getAttribute(FORMULA_ATTRIBUTE) ?? "" });
+      node = walker.nextSibling() ?? nextOutside(walker);
+      continue;
+    }
+    if (node instanceof Text) {
+      pieces.push({ node, text: node.data });
+    }
+    node = walker.nextNode();
+  }
+  return pieces;
+}
+
+// The node after the walker's current one and all it holds, or none at the end of the walk.
+function nextOutside(walker: TreeWalker): Node | null {
+  while (walker.parentNode() !== null) {
+    const after = walker.nextSibling();
+    if (after !== null) {
+      return after;
+    }
+  }
+  return null;
 }
 
 // The text a block's element holds, as anchors are resolved against it.
 export function textOf(blockElement: Element): string {
-  const texts = textsOf(blockElement);
-  let text = "";
-  for (let node = texts.nextNode(); node !== null; node = texts.nextNode()) {
-    text += node.textContent ?? "";
-  }
-  return text;
+  return piecesOf(blockElement)
+    .map((piece) => piece.text)
+    .join("");
 }
 
-// A copy takes the text of the selection as the selection reads it: across a formula, the
-// formula's LaTeX in the run of the text. The browser's own copy would break the line where a
-// formula is drawn.
-function copySelectedText(event: ClipboardEvent<HTMLElement>): void {
-  const selection = getSelection();
-  if (selection === null || selection.isCollapsed) {
-    return;
-  }
-  event.clipboardData.setData(PLAIN_TEXT, selection.toString());
-  event.preventDefault();
-}
-
+// The range of the page that shows characters start to end of a block's text. A range that
+// begins or ends inside a formula takes in the whole of its drawing.
 function rangeIn(blockElement: Element, start: number, end: number): Range {
   const range = document.createRange();
-  const texts = textsOf(blockElement);
   let passed = 0;
   let startSet = false;
-  for (let text = texts.nextNode(); text !== null; text = texts.nextNode()) {
-    const length = text.textContent?.length ?? 0;
+  for (const piece of piecesOf(blockElement)) {
+    const length = piece.text.length;
     if (!startSet && start < passed + length) {
-      range.setStart(text, start - passed);
+      if ("node" in piece) {
+        range.setStart(piece.node, start - passed);
+      } else {
+        range.setStartBefore(piece.formula);
+      }
       startSet = true;
     }
     if (startSet && end <= passed + length) {
-      range.setEnd(text, end - passed);
+      if ("node" in piece) {
+        range.setEnd(piece.node, end - passed);
+      } else {
+        range.setEndAfter(piece.formula);
+      }
       return range;
     }
     passed += length;

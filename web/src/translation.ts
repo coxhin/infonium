@@ -41,10 +41,13 @@ const NO_BLOCKS: ReadonlyMap<number, TranslatedBlock> = new Map();
 // Why translating one block again was refused, by the status of the refusal, in words a reader
 // understands, followed by the service's own words. The control stands only on a translated
 // block, so a block that is not found is one whose item has gone or been read anew.
+const NOT_ASKED = 409;
+const NOT_FOUND = 404;
+const MODEL_FAILED = 502;
 const AGAIN_REFUSALS = new Map<number, string>([
-  [409, "这篇的译文还没有请求过，或被判断为不用翻译，所以没有可以重译的段落。"],
-  [404, "服务那里找不到这一段了：这一篇可能已被移除，或已重新读取。"],
-  [502, "模型这次没有给出可用的译文，可以稍后再试。"],
+  [NOT_ASKED, "这篇的译文还没有请求过，或被判断为不用翻译，所以没有可以重译的段落。"],
+  [NOT_FOUND, "服务那里找不到这一段了：这一篇可能已被移除，或已重新读取。"],
+  [MODEL_FAILED, "模型这次没有给出可用的译文，可以稍后再试。"],
 ]);
 
 function againFailed(error: unknown): string {

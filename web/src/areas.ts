@@ -12,6 +12,11 @@ export type Area = {
   lines: Box[];
   vertical: boolean;
   typeset: Typeset;
+  // The line spacing of the source, as a part of the size of its text, and the room the lines
+  // take with their leading: the box grown by half a leading before the first line and after
+  // the last, short of where another block's lines begin.
+  spacing: number;
+  room: Box;
   // The share of the block's source text that the area's lines hold.
   characters: number;
 };
@@ -42,6 +47,9 @@ const MOST_STEP = 3;
 // Boxes in whole points put a 10 point text anywhere from 9 to 11 points, a tenth either way;
 // a footnote of 8 points under 10 point paragraphs is a fifth smaller and keeps its own size.
 const SAME_TYPE = 0.15;
+const PLAIN_SPACING = 1.25;
+// The line spacing of the source is kept between these, as a part of the size of its text.
+const SPACING_BOUNDS = [1, 2.4] as const;
 
 function median(values: number[]): number | undefined {
   const sorted = [...values].sort((first, second) => first - second);
@@ -95,14 +103,55 @@ function goesOn(last: PagePlace, next: PagePlace, downward: boolean): boolean {
   return sideBySide || sameColumn;
 }
 
-function areaOf(lines: PagePlace[], downward: boolean, typeset: Typeset): Area {
+function spacingOf(typeset: Typeset): number {
+  return typeset.pitch === undefined || typeset.size === 0
+    ? PLAIN_SPACING
+    : Math.min(SPACING_BOUNDS[1], Math.max(SPACING_BOUNDS[0], typeset.pitch / typeset.size));
+}
+
+// The room of lines with their leading: grown across the lines by half a leading on each side,
+// and on a side where another block's lines stand, no further than halfway to them, so that
+// the rooms of two blocks never meet; where the other's lines already reach the box, not at
+// all on that side.
+function roomOf(box: Box, leading: number, downward: boolean, others: Box[]): Box {
+  // Measured along the run of lines: across the page for lines written downwards, down it
+  // otherwise. A vertical run goes right to left, but before and after are only sides here.
+  const start = downward ? box.left : box.top;
+  const end = downward ? box.left + box.width : box.top + box.height;
+  let low = start - leading / 2;
+  let high = end + leading / 2;
+  for (const other of others) {
+    const level = downward
+      ? other.top < box.top + box.height && box.top < other.top + other.height
+      : other.left < box.left + box.width && box.left < other.left + other.width;
+    if (!level) {
+      continue;
+    }
+    const otherStart = downward ? other.left : other.top;
+    const otherEnd = downward ? other.left + other.width : other.top + other.height;
+    if (otherStart + otherEnd >= start + end) {
+      high = Math.min(high, Math.max(end, (otherStart + end) / 2));
+    } else {
+      low = Math.max(low, Math.min(start, (otherEnd + start) / 2));
+    }
+  }
+  return downward
+    ? { ...box, left: low, width: high - low }
+    : { ...box, top: low, height: high - low };
+}
+
+function areaOf(lines: PagePlace[], downward: boolean, typeset: Typeset, others: Box[]): Area {
   const boxes = lines.map(({ left, top, width, height }) => ({ left, top, width, height }));
+  const box = union(boxes);
+  const spacing = spacingOf(typeset);
   return {
     page: lines[0]?.page ?? 0,
-    box: union(boxes),
+    box,
     lines: boxes,
     vertical: downward,
     typeset,
+    spacing,
+    room: roomOf(box, (spacing - 1) * typeset.size, downward, others),
     characters: lines.reduce((sum, line) => sum + (line.end - line.start), 0),
   };
 }
@@ -132,7 +181,10 @@ export function areasOf(
       runs.push([line]);
     }
   }
-  return runs.map((run) => areaOf(run, downward, typesetOn(run[0]?.page ?? 0)));
+  return runs.map((run) => {
+    const page = run[0]?.page ?? 0;
+    return areaOf(run, downward, typesetOn(page), othersOn(page));
+  });
 }
 
 // The sizes and the steps between lines that a set of lines shows, a line much taller than
@@ -159,6 +211,17 @@ function measuresOf(places: PagePlace[]): Measures {
     }
   });
   return { sizes, pitches };
+}
+
+// The lines of a block that tell the size of its text: those that hold no formula, as a line
+// with a sum and its limits stands taller than the text around it. A block that is all
+// formula is told by all its lines.
+function textLinesOf(block: Block, places: PagePlace[]): PagePlace[] {
+  const formulas = ("marks" in block ? block.marks : []).filter((mark) => mark.kind === "formula");
+  const plain = places.filter(
+    (place) => !formulas.some((mark) => mark.start < place.end && place.start < mark.end),
+  );
+  return plain.length > 0 ? plain : places;
 }
 
 function typesetOf(measures: Measures): Typeset | undefined {
@@ -198,7 +261,7 @@ export function layoutOf(blocks: Block[]): Layout {
       byPage.set(place.page, [...(byPage.get(place.page) ?? []), place]);
     }
     byPage.forEach((places, page) => {
-      const own = measuresOf(places);
+      const own = measuresOf(textLinesOf(block, places));
       const key = kindOnPage(page, block.kind);
       const kept = measured.get(key) ?? { sizes: [], pitches: [] };
       measured.set(key, {
@@ -217,20 +280,36 @@ export function layoutOf(blocks: Block[]): Layout {
   return { boxes, kinds };
 }
 
-// A block is set in the type of its kind on its page where its own lines are near that size;
-// one clearly larger or smaller, as a title among headings, keeps its own, with the spacing of
-// its kind in proportion where its own lines show none.
-function blockTypeset(own: Typeset | undefined, kind: Typeset | undefined): Typeset {
+const NO_TYPESET: Typeset = { size: 0, pitch: undefined };
+
+function scaledPitch(kind: Typeset, size: number): number | undefined {
+  return kind.pitch === undefined ? undefined : (kind.pitch * size) / kind.size;
+}
+
+// A block is set in the type of its kind on its page, unless its lines show it clearly larger
+// or smaller. It is larger, as a title among headings, only where even its smallest line is.
+// It is smaller, as a footnote among paragraphs, where its size is: told by its pitch against
+// its kind's where both are known, as boxes in whole points tell a size less surely than the
+// steps between lines do, and by its lines otherwise.
+function blockTypeset(own: Measures, kind: Typeset | undefined): Typeset {
+  const ownTypeset = typesetOf(own);
   if (kind === undefined) {
-    return own ?? { size: 0, pitch: undefined };
+    return ownTypeset ?? NO_TYPESET;
   }
-  if (own === undefined || Math.abs(own.size / kind.size - 1) <= SAME_TYPE) {
+  if (ownTypeset === undefined) {
     return kind;
   }
-  return {
-    size: own.size,
-    pitch: own.pitch ?? (kind.pitch === undefined ? undefined : (kind.pitch * own.size) / kind.size),
-  };
+  if (Math.min(...own.sizes) > kind.size * (1 + SAME_TYPE)) {
+    return { size: ownTypeset.size, pitch: ownTypeset.pitch ?? scaledPitch(kind, ownTypeset.size) };
+  }
+  const told =
+    ownTypeset.pitch !== undefined && kind.pitch !== undefined
+      ? (kind.size * ownTypeset.pitch) / kind.pitch
+      : ownTypeset.size;
+  if (told < kind.size * (1 - SAME_TYPE)) {
+    return { size: told, pitch: ownTypeset.pitch ?? scaledPitch(kind, told) };
+  }
+  return kind;
 }
 
 // Marks that open or close a phrase, before and after which a line is not broken in Chinese
@@ -353,7 +432,7 @@ export function placedOf(
       .map((other) => other.box);
   const typesetOn = (page: number) =>
     blockTypeset(
-      typesetOf(measuresOf(places.filter((place) => place.page === page))),
+      measuresOf(textLinesOf(block, places.filter((place) => place.page === page))),
       layout.kinds.get(kindOnPage(page, block.kind)),
     );
   const areas = areasOf(places, othersOn, typesetOn);

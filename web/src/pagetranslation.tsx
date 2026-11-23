@@ -3,9 +3,6 @@ import type { AreaText, Box } from "./areas";
 import { MarkedText } from "./blocks";
 import "./pagetranslation.css";
 
-const PLAIN_SPACING = 1.25;
-// The line spacing of the source is kept between these, as a part of the size of the text.
-const SPACING_BOUNDS = [1, 2.4] as const;
 // Text is made smaller to fit its area, but never below this part of the source's size.
 export const FLOOR = 0.6;
 const FITTING_STEPS = 7;
@@ -29,7 +26,9 @@ export type Drawn = { canvas: HTMLCanvasElement; count: number };
 
 // Text of one kind on one paper is set in one ink across a page: the ink read from each area
 // varies with how much of the letters' soft edges it caught, so the areas of a kind that lie on
-// the same paper take the middle of their inks.
+// the same paper take one ink, the truest of those alike to the middle of their inks. An ink
+// that stands out from that middle, as a red notice among black paragraphs, is the text's own
+// colour and is kept.
 function evened(
   texts: AreaText[],
   read: ReadonlyMap<string, Colours>,
@@ -47,15 +46,43 @@ function evened(
     const sorted = [...inks].sort((first, second) => brightnessOf(first) - brightnessOf(second));
     middles.set(group, sorted[Math.floor(sorted.length / 2)] ?? INK);
   });
+  // Of the inks alike to the middle, the one furthest from the paper is the truest: letters
+  // drawn small lose their middle to their soft edges and read lighter than they are printed.
+  const truest = new Map<string, string>();
+  for (const text of texts) {
+    const colours = read.get(text.key);
+    const group = colours === undefined ? undefined : groupOf(text, colours);
+    const middle = group === undefined ? undefined : middles.get(group);
+    if (colours === undefined || group === undefined || middle === undefined) {
+      continue;
+    }
+    const paper = rgbOf(colours.paper);
+    const kept = truest.get(group) ?? middle;
+    const alike = distance(rgbOf(middle), rgbOf(colours.ink)) <= ALIKE_INKS;
+    if (alike && distance(rgbOf(colours.ink), paper) > distance(rgbOf(kept), paper)) {
+      truest.set(group, colours.ink);
+    }
+  }
   const evenedColours = new Map<string, Colours>();
   for (const text of texts) {
     const colours = read.get(text.key);
     if (colours !== undefined) {
-      const ink = middles.get(groupOf(text, colours)) ?? colours.ink;
+      const middle = middles.get(groupOf(text, colours));
+      const alike = middle !== undefined && distance(rgbOf(middle), rgbOf(colours.ink)) <= ALIKE_INKS;
+      const ink = alike ? (truest.get(groupOf(text, colours)) ?? middle) : colours.ink;
       evenedColours.set(text.key, { paper: colours.paper, ink });
     }
   }
   return evenedColours;
+}
+
+// Inks closer than this, as a distance between colours, are one ink read unevenly; the greys
+// read from black text lie within 60 of one another, a red is some 250 from them.
+const ALIKE_INKS = 80;
+
+function rgbOf(colour: string): Rgb {
+  const [red = 0, green = 0, blue = 0] = (colour.match(/\d+/g) ?? []).map(Number);
+  return [red, green, blue];
 }
 
 // Papers alike to the eye are one paper: each channel is taken to eight levels.
@@ -158,19 +185,19 @@ function TranslatedArea({
   const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
   const [open, setOpen] = useState(false);
   const { area, piece } = text;
-  const { size: lineSize, pitch } = area.typeset;
-  // The size of the text, and its leading, as parts of the page's width.
-  const size = area.vertical ? lineSize : lineSize * shape;
-  const spacing =
-    pitch === undefined
-      ? PLAIN_SPACING
-      : Math.min(
-          SPACING_BOUNDS[1],
-          Math.max(SPACING_BOUNDS[0], (pitch * (area.vertical ? 1 : shape)) / size),
-        );
-  // The source's lines hold their leading between them; the room their text takes is that of
-  // its lines with the leading of each, half above the first and half below the last.
-  const leading = (spacing - 1) * size;
+  // The size of the text as a part of the page's width.
+  const size = area.vertical ? area.typeset.size : area.typeset.size * shape;
+  const spacing = area.spacing;
+  // Fonts that come after the first fitting, a formula's above all, change what the text
+  // takes, so the area is fitted again once they are in.
+  const [fontsIn, setFontsIn] = useState(false);
+  useEffect(() => {
+    let current = true;
+    void document.fonts.ready.then(() => current && setFontsIn(true));
+    return () => {
+      current = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const box = element.current;
@@ -203,15 +230,14 @@ function TranslatedArea({
     }
     box.style.setProperty("--fit", String(found.ratio));
     setFit(found);
-  }, [piece, size, spacing, width]);
+  }, [piece, size, spacing, width, fontsIn]);
 
-  const half = `${(leading / 2) * 100}cqw`;
-  const whole = `${leading * 100}cqw`;
+  // The text stands in the room its source's lines take with their leading.
   const style = {
-    left: area.vertical ? `calc(${percent(area.box.left)} - ${half})` : percent(area.box.left),
-    top: area.vertical ? percent(area.box.top) : `calc(${percent(area.box.top)} - ${half})`,
-    width: area.vertical ? `calc(${percent(area.box.width)} + ${whole})` : percent(area.box.width),
-    height: area.vertical ? percent(area.box.height) : `calc(${percent(area.box.height)} + ${whole})`,
+    left: percent(area.room.left),
+    top: percent(area.room.top),
+    width: percent(area.room.width),
+    height: percent(area.room.height),
     "--size": `${size * 100}cqw`,
     "--fit": fit.ratio,
     lineHeight: spacing,
