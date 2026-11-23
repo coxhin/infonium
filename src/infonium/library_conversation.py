@@ -112,6 +112,9 @@ LIBRARY_CITING = (
     + """\
 - Cite a passage only from the "text" of a block that a tool gave you, under that block's \
 own handle and number.
+- A handle is how you name a source to infonium, and it stands only in a citation's \
+"document" field. The reader never sees it: a statement names a source by its title, or by \
+what it is ("the French article"), never by its handle, and a search query holds no handle.
 - A statement that compares or joins what several sources say cites the passage of each \
 source it rests on, and says nothing that those passages do not say.
 """
