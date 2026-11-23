@@ -1,0 +1,68 @@
+/* The column is as tall as the window; each tab scrolls inside it, and the chat keeps its box
+   at the foot. */
+.app > .side {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.side :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.side .tabs {
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.6rem 1.2rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.side .tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 0.3rem 0.7rem 0.4rem;
+  color: var(--muted);
+}
+
+.side .tabs button[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.side .tabs button:disabled {
+  opacity: 0.45;
+}
+
+.side .lost {
+  margin: 0;
+  padding: 0.4rem 1.2rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.side .panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.side .panel.scrolled {
+  overflow-y: auto;
+}
+
+.side .panel > .status {
+  padding: 0 1.2rem;
+}
+
+@media (max-width: 64rem) {
+  .app > .side {
+    overflow: visible;
+  }
+}

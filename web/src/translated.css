@@ -1,0 +1,121 @@
+/* A block's translation in the text. Beside its source it is the second voice: the same
+   form, set quieter, after a rule that ties it to the block above. */
+
+.translated {
+  position: relative;
+}
+
+.translated.beside {
+  margin: -0.5em 0 1.4em;
+  padding-left: 0.8rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95em;
+}
+
+.translated.beside :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.6em;
+  font-size: 0.95em;
+}
+
+.translated.beside :is(p, blockquote, .list-item, figure, .table-scroll) {
+  margin-bottom: 0;
+}
+
+/* A figure's translation is its words; its picture stands once, above, in the source. */
+.translated.beside figure img {
+  display: none;
+}
+
+.translated.beside figure {
+  margin-top: 0;
+}
+
+.translated .segment.pointed,
+.translated table.pointed {
+  background: var(--found);
+  color: var(--ink);
+}
+
+/* The control to translate a block again stands in the margin to the left of the block, in
+   the reader's padding, so it never lies over words. Where a pointer hovers, it shows while
+   the block or its stretch of margin is hovered, or while it has the focus, and takes no click
+   while it cannot be seen. Where nothing hovers, as on a phone, it is always on show. */
+:is(.translated, .line-group)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 2rem;
+}
+
+.again {
+  position: absolute;
+  top: 0.15rem;
+  right: calc(100% + 0.3rem);
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--paper);
+}
+
+@media (hover: hover) {
+  .again {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  :is(.translated, .line-group):hover .again,
+  .again:focus-visible,
+  .again:disabled {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Where nothing hovers, the control is pressed with a finger: it takes 40 px each way, all of
+   it in the margin, which is widened for it, and draws only its mark. */
+@media (hover: none) {
+  /* Named by its element too, to win over the reader's own padding in styles.css, which the
+     page loads after this sheet. */
+  article.reader {
+    padding-left: 3rem;
+  }
+
+  .again {
+    top: -0.35rem;
+    right: calc(100% + 0.25rem);
+    width: 2.5rem;
+    height: 2.5rem;
+    border-color: transparent;
+    background: none;
+    font-size: 1rem;
+  }
+}
+
+.again:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.again:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.again-note {
+  margin: 0.2rem 0 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: normal;
+}
+
+.again-note.failed {
+  color: var(--failure);
+  overflow-wrap: anywhere;
+}

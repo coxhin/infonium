@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
@@ -13,33 +14,50 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
-from infonium.chat import ChatEvent, Conversation, Question, Unanswered
+from infonium.chat import (
+    Answered,
+    Answering,
+    ChatEvent,
+    Conversation,
+    ConversationBusy,
+    Drafted,
+    ItemConversation,
+    ItemConversations,
+    Question,
+    Questioned,
+    Turn,
+    Unanswered,
+    answer_progress,
+)
+from infonium.citing import numbered_blocks
 from infonium.digest import (
     Digest,
     DraftDigest,
     Section,
     digest_instructions,
-    digest_prompt,
     grounded_sections,
 )
 from infonium.document import Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
-from infonium.intake import Engines, Intake
+from infonium.intake import Engines, Intake, failure_reason
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
+    endable_openai_model,
     openai_model,
 )
 from infonium.library import (
     LOCAL_OWNER,
     Holding,
     Item,
+    Library,
     LibraryStore,
     NotInLibrary,
     Origin,
     Reading,
 )
+from infonium.model_connection import Ending
 from infonium.search import BlockIndex
 from infonium.settings import Settings
 from infonium.speech import Recogniser
@@ -60,6 +78,9 @@ HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
 UNBUILT = "this part of infonium is not built yet"
+# What an ASGI server's message says of itself, and the message that the connection is gone.
+MESSAGE_TYPE = "type"
+DISCONNECT = "http.disconnect"
 
 settings = Settings()
 
@@ -98,6 +119,17 @@ def block_index() -> BlockIndex:
 @cache
 def language_model() -> LanguageModel:
     return openai_model(name=settings.model, wire_api=settings.wire_api)
+
+
+@cache
+def answering_model() -> LanguageModel:
+    # The model that writes digests, over connections that a reader who leaves cuts.
+    return endable_openai_model(name=settings.model, wire_api=settings.wire_api)
+
+
+@cache
+def answering() -> Answering:
+    return Answering()
 
 
 @asynccontextmanager
@@ -193,10 +225,14 @@ app.add_exception_handler(NamelessUpload, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
+app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
+ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# What a model's failure to answer is told as, once the lines of an answer have begun.
+MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
 
 @app.middleware("http")
@@ -225,6 +261,45 @@ def current_owner() -> str:
 Owner = Annotated[str, Depends(current_owner)]
 
 
+def questioned_item(item_id: str, owner: Owner) -> Iterator[Questioned]:
+    # The item's conversation, held for a question until the question's response has been
+    # sent, with what the question is asked of. A conversation that is answering, or an item
+    # without a document, is refused before a line of the answer is sent.
+    with answering().claimed(ItemConversation(owner=owner, item_id=item_id)):
+        with library_store().transaction(owner) as transaction:
+            questioned = Questioned(
+                holding=Library(transaction).holding(item_id),
+                turns=ItemConversations(transaction).turns(item_id),
+            )
+        yield questioned
+
+
+QuestionedItem = Annotated[Questioned, Depends(questioned_item)]
+
+
+async def ended_on_leaving(request: Request, ending: Ending) -> None:
+    # The server says the connection is gone also once the response is complete, when ending
+    # the reply ends nothing.
+    while (await request.receive())[MESSAGE_TYPE] != DISCONNECT:
+        pass
+    ending.end()
+
+
+async def answer_ending(request: Request) -> AsyncIterator[Ending]:
+    # A reader who leaves in the middle of an answer ends it at once, whatever the model is
+    # doing: the thread that writes the lines waits in a read of the model's reply, and only
+    # cutting the reply's connection ends that wait.
+    ending = Ending()
+    watching = asyncio.create_task(ended_on_leaving(request, ending))
+    try:
+        yield ending
+    finally:
+        watching.cancel()
+
+
+AnswerEnding = Annotated[Ending, Depends(answer_ending)]
+
+
 def entry_of(item: Item) -> ItemEntry:
     return ItemEntry(id=item.id, origin=item.origin, reading=item.reading)
 
@@ -242,7 +317,7 @@ def written_digest(holding: Holding, owner: str) -> Digest:
     model = language_model()
     completion = model.structured(
         instructions=digest_instructions(settings.language),
-        prompt=digest_prompt(holding.title, holding.document),
+        prompt=numbered_blocks(holding.title, holding.document),
         output=DraftDigest,
     )
     digest = Digest(
@@ -356,23 +431,53 @@ def item_page(item_id: str, owner: Owner) -> PageView:
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
 def item_conversation(item_id: str, owner: Owner) -> Conversation:
-    raise NotImplementedError(UNBUILT)
+    # An item without a document has no conversation.
+    with library_store().transaction(owner) as transaction:
+        Library(transaction).holding(item_id)
+        return Conversation(turns=ItemConversations(transaction).turns(item_id))
 
 
-@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
-def ask_about_item(item_id: str, question: Question, owner: Owner) -> Iterator[ChatEvent]:
+@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
+def ask_about_item(
+    item_id: str,
+    question: Question,
+    owner: Owner,
+    questioned: QuestionedItem,
+    ending: AnswerEnding,
+) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON.
-    yield Unanswered(reason=UNBUILT)
+    # What happens on the way is sent as it happens, each event a line of JSON. The turn is
+    # kept before it is sent; a reader who leaves before then leaves nothing kept. A failure
+    # of infonium's own is not told as an answer: it ends the lines without a last event.
+    progress = answer_progress(
+        answering_model(), questioned.holding, questioned.turns, question.text, ending
+    )
+    try:
+        for step in progress:
+            match step:
+                case Drafted():
+                    yield step
+                case Turn():
+                    with library_store().transaction(owner) as transaction:
+                        ItemConversations(transaction).keep_turn(item_id, step)
+                    yield Answered(turn=step)
+    except MODEL_FAILURES as failure:
+        yield Unanswered(reason=failure_reason(failure))
 
 
 @app.delete(
     "/api/items/{item_id}/conversation",
-    responses=NOT_IN_LIBRARY,
+    responses=NOT_IN_LIBRARY | ANSWERING,
     status_code=HTTPStatus.NO_CONTENT,
 )
 def forget_item_conversation(item_id: str, owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    # A conversation that is answering is not forgotten: the answer would be kept after it.
+    with (
+        answering().claimed(ItemConversation(owner=owner, item_id=item_id)),
+        library_store().transaction(owner) as transaction,
+    ):
+        Library(transaction).holding(item_id)
+        ItemConversations(transaction).forget(item_id)
 
 
 @app.get("/api/conversation")

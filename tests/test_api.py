@@ -139,22 +139,36 @@ class StubModel:
             {"text": "Made up.", "citations": [{"block_number": number, "quote": MADE_UP_QUOTE}]},
         ]
         content = json.dumps({"sections": [{"title": "Summary", "statements": statements}]})
-        return httpx2.Response(
-            200,
-            json={
-                "id": "chatcmpl-stub",
-                "object": "chat.completion",
-                "created": 0,
+        chunk = {"id": "chatcmpl-stub", "object": "chat.completion.chunk", "created": 0}
+        chunks = [
+            {
+                **chunk,
                 "model": asked["model"],
                 "choices": [
                     {
                         "index": 0,
-                        "finish_reason": "stop",
-                        "message": {"role": "assistant", "content": content, "refusal": None},
+                        "finish_reason": None,
+                        "delta": {"role": "assistant", "content": content},
                     }
                 ],
+            },
+            {
+                **chunk,
+                "model": asked["model"],
+                "choices": [{"index": 0, "finish_reason": "stop", "delta": {}}],
+            },
+            {
+                **chunk,
+                "model": asked["model"],
+                "choices": [],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
             },
+        ]
+        events = [f"data: {json.dumps(sent)}\n\n" for sent in chunks]
+        return httpx2.Response(
+            200,
+            content="".join([*events, "data: [DONE]\n\n"]),
+            headers={"content-type": "text/event-stream"},
         )
 
     def language_model(self) -> ChatCompletionsLanguageModel:
