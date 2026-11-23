@@ -25,6 +25,7 @@ MODEL_HOST = "model.test"
 MODEL_BASE_URL = f"http://{MODEL_HOST}/v1"
 MODEL_KEY = "stand-in-key"
 STANDIN_MODEL = "stand-in-model"
+TRANSLATION_MODEL = "stand-in-translation-model"
 CHAT_PATH = "/v1/chat/completions"
 RESPONSES_PATH = "/v1/responses"
 WIRE_PATHS = {CHAT_PATH: WireApi.CHAT_COMPLETIONS, RESPONSES_PATH: WireApi.RESPONSES}

@@ -1,3 +1,4 @@
+import gzip
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -9,7 +10,16 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from infonium import pdf
-from infonium.document import Extracted, PagePlace, put_together
+from infonium.document import (
+    Code,
+    Extracted,
+    Figure,
+    FormulaMark,
+    PagePlace,
+    Paragraph,
+    Table,
+    put_together,
+)
 from infonium.mineru import Line, ParsedPage, RegionType, SpanType, Text, TextSpan, UnparsedFile
 from tests.pdf_engine_standin import PDF_DATA
 
@@ -255,4 +265,91 @@ def test_a_word_the_engine_read_short_of_a_ligature_is_spelled_as_the_layer_writ
     )
     assert pdf.respelled(read, frozenset()) == read, (
         f"{read!r} was respelled, though the text layer holds no word it could stand for"
+    )
+
+
+# The samples whose stored engine results hold formulas.
+FORMULA_SAMPLES = ("special", "odd_scan")
+FORMULA_SPANS = frozenset({SpanType.INLINE_FORMULA, SpanType.DISPLAY_FORMULA})
+DISPLAY_FORMULA = "\\int_{0}^{1} x \\, dx = \\frac{1}{2}"
+# Where the display formula a test adds is set on its page, in the engine's points: below
+# everything the page of the sample holds.
+DISPLAY_BOX = (100.0, 700.0, 400.0, 730.0)
+
+
+def engine_results(sample: str) -> dict[str, Any]:
+    written: dict[str, Any] = json.loads(
+        gzip.decompress((PDF_DATA / "engine" / f"{sample}.json.gz").read_bytes())
+    )
+    return written
+
+
+def engine_formulas(node: object) -> list[str]:
+    # The content of every formula span in the regions given, in the order they stand.
+    match node:
+        case {"type": kind, "content": str(content)} if kind in FORMULA_SPANS:
+            return [content]
+        case dict():
+            return [found for value in node.values() for found in engine_formulas(value)]
+        case list():
+            return [found for value in node for found in engine_formulas(value)]
+        case _:
+            return []
+
+
+def unspaced(text: str) -> str:
+    return "".join(text.split())
+
+
+def formula_texts(extracted: Extracted) -> list[str]:
+    return [
+        block.text[mark.start : mark.end]
+        for block in extracted.blocks
+        if not isinstance(block, Code | Table | Figure)
+        for mark in block.marks
+        if isinstance(mark, FormulaMark)
+    ]
+
+
+@pytest.mark.parametrize("sample", FORMULA_SAMPLES)
+def test_every_formula_of_a_pdf_has_a_formula_mark_over_its_latex(
+    sample: str, standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    pages = engine_results(sample)["middle"]["pdf_info"]
+    given = [formula for page in pages for formula in engine_formulas(page["preproc_blocks"])]
+    assert given, f"the stored engine results of {sample} hold no formula to judge"
+    marked = formula_texts(reading_of(sample, standin_pdf_engine(sample), tmp_path))
+    assert sorted(map(unspaced, marked)) == sorted(map(unspaced, given)), (
+        f"the formula marks of {sample} do not cover exactly the LaTeX of the engine's formulas: "
+        f"{marked} for {given}"
+    )
+
+
+def test_a_display_formula_is_a_paragraph_one_formula_mark_covers_whole(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    results = engine_results("special")
+    box = list(DISPLAY_BOX)
+    span = {"bbox": box, "type": SpanType.DISPLAY_FORMULA, "content": DISPLAY_FORMULA}
+    region = {
+        "bbox": box,
+        "type": RegionType.DISPLAY_FORMULA,
+        "angle": 0,
+        "lines": [{"bbox": box, "spans": [span]}],
+    }
+    results["middle"]["pdf_info"][0]["preproc_blocks"].append(region)
+    changed = tmp_path / "special-with-display.json.gz"
+    changed.write_bytes(gzip.compress(json.dumps(results).encode()))
+    extracted = reading_of("special", standin_pdf_engine("special", changed), tmp_path)
+    displayed = [
+        block for block in extracted.blocks if unspaced(DISPLAY_FORMULA) in unspaced(block.text)
+    ]
+    assert len(displayed) == 1, f"the display formula is not one block of its own: {displayed}"
+    [block] = displayed
+    assert isinstance(block, Paragraph), f"a display formula was read as a {block.kind}"
+    assert [(mark.kind, mark.start, mark.end) for mark in block.marks] == [
+        ("formula", 0, len(block.text))
+    ], f"a display formula is not a paragraph one formula mark covers whole: {block.marks}"
+    assert unspaced(block.text) == unspaced(DISPLAY_FORMULA), (
+        f"the display formula's paragraph holds more than its LaTeX: {block.text!r}"
     )
