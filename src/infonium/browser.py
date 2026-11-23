@@ -130,10 +130,13 @@ TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 
 # The browser is driven by a process of its own, this module run as a program and held by
 # lineage, which starts the proxy the browser connects through and Playwright, which starts
-# the browser. It is given the address of the page, a folder for its work, the browser to
-# start and the moment, on the system's monotonic clock, by which it is to be done; it leaves
-# the page in the folder and a report of the rendering beside it, and then waits to be ended.
+# the browser. It is given a folder for its work, the browser to start and the moment, on the
+# system's monotonic clock, by which it is to be done, and finds the address of the page in a
+# file of the folder, where no other user of this machine sees it and no length limits it; it
+# leaves the page in the folder and a report of the rendering beside it, and then waits to be
+# ended.
 RENDERER = (sys.executable, lineage.RUN_AS_MODULE, __spec__.name)
+ADDRESS_FILE = "address"
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
 # How long the process that started the renderer lets pass from one look to the next at
@@ -477,7 +480,8 @@ def main() -> None:
     # exception does not cross from one process to another: a fault of the renderer's own
     # ends it without a report. Whatever the renderer started is ended before it reports or
     # ends.
-    url, work, program, deadline = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+    work, program, deadline = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+    url = (work / ADDRESS_FILE).read_text()
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
     reported = Event()
     lineage.hold_descendants(partial(remove_rendering, work, reported))
@@ -540,7 +544,8 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     # The rendering of a page as the renderer reports it. Whatever the renderer started is
     # ended with it, and gone, before this returns or raises.
     deadline = time.monotonic() + RENDERING_LIMIT_SECONDS - REPORTING_SECONDS
-    command = [*RENDERER, url, str(work), program, repr(deadline)]
+    command = [*RENDERER, str(work), program, repr(deadline)]
+    (work / ADDRESS_FILE).write_text(url)
     with TemporaryDirectory() as temporary:
         environment = renderer_environment(work, Path(temporary))
         with lineage.HeldProgram(command, environment) as renderer:
