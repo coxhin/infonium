@@ -24,7 +24,7 @@ from infonium.digest import (
     grounded_sections,
 )
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
-from infonium.framedpage import framed_page
+from infonium.framedpage import FramedPage, framed_page
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
@@ -52,6 +52,19 @@ READERS = 2
 # A source is another site's bytes served from this origin; a browser that opens one treats
 # it as inert and as the kind of bytes it is said to be.
 SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
+# A web page an item was read from, served as a document of its own, is inert and quiet
+# whoever opens its address, a frame or a tab: these headers are the first line of defence,
+# and what framedpage removes from the page the second. The page keeps infonium's origin so
+# that the reader's code can reach into it, but no script, plugin or frame runs in it, and
+# no form is sent from it.
+PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "sandbox allow-same-origin; script-src 'none'; object-src 'none'; frame-src 'none';"
+        " form-action 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 FETCH_SITE = "sec-fetch-site"
 OWN_SITES = frozenset({"same-origin", "none"})
@@ -150,13 +163,11 @@ class TranslationView(BaseModel):
     blocks: list[TranslatedBlock]
 
 
-class PageView(BaseModel):
-    # The web page an item was read from, made ready for a frame that runs none of its
-    # scripts: its addresses are those of the site it came from, and an element that holds
-    # the text of one block, and nothing else, carries that block's number in the
-    # attribute named here. The blocks placed so are listed; any other block has no
-    # element of its own in the page.
-    html: str
+class PageBlocks(BaseModel):
+    # Where the blocks of an item's document stand in the web page it was read from, as the
+    # page is served: an element that holds the text of one block, and nothing else, carries
+    # that block's number in the attribute named here. The blocks placed so are listed; any
+    # other block has no element of its own in the page.
     block_attribute: str
     placed: list[BlockNumber]
 
@@ -182,6 +193,9 @@ app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY)
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
+SERVED_PAGE: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.OK: {"content": {HTML_MEDIA_TYPE: {"schema": {"type": "string"}}}}
+}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 
 
@@ -334,8 +348,7 @@ def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> 
     raise NotImplementedError(UNBUILT)
 
 
-@app.get("/api/items/{item_id}/page", responses=NOT_IN_LIBRARY)
-def item_page(item_id: str, owner: Owner) -> PageView:
+def framed_item_page(item_id: str, owner: str) -> FramedPage:
     # The page of an item that was read from a web page; any other item has none.
     store = library_store()
     with store.library(owner) as library:
@@ -343,8 +356,24 @@ def item_page(item_id: str, owner: Owner) -> PageView:
         document = library.holding(item_id).document
     if document.media_type != HTML_MEDIA_TYPE:
         raise NotInLibrary(f"item {item_id} was not read from a web page")
-    page = framed_page(store.snapshot(document.snapshot).read_bytes(), origin, document.blocks)
-    return PageView(html=page.html, block_attribute=BLOCK_ATTRIBUTE, placed=page.placed)
+    return framed_page(store.snapshot(document.snapshot).read_bytes(), origin, document.blocks)
+
+
+@app.get(
+    "/api/items/{item_id}/page",
+    responses=NOT_IN_LIBRARY | SERVED_PAGE,
+    response_class=Response,
+)
+def item_page(item_id: str, owner: Owner) -> Response:
+    page = framed_item_page(item_id, owner).html
+    return Response(content=page, media_type=HTML_MEDIA_TYPE, headers=PAGE_HEADERS)
+
+
+@app.get("/api/items/{item_id}/page/blocks", responses=NOT_IN_LIBRARY)
+def item_page_blocks(item_id: str, owner: Owner) -> PageBlocks:
+    return PageBlocks(
+        block_attribute=BLOCK_ATTRIBUTE, placed=framed_item_page(item_id, owner).placed
+    )
 
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)

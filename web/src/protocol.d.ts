@@ -146,6 +146,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/page/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Page Blocks */
+        get: operations["item_page_blocks_api_items__item_id__page_blocks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/source": {
         parameters: {
             query?: never;
@@ -465,6 +482,13 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** PageBlocks */
+        PageBlocks: {
+            /** Block Attribute */
+            block_attribute: string;
+            /** Placed */
+            placed: number[];
+        };
         /** PagePlace */
         PagePlace: {
             /**
@@ -507,15 +531,6 @@ export interface components {
              * @description A distance across or down a page, as a part of its size.
              */
             width: number;
-        };
-        /** PageView */
-        PageView: {
-            /** Block Attribute */
-            block_attribute: string;
-            /** Html */
-            html: string;
-            /** Placed */
-            placed: number[];
         };
         /** Paragraph */
         Paragraph: {
@@ -1322,7 +1337,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PageView"];
+                    "text/html": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_page_blocks_api_items__item_id__page_blocks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageBlocks"];
                 };
             };
             /** @description Not Found */

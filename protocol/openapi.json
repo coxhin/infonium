@@ -727,6 +727,29 @@
         "title": "ListItem",
         "type": "object"
       },
+      "PageBlocks": {
+        "properties": {
+          "block_attribute": {
+            "title": "Block Attribute",
+            "type": "string"
+          },
+          "placed": {
+            "items": {
+              "description": "The position of a block in its document, counted from 0.",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Placed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "block_attribute",
+          "placed"
+        ],
+        "title": "PageBlocks",
+        "type": "object"
+      },
       "PagePlace": {
         "properties": {
           "end": {
@@ -793,34 +816,6 @@
           "height"
         ],
         "title": "PagePlace",
-        "type": "object"
-      },
-      "PageView": {
-        "properties": {
-          "block_attribute": {
-            "title": "Block Attribute",
-            "type": "string"
-          },
-          "html": {
-            "title": "Html",
-            "type": "string"
-          },
-          "placed": {
-            "items": {
-              "description": "The position of a block in its document, counted from 0.",
-              "minimum": 0.0,
-              "type": "integer"
-            },
-            "title": "Placed",
-            "type": "array"
-          }
-        },
-        "required": [
-          "html",
-          "block_attribute",
-          "placed"
-        ],
-        "title": "PageView",
         "type": "object"
       },
       "Paragraph": {
@@ -2238,9 +2233,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageView"
+                  "type": "string"
                 }
               }
             },
@@ -2268,6 +2263,55 @@
           }
         },
         "summary": "Item Page"
+      }
+    },
+    "/api/items/{item_id}/page/blocks": {
+      "get": {
+        "operationId": "item_page_blocks_api_items__item_id__page_blocks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageBlocks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Page Blocks"
       }
     },
     "/api/items/{item_id}/source": {

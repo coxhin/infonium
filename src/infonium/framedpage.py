@@ -8,17 +8,30 @@ from pydantic import BaseModel
 
 from infonium.blockholders import STYLE_ATTRIBUTE, placed_blocks, unread_parts
 from infonium.document import NO_TEXT, WEB_SCHEMES, Block, BlockNumber, UnreadableSource
-from infonium.htmlpage import drop_dialogs
+from infonium.htmlpage import IS_HIDDEN, drop_dialogs
 from infonium.library import Link, Origin, Upload
 
-# What a page holds that would run, send or load another page in the frame. A script is
-# removed with what it holds. An object or an applet is replaced by its fallback content,
-# which a browser shows where it cannot show the object; so is an embed, which holds nothing
-# in a browser, but which the parser takes for an element that holds what follows it. A
-# frame keeps its box but not its page.
+# What a page holds that would run, send or load another page where it is shown. The headers
+# the page is served with forbid all of this to the browser; taking it out of the page itself
+# is the second line of defence, which holds wherever the page is shown without those
+# headers. A script is removed with what it holds. An object or an applet is replaced by its
+# fallback content, which a browser shows where it cannot show the object; so is an embed,
+# which holds nothing in a browser, but which the parser takes for an element that holds
+# what follows it. A frame keeps its box but not its page.
 SCRIPT = "script"
 STYLE_ELEMENT = "style"
 FOREIGN_CONTENT = ("svg", "math")
+# What a page holds for a browser without scripts is shown, as such a browser shows it: its
+# stylesheets and the pictures of its article. A picture in it that is there only to count
+# the visit is not: one of a pixel or none, by its attributes or its style, one that is
+# hidden, and one with neither a size nor a description, which a counter needs no more than
+# it needs to be seen.
+SCRIPTLESS_PICTURES = etree.XPath("//noscript//img")
+PICTURE_SIZE = re.compile(r"(?:^|[;\s])(?:width|height)\s*:\s*[01](?:px)?\s*(?:;|$)", re.IGNORECASE)
+PIXEL_SIZE_SUFFIX = "px"
+SIZE_ATTRIBUTES = ("width", "height")
+DESCRIPTION = "alt"
+LARGEST_COUNTER_SIZE = 1
 REPLACED_BY_CONTENT = frozenset({"object", "applet", "param", "embed"})
 FRAMES = ("iframe", "frame", "fencedframe", "portal")
 FRAMED_PAGE = ("src", "srcdoc")
@@ -74,9 +87,10 @@ NAMED_ADDRESSES = etree.XPath(
 )
 OWN_BASE = etree.XPath("//base[@href]/@href")
 
-# Chrome sends the address of the page that holds the frame as the referrer of what the CSS
-# held in the framed page loads, in a style element or a style attribute, whatever referrer
-# policy the page names; what a stylesheet loaded from an address loads names that address.
+# Chrome sends the origin of the page as the referrer of what the CSS held in the page loads,
+# in a style element or a style attribute, whatever referrer policy the page names in its
+# headers or in a meta element; what a stylesheet loaded from an address loads names that
+# address, and a stylesheet loaded from a data: address names nothing.
 # So CSS that loads anything is moved into stylesheets with data: addresses, which are no
 # referrer, and its addresses are made absolute, since a data: address is no base for them.
 # A declaration taken out of a style attribute is applied to its element by a rule in such a
@@ -111,6 +125,22 @@ def page_tree(content: bytes, address: str) -> html.HtmlElement:
 
 def is_script_address(value: str) -> bool:
     return SCRIPT_ADDRESS.match(ADDRESS_NOISE.sub("", value)) is not None
+
+
+def is_visit_counter(picture: html.HtmlElement) -> bool:
+    sizes = [
+        picture.get(name, "").strip().removesuffix(PIXEL_SIZE_SUFFIX) for name in SIZE_ATTRIBUTES
+    ]
+    tiny = any(size.isdigit() and int(size) <= LARGEST_COUNTER_SIZE for size in sizes)
+    styled_tiny = PICTURE_SIZE.search(picture.get(STYLE_ATTRIBUTE, "")) is not None
+    unsized = not any(sizes) and not picture.get(DESCRIPTION, "").strip()
+    return tiny or styled_tiny or unsized or bool(IS_HIDDEN(picture))
+
+
+def drop_visit_counters(page: html.HtmlElement) -> None:
+    for picture in SCRIPTLESS_PICTURES(page):
+        if is_visit_counter(picture):
+            picture.drop_tree()
 
 
 def made_inert(page: html.HtmlElement) -> None:
@@ -261,8 +291,8 @@ def heading_address(origin: Origin) -> str:
 
 
 def with_head(page: html.HtmlElement, base: str) -> None:
-    # The page sends no referrer, and its addresses lead to its site. Both are set before
-    # anything in the page loads.
+    # The page sends no referrer, as its headers say too, and its addresses lead to its site.
+    # Both are set before anything in the page loads.
     head = page.find(HEAD)
     if head is None:
         head = html.Element(HEAD)
@@ -277,14 +307,15 @@ def with_head(page: html.HtmlElement, base: str) -> None:
 
 
 def framed_page(content: bytes, origin: Origin, blocks: list[Block]) -> FramedPage:
-    # The page an item was read from, made ready to be shown in a frame that runs none of
-    # its scripts, with the elements that hold the blocks' text marked. Its dialogs are left
-    # out, as the extractor leaves them out: shown without the script that closes them, they
-    # would cover the page.
+    # The page an item was read from, made ready to be shown with none of its scripts run,
+    # with the elements that hold the blocks' text marked. Its dialogs are left out, as the
+    # extractor leaves them out: shown without the script that closes them, they would cover
+    # the page.
     page = page_tree(content, heading_address(origin))
     doctype = page.getroottree().docinfo.doctype
     base = base_address(page, origin)
     made_inert(page)
+    drop_visit_counters(page)
     with_css_moved(page, base)
     drop_dialogs(page)
     placed = placed_blocks(page, unread_parts(page, heading_address(origin)), base, blocks)
