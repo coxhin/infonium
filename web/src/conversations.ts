@@ -55,7 +55,12 @@ const UNREAD: Chat = {
   forgetting: "idle",
   heard: "",
 };
-const CUT_OFF = "连接中断，回答没有写完";
+const CUT_OFF = "连接中断，回答没有写完。";
+const UNREACHED = "连不上服务，问题没有发出。";
+const NOT_READ_AGAIN = "对话也没能重新读取，刷新页面可以再读一次。";
+// The service refuses a question about a conversation that is answering another.
+const ANSWERING_STATUS = 409;
+const ANSWERING = "这段对话正在回答另一个问题，等它答完再问。";
 // A reading after a broken connection is tried this many times, this far apart, since the
 // connection may break when this machine's network changes, which settles within a second.
 const REREADS = 3;
@@ -190,25 +195,23 @@ export function useConversations(): Conversations {
   async function reread(scope: Scope) {
     reading.current.add(scopeKey(scope));
     const begun = clearingsOf(scope);
-    let reason = "";
     for (let attempt = 0; attempt < REREADS; attempt += 1) {
       try {
         readIn(scope, await readConversation(scope), begun);
         return;
-      } catch (error) {
-        reason = reasonOf(error);
+      } catch {
+        // Tried again after a pause; only the last failure is said, below.
         await paused(REREAD_PAUSE_MS);
       }
     }
-    update(scope, (chat) => ({
-      ...chat,
-      problem: `${chat.problem ?? ""}对话也没能重新读取：${reason}`,
-    }));
+    update(scope, (chat) => ({ ...chat, problem: `${chat.problem ?? ""}${NOT_READ_AGAIN}` }));
     readingDone(scope, undefined);
   }
 
-  function cutOff(scope: Scope, question: string, reason: string) {
-    update(scope, (chat) => givenBack(chat, question, `${CUT_OFF}${reason}。`));
+  // The browser's reason for a broken connection is a word of its own, such as "network
+  // error", which tells a reader nothing more, so it is not shown.
+  function cutOff(scope: Scope, question: string) {
+    update(scope, (chat) => givenBack(chat, question, CUT_OFF));
     void reread(scope);
   }
 
@@ -266,15 +269,17 @@ export function useConversations(): Conversations {
             return;
         }
       }
-      cutOff(scope, question, "");
+      cutOff(scope, question);
     } catch (error) {
       if (error instanceof RefusedQuestion) {
-        update(scope, (chat) => givenBack(chat, question, `问题没有被接受：${error.message}`));
+        const reason =
+          error.status === ANSWERING_STATUS ? ANSWERING : `问题没有被接受：${error.message}`;
+        update(scope, (chat) => givenBack(chat, question, reason));
       } else if (error instanceof UnreachedService) {
         // The question was never received, so the conversation has nothing new to read.
-        update(scope, (chat) => givenBack(chat, question, `连不上服务，问题没有发出：${error.message}`));
+        update(scope, (chat) => givenBack(chat, question, UNREACHED));
       } else {
-        cutOff(scope, question, `：${reasonOf(error)}`);
+        cutOff(scope, question);
       }
     }
   }
