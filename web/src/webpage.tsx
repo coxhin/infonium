@@ -131,8 +131,10 @@ class FramedPage {
     this.written.set(element, { setting, translated: wanted });
   }
 
-  mark(selector: string, passage: Range): void {
-    this.pointedRule.replaceSync(`${selector} { ${POINTED_OUTLINE} }`);
+  // The outline goes round an element laid out as a block; round one laid out inline, as a
+  // run of words inside a larger element is, it would be drawn round each line apart.
+  mark(outlined: string | null, passage: Range): void {
+    this.pointedRule.replaceSync(outlined === null ? "" : `${outlined} { ${POINTED_OUTLINE} }`);
     this.view.CSS.highlights.set(POINTED_HIGHLIGHT, new this.view.Highlight(passage));
   }
 
@@ -506,10 +508,13 @@ function selectorOf(pageBlocks: PageBlocks, holder: Element): string {
   return `[${attribute}="${holder.getAttribute(attribute) ?? ""}"]`;
 }
 
-type Target = { found: true; selector: string; passage: Range } | { found: false; reason: string };
+type Target =
+  | { found: true; outlined: string | null; passage: Range }
+  | { found: false; reason: string };
 
 // Where a passage stands in the page: the element that stands for its block, whole, or the
-// quoted words where the element holds the block's text and they are found in it.
+// quoted words where the element holds the block's text and they are found in it; and the
+// element to outline, if any.
 function targetOf(
   framed: FramedPage,
   pageBlocks: PageBlocks,
@@ -528,7 +533,12 @@ function targetOf(
       : null;
   const whole = page.createRange();
   whole.selectNodeContents(holder);
-  return { found: true, selector: selectorOf(pageBlocks, holder), passage: words ?? whole };
+  const inline = framed.view.getComputedStyle(holder).display.startsWith(INLINE_DISPLAY);
+  return {
+    found: true,
+    outlined: inline ? null : selectorOf(pageBlocks, holder),
+    passage: words ?? whole,
+  };
 }
 
 function paddingOf(computed: string): number {
@@ -753,7 +763,7 @@ export function WebpageView({
         onLost(target.reason);
       }
     } else {
-      framed.mark(target.selector, target.passage);
+      framed.mark(target.outlined, target.passage);
       if (first) {
         bringIntoFrame(frame.current, framed, target.passage);
       }
