@@ -69,7 +69,7 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 - A site that turns programs away is not read. When it answers with anything but success, the reading fails with that status. When it answers with a check for a person in place of the page, the reading fails with the site's name, as long as the check is one that infonium knows; a check it does not know may be read as the page.
 - A page of fewer than 200 words is taken for a check when its title is one that guards give their checks, or when the address it ends at names a captcha and carries another address to go on to, so a short page that happens to look like that is refused.
 - A page whose HTML holds 200 words or more, menus and links included, is read from its HTML and never opened in a browser.
-- A page of fewer than 200 words waits while it is opened in a browser: a few seconds as a rule, and 90 at most.
+- A page of fewer than 200 words waits while it is opened in a browser, 90 seconds at most: the three such pages of a survey of 30 sites took 5 to 26 seconds.
 - Of the HTML and the page the browser builds, the one with more words is kept, even when those words are menus and links.
 - Without Chrome, a page whose HTML only asks for JavaScript may be read as that one line.
 - A page in the browser may take 3 GiB of memory, counted over the browser and the programs that drive it, and 1 GiB of disk, and may pass the memory bound by about 1.5 GiB, and the disk bound by what it writes in about 2 seconds, before it is ended.
