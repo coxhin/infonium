@@ -1,7 +1,8 @@
 /* A block's translation in the text. Beside its source it is the second voice: the same
    form, set quieter, after a rule that ties it to the block above. */
 
-.translated {
+.translated,
+.untranslated {
   position: relative;
 }
 
@@ -41,7 +42,7 @@
    the reader's padding, so it never lies over words. Where a pointer hovers, it shows while
    the block or its stretch of margin is hovered, or while it has the focus, and takes no click
    while it cannot be seen. Where nothing hovers, as on a phone, it is always on show. */
-:is(.translated, .line-group)::before {
+:is(.translated, .untranslated, .line-group)::before {
   content: "";
   position: absolute;
   top: 0;
@@ -70,7 +71,7 @@
     pointer-events: none;
   }
 
-  :is(.translated, .line-group):hover .again,
+  :is(.translated, .untranslated, .line-group):hover .again,
   .again:focus-visible,
   .again:disabled {
     opacity: 1;
