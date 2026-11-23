@@ -21,8 +21,10 @@ import psutil
 RUN_AS_MODULE = "-m"
 # Linux's option of prctl that makes a process the reaper of the orphans among its
 # descendants, so that whatever they start stays its descendant when its parent dies, a
-# process that leads a session of its own as well.
+# process that leads a session of its own as well; and the one that has a process sent a
+# signal when the thread that started it ends.
 PR_SET_CHILD_SUBREAPER = 36
+PR_SET_PDEATHSIG = 1
 # A look at whether a process has ended that does not wait, and leaves it unreaped.
 ENDED_UNREAPED = os.WEXITED | os.WNOHANG | os.WNOWAIT
 # The status a held program ends with when the process that holds it is gone.
@@ -61,9 +63,9 @@ def hold_data_to(limit: int) -> None:
     resource.setrlimit(resource.RLIMIT_DATA, (data_limit, data_limit))
 
 
-def become_reaper() -> None:
+def set_process_option(option: int, value: int) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+    if libc.prctl(option, value, 0, 0, 0) != 0:
         number = ctypes.get_errno()
         raise OSError(number, os.strerror(number))
 
@@ -165,8 +167,10 @@ def hold_descendants(abandoned: Callable[[], None]) -> None:
     # What a held program does first. It becomes the reaper of the orphans of all it starts,
     # so that they stay its descendants until it is ended; and once the process that holds it
     # is gone, it ends all it started, calls `abandoned`, and ends itself, whatever of this
-    # fails.
-    become_reaper()
+    # fails. A holder that dies after it has stopped the program, to end it, has the program
+    # go on, so that it finds its holder gone.
+    set_process_option(PR_SET_CHILD_SUBREAPER, 1)
+    set_process_option(PR_SET_PDEATHSIG, signal.SIGCONT)
     Thread(target=end_when_abandoned, args=(abandoned,), daemon=True).start()
 
 
@@ -185,10 +189,15 @@ class HeldProgram:
     # wherever it is reparented.
     def __init__(self, command: list[str], environment: dict[str, str]) -> None:
         reading, self.holding = os.pipe()
-        self.process = subprocess.Popen(
-            command, stdin=reading, env=environment, start_new_session=True
-        )
-        os.close(reading)
+        try:
+            self.process = subprocess.Popen(
+                command, stdin=reading, env=environment, start_new_session=True
+            )
+        except BaseException:
+            os.close(self.holding)
+            raise
+        finally:
+            os.close(reading)
         self.seen: set[psutil.Process] = set()
 
     def __enter__(self) -> Self:
@@ -227,9 +236,7 @@ class HeldProgram:
         # ended: stopped, it would never end. Where this process inherits the dead, as process
         # 1 of a container or a reaper of orphans does, the ended that became its children are
         # reaped by their numbers, each known to be the one that was ended, and no other child
-        # of this process is touched. A process whose first thread has ended shows as ended
-        # while its other threads still end, and hands its children on only after them, so
-        # the ended are looked at until each is gone, for as long as an ending may take.
+        # of this process is touched.
         os.kill(self.process.pid, signal.SIGSTOP)
         try:
             end_all(self.held)
@@ -237,12 +244,25 @@ class HeldProgram:
             self.process.kill()
             self.status()
             os.close(self.holding)
+            self.reap_ended()
+
+    def reap_ended(self) -> None:
+        # A process whose first thread has ended shows as ended while its other threads still
+        # end, and can be reaped, or hands its children on, only after them: the noted processes
+        # that ended are looked at again while one of them waits for that, for as long as an
+        # ending may take. An ended process whose parent goes on is that parent's to reap.
         began = time.monotonic()
-        while (ended := [process for process in self.seen if process.is_running()]) and (
-            time.monotonic() - began < ENDING_LIMIT_SECONDS
-        ):
-            for process in ended:
+        while time.monotonic() - began < ENDING_LIMIT_SECONDS:
+            waiting = False
+            for process in self.seen:
                 with suppress(psutil.NoSuchProcess, ChildProcessError):
-                    if process.ppid() == os.getpid():
-                        os.waitpid(process.pid, os.WNOHANG)
+                    if is_alive(process):
+                        continue
+                    parent = process.ppid()
+                    if parent == os.getpid():
+                        waiting |= os.waitpid(process.pid, os.WNOHANG) == (0, 0)
+                    elif not is_alive(psutil.Process(parent)):
+                        waiting = True
+            if not waiting:
+                return
             time.sleep(ENDING_WATCH_SECONDS)
