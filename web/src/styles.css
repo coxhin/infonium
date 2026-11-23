@@ -366,10 +366,11 @@ main > .status {
 }
 
 @media (max-width: 64rem) {
-  /* As the wide layout's middle column, the one column is never wider than the screen: a
-     plain 1fr grows to the widest table or listing, which scroll inside themselves instead. */
+  /* The one column is a flow of blocks, never wider than the screen: the widest table or
+     listing scrolls inside itself. Out of a grid, the column beside the reader can be held at
+     the foot of the window while the page scrolls. */
   .app {
-    grid-template-columns: minmax(0, 1fr);
+    display: block;
     height: auto;
   }
 

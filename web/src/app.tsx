@@ -1,14 +1,14 @@
-import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { listItems, readDocument, readEntry, type Anchor, type ItemEntry } from "./client";
+import { Component, useState, useSyncExternalStore, type ReactNode } from "react";
+import { listItems, readDocument, readEntry, type ItemEntry } from "./client";
 import { Library } from "./library";
 import { itemLink, linkedItem } from "./links";
-import { reasonOf, useLoaded, useWatched } from "./loading";
+import { reasonOf, useLoaded, useWatched, type Loaded } from "./loading";
 import { isBeingRead } from "./entry";
 import { ReadItem, type ReadEntry } from "./reading";
-import { SeatingProvider, SideColumn, useSeating } from "./side";
+import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
 
-// An item opened for one of its passages, as a citation in the chat opens it.
-type Opening = { itemId: string; anchor: Anchor };
+const STILL_READING = "这一篇还在读取，读完后才能打开这段引文。";
+const READING_FAILED = "这一篇读取失败，打不开这段引文。";
 
 function onLinkChange(notify: () => void): () => void {
   addEventListener("hashchange", notify);
@@ -45,9 +45,13 @@ class PaneBoundary extends Component<{ children: ReactNode }, { reason: string |
   }
 }
 
-function DocumentPane({ entry, opening }: { entry: ReadEntry; opening: Anchor | undefined }) {
+function DocumentPane({ entry }: { entry: ReadEntry }) {
   // The document is opened again only when another one has taken its place.
   const itemDocument = useLoaded(() => readDocument(entry.id), entry.reading.document);
+  useCannotShow(
+    entry.id,
+    itemDocument.state === "failed" ? `打不开这一篇的原文：${itemDocument.reason}` : undefined,
+  );
   switch (itemDocument.state) {
     case "loading":
       return <Notice failed={false}>正在打开…</Notice>;
@@ -59,14 +63,25 @@ function DocumentPane({ entry, opening }: { entry: ReadEntry; opening: Anchor | 
           key={itemDocument.value.id}
           entry={entry}
           itemDocument={itemDocument.value}
-          opening={opening}
         />
       );
   }
 }
 
-function ItemPane({ itemId, opening }: { itemId: string; opening: Anchor | undefined }) {
+// Why an item, as far as it is loaded, cannot be shown; nothing while it may yet be.
+function unshownReason(entry: Loaded<ItemEntry>): string | undefined {
+  if (entry.state === "failed") {
+    return `打不开这一篇：${entry.reason}`;
+  }
+  if (entry.state === "loading" || entry.value.reading.kind === "read") {
+    return undefined;
+  }
+  return entry.value.reading.attempt.kind === "failed" ? READING_FAILED : STILL_READING;
+}
+
+function ItemPane({ itemId }: { itemId: string }) {
   const { loaded: entry } = useWatched(() => readEntry(itemId), itemId, isBeingRead);
+  useCannotShow(itemId, unshownReason(entry));
   if (entry.state === "loading") {
     return <Notice failed={false}>正在打开…</Notice>;
   }
@@ -75,7 +90,7 @@ function ItemPane({ itemId, opening }: { itemId: string; opening: Anchor | undef
   }
   const { reading } = entry.value;
   if (reading.kind === "read") {
-    return <DocumentPane entry={{ ...entry.value, reading }} opening={opening} />;
+    return <DocumentPane entry={{ ...entry.value, reading }} />;
   }
   switch (reading.attempt.kind) {
     case "underway":
@@ -89,22 +104,11 @@ export function App() {
   const selected = useSyncExternalStore(onLinkChange, selectedItem);
   const [imports, setImports] = useState(0);
   const entries = useWatched(listItems, String(imports), (listed) => listed.some(isBeingRead));
-  const { seating, seated, pointer } = useSeating();
-  const [opening, setOpening] = useState<Opening>();
-  // An item is opened for a passage once: the passage is given to the first reader of the item
-  // that comes on show, and to no reader made after it. An item opened another way opens at
-  // its start.
-  useEffect(() => {
-    if (
-      opening !== undefined &&
-      (opening.itemId !== selected || seated?.itemId === opening.itemId)
-    ) {
-      setOpening(undefined);
-    }
-  }, [selected, seated?.life]);
+  const { seating, seated, unshown, pointer } = useSeating();
 
-  function openAt(itemId: string, anchor: Anchor) {
-    setOpening({ itemId, anchor });
+  // The column shows the passage a citation opens the item for, once the item's reader is on
+  // show.
+  function openItem(itemId: string) {
     location.hash = itemLink(itemId);
   }
 
@@ -128,13 +132,16 @@ export function App() {
           // An import may have started the open item's reading again, so the pane is rebuilt
           // after every import and reads the item again.
           <PaneBoundary key={`${selected}:${imports}`}>
-            <ItemPane
-              itemId={selected}
-              opening={opening?.itemId === selected ? opening.anchor : undefined}
-            />
+            <ItemPane itemId={selected} />
           </PaneBoundary>
         )}
-        <SideColumn selected={selected} seated={seated} pointer={pointer} onOpen={openAt} />
+        <SideColumn
+          selected={selected}
+          seated={seated}
+          unshown={unshown}
+          pointer={pointer}
+          onOpen={openItem}
+        />
       </div>
     </SeatingProvider>
   );

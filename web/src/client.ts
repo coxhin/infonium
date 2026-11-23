@@ -64,7 +64,14 @@ async function done(request: Promise<{ error?: Refusal; response: Response }>): 
 }
 
 // The service answered a question with a status other than success, so it began no answer.
-export class RefusedQuestion extends Error {}
+export class RefusedQuestion extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 // The question never reached the service: the request itself failed, before any answer.
 // Any failure of a question that is neither this nor a refusal is a connection that broke.
@@ -87,7 +94,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new RefusedQuestion(refusalText(error));
+    throw new RefusedQuestion(refusalText(error), response.status);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");
