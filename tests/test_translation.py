@@ -1,5 +1,7 @@
 import itertools
+import threading
 from collections.abc import Callable
+from http import HTTPStatus
 from typing import Any
 
 import pytest
@@ -25,6 +27,7 @@ from infonium.document import (
     TimePlace,
 )
 from infonium.transcript import SENTENCE_ENDS, ends_sentence
+from tests.model_standin import Rejection
 from tests.service import SITE, App
 from tests.translation_standin import (
     RECORDING,
@@ -33,13 +36,17 @@ from tests.translation_standin import (
     WORDS,
     Passage,
     asked_for,
+    asks_passages,
     by_number,
     first_replies,
+    holding,
     kept,
     passage_requests,
     settled,
+    survey_reply,
     translated_whole,
     translating,
+    translation,
 )
 
 EXAMPLES = settings(max_examples=15, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -158,6 +165,64 @@ def test_every_block_that_says_something_in_words_is_translated_and_no_other(
         "the blocks translated are not those that say something in words (a code block, a "
         "block one formula covers whole and one without letters are not): "
         f"{sorted(by_number(view))} where {sorted(worded)} say something"
+    )
+
+
+STANDINGS = ("unasked", "translating", "stopped", "translated", "unneeded")
+# A refusal of the endpoint that the openai package does not try again by itself.
+REFUSED = Rejection(status=HTTPStatus.BAD_REQUEST, body='{"error": {"message": "refused"}}')
+
+
+def standing_view(app: App, item_id: str, standing: str) -> dict[str, Any]:
+    # The view of the document's translation once it stands as named.
+    match standing:
+        case "unasked":
+            return translation(app, item_id)
+        case "translating":
+            gate = threading.Event()
+            app.model.reset(holding(translating(), gate, lambda asked: True))
+            try:
+                asked_for(app, item_id)
+                return translation(app, item_id)
+            finally:
+                gate.set()
+                settled(app, item_id)
+        case "stopped":
+            refusing = translating()
+            app.model.reset(lambda asked: REFUSED if asks_passages(asked) else refusing(asked))
+        case "translated":
+            app.model.reset(translating())
+        case _:
+            app.model.reset(translating(survey=survey_reply(written_in_asked_language=True)))
+    asked_for(app, item_id)
+    return settled(app, item_id)
+
+
+@pytest.mark.parametrize("standing", STANDINGS)
+@given(judged=judged_blocks())
+@FEW_EXAMPLES
+def test_the_blocks_to_translate_are_those_that_say_something_in_words_whatever_the_progress(
+    app: App, standing: str, judged: tuple[list[Block], set[int]]
+) -> None:
+    blocks, worded = judged
+    document = kept(app, blocks)
+    view = standing_view(app, document.item_id, standing)
+    assert view["progress"]["kind"] == standing, (
+        f"the translation did not come to stand {standing}: {view['progress']}"
+    )
+    assert view["blocks_to_translate"] == sorted(worded), (
+        f"the blocks to translate of a translation that is {standing} are not, in order, those "
+        f"that say something in words: {view['blocks_to_translate']} where {sorted(worded)}"
+    )
+    if standing in {"translating", "stopped"}:
+        assert view["progress"]["total"] == len(view["blocks_to_translate"]), (
+            f"the total of {standing} is not the number of blocks to translate: {view['progress']}"
+        )
+        assert view["progress"]["translated"] == len(view["blocks"]), (
+            f"{standing} does not count the blocks kept: {view['progress']}"
+        )
+    assert set(by_number(view)) <= set(view["blocks_to_translate"]), (
+        f"a block kept of a translation that is {standing} is not among the blocks to translate"
     )
 
 
@@ -560,42 +625,111 @@ def test_what_the_source_text_holds_is_kept_whatever_tags_the_passage_was_sent_w
     )
 
 
-FORMULA_CHANGES: dict[str, Callable[[str], str]] = {
-    "spaced": lambda formula: f"{formula[0]} {formula[1:]}",
-    "shortened": lambda formula: formula[:-1],
-    "translated": lambda formula: "the formula",
-    "doubled": lambda formula: f"{formula}{formula}",
+# Ways a model alters the text of a formula it copies, none of them bringing a letter the
+# formula does not hold: spaces dropped or added, backslashes doubled or lost, braces lost,
+# and the control characters that a backslash and a letter become when the model writes
+# them unescaped into JSON.
+FORMULA_ALTERATIONS: dict[str, Callable[[str], str]] = {
+    "spaces dropped": lambda formula: formula.replace(" ", ""),
+    "spaces added": lambda formula: " ".join(formula),
+    "backslashes doubled": lambda formula: formula.replace("\\", "\\\\"),
+    "backslashes lost": lambda formula: formula.replace("\\", ""),
+    "braces lost": lambda formula: formula.replace("{", "").replace("}", ""),
+    "control characters": lambda formula: (
+        formula.replace("\\f", "\f").replace("\\b", "\b").replace("\\t", "\t")
+    ),
 }
 FORMULA_TAG = "f"
+# Words of a sentence that a model may put inside a formula's tags.
+PROSE = ("the energy of the quorvex", "where zindlap holds", "harbour")
+
+
+def formula_replaced(passage: Passage, at: int, inside: Callable[[str], str | None]) -> str:
+    # The passage translated, with the text between the tags of its formula at the place
+    # given as the function makes it; where it makes none, the formula's tags are lost.
+    pairs = [pair for pair in tag_pairs(passage.text) if pair[0] == FORMULA_TAG]
+    name, number = pairs[at % len(pairs)]
+    opening, closing = f"<{name}{number}>", f"</{name}{number}>"
+    before, rest = passage.text.split(opening, 1)
+    formula, after = rest.split(closing, 1)
+    written = inside(formula)
+    if written is None:
+        return f"{TRANSLATED}{before}{formula}{after}"
+    return f"{TRANSLATED}{before}{opening}{written}{closing}{after}"
+
+
+with_formulas = marked_paragraph().filter(
+    lambda paragraph: any(isinstance(mark, FormulaMark) for mark in paragraph.marks)
+)
 
 
 @given(
-    paragraph=marked_paragraph().filter(
-        lambda paragraph: any(isinstance(mark, FormulaMark) for mark in paragraph.marks)
-    ),
-    change=st.sampled_from([*sorted(FORMULA_CHANGES), "untagged"]),
+    paragraph=with_formulas,
+    alterations=st.lists(st.sampled_from(sorted(FORMULA_ALTERATIONS)), min_size=1, max_size=3),
+    at=st.integers(0, 7),
 )
 @EXAMPLES
-def test_a_formula_comes_back_inside_its_mark_with_exactly_its_text_or_is_asked_again(
-    app: App, paragraph: Paragraph, change: str
+def test_a_formula_altered_without_a_letter_of_its_own_is_kept_as_the_source_has_it(
+    app: App, paragraph: Paragraph, alterations: list[str], at: int
 ) -> None:
-    def changed(passage: Passage) -> str:
-        pairs = [pair for pair in tag_pairs(passage.text) if pair[0] == FORMULA_TAG]
-        name, number = pairs[0]
-        opening, closing = f"<{name}{number}>", f"</{name}{number}>"
-        before, rest = passage.text.split(opening, 1)
-        formula, after = rest.split(closing, 1)
-        if change == "untagged":
-            return f"{TRANSLATED}{before}{formula}{after}"
-        return f"{TRANSLATED}{before}{opening}{FORMULA_CHANGES[change](formula)}{closing}{after}"
+    def altered(formula: str) -> str:
+        for alteration in alterations:
+            formula = FORMULA_ALTERATIONS[alteration](formula)
+        return formula
 
-    app.model.reset(first_replies(1, translating(changed), translating()))
+    app.model.reset(translating(lambda passage: formula_replaced(passage, at, altered)))
     document = kept(app, [paragraph])
     [block] = translated_whole(app, document.item_id)["blocks"]
     assert block["segments"][0]["text"] == f"{TRANSLATED}{paragraph.text}", (
-        f"a reply with a formula {change} was kept: {block['segments'][0]['text']!r}"
+        f"a formula whose text came back with {alterations} was not kept as the source has it: "
+        f"{block['segments'][0]['text']!r}"
     )
     assert segment_marks(block) == shifted(paragraph.marks, len(TRANSLATED)), (
-        "the formula marks kept are not over the formulas' exact text"
+        "the formula marks kept are not over the source's formulas"
     )
-    assert len(passage_requests(app)) == 2, f"a reply with a formula {change} was not asked again"
+    assert len(passage_requests(app)) == 1, (
+        f"a reply whose formula came back with {alterations} and no letter of its own was asked "
+        "for again"
+    )
+
+
+@given(
+    paragraph=with_formulas,
+    change=st.sampled_from(["tags lost", *PROSE]),
+    at=st.integers(0, 7),
+)
+@EXAMPLES
+def test_a_formula_whose_tags_are_lost_or_that_holds_prose_is_asked_again(
+    app: App, paragraph: Paragraph, change: str, at: int
+) -> None:
+    def inside(formula: str) -> str | None:
+        return None if change == "tags lost" else f"{formula} {change}"
+
+    if change != "tags lost":
+        formulas = [
+            paragraph.text[mark.start : mark.end]
+            for mark in paragraph.marks
+            if isinstance(mark, FormulaMark)
+        ]
+        chosen = formulas[at % len(formulas)]
+        assume(any(letter.isalpha() and letter not in chosen for letter in change))
+    app.model.reset(
+        first_replies(
+            1,
+            translating(lambda passage: formula_replaced(passage, at, inside)),
+            translating(),
+        )
+    )
+    document = kept(app, [paragraph])
+    [block] = translated_whole(app, document.item_id)["blocks"]
+    assert len(passage_requests(app)) == 2, (
+        f"a reply whose formula {'lost its tags' if change == 'tags lost' else 'held prose'} "
+        "was not asked for again"
+    )
+    assert block["segments"][0]["text"] == f"{TRANSLATED}{paragraph.text}", (
+        f"the reply asked for again in place of one whose formula was {change!r} was not kept: "
+        f"{block['segments'][0]['text']!r}"
+    )
+    assert segment_marks(block) == shifted(paragraph.marks, len(TRANSLATED)), (
+        "the formula marks kept are not over the source's formulas"
+    )

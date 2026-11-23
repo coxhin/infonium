@@ -1,4 +1,3 @@
-import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -79,7 +78,6 @@ TERMS_USED = [("Quillmoor", "Quillmoor"), ("Phobos", "Phoboksen")]
 TERM_TRANSLATION = "奎尔穆尔港"
 # What the model that writes digests puts before a block it translates again.
 AGAIN = "再"
-NUMBER = re.compile(r"\d+")
 # How long the run before a POST is given to go on, were it not ended.
 QUIET_SECONDS_SHORT = 0.5
 
@@ -450,7 +448,9 @@ def test_post_on_an_unneeded_translation_translates_without_asking_again(app: Ap
 
 def test_get_starts_nothing(app: App) -> None:
     app.model.reset(translating())
-    document = kept(app, [Paragraph(text="harbour ledger", marks=[])])
+    document = kept(
+        app, [Code(text="print('harbour')"), Paragraph(text="harbour ledger", marks=[])]
+    )
     view = translation(app, document.item_id)
     assert view == {
         "document": document.document_id,
@@ -459,6 +459,7 @@ def test_get_starts_nothing(app: App) -> None:
         "input_tokens": 0,
         "output_tokens": 0,
         "blocks": [],
+        "blocks_to_translate": [1],
     }, f"a translation nobody asked for is not Unasked and empty: {view}"
     quiet(app)
     assert app.model.asked() == [], "GET of a translation sent a request to the model"
@@ -602,11 +603,14 @@ def test_a_failed_passage_leaves_its_blocks_and_put_goes_on_with_them(app: App) 
         "a passage that failed did not leave only its own blocks untranslated: the run did not "
         "go on with the rest"
     )
-    reason = stopped["progress"]["reason"]
-    counts = {int(number) for number in NUMBER.findall(reason)}
-    assert {missing, len(blocks)} <= counts and refused_reason(app) in reason, (
-        f"the reason does not say that {missing} of {len(blocks)} blocks could not be translated "
-        f"and why the last failed, as failure_reason words it: {reason!r}"
+    progress = stopped["progress"]
+    assert (progress["translated"], progress["total"]) == (len(blocks) - missing, len(blocks)), (
+        f"Stopped does not count the {len(blocks) - missing} of {len(blocks)} blocks kept: "
+        f"{progress}"
+    )
+    assert progress["reason"] == refused_reason(app), (
+        "the reason of Stopped is not the last failure alone, as failure_reason words it: "
+        f"{progress['reason']!r}"
     )
     app.model.reset(translating())
     asked_for(app, document.item_id)
