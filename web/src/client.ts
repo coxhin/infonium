@@ -53,16 +53,8 @@ function refusalText(refusal: Refusal | undefined): string {
   return detail?.map((problem) => problem.msg).join("；") ?? "请求没有成功";
 }
 
-async function settled<Data>(request: Promise<{ data?: Data; error?: Refusal }>): Promise<Data> {
-  const { data, error } = await request;
-  if (data === undefined) {
-    throw new Error(refusalText(error));
-  }
-  return data;
-}
-
-// The service answered a request with a status other than success: a question, so it began no
-// answer, or a clearing, so nothing was cleared. The status tells why.
+// The service answered a request with a status other than success, so it did nothing of what
+// was asked. The status tells the kinds of refusal apart where a reader is told them apart.
 export class Refused extends Error {
   constructor(
     message: string,
@@ -70,6 +62,16 @@ export class Refused extends Error {
   ) {
     super(message);
   }
+}
+
+async function settled<Data>(
+  request: Promise<{ data?: Data; error?: Refusal; response: Response }>,
+): Promise<Data> {
+  const { data, error, response } = await request;
+  if (data === undefined) {
+    throw new Refused(refusalText(error), response.status);
+  }
+  return data;
 }
 
 // A request that answers with nothing when it succeeds.
