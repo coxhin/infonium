@@ -441,7 +441,13 @@ def translate_blocks(
             return
         wordings = [block_wordings(work.document.blocks[number]) for number in pending]
         asked = work.model_copy(update={"numbers": pending})
-        logger.info("asking %s for blocks %s of document %s", model.name, pending, work.document.id)
+        logger.info(
+            "asking %s for blocks %s of document %s, attempt %d",
+            model.name,
+            pending,
+            work.document.id,
+            attempt,
+        )
         passages = passages_of(asked, wordings)
         try:
             replied = renditions(model, language, passages)
