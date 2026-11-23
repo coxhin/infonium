@@ -1,11 +1,14 @@
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import httpx
+import openai
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 from playwright.sync_api import Error as PlaywrightError
 from pydantic import SecretStr
@@ -16,6 +19,7 @@ from infonium.document import (
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
     NO_TEXT,
+    WORD_GAP,
     UnreadableSource,
     turned_away,
     word_count,
@@ -176,3 +180,97 @@ def test_a_page_whose_html_holds_enough_words_is_read_without_the_browser(plain:
     assert readout.extracted.blocks == page_text(plain).blocks, (
         "a page whose HTML holds enough words was not read from its HTML"
     )
+
+
+ERROR_KINDS = (ValueError, OSError, RuntimeError, KeyError, UnreadableSource)
+REASON_LENGTH = intake.REASON_LIMIT_CHARACTERS + len(intake.CUT_SHORT)
+one_line_texts = (
+    st.text(st.characters(exclude_categories=["Cs", "Cc", "Z"]), min_size=1)
+    .map(str.strip)
+    .filter(bool)
+)
+
+
+def is_one_line(reason: str) -> bool:
+    return reason == WORD_GAP.join(reason.split())
+
+
+@given(kind=st.sampled_from(ERROR_KINDS), said=st.text())
+def test_a_reason_is_one_line_a_person_reads(kind: type[Exception], said: str) -> None:
+    reason = intake.failure_reason(kind(said))
+    assert is_one_line(reason), f"a reason was not given on one line: {reason!r}"
+    assert len(reason) <= REASON_LENGTH, f"a reason of {len(reason)} characters was kept whole"
+
+
+@given(kind=st.sampled_from(ERROR_KINDS), said=st.text())
+def test_a_reason_says_something(kind: type[Exception], said: str) -> None:
+    assume(said.strip() or not said)
+    assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="an error whose text is only spaces or line breaks is given an empty reason: "
+    "failure_reason names the error's kind only when its text is empty",
+)
+@given(kind=st.sampled_from(ERROR_KINDS), said=st.text(st.sampled_from(" \t\n\x85"), min_size=1))
+def test_an_error_that_says_only_spaces_is_given_a_reason(kind: type[Exception], said: str) -> None:
+    assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
+
+
+@given(lines=st.lists(one_line_texts, min_size=1, max_size=4), status=st.integers(1, 255))
+def test_a_program_that_fails_is_given_by_the_last_line_it_wrote(
+    lines: list[str], status: int
+) -> None:
+    written = "".join(f"[aac @ 0x5581d0a0] {line}\n \n" for line in lines)
+    error = subprocess.CalledProcessError(status, ["ffmpeg", "-i", "source"], stderr=written)
+    expected = WORD_GAP.join(lines[-1].split())[: intake.REASON_LIMIT_CHARACTERS]
+    assert intake.failure_reason(error).removesuffix(intake.CUT_SHORT) == expected, (
+        "a program that failed was not given by the last line it wrote"
+    )
+
+
+@given(status=st.integers(1, 255), module=st.sampled_from(["infonium.browser", "speech"]))
+def test_a_program_that_fails_without_a_word_is_named_with_how_it_ended(
+    status: int, module: str
+) -> None:
+    silent = subprocess.CalledProcessError(status, [sys.executable, "-m", module, "work"], "")
+    overdue = subprocess.TimeoutExpired(["/usr/local/bin/mineru", "-p", "file.pdf"], 90.5)
+    assert intake.failure_reason(silent) == f"{module} ended with status {status}", (
+        "a program that ended without a word was not named with its status"
+    )
+    assert intake.failure_reason(overdue) == "mineru took longer than 90.5 seconds", (
+        "a program that ran out of time was not named with its time"
+    )
+
+
+def unanswered(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+# A key a service is reached with, which neither a page of the service nor its address holds.
+secrets = st.from_regex(r"[A-Za-z]{5,12}[0-9]{2}", fullmatch=True)
+
+
+@given(secret=secrets, status=st.integers(400, 599))
+def test_a_service_that_failed_is_given_without_the_secrets_of_its_address(
+    secret: str, status: int
+) -> None:
+    page = "<html><body>" + "<p>The upstream did not answer in time.</p>\n" * 400 + "</body></html>"
+    answered = httpx.MockTransport(lambda request: httpx.Response(status, html=page))
+    for transport in (answered, httpx.MockTransport(unanswered)):
+        client = openai.OpenAI(
+            base_url=f"https://reader:{secret}@speech.test/v1",
+            default_query={"key": secret},
+            api_key="unused",
+            max_retries=0,
+            http_client=httpx.Client(transport=transport),
+        )
+        with pytest.raises(openai.APIError) as raised:
+            client.audio.transcriptions.create(file=("a.wav", b"RIFF", "audio/wav"), model="m")
+        reason = intake.failure_reason(raised.value)
+        assert secret not in reason, f"a reason holds a secret of the address it names: {reason}"
+        assert reason.startswith("https://speech.test/v1/audio/transcriptions "), (
+            f"a reason does not name the address that was asked: {reason}"
+        )
+        assert is_one_line(reason) and len(reason) <= REASON_LENGTH, "a reason is not one line"
