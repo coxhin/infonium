@@ -25,6 +25,9 @@ const LETTER_SHAPE = 792 / 612;
 // height.
 const DRAWING_MARGIN = "150% 0px";
 const LEAST_SHARPNESS = 2;
+// The most pixels the floor above draws a page at: a letter or A4 page at twice its printed
+// size takes about 2 million, which this leaves whole.
+const MOST_FLOOR_PIXELS = 4_000_000;
 const BOX_CLASS = "page-box";
 
 function percent(fraction: number): string {
@@ -159,11 +162,13 @@ function Page({
       const natural = page.getViewport({ scale: 1 });
       // A page is drawn no smaller than at its printed size twice over, however small it is on
       // show: the colours of a translation are read off the drawing, and drawn smaller, a thin
-      // stroke covers no pixel whole and black print reads grey.
-      const sharpness = Math.max(
-        (frame.current.clientWidth / natural.width) * devicePixelRatio,
-        LEAST_SHARPNESS,
-      );
+      // stroke covers no pixel whole and black print reads grey. That floor is bounded by a
+      // count of pixels, as a file may give its pages in pixels rather than points; a page so
+      // large holds its strokes at many pixels already. A page shown larger than either is
+      // drawn as it is shown, as before.
+      const shown = (frame.current.clientWidth / natural.width) * devicePixelRatio;
+      const bounded = Math.sqrt(MOST_FLOOR_PIXELS / (natural.width * natural.height));
+      const sharpness = Math.max(shown, Math.min(LEAST_SHARPNESS, bounded));
       const viewport = page.getViewport({ scale: sharpness });
       target.width = viewport.width;
       target.height = viewport.height;
