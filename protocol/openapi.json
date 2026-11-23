@@ -1144,6 +1144,12 @@
             "title": "Anchors",
             "type": "array"
           },
+          "lost_citations": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Lost Citations",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -1655,6 +1661,16 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "summary": "Forget Library Conversation"
@@ -1720,6 +1736,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {

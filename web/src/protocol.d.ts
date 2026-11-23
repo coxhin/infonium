@@ -642,6 +642,11 @@ export interface components {
         Statement: {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
+            /**
+             * Lost Citations
+             * @default 0
+             */
+            lost_citations: number;
             /** Text */
             text: string;
         };
@@ -907,6 +912,15 @@ export interface operations {
                     "application/jsonl": unknown;
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -933,6 +947,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
             };
         };
     };

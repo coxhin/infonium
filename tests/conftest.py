@@ -15,6 +15,13 @@ from infonium.language_model import LanguageModel, WireApi, endable_openai_model
 from infonium.library import LibraryStore
 from infonium.settings import Settings
 from tests import pdf_engine_standin
+from tests.embedding_standin import (
+    EMBEDDING_BASE_URL,
+    EMBEDDING_KEY,
+    EMBEDDING_MODEL,
+    EmbeddingStandin,
+    embedding_standin,
+)
 from tests.model_standin import (
     MODEL_BASE_URL,
     MODEL_KEY,
@@ -116,14 +123,34 @@ def model(served_model: ModelStandin, monkeypatch: pytest.MonkeyPatch) -> ModelS
     return served_model
 
 
+@pytest.fixture(scope="session")
+def served_embedder() -> Iterator[EmbeddingStandin]:
+    with embedding_standin() as standin:
+        yield standin
+
+
+@pytest.fixture
+def embedder(
+    served_embedder: EmbeddingStandin, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[EmbeddingStandin]:
+    # The stand-in embedding engine, away until a test brings it up, reached without a proxy.
+    served_embedder.reset()
+    for name in PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    yield served_embedder
+    served_embedder.reset()
+
+
 @pytest.fixture
 def start_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     standin_pdf_engine: Callable[[str], Path],
     model: ModelStandin,
+    embedder: EmbeddingStandin,
 ) -> Iterator[Callable[..., App]]:
-    # Starts the service on the test's library, its models speaking the wire API given.
+    # Starts the service on the test's library, its models speaking the wire API given and its
+    # embedding engine the stand-in, by the name of the model given.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
     monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
@@ -135,12 +162,9 @@ def start_app(
         ),
         browser=Path("no-such-browser"),
     )
-    embedding_engine = embedding.EmbeddingEngine(
-        base_url="https://embedding.test/v1", api_key=SecretStr("unused"), model="none"
-    )
     started: list[App] = []
 
-    def start(wire_api: WireApi = WireApi.RESPONSES) -> App:
+    def start(wire_api: WireApi = WireApi.RESPONSES, embedding_model: str = EMBEDDING_MODEL) -> App:
         @cache
         def language_model() -> LanguageModel:
             return openai_model(name=STANDIN_MODEL, wire_api=wire_api)
@@ -153,16 +177,25 @@ def start_app(
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
         monkeypatch.setattr(api, "intake", lambda: reader)
-        index = search.BlockIndex(store=store, engine=embedding_engine)
+        index = search.BlockIndex(
+            store=store,
+            engine=embedding.EmbeddingEngine(
+                base_url=EMBEDDING_BASE_URL,
+                api_key=SecretStr(EMBEDDING_KEY),
+                model=embedding_model,
+            ),
+        )
         monkeypatch.setattr(api, "block_index", lambda: index)
         monkeypatch.setattr(api, "language_model", language_model)
         monkeypatch.setattr(api, "answering_model", answering_model)
         client = TestClient(api.app)
         client.__enter__()
-        started.append(App(client, store, site, model))
+        started.append(App(client, store, site, model, index))
         return started[-1]
 
     yield start
+    # A request the stand-in holds is let go, so that the index's work ends with the service.
+    embedder.reset()
     for app in started:
         if app.running:
             app.client.__exit__(None, None, None)

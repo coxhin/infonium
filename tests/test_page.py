@@ -724,6 +724,7 @@ def effective_address(page: ServedPage, address: str) -> str:
     return urljoin(base, address.strip())
 
 
+UPLOADED_BASES = ("", "/", "sub/", "?q")
 RELATIVE_ADDRESSES = ("pictures/a.png", "/root.css", "../up.html", "?q=1", "//cdn.test/x.png")
 PAGE_BASES = (
     "",
@@ -763,15 +764,21 @@ def page_addresses(page: ServedPage) -> list[tuple[str, str]]:
     return [(written, resolved) for written, resolved in found if written.strip()]
 
 
-@pytest.mark.parametrize("base", PAGE_BASES)
-def test_the_pages_relative_addresses_lead_to_the_site_it_came_from(app: App, base: str) -> None:
+# The cases of one requirement are judged on one service each: starting one takes longer
+# than reading a page.
+def test_the_pages_relative_addresses_lead_to_the_site_it_came_from(app: App) -> None:
+    for base in PAGE_BASES:
+        relative_addresses_lead_to_the_site(app, base)
+
+
+def relative_addresses_lead_to_the_site(app: App, base: str) -> None:
     name = next(names)
-    page_url = f"{SITE}/pages/{name}"
+    page_url = f"{SITE}/page/{name}"
     served_page = served(app, app.read_page(name, addressed_page(base).encode()))
     own_base = urljoin(page_url, base.strip())
     leads = page_addresses(served_page)
     assert len(leads) >= 3 * len(RELATIVE_ADDRESSES), (
-        f"the served page lost the page's addresses: {leads}"
+        f"with the page's base {base!r}, the served page lost the page's addresses: {leads}"
     )
     for written, resolved in leads:
         relative = next(
@@ -791,18 +798,22 @@ def test_the_pages_relative_addresses_lead_to_the_site_it_came_from(app: App, ba
         )
 
 
-@pytest.mark.parametrize("base", ["", "/", "sub/", "?q"])
-def test_an_uploaded_pages_relative_addresses_do_not_lead_to_infonium(app: App, base: str) -> None:
-    entry = app.settled(app.upload("saved page.html", addressed_page(base).encode()).json()["id"])
-    assert stand(entry) == "read/settled", f"an uploaded page was not read: {entry['reading']}"
-    leads = page_addresses(served(app, entry["id"]))
-    assert leads, "the served page lost the page's addresses"
-    to_infonium = [
-        (written, resolved)
-        for written, resolved in leads
-        if urlsplit(resolved).netloc == SERVED_HOST
-    ]
-    assert not to_infonium, f"addresses of an uploaded page lead to infonium: {to_infonium}"
+def test_an_uploaded_pages_relative_addresses_do_not_lead_to_infonium(app: App) -> None:
+    for number, base in enumerate(UPLOADED_BASES):
+        upload = app.upload(f"saved page {number}.html", addressed_page(base).encode())
+        entry = app.settled(upload.json()["id"])
+        assert stand(entry) == "read/settled", f"an uploaded page was not read: {entry['reading']}"
+        leads = page_addresses(served(app, entry["id"]))
+        assert leads, f"with the page's base {base!r}, the served page lost its addresses"
+        to_infonium = [
+            (written, resolved)
+            for written, resolved in leads
+            if urlsplit(resolved).netloc == SERVED_HOST
+        ]
+        assert not to_infonium, (
+            f"with the page's base {base!r}, addresses of an uploaded page lead to infonium: "
+            f"{to_infonium}"
+        )
 
 
 def doctype_of(page_html: str) -> str | None:
@@ -821,15 +832,32 @@ def dropped(doctype: str, mode: str) -> object:
     )
 
 
+KEPT_DOCTYPES = (
+    "<!DOCTYPE html>",
+    "<!doctype html>",
+    '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"\n'
+    '  "http://www.w3.org/TR/html4/loose.dtd">',
+    '<!DOCTYPE html SYSTEM "about:legacy-compat">',
+    "",
+)
+
+
+def keeps_its_document_type(app: App, doctype: str) -> None:
+    page = article_page("", doctype=doctype)
+    served_page = served(app, app.read_page(next(names), page.encode()))
+    assert doctype_of(served_page.markup) == doctype_of(page), (
+        f"the page declared {doctype!r} and is served with {doctype_of(served_page.markup)!r}"
+    )
+
+
+def test_the_page_keeps_its_document_type(app: App) -> None:
+    for doctype in KEPT_DOCTYPES:
+        keeps_its_document_type(app, doctype)
+
+
 @pytest.mark.parametrize(
     "doctype",
     [
-        "<!DOCTYPE html>",
-        "<!doctype html>",
-        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"\n'
-        '  "http://www.w3.org/TR/html4/loose.dtd">',
-        '<!DOCTYPE html SYSTEM "about:legacy-compat">',
-        "",
         dropped(
             '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" '
             '"http://www.w3.org/TR/html4/strict.dtd">',
@@ -849,12 +877,8 @@ def dropped(doctype: str, mode: str) -> object:
         dropped('<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">', "quirks"),
     ],
 )
-def test_the_page_keeps_its_document_type(app: App, doctype: str) -> None:
-    page = article_page("", doctype=doctype)
-    served_page = served(app, app.read_page(next(names), page.encode()))
-    assert doctype_of(served_page.markup) == doctype_of(page), (
-        f"the page declared {doctype!r} and is served with {doctype_of(served_page.markup)!r}"
-    )
+def test_the_page_keeps_a_document_type_of_an_older_kind(app: App, doctype: str) -> None:
+    keeps_its_document_type(app, doctype)
 
 
 # Elements that give a page its layout, each told apart by its attributes.
@@ -895,22 +919,24 @@ def test_the_pages_structure_classes_and_styles_are_kept(app: App) -> None:
         assert len(kept) == 1, f"the page's {opened[tag]} is not in the served page as it was"
 
 
-@pytest.mark.parametrize(
-    ("charset", "words"),
-    [
-        (
-            "windows-1252",
-            "Le café naïve à côté de l\N{RIGHT SINGLE QUOTATION MARK}Œuvre — ça coûte 5 €",
-        ),
-        ("iso-8859-1", "El árbol de la mañana, señor, está aquí"),
-        ("shift_jis", "日本語の段落もある。港の帳簿は町の図書館にある。"),
-        ("gb2312", "港口的账簿至今仍保存在镇图书馆里。"),
-        ("koi8-r", "Ночной паром уходил в четверть десятого."),
-    ],
+ENCODED_WORDS = (
+    (
+        "windows-1252",
+        "Le café naïve à côté de l\N{RIGHT SINGLE QUOTATION MARK}Œuvre — ça coûte 5 €",
+    ),
+    ("iso-8859-1", "El árbol de la mañana, señor, está aquí"),
+    ("shift_jis", "日本語の段落もある。港の帳簿は町の図書館にある。"),
+    ("gb2312", "港口的账簿至今仍保存在镇图书馆里。"),
+    ("koi8-r", "Ночной паром уходил в четверть десятого."),
 )
-def test_the_pages_text_is_decoded_as_the_extractor_decodes_it(
-    app: App, charset: str, words: str
-) -> None:
+
+
+def test_the_pages_text_is_decoded_as_the_extractor_decodes_it(app: App) -> None:
+    for charset, words in ENCODED_WORDS:
+        decoded_as_the_extractor_decodes_it(app, charset, words)
+
+
+def decoded_as_the_extractor_decodes_it(app: App, charset: str, words: str) -> None:
     page = (
         f"<!DOCTYPE html><html><head><meta charset='{charset}'><title>Kinds</title></head>"
         f"<body><article><p>{words}</p>{FILLER}</article></body></html>"
@@ -930,22 +956,24 @@ def test_the_pages_text_is_decoded_as_the_extractor_decodes_it(
 NOSCRIPT_PICTURE = "https://pictures.test/noscript.jpg"
 
 
-@pytest.mark.parametrize(
-    ("attributes", "kept"),
-    [
-        ("width='1' height='1'", False),
-        ("width='0' height='0'", False),
-        ("style='display:none'", False),
-        ("style='visibility: hidden'", False),
-        ("hidden", False),
-        ("", True),
-        ("width='640' height='480'", True),
-        ("alt='The night ferry at the pier' class='lazy'", True),
-    ],
+NOSCRIPT_PICTURES = (
+    ("width='1' height='1'", False),
+    ("width='0' height='0'", False),
+    ("style='display:none'", False),
+    ("style='visibility: hidden'", False),
+    ("hidden", False),
+    ("", True),
+    ("width='640' height='480'", True),
+    ("alt='The night ferry at the pier' class='lazy'", True),
 )
-def test_a_picture_for_no_script_is_left_out_only_when_it_is_not_to_be_seen(
-    app: App, attributes: str, kept: bool
-) -> None:
+
+
+def test_a_picture_for_no_script_is_left_out_only_when_it_is_not_to_be_seen(app: App) -> None:
+    for attributes, kept in NOSCRIPT_PICTURES:
+        picture_for_no_script_is_left_out(app, attributes, kept)
+
+
+def picture_for_no_script_is_left_out(app: App, attributes: str, kept: bool) -> None:
     picture = f"<noscript><img src='{NOSCRIPT_PICTURE}' {attributes}></noscript>"
     page = (
         "<!DOCTYPE html><html><head><title>Pictures</title></head><body><article>"
@@ -959,20 +987,22 @@ def test_a_picture_for_no_script_is_left_out_only_when_it_is_not_to_be_seen(
     )
 
 
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [
-        ("<h2>{words}</h2>", "<p>{words}</p>"),
-        ("<p>{words}</p>", "<h2>{words}</h2>"),
-        ("<nav><p>{words}</p></nav><h2>{words}</h2>", "<p>{words}</p>"),
-        ("<p>{words}</p>", "<h3><span>{words}</span></h3>"),
-    ],
+TWICE = (
+    ("<h2>{words}</h2>", "<p>{words}</p>"),
+    ("<p>{words}</p>", "<h2>{words}</h2>"),
+    ("<nav><p>{words}</p></nav><h2>{words}</h2>", "<p>{words}</p>"),
+    ("<p>{words}</p>", "<h3><span>{words}</span></h3>"),
 )
+
+
 @settings(max_examples=10, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(said=words)
-def test_a_text_that_stands_twice_is_marked_on_the_element_of_its_kind(
-    app: App, first: str, second: str, said: str
-) -> None:
+def test_a_text_that_stands_twice_is_marked_on_the_element_of_its_kind(app: App, said: str) -> None:
+    for first, second in TWICE:
+        marked_on_the_element_of_its_kind(app, first, second, said)
+
+
+def marked_on_the_element_of_its_kind(app: App, first: str, second: str, said: str) -> None:
     body = f"{first.format(words=said)}{FILLER}{second.format(words=said)}"
     page = article_page(body)
     served_page = served(app, app.read_page(next(names), page.encode()))
