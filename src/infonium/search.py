@@ -13,6 +13,7 @@ import sqlite_vec
 from pydantic import BaseModel, SecretStr
 
 from infonium.document import UNSPACED_CODE_POINTS, WORD_GAP, BlockNumber, Document
+from infonium.intake import failure_reason
 from infonium.library import (
     LIBRARY_FILE,
     document_table,
@@ -40,6 +41,7 @@ WORD_CATEGORIES = frozenset("LMN")
 PHRASE_QUOTE = '"'
 ANY_ENDING = "*"
 EITHER = " OR "
+EVERY = " AND "
 # How many blocks each way of finding brings to the one ranking, and how much the first
 # places of a way count above its later ones: a block's score is the sum, over the ways that
 # found it, of one over this number plus its place (reciprocal rank fusion).
@@ -177,23 +179,39 @@ def phrase(words: str) -> str:
     return f"{PHRASE_QUOTE}{words.replace(PHRASE_QUOTE, PHRASE_QUOTE * 2)}{PHRASE_QUOTE}"
 
 
-def match_expression(query: str) -> str:
-    # A block is found by any word of the query, and ranks higher the more it holds. A part of
-    # the query between spaces is sought whole, as a phrase, and also by each word or pair of
-    # letters in it, since a question in Chinese or Japanese is one such part. A lone letter
-    # of an unspaced writing is sought at the start of a pair as well.
-    terms: list[str] = []
-    for part in query.split():
-        pieces = [piece for piece in indexed_words(part).split() if has_word(piece)]
-        if len(pieces) > 1:
-            terms.append(phrase(WORD_GAP.join(pieces)))
-        terms.extend(phrase(piece) for piece in pieces)
-        terms.extend(
-            f"{phrase(piece)} {ANY_ENDING}"
-            for piece in pieces
-            if len(piece) == 1 and is_unspaced_letter(piece)
+def sought_term(piece: str) -> str:
+    # A lone letter of an unspaced writing is sought by itself and at the start of a pair.
+    if len(piece) == 1 and is_unspaced_letter(piece):
+        return f"({phrase(piece)}{EITHER}{phrase(piece)} {ANY_ENDING})"
+    return phrase(piece)
+
+
+def query_parts(query: str) -> list[list[str]]:
+    # The parts of a query between its spaces, each as the words and pairs of letters that the
+    # index holds of it. A question in Chinese or Japanese is one part.
+    parts = (
+        [piece for piece in indexed_words(part).split() if has_word(piece)]
+        for part in query.split()
+    )
+    return [part for part in parts if part]
+
+
+def all_words_expression(query: str) -> str:
+    # A block that holds every part of the query, the words of each part side by side.
+    return EVERY.join(
+        dict.fromkeys(
+            sought_term(part[0]) if len(part) == 1 else phrase(WORD_GAP.join(part))
+            for part in query_parts(query)
         )
-    return EITHER.join(dict.fromkeys(terms))
+    )
+
+
+def any_words_expression(query: str) -> str:
+    # A block that holds any word or pair of letters of the query, ranked higher the more it
+    # holds.
+    return EITHER.join(
+        dict.fromkeys(sought_term(piece) for part in query_parts(query) for piece in part)
+    )
 
 
 def fused(rankings: list[list[int]], limit: int) -> list[int]:
@@ -437,7 +455,7 @@ class BlockIndex:
                 if self.engine_answers:
                     logger.warning(
                         "the embedding engine did not answer, so blocks wait for vectors: %s",
-                        failure,
+                        failure_reason(failure),
                     )
                 self.engine_answers = False
                 return
@@ -495,26 +513,32 @@ class BlockIndex:
         # The best blocks of the owner's library for a query, by its words and, where the
         # engine answers, by its meaning, best first.
         self.catch_up(owner)
-        expression = match_expression(query)
         with self.database.connect() as connection:
-            by_words = (
-                list(
-                    connection.execute(
-                        FIND_BY_WORDS,
-                        {"expression": expression, "owner": owner, "candidates": CANDIDATES},
-                    ).scalars()
-                )
-                if expression
-                else []
-            )
             has_vectors = connection.execute(
                 sqlalchemy.select(vector_model_table.c.model).where(
                     vector_model_table.c.model == self.embedding_model
                 )
             ).first()
         by_meaning = self.found_by_meaning(owner, query) if has_vectors else []
-        ranked = fused([by_words, by_meaning], limit)
-        return self.found_blocks(owner, ranked)
+        by_words = self.found_by_words(owner, all_words_expression(query))
+        # A block that holds only some words of the query, such as the pairs of letters that a
+        # question in Chinese shares with any Chinese text, is worse than what meaning finds,
+        # and is given only where meaning finds nothing.
+        if not by_meaning:
+            by_some_words = self.found_by_words(owner, any_words_expression(query))
+            by_words = list(dict.fromkeys(by_words + by_some_words))[:CANDIDATES]
+        return self.found_blocks(owner, fused([by_words, by_meaning], limit))
+
+    def found_by_words(self, owner: str, expression: str) -> list[int]:
+        if not expression:
+            return []
+        with self.database.connect() as connection:
+            return list(
+                connection.execute(
+                    FIND_BY_WORDS,
+                    {"expression": expression, "owner": owner, "candidates": CANDIDATES},
+                ).scalars()
+            )
 
     def found_by_meaning(self, owner: str, query: str) -> list[int]:
         # A search that the engine does not answer goes on by words alone.
@@ -522,7 +546,8 @@ class BlockIndex:
             vector = self.embedded([query], QUERY_TIMEOUT_SECONDS)[0]
         except openai.APIError as failure:
             logger.info(
-                "searching by words alone, as the embedding engine did not answer: %s", failure
+                "searching by words alone, as the embedding engine did not answer: %s",
+                failure_reason(failure),
             )
             return []
         with self.database.connect() as connection:
