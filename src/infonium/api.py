@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
+from infonium.blockholders import BLOCK_ATTRIBUTE
 from infonium.chat import ChatEvent, Conversation, Question, Unanswered
 from infonium.digest import (
     Digest,
@@ -23,7 +24,7 @@ from infonium.digest import (
     grounded_sections,
 )
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
-from infonium.framedpage import BLOCK_ATTRIBUTE, framed_page
+from infonium.framedpage import framed_page
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
