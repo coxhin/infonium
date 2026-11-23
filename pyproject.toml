@@ -49,6 +49,23 @@ strict = true
 files = ["src"]
 plugins = ["pydantic.mypy"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The default run refuses the network, and leaves out the tests that need a program of their
+# own; `-m` with a marker's name runs those.
+addopts = [
+    "--strict-markers",
+    "--disable-socket",
+    "--allow-unix-socket",
+    "-m",
+    "not chrome and not ffmpeg and not mineru",
+]
+markers = [
+    "chrome: renders pages in Google Chrome or Chromium, with its sandbox",
+    "ffmpeg: reads recordings with FFmpeg's ffmpeg and ffprobe",
+    "mineru: parses PDFs with MinerU 3.4.2 on a GPU",
+]
+
 [[tool.mypy.overrides]]
 # These ship no type information.
 module = ["filetype", "pypdfium2"]
@@ -56,7 +73,10 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.170.17",
     "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-socket>=0.8.1",
     "ruff>=0.17.5",
     "types-lxml>=2026.2.16",
     "types-m3u8>=6.0.0.20260518",

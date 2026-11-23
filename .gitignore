@@ -7,3 +7,5 @@ web/dist/
 data/
 .env
 .playwright-mcp/
+.pytest_cache/
+.hypothesis/

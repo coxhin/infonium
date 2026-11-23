@@ -98,12 +98,19 @@ infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF 
 
 ```bash
 make check       # lint, types, and generated protocol files are current
+make test        # the tests that need nothing outside the repository
 make protocol    # regenerate protocol/openapi.json and web/src/protocol.d.ts
 ```
 
 The HTTP protocol is defined by the models in `src/infonium`. `protocol/openapi.json` and `web/src/protocol.d.ts` are generated from them and never edited by hand.
 
-There is no test suite yet.
+`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser or a model: a test that opens a network socket or looks up a name fails. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
+
+```bash
+uv run pytest -m chrome    # Chrome or Chromium, by INFONIUM_BROWSER
+uv run pytest -m ffmpeg    # ffmpeg and ffprobe
+uv run pytest -m mineru    # MinerU 3.4.2, by INFONIUM_PDF_ENGINE, on a GPU
+```
 
 ## License
 

@@ -1,4 +1,4 @@
-.PHONY: install dev api ui protocol check
+.PHONY: install dev api ui protocol check test
 
 API_PORT ?= 8710
 UI_PORT ?= 5173
@@ -27,3 +27,6 @@ check:
 	pnpm --dir web exec tsc --noEmit
 	uv run infonium-protocol | diff - protocol/openapi.json
 	pnpm --dir web exec openapi-typescript ../protocol/openapi.json | diff - web/src/protocol.d.ts
+
+test:
+	uv run pytest
