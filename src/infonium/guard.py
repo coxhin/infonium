@@ -54,24 +54,17 @@ def address_part(address: str) -> str:
     return f"{parts.netloc}{parts.path}".casefold()
 
 
-def leads_on(address: str) -> bool:
-    # Whether the query of an address carries another address, the one a check sends the
-    # reader on to once it is passed.
-    return any(value.startswith(WEB_SCHEMES) for _, value in parse_qsl(urlsplit(address).query))
-
-
 def names_check(asked: str, served: str) -> bool:
     # A check that a site puts in the way names itself in its address where the address asked
-    # for does not, and carries in its query an address to go on to. A word in an article's
-    # slug is no sign: a link to an article about captchas may lead to such a slug.
-    return leads_on(served) and any(
+    # for does not, and carries in its query an address to go on to, the one it sends the
+    # reader on to once it is passed. A word in an article's slug is no sign: a link to an
+    # article about captchas may lead to such a slug.
+    return any(
+        value.startswith(WEB_SCHEMES) for _, value in parse_qsl(urlsplit(served).query)
+    ) and any(
         word in address_part(served) and word not in address_part(asked)
         for word in CHECK_ADDRESS_WORDS
     )
-
-
-def has_check_title(title: str) -> bool:
-    return WORD_GAP.join(title.split()).casefold() in CHECK_TITLES
 
 
 def is_check_page(page: ServedPage) -> bool:
@@ -86,6 +79,9 @@ def is_check_page(page: ServedPage) -> bool:
         raise ValueError(f"the page served from {page.served} holds no HTML")
     return (
         names_check(page.asked, page.served)
-        or any(has_check_title(title.text_content()) for title in tree.xpath(TITLE_PATH))
+        or any(
+            WORD_GAP.join(title.text_content().split()).casefold() in CHECK_TITLES
+            for title in tree.xpath(TITLE_PATH)
+        )
         or bool(tree.xpath(CHECK_ELEMENTS))
     )
