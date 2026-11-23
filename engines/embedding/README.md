@@ -34,7 +34,7 @@ Text Embeddings Inference has images for NVIDIA cards as well (`ghcr.io/huggingf
 
 ## Another engine
 
-infonium sends up to 8 blocks at a time, each cut to its first 2,000 characters, to `POST /v1/embeddings` with `encoding_format=float`, and a question by itself the same way. A block of fewer than 8 words, such as a heading, is not sent. Any endpoint that answers this will do, such as Ollama's or OpenAI's: set `INFONIUM_EMBEDDING_BASE_URL`, `INFONIUM_EMBEDDING_API_KEY` and `INFONIUM_EMBEDDING_MODEL` to it.
+infonium sends up to 8 blocks at a time, each as the title of its item, a line break and the block's text, cut to its first 2,000 characters, to `POST /v1/embeddings` with `encoding_format=float`, and a question by itself the same way. A heading, and any other block of fewer than 3 words, is not sent. Any endpoint that answers this will do, such as Ollama's or OpenAI's: set `INFONIUM_EMBEDDING_BASE_URL`, `INFONIUM_EMBEDDING_API_KEY` and `INFONIUM_EMBEDDING_MODEL` to it.
 
 infonium takes an endpoint for away, and tries it again every 10 seconds, when it cannot be reached, does not answer in time, or answers 429 or 5xx. Any other error, such as 401 for a wrong key or 404 for a wrong address or model, stops the index of blocks until infonium starts again, and every search fails with that error.
 
