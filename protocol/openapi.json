@@ -1144,6 +1144,12 @@
             "title": "Anchors",
             "type": "array"
           },
+          "lost_citations": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Lost Citations",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"

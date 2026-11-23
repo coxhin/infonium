@@ -642,6 +642,11 @@ export interface components {
         Statement: {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
+            /**
+             * Lost Citations
+             * @default 0
+             */
+            lost_citations: number;
             /** Text */
             text: string;
         };

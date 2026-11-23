@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field
 
 from infonium.anchor import Anchor, Citation, anchors_of
 from infonium.document import BlockKind, Document
@@ -34,9 +36,13 @@ class DraftStatement(BaseModel):
 
 
 class Statement(BaseModel):
-    # A statement with the passages of the document it rests on, as they were found there.
+    # A statement with the passages of the documents it rests on, as they were found there,
+    # and how many of the citations the model gave it named no passage that was found: a
+    # statement whose citations were all lost is a claim without its source, not a statement
+    # that makes no claim of a source. A statement stored before the count was kept lost none.
     text: str
     anchors: list[Anchor]
+    lost_citations: Annotated[int, Field(ge=0)] = 0
 
 
 def numbered_blocks(title: str, document: Document) -> str:
@@ -51,8 +57,11 @@ def numbered_blocks(title: str, document: Document) -> str:
 
 
 def grounded(document: Document, draft: DraftStatement) -> Statement:
-    # A citation whose quote the document does not hold gives no anchor.
-    return Statement(text=draft.text, anchors=anchors_of(document, draft.citations))
+    # A citation whose quote the document does not hold gives no anchor, and is lost.
+    anchors = anchors_of(document, draft.citations)
+    return Statement(
+        text=draft.text, anchors=anchors, lost_citations=len(draft.citations) - len(anchors)
+    )
 
 
 class SourcedCitation(BaseModel):
@@ -70,17 +79,18 @@ class SourcedDraftStatement(BaseModel):
 
 
 def grounded_across(documents: dict[str, Document], draft: SourcedDraftStatement) -> Statement:
-    # Each citation is looked up in the document its handle names; one whose handle names no
-    # document of these, or whose quote that document does not hold, gives no anchor.
+    # Each citation is looked up in the document that the handle it gives names, as the
+    # documents map them; one whose handle names none of them, or whose quote that document
+    # does not hold, gives no anchor, and is lost.
+    anchors = [
+        anchor
+        for citation in draft.citations
+        if citation.document in documents
+        for anchor in anchors_of(
+            documents[citation.document],
+            [Citation(block_number=citation.block_number, quote=citation.quote)],
+        )
+    ]
     return Statement(
-        text=draft.text,
-        anchors=[
-            anchor
-            for citation in draft.citations
-            if citation.document in documents
-            for anchor in anchors_of(
-                documents[citation.document],
-                [Citation(block_number=citation.block_number, quote=citation.quote)],
-            )
-        ],
+        text=draft.text, anchors=anchors, lost_citations=len(draft.citations) - len(anchors)
     )

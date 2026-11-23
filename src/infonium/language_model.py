@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from openai import (
     APIConnectionError,
@@ -44,7 +44,21 @@ NO_PARSED_OUTPUT = "the model returned no parsed output"
 NO_TOKEN_USAGE = "the endpoint reported no token usage"
 INCOMPLETE_REPLY = "the endpoint cut the reply short: {reason}"
 UNEXPECTED_REPLY = "the model's reply is not of the form asked for: {error}"
-ENDLESS_TOOL_USE = "the model still called tools after {rounds} requests"
+# The most calls of tools run in one round; the model is told so of the calls beyond.
+MOST_CALLS_PER_ROUND = 4
+ENDLESS_TOOL_USE = "the model gave no answer within the {rounds} requests a reply may take"
+CALL_NOT_RUN = (
+    "This call was not run: at most {most} calls run in one round. Make it again in the next "
+    "round if you still need it."
+)
+# The last request of a reply with tools offers none, so that the model answers with what it
+# has; it is told so in a message of its own.
+LAST_REQUEST = (
+    "This is the last request of your reply: no tool can be called any more. Answer now with "
+    "what you have found."
+)
+TOOLS_OFFERED: Final = "auto"
+NO_TOOLS: Final = "none"
 NO_SUCH_TOOL = "There is no tool named {name}. The tools are: {names}."
 WRONG_ARGUMENTS = "The arguments do not fit the tool {name}: {error}"
 # The finishes of a Chat Completions reply that mean it was not written whole.
@@ -206,10 +220,11 @@ def tool_call(tools: Sequence[Tool[Any]], call: ToolCall) -> Called | Miscalled:
 def tool_results(
     tools: Sequence[Tool[Any]], calls: list[ToolCall]
 ) -> Generator[Called, None, list[str]]:
-    # Runs the calls in order, handing on each before its tool runs, and gives their results.
-    # A tool that raises is infonium's failure, not the model's, and ends the reply.
+    # Runs the calls in order, as many as one round runs, handing on each before its tool runs,
+    # and gives their results. A tool that raises is infonium's failure, not the model's, and
+    # ends the reply.
     results: list[str] = []
-    for call in calls:
+    for call in calls[:MOST_CALLS_PER_ROUND]:
         match tool_call(tools, call):
             case Called() as called:
                 yield called
@@ -217,7 +232,12 @@ def tool_results(
                 results.append(tool.run(called.arguments))
             case Miscalled(result=result):
                 results.append(result)
-    return results
+    not_run = CALL_NOT_RUN.format(most=MOST_CALLS_PER_ROUND)
+    return [*results, *(not_run for _ in calls[MOST_CALLS_PER_ROUND:])]
+
+
+def is_last_request(request: int, tools: Sequence[Tool[Any]]) -> bool:
+    return bool(tools) and request == REPLY_ROUNDS - 1
 
 
 class LanguageModel(ABC):
@@ -286,7 +306,12 @@ class ChatCompletionsLanguageModel(LanguageModel):
         ]
         spent = NO_TOKENS
         for request in range(REPLY_ROUNDS):
-            answered = yield from self.round(request, sent, output, tools, ending)
+            last = is_last_request(request, tools)
+            if last:
+                sent.append(chat_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
+            answered = yield from self.round(
+                request, sent, output, tools, NO_TOOLS if last else TOOLS_OFFERED, ending
+            )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
                 case Spoke(output=parsed):
@@ -319,6 +344,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
         sent: list[ChatCompletionMessageParam],
         output: type[Output],
         tools: Sequence[Tool[Any]],
+        offered: Literal["auto", "none"],
         ending: Ending,
     ) -> Generator[Written, None, Answered[Output]]:
         content = ""
@@ -347,6 +373,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
                     for tool in tools
                 ]
                 or omit,
+                tool_choice=offered if tools else omit,
                 stream=True,
                 stream_options={"include_usage": True},
             )
@@ -412,7 +439,18 @@ class ResponsesLanguageModel(LanguageModel):
         sent = [responses_message(message) for message in messages]
         spent = NO_TOKENS
         for request in range(REPLY_ROUNDS):
-            answered = yield from self.round(request, instructions, sent, output, tools, ending)
+            last = is_last_request(request, tools)
+            if last:
+                sent.append(responses_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
+            answered = yield from self.round(
+                request,
+                instructions,
+                sent,
+                output,
+                tools,
+                NO_TOOLS if last else TOOLS_OFFERED,
+                ending,
+            )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
                 case Spoke(output=parsed):
@@ -445,6 +483,7 @@ class ResponsesLanguageModel(LanguageModel):
         sent: list[ResponseInputItemParam],
         output: type[Output],
         tools: Sequence[Tool[Any]],
+        offered: Literal["auto", "none"],
         ending: Ending,
     ) -> Generator[Written, None, Answered[Output]]:
         texts: dict[str, str] = defaultdict(str)
@@ -476,6 +515,7 @@ class ResponsesLanguageModel(LanguageModel):
                     for tool in tools
                 ]
                 or omit,
+                tool_choice=offered if tools else omit,
                 store=False,
                 stream=True,
             )

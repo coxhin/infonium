@@ -1,65 +1,49 @@
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Hashable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 import sqlalchemy
 from pydantic import (
     AwareDatetime,
     BaseModel,
-    ConfigDict,
     Field,
     StringConstraints,
     TypeAdapter,
     ValidationError,
 )
 
-from infonium.citing import (
-    BLOCKS_EXPLAINED,
-    CITING_RULES,
-    DraftStatement,
-    Statement,
-    grounded,
-    numbered_blocks,
-)
+from infonium.citing import Statement
 from infonium.document import Tagged
-from infonium.language_model import (
-    LanguageModel,
-    Message,
-    Replied,
-    Side,
-    StructuredCompletion,
-    Written,
-)
-from infonium.library import Holding, OwnerTransaction, item_table, metadata
-from infonium.model_connection import Ending
+from infonium.language_model import Called, Message, Replied, ReplyEvent, Side, Written
+from infonium.library import OwnerTransaction
+
+# What the conversations about an item and about the whole library have alike: what they tell
+# the one who asks, how their turns are kept, that each answers one question at a time, how a
+# draft is followed, how earlier turns are given again and the rules of an answer's grounding.
 
 # Stored with every turn, so that a later change to the models can tell which form a row has.
 TURN_FORMAT = 1
-BUSY = "a question about this item is being answered already"
-LIBRARY_BUSY = "a question about the library is being answered already"
-INSTRUCTIONS = """\
-You answer a reader's questions about one document. The reader checks every claim against \
-the source.
-
-{blocks_explained}\
-The document comes in the first message. The questions asked before follow, each with the \
-statements you answered it with, and last the question to answer now.
-
-Write the answer in the language the question is asked in.
-
+# The most characters of earlier turns that a question gives the model again; the oldest
+# turns are left out first. The conversation that is kept is not cut.
+EARLIER_CHARACTERS = 12_000
+# The rules of an answer's grounding, for the instructions of either conversation: what it
+# rests on, and the rules of citing that its citations keep.
+ANSWER_RULES = """\
 Grounding rules:
 - Answer in statements of one or two sentences each, as few as the question needs.
-- Give every statement that tells what the document says one to three citations.
+- Give every statement that tells what {material} says one to three citations.
 {citing_rules}\
-- When the document does not say what the question asks, or says only part of it, give one \
-statement that says only that, with no citations. What the document does say on the matter \
+- When {material} does not say what the question asks, or says only part of it, give one \
+statement that says only that, with no citations. What {material} does say on the matter \
 goes into statements of their own, each with its citations.
 - An earlier question may tell what the question to answer now refers to. The answer still \
-rests on the document alone.
+rests on {material} alone.
 """
+# The JSON of an answer that is still being written ends in the middle; a string it breaks
+# off in is read as far as it goes.
+UNFINISHED_JSON: Final = "trailing-strings"
 
 
 class Question(BaseModel):
@@ -133,11 +117,6 @@ class Unanswered(Tagged):
 ChatEvent = Annotated[Drafted | Searched | Answered | Unanswered, Field(discriminator="kind")]
 
 
-class DraftAnswer(BaseModel):
-    # An answer as the model writes it.
-    statements: list[DraftStatement]
-
-
 class WrittenStatement(BaseModel):
     # A statement of an answer that is still being written. Its text is empty until the
     # model has begun it.
@@ -149,107 +128,74 @@ class WrittenAnswer(BaseModel):
 
 
 WRITTEN_ANSWER = TypeAdapter(WrittenAnswer)
-# The JSON of an answer that is still being written ends in the middle; a string it breaks
-# off in is read as far as it goes.
-UNFINISHED_JSON: Final = "trailing-strings"
 
 
-class Questioned(BaseModel):
-    # What a question about an item is asked of: its document, and the turns of its
-    # conversation before the question.
-    holding: Holding
-    turns: list[Turn]
+class KeptTurns:
+    # The turns of one conversation, kept in a table of the conversation's own whose rows the
+    # key's columns pick, in the order they were asked. Every table of turns has the columns
+    # position, format and body besides those of its key, the owner's among them.
+    def __init__(
+        self,
+        transaction: OwnerTransaction,
+        table: sqlalchemy.Table,
+        key: dict[sqlalchemy.Column[Any], str],
+    ) -> None:
+        self.connection = transaction.connection
+        self.table = table
+        self.key = key
 
+    def where(self) -> list[sqlalchemy.ColumnElement[bool]]:
+        return [column == value for column, value in self.key.items()]
 
-class ItemConversation(BaseModel):
-    # Which conversation a question is asked in: the one of an owner's item.
-    model_config = ConfigDict(frozen=True)
+    def turns(self) -> list[Turn]:
+        bodies = self.connection.execute(
+            sqlalchemy.select(self.table.c.body)
+            .where(*self.where())
+            .order_by(self.table.c.position)
+        ).scalars()
+        return [Turn.model_validate_json(body) for body in bodies]
 
-    owner: str
-    item_id: str
+    def keep_turn(self, turn: Turn) -> None:
+        # A turn goes after the last one kept, counting from 0.
+        following = (
+            sqlalchemy.select(
+                sqlalchemy.func.coalesce(sqlalchemy.func.max(self.table.c.position) + 1, 0)
+            )
+            .where(*self.where())
+            .scalar_subquery()
+        )
+        self.connection.execute(
+            sqlalchemy.insert(self.table).values(
+                {
+                    **self.key,
+                    self.table.c.position: following,
+                    self.table.c.format: TURN_FORMAT,
+                    self.table.c.body: turn.model_dump_json(),
+                }
+            )
+        )
 
-
-class LibraryConversation(BaseModel):
-    # The conversation of an owner about the whole library.
-    model_config = ConfigDict(frozen=True)
-
-    owner: str
+    def forget(self) -> None:
+        self.connection.execute(sqlalchemy.delete(self.table).where(*self.where()))
 
 
 class ConversationBusy(Exception):
     pass
 
 
-item_turn_table = sqlalchemy.Table(
-    "item_turn",
-    metadata,
-    sqlalchemy.Column(
-        "item_id", sqlalchemy.String, sqlalchemy.ForeignKey(item_table.c.id), primary_key=True
-    ),
-    sqlalchemy.Column("position", sqlalchemy.Integer, primary_key=True),
-    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
-    sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
-    sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
-)
-
-
-class ItemConversations:
-    # The conversations about an owner's items, kept in the library beside the items.
-    def __init__(self, transaction: OwnerTransaction) -> None:
-        self.connection = transaction.connection
-        self.owner = transaction.owner
-
-    def turns(self, item_id: str) -> list[Turn]:
-        bodies = self.connection.execute(
-            sqlalchemy.select(item_turn_table.c.body)
-            .where(item_turn_table.c.owner == self.owner, item_turn_table.c.item_id == item_id)
-            .order_by(item_turn_table.c.position)
-        ).scalars()
-        return [Turn.model_validate_json(body) for body in bodies]
-
-    def keep_turn(self, item_id: str, turn: Turn) -> None:
-        # A turn goes after the last one kept, counting from 0.
-        following = (
-            sqlalchemy.select(
-                sqlalchemy.func.coalesce(sqlalchemy.func.max(item_turn_table.c.position) + 1, 0)
-            )
-            .where(item_turn_table.c.owner == self.owner, item_turn_table.c.item_id == item_id)
-            .scalar_subquery()
-        )
-        self.connection.execute(
-            sqlalchemy.insert(item_turn_table).values(
-                {
-                    item_turn_table.c.item_id: item_id,
-                    item_turn_table.c.position: following,
-                    item_turn_table.c.owner: self.owner,
-                    item_turn_table.c.format: TURN_FORMAT,
-                    item_turn_table.c.body: turn.model_dump_json(),
-                }
-            )
-        )
-
-    def forget(self, item_id: str) -> None:
-        self.connection.execute(
-            sqlalchemy.delete(item_turn_table).where(
-                item_turn_table.c.owner == self.owner, item_turn_table.c.item_id == item_id
-            )
-        )
-
-
 class Answering:
-    # The conversations that are answering a question now. A conversation answers one
-    # question at a time: a second one is refused, not queued.
+    # The conversations that are answering a question now, each by a key of its own kind. A
+    # conversation answers one question at a time and is not cleared meanwhile: a second
+    # question or a clearing is refused, not queued.
     def __init__(self) -> None:
         self.turn = Lock()
-        self.answering: set[ItemConversation | LibraryConversation] = set()
+        self.answering: set[Hashable] = set()
 
     @contextmanager
-    def claimed(self, conversation: ItemConversation | LibraryConversation) -> Iterator[None]:
+    def claimed(self, conversation: Hashable, busy: str) -> Iterator[None]:
         with self.turn:
             if conversation in self.answering:
-                raise ConversationBusy(
-                    BUSY if isinstance(conversation, ItemConversation) else LIBRARY_BUSY
-                )
+                raise ConversationBusy(busy)
             self.answering.add(conversation)
         try:
             yield
@@ -258,30 +204,8 @@ class Answering:
                 self.answering.remove(conversation)
 
 
-def answer_instructions() -> str:
-    return INSTRUCTIONS.format(blocks_explained=BLOCKS_EXPLAINED, citing_rules=CITING_RULES)
-
-
-def answered_text(answer: Answer) -> str:
-    return "\n".join(statement.text for statement in answer.statements)
-
-
-def conversation_messages(holding: Holding, turns: list[Turn], question: str) -> list[Message]:
-    # The document comes first and stays the same from one question to the next, so that an
-    # endpoint that caches the beginning of a request finds it again.
-    earlier = [
-        message
-        for turn in turns
-        for message in (
-            Message(side=Side.ASKER, text=turn.question),
-            Message(side=Side.MODEL, text=answered_text(turn.answer)),
-        )
-    ]
-    return [
-        Message(side=Side.ASKER, text=numbered_blocks(holding.title, holding.document)),
-        *earlier,
-        Message(side=Side.ASKER, text=question),
-    ]
+def answer_rules(material: str, citing_rules: str) -> str:
+    return ANSWER_RULES.format(material=material, citing_rules=citing_rules)
 
 
 def drafted_statements(written: str) -> list[str]:
@@ -295,47 +219,12 @@ def drafted_statements(written: str) -> list[str]:
     return [statement.text for statement in answer.statements if statement.text]
 
 
-def answered_turn(
-    holding: Holding,
-    question: str,
-    model: str,
-    completion: StructuredCompletion[DraftAnswer],
-    written: datetime,
-) -> Turn:
-    statements = [
-        grounded(holding.document, statement) for statement in completion.output.statements
-    ]
-    cited = [
-        CitedSource(
-            document=holding.document.id, item=holding.document.item_id, title=holding.title
-        )
-    ]
-    return Turn(
-        question=question,
-        answer=Answer(
-            model=model,
-            written=written,
-            input_tokens=completion.input_tokens,
-            output_tokens=completion.output_tokens,
-            statements=statements,
-            sources=cited if any(statement.anchors for statement in statements) else [],
-        ),
-    )
-
-
-def answer_progress(
-    model: LanguageModel, holding: Holding, turns: list[Turn], question: str, ending: Ending
-) -> Generator[Drafted | Turn]:
-    # The answer to a question about an item's document as it is written, a draft each time
-    # the texts of its statements grow, and last the whole turn.
+def followed[Output: BaseModel](
+    replies: Iterator[ReplyEvent[Output]],
+) -> Generator[Drafted | Called | Replied[Output]]:
+    # A reply as a reader follows it: a draft each time the texts of its statements grow, and
+    # the calls of tools and the whole reply as they come.
     shown: list[str] = []
-    replies = model.replying(
-        answer_instructions(),
-        conversation_messages(holding, turns, question),
-        DraftAnswer,
-        [],
-        ending,
-    )
     for event in replies:
         match event:
             case Written(text=text):
@@ -343,5 +232,30 @@ def answer_progress(
                 if statements != shown:
                     shown = statements
                     yield Drafted(statements=shown)
-            case Replied(completion=completion):
-                yield answered_turn(holding, question, model.name, completion, datetime.now(UTC))
+            case Called() | Replied():
+                yield event
+
+
+def answered_text(answer: Answer) -> str:
+    return "\n".join(statement.text for statement in answer.statements)
+
+
+def earlier_messages(turns: list[Turn], given_again: Callable[[Answer], str]) -> list[Message]:
+    # The questions asked before and their answers as the model is given them again, newest
+    # last, as many of the newest as EARLIER_CHARACTERS holds.
+    pairs = [(turn.question, given_again(turn.answer)) for turn in turns]
+    kept: list[tuple[str, str]] = []
+    room = EARLIER_CHARACTERS
+    for question, answer in reversed(pairs):
+        room -= len(question) + len(answer)
+        if room < 0:
+            break
+        kept.insert(0, (question, answer))
+    return [
+        message
+        for question, answer in kept
+        for message in (
+            Message(side=Side.ASKER, text=question),
+            Message(side=Side.MODEL, text=answer),
+        )
+    ]

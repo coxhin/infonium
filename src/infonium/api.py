@@ -23,15 +23,11 @@ from infonium.chat import (
     Conversation,
     ConversationBusy,
     Drafted,
-    ItemConversation,
-    ItemConversations,
-    LibraryConversation,
+    KeptTurns,
     Question,
-    Questioned,
     Searched,
     Turn,
     Unanswered,
-    answer_progress,
 )
 from infonium.citing import numbered_blocks
 from infonium.digest import (
@@ -45,6 +41,13 @@ from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, er
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
 from infonium.intake import Engines, Intake, failure_reason
+from infonium.item_conversation import (
+    ITEM_BUSY,
+    ItemConversation,
+    Questioned,
+    answer_progress,
+    item_turns,
+)
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -60,12 +63,15 @@ from infonium.library import (
     LibraryStore,
     NotInLibrary,
     Origin,
+    OwnerTransaction,
     Reading,
 )
 from infonium.library_conversation import (
-    LibraryConversations,
-    Shelf,
+    LIBRARY_BUSY,
+    LibraryConversation,
     library_answer_progress,
+    library_shelf,
+    library_turns,
 )
 from infonium.model_connection import Ending
 from infonium.search import BlockIndex
@@ -354,11 +360,11 @@ def questioned_item(item_id: str, owner: Owner) -> Iterator[Questioned]:
     # The item's conversation, held for a question until the question's response has been
     # sent, with what the question is asked of. A conversation that is answering, or an item
     # without a document, is refused before a line of the answer is sent.
-    with answering().claimed(ItemConversation(owner=owner, item_id=item_id)):
+    with answering().claimed(ItemConversation(owner=owner, item_id=item_id), ITEM_BUSY):
         with library_store().transaction(owner) as transaction:
             questioned = Questioned(
                 holding=Library(transaction).holding(item_id),
-                turns=ItemConversations(transaction).turns(item_id),
+                turns=item_turns(transaction, item_id).turns(),
             )
         yield questioned
 
@@ -560,12 +566,33 @@ def item_page_blocks(item_id: str, owner: Owner) -> PageBlocks:
     )
 
 
+def told(
+    progress: Iterator[Searched | Drafted | Turn],
+    owner: str,
+    kept: Callable[[OwnerTransaction], KeptTurns],
+) -> Iterator[ChatEvent]:
+    # What an answer sends as it is written, and last the turn, kept before it is sent, or
+    # why no answer came. A reader who leaves before then leaves nothing kept. A failure of
+    # infonium's own is not told as an answer: it ends the lines without a last event.
+    try:
+        for step in progress:
+            match step:
+                case Searched() | Drafted():
+                    yield step
+                case Turn():
+                    with library_store().transaction(owner) as transaction:
+                        kept(transaction).keep_turn(step)
+                    yield Answered(turn=step)
+    except MODEL_FAILURES as failure:
+        yield Unanswered(reason=failure_reason(failure))
+
+
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
 def item_conversation(item_id: str, owner: Owner) -> Conversation:
     # An item without a document has no conversation.
     with library_store().transaction(owner) as transaction:
         Library(transaction).holding(item_id)
-        return Conversation(turns=ItemConversations(transaction).turns(item_id))
+        return Conversation(turns=item_turns(transaction, item_id).turns())
 
 
 @app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
@@ -577,23 +604,14 @@ def ask_about_item(
     ending: AnswerEnding,
 ) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON. The turn is
-    # kept before it is sent; a reader who leaves before then leaves nothing kept. A failure
-    # of infonium's own is not told as an answer: it ends the lines without a last event.
-    progress = answer_progress(
-        answering_model(), questioned.holding, questioned.turns, question.text, ending
+    # What happens on the way is sent as it happens, each event a line of JSON.
+    yield from told(
+        answer_progress(
+            answering_model(), questioned.holding, questioned.turns, question.text, ending
+        ),
+        owner,
+        lambda transaction: item_turns(transaction, item_id),
     )
-    try:
-        for step in progress:
-            match step:
-                case Drafted():
-                    yield step
-                case Turn():
-                    with library_store().transaction(owner) as transaction:
-                        ItemConversations(transaction).keep_turn(item_id, step)
-                    yield Answered(turn=step)
-    except MODEL_FAILURES as failure:
-        yield Unanswered(reason=failure_reason(failure))
 
 
 @app.delete(
@@ -604,20 +622,20 @@ def ask_about_item(
 def forget_item_conversation(item_id: str, owner: Owner) -> None:
     # A conversation that is answering is not forgotten: the answer would be kept after it.
     with (
-        answering().claimed(ItemConversation(owner=owner, item_id=item_id)),
+        answering().claimed(ItemConversation(owner=owner, item_id=item_id), ITEM_BUSY),
         library_store().transaction(owner) as transaction,
     ):
         Library(transaction).holding(item_id)
-        ItemConversations(transaction).forget(item_id)
+        item_turns(transaction, item_id).forget()
 
 
 def questioned_library(owner: Owner) -> Iterator[list[Turn]]:
     # The owner's conversation about the library, held for a question until the question's
     # response has been sent, with its turns before the question. A conversation that is
     # answering is refused before a line of the answer is sent.
-    with answering().claimed(LibraryConversation(owner=owner)):
+    with answering().claimed(LibraryConversation(owner=owner), LIBRARY_BUSY):
         with library_store().transaction(owner) as transaction:
-            turns = LibraryConversations(transaction).turns()
+            turns = library_turns(transaction).turns()
         yield turns
 
 
@@ -627,7 +645,7 @@ QuestionedLibrary = Annotated[list[Turn], Depends(questioned_library)]
 @app.get("/api/conversation")
 def library_conversation(owner: Owner) -> Conversation:
     with library_store().transaction(owner) as transaction:
-        return Conversation(turns=LibraryConversations(transaction).turns())
+        return Conversation(turns=library_turns(transaction).turns())
 
 
 @app.post("/api/conversation", responses=ANSWERING)
@@ -636,28 +654,20 @@ def ask_about_library(
 ) -> Iterator[ChatEvent]:
     # Answers a question about everything the library holds, after the questions asked of
     # the library before, and sends its events the same way. The model searches and reads
-    # the library's blocks with tools that change nothing; a search that fails because the
-    # index has failed is infonium's own failure.
-    shelf = Shelf(store=library_store(), index=block_index(), owner=owner)
-    progress = library_answer_progress(answering_model(), shelf, turns, question.text, ending)
-    try:
-        for step in progress:
-            match step:
-                case Searched() | Drafted():
-                    yield step
-                case Turn():
-                    with library_store().transaction(owner) as transaction:
-                        LibraryConversations(transaction).keep_turn(step)
-                    yield Answered(turn=step)
-    except MODEL_FAILURES as failure:
-        yield Unanswered(reason=failure_reason(failure))
+    # the library's blocks with tools that change nothing.
+    shelf = library_shelf(library_store(), block_index(), owner)
+    yield from told(
+        library_answer_progress(answering_model(), shelf, turns, question.text, ending),
+        owner,
+        library_turns,
+    )
 
 
 @app.delete("/api/conversation", responses=ANSWERING, status_code=HTTPStatus.NO_CONTENT)
 def forget_library_conversation(owner: Owner) -> None:
     # A conversation that is answering is not forgotten: the answer would be kept after it.
     with (
-        answering().claimed(LibraryConversation(owner=owner)),
+        answering().claimed(LibraryConversation(owner=owner), LIBRARY_BUSY),
         library_store().transaction(owner) as transaction,
     ):
-        LibraryConversations(transaction).forget()
+        library_turns(transaction).forget()
