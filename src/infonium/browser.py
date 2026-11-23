@@ -137,6 +137,7 @@ TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 # ended.
 RENDERER = (sys.executable, lineage.RUN_AS_MODULE, __spec__.name)
 ADDRESS_FILE = "address"
+ADDRESS_ENCODING = "utf-8"
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
 # How long the process that started the renderer lets pass from one look to the next at
@@ -484,7 +485,7 @@ def main() -> None:
     # ends it without a report. Whatever the renderer started is ended before it reports or
     # ends.
     work, program, deadline = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-    url = (work / ADDRESS_FILE).read_text()
+    url = (work / ADDRESS_FILE).read_text(encoding=ADDRESS_ENCODING)
     lineage.hold_data_to(PROCESS_MEMORY_BYTES)
     reported = Event()
     lineage.hold_descendants(partial(remove_rendering, work, reported))
@@ -548,7 +549,7 @@ def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
     # ended with it, and gone, before this returns or raises.
     deadline = time.monotonic() + RENDERING_LIMIT_SECONDS - REPORTING_SECONDS
     command = [*RENDERER, str(work), program, repr(deadline)]
-    (work / ADDRESS_FILE).write_text(url)
+    (work / ADDRESS_FILE).write_text(url, encoding=ADDRESS_ENCODING)
     with TemporaryDirectory() as temporary:
         environment = renderer_environment(work, Path(temporary))
         with lineage.HeldProgram(command, environment) as renderer:
