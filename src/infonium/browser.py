@@ -88,14 +88,12 @@ WRITTEN_LINE = re.compile(
     r"^\[pid=\d+\]\[(?:err|out)\] (?:\[[^\]]*\] )?(?P<said>.+)$", re.MULTILINE
 )
 # What a person is told of a page that met a limit of infonium's own, or an error that Chrome
-# names: by the mark in Playwright's error, or for another error of Chrome's, its name.
+# names: by the mark in Playwright's error, looked for in the error without the addresses it
+# names, which a page chooses; or for another error of Chrome's, its name.
 NO_ANSWER = "{source} did not answer within {seconds:g} s"
-CRASH_MARK = "crashed"
-CRASHED_PAGE = (
-    "{source} crashed its page in the browser, as a page does whose scripts hold more than "
-    "{mib} MiB"
-)
+WEB_ADDRESS = re.compile(r"\S+://\S*")
 CHROME_ERRORS = {
+    "crashed": "the page at {source} crashed in the browser",
     "net::ERR_NETWORK_CHANGED": "the network of this machine changed while {source} was loading",
     "net::ERR_UNSAFE_REDIRECT": "{source} led the browser to an address that is not a web page",
     "net::ERR_ABORTED": "loading {source} was broken off",
@@ -340,15 +338,16 @@ class PageRendering:
         # error, without the call log that follows an error of Playwright.
         said = wellformed(error_text(ending))
         first = said.splitlines()[0]
-        refused = self.proxy_refusals() if PROXY_FAILURE in said else []
+        marked = WEB_ADDRESS.sub("", first)
+        refused = self.proxy_refusals() if PROXY_FAILURE in marked else []
         written = [
             line["said"]
             for line in WRITTEN_LINE.finditer(
                 said.partition(BROWSER_LOGS)[2].partition(CALL_LOG)[0]
             )
         ]
-        named = [words for mark, words in CHROME_ERRORS.items() if mark in first]
-        other = CHROME_ERROR.search(first)
+        named = [words for mark, words in CHROME_ERRORS.items() if mark in marked]
+        other = CHROME_ERROR.search(marked)
         if isinstance(ending, UnreadableSource) or refused:
             return (refused or [first])[0]
         if written or BROWSER_LOGS in said:
@@ -359,8 +358,6 @@ class PageRendering:
             )
         if isinstance(ending, WaitOverdue):
             return NO_ANSWER.format(source=self.url, seconds=ANSWER_LIMIT_MS / MS_PER_SECOND)
-        if CRASH_MARK in first:
-            return CRASHED_PAGE.format(source=self.url, mib=SCRIPT_MEMORY_MIB)
         if named:
             return named[0].format(source=self.url, program=self.program)
         return OTHER_CHROME_ERROR.format(source=self.url, error=other.group()) if other else first
