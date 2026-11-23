@@ -1,70 +1,61 @@
 import logging
-import sqlite3
-import unicodedata
 from array import array
-from itertools import groupby
-from pathlib import Path
-from threading import Event, Lock, Thread
-from typing import Final
+from concurrent.futures import Future, ThreadPoolExecutor
+from enum import StrEnum
+from threading import Event, Lock
+from typing import Annotated
 
-import openai
 import sqlalchemy
-import sqlite_vec
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, validate_call
 
-from infonium.document import UNSPACED_CODE_POINTS, WORD_GAP, BlockNumber, Document
+from infonium.document import BlockNumber, Document
+from infonium.embedding import ENGINE_AWAY, EmbeddingEngine, Vector, embedded
 from infonium.intake import failure_reason
 from infonium.library import (
-    LIBRARY_FILE,
+    LibraryStore,
+    OwnerTransaction,
     document_table,
     item_table,
     kept_document_id,
     kept_title,
     metadata,
 )
-
-# How the words of a block are written into the index. A document indexed in another form is
-# indexed again.
-WORDS_FORMAT = 1
-# The writings that put no space between words: those of Chinese and Japanese, and Thai, Lao,
-# Burmese and Khmer. A run of letters in them is indexed as the pairs of neighbours it holds,
-# so that any two or more letters side by side in it are found.
-UNSPACED_WRITING = (
-    *UNSPACED_CODE_POINTS,
-    range(0x0E00, 0x0F00),
-    range(0x1000, 0x10A0),
-    range(0x1780, 0x1800),
+from infonium.terms import (
+    TERMS_FORMAT,
+    TOKENIZER,
+    all_words_expression,
+    any_words_expression,
+    has_word,
+    indexed_words,
+    word_total,
 )
-# The kinds of character that make up words, as the index's tokenizer takes them: letters,
-# marks and numbers.
-WORD_CATEGORIES = frozenset("LMN")
-PHRASE_QUOTE = '"'
-ANY_ENDING = "*"
-EITHER = " OR "
-EVERY = " AND "
-# How many blocks each way of finding brings to the one ranking, and how much the first
-# places of a way count above its later ones: a block's score is the sum, over the ways that
-# found it, of one over this number plus its place (reciprocal rank fusion).
+
+# How many blocks each way of finding brings to the ranking, and how much the first places of
+# a way count above its later ones: a block's score is the sum, over the ways that found it,
+# of one over this number plus its place (reciprocal rank fusion).
 CANDIDATES = 50
 RANK_DAMPING = 60
-# Blocks are sent to the engine this many at a time, and of each block at most this much text.
-EMBEDDING_BATCH = 32
-EMBEDDED_CHARACTERS = 2000
-DOCUMENTS_AT_ONCE = 16
-# The longest the engine may take over a batch of blocks, and over a query, which a search
+# A block of fewer words than this, as a heading, a caption or a line of a list of sources,
+# says too little to be near a question in meaning: such a block is found by its words alone,
+# and is given no vector. A character of Chinese or Japanese counts as a word.
+MEANINGFUL_WORDS = 8
+# Blocks are sent to the engine this many at a time. A question waits at the engine for the
+# batch before it, so the batch is small.
+EMBEDDING_BATCH = 8
+# The longest the engine may take over a batch of blocks, and over a question, which a search
 # waits for.
 EMBEDDING_TIMEOUT_SECONDS = 120.0
 QUERY_TIMEOUT_SECONDS = 10.0
 FLOATS = "f"
-FLOAT_ENCODING: Final = "float"
-# How often the index looks for documents it does not hold yet and for blocks without
-# vectors, which is also how soon it notices that an engine that was away is back.
+# How long the worker rests when nothing waits, which is also how soon it notices that an
+# engine that was away is back, and how soon a document read while no one searches is indexed.
 CATCH_UP_SECONDS = 10.0
-CONNECT = "connect"
 
 WORDS_TABLE = "search_words"
-VECTOR_TABLE = "search_vector"
+WORDS_COLUMN = "words"
+OWNER_COLUMN = "owner"
 
+# The documents the index holds, and how many of their blocks it holds.
 indexed_document_table = sqlalchemy.Table(
     "search_document",
     metadata,
@@ -72,58 +63,66 @@ indexed_document_table = sqlalchemy.Table(
     sqlalchemy.Column("owner", sqlalchemy.String, nullable=False, index=True),
     sqlalchemy.Column("item_id", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
+    sqlalchemy.Column("blocks", sqlalchemy.Integer, nullable=False),
 )
-# Each block that holds words, under an id that is also its row in the words and the vectors.
+# Each block that holds words, once, under an id that is never given again, which is also its
+# row among the words. Its vector is kept with it, with the model that made it; a block of few
+# words has none.
 indexed_block_table = sqlalchemy.Table(
     "search_block",
     metadata,
     sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),
     sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
-    sqlalchemy.Column("document_id", sqlalchemy.String, nullable=False, index=True),
+    sqlalchemy.Column(
+        "document_id",
+        sqlalchemy.String,
+        sqlalchemy.ForeignKey(indexed_document_table.c.document_id, ondelete="CASCADE"),
+        nullable=False,
+    ),
     sqlalchemy.Column("item_id", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("block_number", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("text", sqlalchemy.String, nullable=False),
-    sqlalchemy.Column("embedded", sqlalchemy.Boolean, nullable=False, index=True),
+    sqlalchemy.Column("meaningful", sqlalchemy.Boolean, nullable=False),
+    sqlalchemy.Column("vector_model", sqlalchemy.String),
+    sqlalchemy.Column("embedding", sqlalchemy.LargeBinary),
+    sqlalchemy.UniqueConstraint("document_id", "block_number"),
+    sqlalchemy.CheckConstraint("(vector_model IS NULL) = (embedding IS NULL)"),
+    sqlalchemy.CheckConstraint("meaningful OR vector_model IS NULL"),
+    sqlalchemy.Index("search_block_vectors", "owner", "vector_model"),
+    sqlite_autoincrement=True,
 )
-# The model the vectors were made by, and how many numbers each has; no row while there are
-# no vectors. The vector table exists exactly while this row does.
-vector_model_table = sqlalchemy.Table(
-    "search_vector_model",
-    metadata,
-    sqlalchemy.Column("model", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("dimensions", sqlalchemy.Integer, nullable=False),
-)
-# The words are kept only as the index's terms: a block's text is kept with the block.
+# The words of each block as the index takes them, and its owner; only the index's terms are
+# kept, not the words.
 CREATE_WORDS = (
-    f"CREATE VIRTUAL TABLE IF NOT EXISTS {WORDS_TABLE} USING fts5(words, content='', "
-    "contentless_delete=1, tokenize='unicode61 remove_diacritics 2')"
+    f"CREATE VIRTUAL TABLE {WORDS_TABLE} USING fts5({WORDS_COLUMN}, "
+    f"{OWNER_COLUMN} UNINDEXED, content='', contentless_delete=1, contentless_unindexed=1, "
+    f"tokenize='{TOKENIZER}')"
 )
-CREATE_VECTORS = (
-    f"CREATE VIRTUAL TABLE {VECTOR_TABLE} USING vec0(owner text partition key, "
-    "embedding float[{dimensions}] distance_metric=cosine)"
+DROP_LEFT_OWNERS = f"DROP TABLE IF EXISTS {WORDS_TABLE}_content"
+words_table = sqlalchemy.table(
+    WORDS_TABLE,
+    sqlalchemy.column("rowid", sqlalchemy.Integer),
+    sqlalchemy.column(WORDS_COLUMN, sqlalchemy.String),
+    sqlalchemy.column(OWNER_COLUMN, sqlalchemy.String),
 )
-DROP_VECTORS = sqlalchemy.text(f"DROP TABLE IF EXISTS {VECTOR_TABLE}")
-INSERT_WORDS = sqlalchemy.text(f"INSERT INTO {WORDS_TABLE}(rowid, words) VALUES (:id, :words)")
-DELETE_WORDS = sqlalchemy.text(f"DELETE FROM {WORDS_TABLE} WHERE rowid = :id")
-CLEAR_WORDS = sqlalchemy.text(f"DELETE FROM {WORDS_TABLE}")
-COUNT_WORDS = sqlalchemy.text(f"SELECT count(*) FROM {WORDS_TABLE}")
-INSERT_VECTOR = sqlalchemy.text(
-    f"INSERT INTO {VECTOR_TABLE}(rowid, owner, embedding) VALUES (:id, :owner, :embedding)"
-)
-DELETE_VECTOR = sqlalchemy.text(f"DELETE FROM {VECTOR_TABLE} WHERE rowid = :id")
-COUNT_VECTORS = sqlalchemy.text(f"SELECT count(*) FROM {VECTOR_TABLE}")
-FIND_BY_WORDS = sqlalchemy.text(
-    f"SELECT {WORDS_TABLE}.rowid FROM {WORDS_TABLE} "
-    f"JOIN {indexed_block_table.name} ON {indexed_block_table.name}.id = {WORDS_TABLE}.rowid "
-    f"WHERE {WORDS_TABLE} MATCH :expression AND {indexed_block_table.name}.owner = :owner "
-    f"ORDER BY bm25({WORDS_TABLE}) LIMIT :candidates"
-)
-FIND_BY_MEANING = sqlalchemy.text(
-    f"SELECT rowid FROM {VECTOR_TABLE} WHERE embedding MATCH :embedding AND k = :candidates "
-    "AND owner = :owner ORDER BY distance"
-)
+words_match = sqlalchemy.literal_column(WORDS_TABLE).op("MATCH")
+words_rank = sqlalchemy.func.bm25(sqlalchemy.literal_column(WORDS_TABLE))
+RANK_LABEL = "rank"
+MATCHED_LABEL = "matched"
+MATERIALIZED = "MATERIALIZED"
 
 logger = logging.getLogger(__name__)
+
+SearchLimit = Annotated[int, Field(ge=1)]
+
+
+class FoundBy(StrEnum):
+    # How a block was found: it holds every word of the query; it holds some of them; it is
+    # among the nearest to the query in meaning; or it holds every word and is near as well.
+    ALL_WORDS = "all_words"
+    SOME_WORDS = "some_words"
+    MEANING = "meaning"
+    ALL_WORDS_AND_MEANING = "all_words_and_meaning"
 
 
 class FoundBlock(BaseModel):
@@ -132,457 +131,463 @@ class FoundBlock(BaseModel):
     title: str
     block_number: BlockNumber
     text: str
+    found_by: FoundBy
 
 
-class EmbeddingEngine(BaseModel):
-    # Where an engine behind OpenAI's embeddings API is reached, the key it asks for, and the
-    # model it embeds with.
-    base_url: str
-    api_key: SecretStr
-    model: str
-
-
-class IndexedBlock(BaseModel):
+class RankedBlock(BaseModel):
     id: int
-    owner: str
+    found_by: FoundBy
+
+
+class WaitingBlock(BaseModel):
+    id: int
     text: str
-
-
-def is_unspaced_letter(character: str) -> bool:
-    return unicodedata.category(character)[0] in WORD_CATEGORIES and any(
-        ord(character) in code_points for code_points in UNSPACED_WRITING
-    )
-
-
-def has_word(text: str) -> bool:
-    return any(unicodedata.category(character)[0] in WORD_CATEGORIES for character in text)
-
-
-def neighbour_pairs(run: str) -> list[str]:
-    return [run] if len(run) == 1 else [run[at : at + 2] for at in range(len(run) - 1)]
-
-
-def indexed_words(text: str) -> str:
-    # The text as the index takes it: each run of letters of an unspaced writing becomes the
-    # pairs of neighbours it holds, apart from what stands around it; other text is left for
-    # the tokenizer to part at its spaces and punctuation.
-    return WORD_GAP.join(
-        WORD_GAP.join(neighbour_pairs(run)) if unspaced else run
-        for unspaced, characters in groupby(text, key=is_unspaced_letter)
-        for run in ["".join(characters)]
-    )
-
-
-def phrase(words: str) -> str:
-    # A quoted phrase is taken as words alone, so nothing of a query is read as the index's
-    # syntax.
-    return f"{PHRASE_QUOTE}{words.replace(PHRASE_QUOTE, PHRASE_QUOTE * 2)}{PHRASE_QUOTE}"
-
-
-def sought_term(piece: str) -> str:
-    # A lone letter of an unspaced writing is sought by itself and at the start of a pair.
-    if len(piece) == 1 and is_unspaced_letter(piece):
-        return f"({phrase(piece)}{EITHER}{phrase(piece)} {ANY_ENDING})"
-    return phrase(piece)
-
-
-def query_parts(query: str) -> list[list[str]]:
-    # The parts of a query between its spaces, each as the words and pairs of letters that the
-    # index holds of it. A question in Chinese or Japanese is one part.
-    parts = (
-        [piece for piece in indexed_words(part).split() if has_word(piece)]
-        for part in query.split()
-    )
-    return [part for part in parts if part]
-
-
-def all_words_expression(query: str) -> str:
-    # A block that holds every part of the query, the words of each part side by side.
-    return EVERY.join(
-        dict.fromkeys(
-            sought_term(part[0]) if len(part) == 1 else phrase(WORD_GAP.join(part))
-            for part in query_parts(query)
-        )
-    )
-
-
-def any_words_expression(query: str) -> str:
-    # A block that holds any word or pair of letters of the query, ranked higher the more it
-    # holds.
-    return EITHER.join(
-        dict.fromkeys(sought_term(piece) for part in query_parts(query) for piece in part)
-    )
-
-
-def fused(rankings: list[list[int]], limit: int) -> list[int]:
-    scores: dict[int, float] = {}
-    for ranking in rankings:
-        for place, block_id in enumerate(ranking, start=1):
-            scores[block_id] = scores.get(block_id, 0.0) + 1 / (RANK_DAMPING + place)
-    return sorted(scores, key=lambda block_id: -scores[block_id])[:limit]
-
-
-def vector_bytes(vector: list[float]) -> bytes:
-    return array(FLOATS, vector).tobytes()
 
 
 def create_words(
     target: sqlalchemy.MetaData, connection: sqlalchemy.Connection, **kw: object
 ) -> None:
-    connection.exec_driver_sql(CREATE_WORDS)
+    # SQLite 3.51 leaves the table of owners behind when the words are dropped, and will not
+    # make the words again beside it.
+    if not sqlalchemy.inspect(connection).has_table(WORDS_TABLE):
+        connection.exec_driver_sql(DROP_LEFT_OWNERS)
+        connection.exec_driver_sql(CREATE_WORDS)
 
 
 sqlalchemy.event.listen(metadata, "after_create", create_words)
 
 
-def load_vectors(connection: sqlite3.Connection, record: object) -> None:
-    connection.enable_load_extension(True)
-    sqlite_vec.load(connection)
-    connection.enable_load_extension(False)
+def is_meaningful(text: str) -> bool:
+    return word_total(text) >= MEANINGFUL_WORDS
+
+
+def found_by(holds_every_word: bool, near_in_meaning: bool) -> FoundBy:
+    match holds_every_word, near_in_meaning:
+        case True, True:
+            return FoundBy.ALL_WORDS_AND_MEANING
+        case True, False:
+            return FoundBy.ALL_WORDS
+        case False, True:
+            return FoundBy.MEANING
+        case _:
+            return FoundBy.SOME_WORDS
+
+
+def ranked_blocks(
+    every_word: list[int], meaning: list[int], some_words: list[int], limit: int
+) -> list[RankedBlock]:
+    # The three rankings joined by reciprocal rank fusion, with every block that holds every
+    # word of the query above every block that does not.
+    holding = set(every_word)
+    near = set(meaning)
+    scores: dict[int, float] = {}
+    for ranking in (every_word, meaning, [block for block in some_words if block not in holding]):
+        for place, block_id in enumerate(ranking, start=1):
+            scores[block_id] = scores.get(block_id, 0.0) + 1 / (RANK_DAMPING + place)
+    best = sorted(scores, key=lambda block_id: (block_id not in holding, -scores[block_id]))
+    return [
+        RankedBlock(id=block_id, found_by=found_by(block_id in holding, block_id in near))
+        for block_id in best[:limit]
+    ]
+
+
+def vector_bytes(vector: Vector) -> bytes:
+    return array(FLOATS, vector).tobytes()
+
+
+def without_vector(model: str) -> sqlalchemy.ColumnElement[bool]:
+    return indexed_block_table.c.meaningful & indexed_block_table.c.vector_model.is_distinct_from(
+        model
+    )
+
+
+def found_by_words(
+    transaction: OwnerTransaction, expression: str, *conditions: sqlalchemy.ColumnElement[bool]
+) -> list[int]:
+    # The words are matched first, by themselves: joined to the blocks in one query, SQLite
+    # would match them again for every block of the owner.
+    if not expression:
+        return []
+    matched = (
+        sqlalchemy.select(words_table.c.rowid, words_rank.label(RANK_LABEL))
+        .where(words_match(expression), words_table.c.owner == transaction.owner)
+        .cte(MATCHED_LABEL)
+        .prefix_with(MATERIALIZED)
+    )
+    return list(
+        transaction.connection.execute(
+            sqlalchemy.select(matched.c.rowid)
+            .join(indexed_block_table, indexed_block_table.c.id == matched.c.rowid)
+            .where(indexed_block_table.c.owner == transaction.owner, *conditions)
+            .order_by(matched.c[RANK_LABEL])
+            .limit(CANDIDATES)
+        ).scalars()
+    )
+
+
+def found_by_meaning(transaction: OwnerTransaction, model: str, vector: Vector) -> list[int]:
+    return list(
+        transaction.connection.execute(
+            sqlalchemy.select(indexed_block_table.c.id)
+            .where(
+                indexed_block_table.c.owner == transaction.owner,
+                indexed_block_table.c.vector_model == model,
+            )
+            .order_by(
+                sqlalchemy.func.vec_distance_cosine(
+                    indexed_block_table.c.embedding, vector_bytes(vector)
+                )
+            )
+            .limit(CANDIDATES)
+        ).scalars()
+    )
+
+
+def found_blocks(transaction: OwnerTransaction, ranked: list[RankedBlock]) -> list[FoundBlock]:
+    # Only blocks of the document an item of the owner holds now are given, whatever the index
+    # still holds of an earlier one.
+    rows = transaction.connection.execute(
+        sqlalchemy.select(
+            indexed_block_table.c.id,
+            indexed_block_table.c.document_id,
+            indexed_block_table.c.item_id,
+            kept_title,
+            indexed_block_table.c.block_number,
+            indexed_block_table.c.text,
+        )
+        .join(item_table, item_table.c.id == indexed_block_table.c.item_id)
+        .where(
+            indexed_block_table.c.id.in_([block.id for block in ranked]),
+            indexed_block_table.c.owner == transaction.owner,
+            item_table.c.owner == transaction.owner,
+            kept_document_id == indexed_block_table.c.document_id,
+        )
+    ).all()
+    kept = {row[0]: row[1:] for row in rows}
+    return [
+        FoundBlock(
+            document=document,
+            item=item,
+            title=title,
+            block_number=number,
+            text=text,
+            found_by=block.found_by,
+        )
+        for block in ranked
+        if block.id in kept
+        for document, item, title, number, text in [kept[block.id]]
+    ]
+
+
+def is_whole(transaction: OwnerTransaction) -> bool:
+    # The owner's part of the index is whole when its documents, its blocks and its words
+    # count alike; when one of its tables was thrown away they do not.
+    owner = transaction.owner
+    counted = (
+        sqlalchemy.select(
+            sqlalchemy.func.coalesce(sqlalchemy.func.sum(indexed_document_table.c.blocks), 0)
+        )
+        .where(indexed_document_table.c.owner == owner)
+        .scalar_subquery(),
+        sqlalchemy.select(sqlalchemy.func.count())
+        .select_from(indexed_block_table)
+        .where(indexed_block_table.c.owner == owner)
+        .scalar_subquery(),
+        sqlalchemy.select(sqlalchemy.func.count())
+        .select_from(words_table)
+        .where(words_table.c.owner == owner)
+        .scalar_subquery(),
+    )
+    return len(set(transaction.connection.execute(sqlalchemy.select(*counted)).one())) == 1
+
+
+def take_out_all(transaction: OwnerTransaction) -> None:
+    owner = transaction.owner
+    connection = transaction.connection
+    connection.execute(sqlalchemy.delete(words_table).where(words_table.c.owner == owner))
+    connection.execute(
+        sqlalchemy.delete(indexed_block_table).where(indexed_block_table.c.owner == owner)
+    )
+    connection.execute(
+        sqlalchemy.delete(indexed_document_table).where(indexed_document_table.c.owner == owner)
+    )
+
+
+def take_out(transaction: OwnerTransaction, document: str) -> None:
+    block_ids = (
+        transaction.connection.execute(
+            sqlalchemy.select(indexed_block_table.c.id).where(
+                indexed_block_table.c.owner == transaction.owner,
+                indexed_block_table.c.document_id == document,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if block_ids:
+        transaction.connection.execute(
+            sqlalchemy.delete(words_table).where(words_table.c.rowid.in_(block_ids))
+        )
+    # The document's blocks go with it.
+    transaction.connection.execute(
+        sqlalchemy.delete(indexed_document_table).where(
+            indexed_document_table.c.owner == transaction.owner,
+            indexed_document_table.c.document_id == document,
+        )
+    )
+
+
+def take_in(transaction: OwnerTransaction, document_id: str) -> None:
+    owner = transaction.owner
+    connection = transaction.connection
+    body = connection.execute(
+        sqlalchemy.select(document_table.c.body).where(
+            document_table.c.owner == owner, document_table.c.id == document_id
+        )
+    ).scalar_one()
+    document = Document.model_validate_json(body)
+    worded = [
+        (number, block.text) for number, block in enumerate(document.blocks) if has_word(block.text)
+    ]
+    connection.execute(
+        sqlalchemy.insert(indexed_document_table).values(
+            document_id=document.id,
+            owner=owner,
+            item_id=document.item_id,
+            format=TERMS_FORMAT,
+            blocks=len(worded),
+        )
+    )
+    if not worded:
+        return
+    block_ids = (
+        connection.execute(
+            sqlalchemy.insert(indexed_block_table).returning(
+                indexed_block_table.c.id, sort_by_parameter_order=True
+            ),
+            [
+                {
+                    "owner": owner,
+                    "document_id": document.id,
+                    "item_id": document.item_id,
+                    "block_number": number,
+                    "text": text,
+                    "meaningful": is_meaningful(text),
+                }
+                for number, text in worded
+            ],
+        )
+        .scalars()
+        .all()
+    )
+    connection.execute(
+        sqlalchemy.insert(words_table),
+        [
+            {"rowid": block_id, WORDS_COLUMN: indexed_words(text), OWNER_COLUMN: owner}
+            for block_id, (_, text) in zip(block_ids, worded, strict=True)
+        ],
+    )
 
 
 class BlockIndex:
     # The index of the blocks of every document the library's items hold now, searched by
-    # their words and by their meaning. It is kept in the library's file, in tables of its own
-    # that it can build again from the documents. Words are indexed before a search and by a
-    # worker that catches up every few seconds; the worker also has the engine make vectors
-    # of the blocks that wait for them, while the engine answers.
-    def __init__(self, directory: Path, engine: EmbeddingEngine) -> None:
-        self.database = sqlalchemy.create_engine(f"sqlite:///{directory / LIBRARY_FILE}")
-        sqlalchemy.event.listen(self.database, CONNECT, load_vectors)
-        self.embedding_model = engine.model
-        self.endpoint = openai.OpenAI(
-            base_url=engine.base_url,
-            api_key=engine.api_key.get_secret_value(),
-            timeout=EMBEDDING_TIMEOUT_SECONDS,
-            max_retries=0,
-        )
-        # The index is changed by one thread at a time.
+    # their words and by their meaning, in tables of its own in the library's file that it can
+    # build again from the documents. A search first indexes the words of the owner's documents
+    # that it does not hold yet. A worker does the same for every owner, and has the engine make
+    # vectors of the blocks that wait for them, a batch of each owner's at a time, while the
+    # engine answers; it rests when nothing waits.
+    def __init__(self, store: LibraryStore, engine: EmbeddingEngine) -> None:
+        self.store = store
+        self.engine = engine
+        # A document is taken into the index, or out of it, by one thread at a time.
         self.turn = Lock()
         self.stopped = Event()
         self.woken = Event()
         self.engine_answers = True
-        self.worker = Thread(target=self.work, name="indexer", daemon=True)
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="indexer")
+        # No worker runs until the index is resumed.
+        self.worker: Future[None] = Future()
 
     def resume(self) -> None:
-        # An index that is not whole, as when some of its tables were thrown away, is built
-        # again; vectors of another model than the one set are made again.
-        metadata.create_all(self.database)
-        with self.turn, self.database.begin() as connection:
-            blocks = connection.execute(
-                sqlalchemy.select(sqlalchemy.func.count()).select_from(indexed_block_table)
-            ).scalar_one()
-            if connection.execute(COUNT_WORDS).scalar_one() != blocks:
-                connection.execute(CLEAR_WORDS)
-                connection.execute(sqlalchemy.delete(indexed_block_table))
-                connection.execute(sqlalchemy.delete(indexed_document_table))
-            if self.vectors_are_stale(connection):
-                self.forget_vectors(connection)
-        self.worker.start()
+        # An owner's part of the index that is not whole is built again from nothing.
+        for owner in self.store.owners():
+            with self.turn, self.store.transaction(owner) as transaction:
+                if not is_whole(transaction):
+                    logger.warning(
+                        "the index of %s's blocks is not whole; it is built again", owner
+                    )
+                    take_out_all(transaction)
+        self.worker = self.pool.submit(self.work)
+        self.worker.add_done_callback(self.record)
 
     def close(self) -> None:
         self.stopped.set()
         self.woken.set()
+        self.pool.shutdown(wait=False, cancel_futures=True)
 
-    def vectors_are_stale(self, connection: sqlalchemy.Connection) -> bool:
-        # Vectors are of no use when they are of another model, when their table is gone, or
-        # when they are not those of the blocks marked as having them.
-        models = list(connection.execute(sqlalchemy.select(vector_model_table.c.model)).scalars())
-        embedded = connection.execute(
-            sqlalchemy.select(sqlalchemy.func.count())
-            .select_from(indexed_block_table)
-            .where(indexed_block_table.c.embedded)
-        ).scalar_one()
-        if models != [self.embedding_model] or not sqlalchemy.inspect(connection).has_table(
-            VECTOR_TABLE
-        ):
-            return bool(models) or embedded > 0
-        return bool(connection.execute(COUNT_VECTORS).scalar_one() != embedded)
+    def record(self, finished: Future[None]) -> None:
+        error = None if finished.cancelled() else finished.exception()
+        if error is not None:
+            logger.error(
+                "the index of blocks stopped; every search fails until infonium starts again",
+                exc_info=error,
+            )
 
-    def forget_vectors(self, connection: sqlalchemy.Connection) -> None:
-        connection.execute(DROP_VECTORS)
-        connection.execute(sqlalchemy.delete(vector_model_table))
-        connection.execute(sqlalchemy.update(indexed_block_table).values(embedded=False))
+    def raise_failure(self) -> None:
+        # A worker that failed fails every search after it, so that a fault is not taken for a
+        # library that holds nothing.
+        if self.worker.done() and not self.worker.cancelled():
+            failure = self.worker.exception()
+            if failure is not None:
+                raise failure
 
     def work(self) -> None:
         while not self.stopped.is_set():
-            # The worker goes on after anything goes wrong in a round: the next round tries
-            # again.
-            try:
-                with self.database.connect() as connection:
-                    owners = connection.execute(
-                        sqlalchemy.select(item_table.c.owner).distinct()
-                    ).scalars()
-                    owners_now = list(owners)
-                for owner in owners_now:
-                    self.catch_up(owner)
-                self.embed_waiting()
-            except Exception:
-                logger.exception("indexing the library's blocks failed; it is tried again")
-            self.woken.wait(CATCH_UP_SECONDS)
-            self.woken.clear()
+            owners = self.store.owners()
+            for owner in owners:
+                self.catch_up(owner)
+            if not self.embed_round(owners):
+                self.woken.wait(CATCH_UP_SECONDS)
+                self.woken.clear()
 
     def catch_up(self, owner: str) -> None:
         # The owner's documents that items hold now are indexed, and those that no item holds
-        # any more are taken out.
-        held_documents = sqlalchemy.select(kept_document_id).where(
-            item_table.c.owner == owner, kept_document_id.is_not(None)
-        )
-        indexed_documents = sqlalchemy.select(
-            indexed_document_table.c.document_id, indexed_document_table.c.format
-        ).where(indexed_document_table.c.owner == owner)
-        with self.turn:
-            with self.database.connect() as connection:
-                held = set(connection.execute(held_documents).scalars())
-                indexed = {
-                    document: format for document, format in connection.execute(indexed_documents)
-                }
-            gone = [
-                document
-                for document, format in indexed.items()
-                if document not in held or format != WORDS_FORMAT
-            ]
-            missing = [document for document in held if indexed.get(document) != WORDS_FORMAT]
-            if gone:
-                with self.database.begin() as connection:
-                    self.take_out(connection, gone)
-            for first in range(0, len(missing), DOCUMENTS_AT_ONCE):
-                with self.database.begin() as connection:
-                    self.take_in(connection, owner, missing[first : first + DOCUMENTS_AT_ONCE])
+        # any more are taken out, each document in a transaction of its own.
+        with self.store.transaction(owner) as transaction:
+            held = set(
+                transaction.connection.execute(
+                    sqlalchemy.select(kept_document_id).where(
+                        item_table.c.owner == owner, kept_document_id.is_not(None)
+                    )
+                ).scalars()
+            )
+            indexed = {
+                document: format
+                for document, format in transaction.connection.execute(
+                    sqlalchemy.select(
+                        indexed_document_table.c.document_id, indexed_document_table.c.format
+                    ).where(indexed_document_table.c.owner == owner)
+                )
+            }
+        for document, format in indexed.items():
+            if document not in held or format != TERMS_FORMAT:
+                with self.turn, self.store.transaction(owner) as transaction:
+                    take_out(transaction, document)
+        missing = [document for document in held if indexed.get(document) != TERMS_FORMAT]
+        for document in missing:
+            with self.turn, self.store.transaction(owner) as transaction:
+                if not self.is_indexed(transaction, document):
+                    take_in(transaction, document)
         if missing:
             self.woken.set()
 
-    def take_out(self, connection: sqlalchemy.Connection, documents: list[str]) -> None:
-        block_ids = connection.execute(
-            sqlalchemy.select(indexed_block_table.c.id, indexed_block_table.c.embedded).where(
-                indexed_block_table.c.document_id.in_(documents)
-            )
-        ).all()
-        if block_ids:
-            connection.execute(DELETE_WORDS, [{"id": block_id} for block_id, _ in block_ids])
-        embedded = [{"id": block_id} for block_id, has_vector in block_ids if has_vector]
-        if embedded:
-            connection.execute(DELETE_VECTOR, embedded)
-        connection.execute(
-            sqlalchemy.delete(indexed_block_table).where(
-                indexed_block_table.c.document_id.in_(documents)
-            )
-        )
-        connection.execute(
-            sqlalchemy.delete(indexed_document_table).where(
-                indexed_document_table.c.document_id.in_(documents)
-            )
+    def is_indexed(self, transaction: OwnerTransaction, document: str) -> bool:
+        # Another thread may have indexed the document since it was found missing.
+        return (
+            transaction.connection.execute(
+                sqlalchemy.select(indexed_document_table.c.format).where(
+                    indexed_document_table.c.document_id == document,
+                    indexed_document_table.c.format == TERMS_FORMAT,
+                )
+            ).first()
+            is not None
         )
 
-    def take_in(self, connection: sqlalchemy.Connection, owner: str, documents: list[str]) -> None:
-        bodies = (
-            connection.execute(
-                sqlalchemy.select(document_table.c.body).where(
-                    document_table.c.owner == owner, document_table.c.id.in_(documents)
+    def embed_round(self, owners: list[str]) -> bool:
+        # One batch of each owner's blocks that wait for vectors; whether any was made. An engine
+        # that is away leaves the blocks waiting for a later round.
+        try:
+            made = [self.embed_batch(owner) for owner in owners]
+        except ENGINE_AWAY as failure:
+            if self.engine_answers:
+                logger.warning(
+                    "the embedding engine is away, so blocks wait for vectors: %s",
+                    failure_reason(failure),
                 )
-            )
-            .scalars()
-            .all()
-        )
-        for document in (Document.model_validate_json(body) for body in bodies):
-            worded = [
-                (number, block.text)
-                for number, block in enumerate(document.blocks)
-                if has_word(block.text)
-            ]
-            if worded:
-                block_ids = (
-                    connection.execute(
-                        sqlalchemy.insert(indexed_block_table).returning(
-                            indexed_block_table.c.id, sort_by_parameter_order=True
-                        ),
-                        [
-                            {
-                                "owner": owner,
-                                "document_id": document.id,
-                                "item_id": document.item_id,
-                                "block_number": number,
-                                "text": text,
-                                "embedded": False,
-                            }
-                            for number, text in worded
-                        ],
-                    )
-                    .scalars()
-                    .all()
-                )
-                connection.execute(
-                    INSERT_WORDS,
-                    [
-                        {"id": block_id, "words": indexed_words(text)}
-                        for block_id, (_, text) in zip(block_ids, worded, strict=True)
-                    ],
-                )
-            connection.execute(
-                sqlalchemy.insert(indexed_document_table).values(
-                    document_id=document.id,
-                    owner=owner,
-                    item_id=document.item_id,
-                    format=WORDS_FORMAT,
-                )
-            )
-
-    def embed_waiting(self) -> None:
-        # Blocks without vectors are sent to the engine a batch at a time, until none waits or
-        # the engine does not answer; then they wait for the next round.
-        while not self.stopped.is_set():
-            with self.database.connect() as connection:
-                waiting = [
-                    IndexedBlock(id=block_id, owner=owner, text=text)
-                    for block_id, owner, text in connection.execute(
-                        sqlalchemy.select(
-                            indexed_block_table.c.id,
-                            indexed_block_table.c.owner,
-                            indexed_block_table.c.text,
-                        )
-                        .where(sqlalchemy.not_(indexed_block_table.c.embedded))
-                        .order_by(indexed_block_table.c.id)
-                        .limit(EMBEDDING_BATCH)
-                    )
-                ]
-            if not waiting:
-                return
-            try:
-                vectors = self.embedded(
-                    [block.text for block in waiting], EMBEDDING_TIMEOUT_SECONDS
-                )
-            except openai.APIError as failure:
-                if self.engine_answers:
-                    logger.warning(
-                        "the embedding engine did not answer, so blocks wait for vectors: %s",
-                        failure_reason(failure),
-                    )
-                self.engine_answers = False
-                return
+            self.engine_answers = False
+            return False
+        if any(made):
             if not self.engine_answers:
                 logger.info("the embedding engine answers again")
             self.engine_answers = True
-            self.keep_vectors(waiting, vectors)
+        return any(made)
 
-    def embedded(self, texts: list[str], timeout: float) -> list[list[float]]:
-        reply = self.endpoint.with_options(timeout=timeout).embeddings.create(
-            model=self.embedding_model,
-            input=[text[:EMBEDDED_CHARACTERS] for text in texts],
-            encoding_format=FLOAT_ENCODING,
-        )
-        return [vector.embedding for vector in sorted(reply.data, key=lambda row: row.index)]
-
-    def keep_vectors(self, blocks: list[IndexedBlock], vectors: list[list[float]]) -> None:
-        # A block taken out of the index while its vector was made gets none.
-        dimensions = len(vectors[0])
-        with self.turn, self.database.begin() as connection:
-            kept = connection.execute(
-                sqlalchemy.select(vector_model_table.c.model, vector_model_table.c.dimensions)
-            ).all()
-            if kept != [(self.embedding_model, dimensions)]:
-                self.forget_vectors(connection)
-                connection.execute(
-                    sqlalchemy.insert(vector_model_table).values(
-                        model=self.embedding_model, dimensions=dimensions
-                    )
+    def embed_batch(self, owner: str) -> bool:
+        # The blocks indexed last are given vectors first, so that what was read just now is
+        # not kept waiting behind a library that is being caught up.
+        model = self.engine.model
+        with self.store.transaction(owner) as transaction:
+            waiting = [
+                WaitingBlock(id=block_id, text=text)
+                for block_id, text in transaction.connection.execute(
+                    sqlalchemy.select(indexed_block_table.c.id, indexed_block_table.c.text)
+                    .where(indexed_block_table.c.owner == owner, without_vector(model))
+                    .order_by(indexed_block_table.c.id.desc())
+                    .limit(EMBEDDING_BATCH)
                 )
-                connection.exec_driver_sql(CREATE_VECTORS.format(dimensions=dimensions))
-            present = set(
-                connection.execute(
-                    sqlalchemy.select(indexed_block_table.c.id).where(
-                        indexed_block_table.c.id.in_([block.id for block in blocks]),
-                        sqlalchemy.not_(indexed_block_table.c.embedded),
-                    )
-                ).scalars()
-            )
-            connection.execute(
-                INSERT_VECTOR,
+            ]
+        if not waiting:
+            return False
+        vectors = embedded(
+            self.engine, [block.text for block in waiting], EMBEDDING_TIMEOUT_SECONDS
+        )
+        # A vector is kept only for the block whose text was sent: ids are never given again,
+        # and the text must be the same still.
+        with self.store.transaction(owner) as transaction:
+            transaction.connection.execute(
+                sqlalchemy.update(indexed_block_table)
+                .where(
+                    indexed_block_table.c.id == sqlalchemy.bindparam("block_id"),
+                    indexed_block_table.c.owner == owner,
+                    indexed_block_table.c.text == sqlalchemy.bindparam("sent"),
+                )
+                .values(vector_model=model, embedding=sqlalchemy.bindparam("vector")),
                 [
-                    {"id": block.id, "owner": block.owner, "embedding": vector_bytes(vector)}
-                    for block, vector in zip(blocks, vectors, strict=True)
-                    if block.id in present
+                    {"block_id": block.id, "sent": block.text, "vector": vector_bytes(vector)}
+                    for block, vector in zip(waiting, vectors, strict=True)
                 ],
             )
-            connection.execute(
-                sqlalchemy.update(indexed_block_table)
-                .where(indexed_block_table.c.id.in_(present))
-                .values(embedded=True)
-            )
+        return True
 
-    def search(self, owner: str, query: str, limit: int) -> list[FoundBlock]:
-        # The best blocks of the owner's library for a query, by its words and, where the
-        # engine answers, by its meaning, best first.
+    @validate_call
+    def search(self, owner: str, query: str, limit: SearchLimit) -> list[FoundBlock]:
+        # The best blocks of the owner's library for a query, best first: those that hold every
+        # word of it, then those near it in meaning, where the engine answers, and those without
+        # a vector to be near by that hold some of its words.
+        self.raise_failure()
         self.catch_up(owner)
-        with self.database.connect() as connection:
-            has_vectors = connection.execute(
-                sqlalchemy.select(vector_model_table.c.model).where(
-                    vector_model_table.c.model == self.embedding_model
+        model = self.engine.model
+        with self.store.transaction(owner) as transaction:
+            has_vectors = transaction.connection.execute(
+                sqlalchemy.select(indexed_block_table.c.id).where(
+                    indexed_block_table.c.owner == owner,
+                    indexed_block_table.c.vector_model == model,
                 )
             ).first()
-        by_meaning = self.found_by_meaning(owner, query) if has_vectors else []
-        by_words = self.found_by_words(owner, all_words_expression(query))
-        # A block that holds only some words of the query, such as the pairs of letters that a
-        # question in Chinese shares with any Chinese text, is worse than what meaning finds,
-        # and is given only where meaning finds nothing.
-        if not by_meaning:
-            by_some_words = self.found_by_words(owner, any_words_expression(query))
-            by_words = list(dict.fromkeys(by_words + by_some_words))[:CANDIDATES]
-        return self.found_blocks(owner, fused([by_words, by_meaning], limit))
-
-    def found_by_words(self, owner: str, expression: str) -> list[int]:
-        if not expression:
-            return []
-        with self.database.connect() as connection:
-            return list(
-                connection.execute(
-                    FIND_BY_WORDS,
-                    {"expression": expression, "owner": owner, "candidates": CANDIDATES},
-                ).scalars()
+        query_vectors = self.query_vectors(query) if has_vectors else []
+        with self.store.transaction(owner) as transaction:
+            every_word = found_by_words(transaction, all_words_expression(query))
+            meaning = [
+                block
+                for vector in query_vectors
+                for block in found_by_meaning(transaction, model, vector)
+            ]
+            some_words = found_by_words(
+                transaction,
+                any_words_expression(query),
+                without_vector(model) if query_vectors else indexed_block_table.c.meaningful,
             )
+            return found_blocks(transaction, ranked_blocks(every_word, meaning, some_words, limit))
 
-    def found_by_meaning(self, owner: str, query: str) -> list[int]:
-        # A search that the engine does not answer goes on by words alone.
+    def query_vectors(self, query: str) -> list[Vector]:
+        # The vector of the query, or none while the engine is away.
+        if not query.strip():
+            return []
         try:
-            vector = self.embedded([query], QUERY_TIMEOUT_SECONDS)[0]
-        except openai.APIError as failure:
+            return embedded(self.engine, [query], QUERY_TIMEOUT_SECONDS)
+        except ENGINE_AWAY as failure:
             logger.info(
-                "searching by words alone, as the embedding engine did not answer: %s",
+                "searching without meaning, as the embedding engine is away: %s",
                 failure_reason(failure),
             )
             return []
-        with self.database.connect() as connection:
-            return list(
-                connection.execute(
-                    FIND_BY_MEANING,
-                    {"embedding": vector_bytes(vector), "candidates": CANDIDATES, "owner": owner},
-                ).scalars()
-            )
-
-    def found_blocks(self, owner: str, ranked: list[int]) -> list[FoundBlock]:
-        # Only blocks of the document an item of the owner holds now are given, whatever the
-        # index still holds of an earlier one.
-        with self.database.connect() as connection:
-            rows = connection.execute(
-                sqlalchemy.select(
-                    indexed_block_table.c.id,
-                    indexed_block_table.c.document_id,
-                    indexed_block_table.c.item_id,
-                    kept_title,
-                    indexed_block_table.c.block_number,
-                    indexed_block_table.c.text,
-                )
-                .join(item_table, item_table.c.id == indexed_block_table.c.item_id)
-                .where(
-                    indexed_block_table.c.id.in_(ranked),
-                    indexed_block_table.c.owner == owner,
-                    item_table.c.owner == owner,
-                    kept_document_id == indexed_block_table.c.document_id,
-                )
-            ).all()
-        found = {
-            block_id: FoundBlock(
-                document=document, item=item, title=title, block_number=number, text=text
-            )
-            for block_id, document, item, title, number, text in rows
-        }
-        return [found[block_id] for block_id in ranked if block_id in found]

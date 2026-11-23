@@ -23,6 +23,7 @@ from infonium.digest import (
     grounded_sections,
 )
 from infonium.document import Block, BlockNumber, MediaType, error_text
+from infonium.embedding import EmbeddingEngine
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
@@ -39,7 +40,7 @@ from infonium.library import (
     Origin,
     Reading,
 )
-from infonium.search import BlockIndex, EmbeddingEngine
+from infonium.search import BlockIndex
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
@@ -85,7 +86,7 @@ def intake() -> Intake:
 @cache
 def block_index() -> BlockIndex:
     return BlockIndex(
-        directory=settings.data_dir,
+        store=library_store(),
         engine=EmbeddingEngine(
             base_url=settings.embedding_base_url,
             api_key=settings.embedding_api_key,
