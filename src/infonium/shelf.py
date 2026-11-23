@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.dialects import sqlite
 
 from infonium.document import BlockNumber, Tagged
+from infonium.glossary import Term
 from infonium.library import OwnerTransaction, document_table, metadata, replacing_insert
-from infonium.rendition import Term
 from infonium.translation import ProgressKind, Stopped, Translated, TranslatedBlock, Unneeded
 
 # The translations a library keeps: for each document and language, a record of how the

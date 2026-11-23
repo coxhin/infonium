@@ -6,10 +6,23 @@ import openai
 from pydantic import BaseModel
 
 from infonium.document import BlockNumber, Document
+from infonium.glossary import Term
 from infonium.intake import failure_reason
 from infonium.language_model import LanguageModel, UnmeteredCompletion, UnstructuredCompletion
-from infonium.rendition import Passages, Term, Wording, keeps_marks, renditions, wordings_of
-from infonium.translation import TranslatedBlock, block_wordings, translated_block
+from infonium.rendition import (
+    PassageBlock,
+    Passages,
+    Wording,
+    keeps_marks,
+    renditions,
+    wordings_of,
+)
+from infonium.translation import (
+    TranslatedBlock,
+    block_wordings,
+    is_cut_into_segments,
+    translated_block,
+)
 
 # Asking a model for blocks of a document in another language: the requests, their
 # attempts, and the failure of blocks whose replies could not be used.
@@ -62,7 +75,10 @@ def passages_of(work: Work, wordings: list[list[Wording]]) -> Passages:
         title=work.title,
         terms=work.terms,
         before=before[len(before) - CONTEXT_CHARACTERS :] if before else "",
-        blocks=wordings,
+        blocks=[
+            PassageBlock(wordings=block, in_segments=is_cut_into_segments(blocks[number]))
+            for number, block in zip(work.numbers, wordings, strict=True)
+        ],
         after=after[:CONTEXT_CHARACTERS],
     )
 
