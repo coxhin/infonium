@@ -117,8 +117,10 @@ export function useCiting(
 // What a statement's chips do not tell: that citations the model gave it were not found in
 // their sources. A statement whose every citation was lost is a claim whose sources are not
 // there, marked plainly. One that kept some says quietly how many more it was given. One that
-// was given none is marked only where every statement is meant to cite, as in a digest; an
-// answer may rightly say what its sources do not cover.
+// has none and lost none is marked only where every statement is meant to cite, as in a
+// digest; an answer may rightly say what its sources do not cover. That mark does not say that
+// the model gave no citation: a statement kept before the count of lost citations was kept
+// reads as having lost none.
 export function LostCitations({
   statement,
   citesAll,
@@ -136,7 +138,7 @@ export function LostCitations({
   }
   if (statement.anchors.length === 0 && citesAll) {
     return (
-      <span className="unsourced" title="模型没有给这句话出处">
+      <span className="unsourced" title="这句话没有可以打开的出处">
         无出处
       </span>
     );
