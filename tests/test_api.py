@@ -1,24 +1,11 @@
-import json
-import re
-import time
-from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import filelock
-import httpx
-import httpx2
-import openai
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
-from infonium import api, intake, speech
-from infonium.language_model import ChatCompletionsLanguageModel
 from infonium.library import (
     CUT_OFF,
     LOCAL_OWNER,
@@ -30,227 +17,15 @@ from infonium.library import (
     Unread,
     item_identity,
 )
+from tests.model_standin import STANDIN_MODEL
 from tests.pdf_engine_standin import PDF_DATA
+from tests.service import READER, SITE, App, article, stand
 
-SITE = "https://pages.test"
-STUB_MODEL = "stub-model"
 # The smallest file that is a picture by its bytes.
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c6360000002000001e221bc330000000049454e44ae426082"
 )
-FILLER = "".join(
-    f"<p>Filler paragraph number {number} keeps the extractor sure that this page is an "
-    "article with running text enough to be worth reading, sentence after sentence.</p>"
-    for number in range(8)
-)
-SETTLE_SECONDS = 30
-POLL_SECONDS = 0.05
-# The limits of a fetch, lowered so that they are met in a second and in megabytes.
-LOWERED_FETCH_SECONDS = 1.0
-LOWERED_FETCH_BYTES = 4 * 1024**2
-MADE_UP_QUOTE = "This sentence was never written anywhere in the source at all."
-BLOCK_LINE = re.compile(r"^\[(\d+)(?: heading)?\] (.*)$", re.MULTILINE)
-
-
-def article(title: str) -> bytes:
-    return (
-        f"<html><head><title>{title}</title></head><body><article><h1>{title}</h1>"
-        f"{FILLER}</article></body></html>"
-    ).encode()
-
-
-class Site:
-    # The sites a test reads from, answered in this process: how often each path was asked
-    # for, and what it answers.
-    def __init__(self) -> None:
-        self.hits: Counter[str] = Counter()
-
-    def answer(self, request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        self.hits[path] += 1
-        match path.split("/")[1:]:
-            case ["reader"]:
-                return httpx.Response(200, headers={"content-type": "text/html"}, content=READER)
-            case ["counted", name]:
-                time.sleep(0.3)
-                return httpx.Response(200, html=article(f"Counted {name}").decode())
-            case ["flaky"] if self.hits[path] == 1:
-                return httpx.Response(200, html=article("Flaky fixture").decode())
-            case ["xhtml"]:
-                return httpx.Response(
-                    200,
-                    headers={"content-type": "application/xhtml+xml"},
-                    content=article("Xhtml fixture"),
-                )
-            case ["untyped"]:
-                return httpx.Response(200, content=article("Untyped fixture"))
-            case ["endless"]:
-                return httpx.Response(200, headers={"content-type": "text/html"}, content=drip())
-            case ["flood"]:
-                return httpx.Response(200, content=pour())
-            case _:
-                return httpx.Response(404)
-
-    @contextmanager
-    def stream(self, method: str, url: str, **options: Any) -> Iterator[httpx.Response]:
-        with (
-            httpx.Client(transport=httpx.MockTransport(self.answer)) as client,
-            client.stream(method, url, **options) as response,
-        ):
-            yield response
-
-
-READER = article("Reader fixture")
-
-
-# A page that trickles, and a file that pours, each for far longer than the limits allow. They
-# end at last, so that a limit that is not kept fails the test rather than holding it.
-def drip() -> Iterator[bytes]:
-    yield b"<html><body>"
-    for _ in range(round(10 * LOWERED_FETCH_SECONDS / 0.1)):
-        time.sleep(0.1)
-        yield b"<p>more</p>" * 20
-
-
-def pour() -> Iterator[bytes]:
-    for _ in range(4 * LOWERED_FETCH_BYTES // 1024**2):
-        yield bytes(1024**2)
-
-
-class StubModel:
-    # A model endpoint answered in this process. Its digest cites the longest block with a
-    # quote of it, the same quote under another block's number, and a quote that is nowhere.
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def answer(self, request: httpx2.Request) -> httpx2.Response:
-        self.calls += 1
-        asked = json.loads(request.content)
-        blocks = [
-            (int(number), text)
-            for number, text in BLOCK_LINE.findall(asked["messages"][-1]["content"])
-        ]
-        number, text = max(blocks, key=lambda block: len(block[1]))
-        quote = " ".join(text.split()[2:12])
-        statements = [
-            {"text": "Quoted.", "citations": [{"block_number": number, "quote": quote}]},
-            {"text": "Misnumbered.", "citations": [{"block_number": number + 2, "quote": quote}]},
-            {"text": "Made up.", "citations": [{"block_number": number, "quote": MADE_UP_QUOTE}]},
-        ]
-        content = json.dumps({"sections": [{"title": "Summary", "statements": statements}]})
-        chunk = {"id": "chatcmpl-stub", "object": "chat.completion.chunk", "created": 0}
-        chunks = [
-            {
-                **chunk,
-                "model": asked["model"],
-                "choices": [
-                    {
-                        "index": 0,
-                        "finish_reason": None,
-                        "delta": {"role": "assistant", "content": content},
-                    }
-                ],
-            },
-            {
-                **chunk,
-                "model": asked["model"],
-                "choices": [{"index": 0, "finish_reason": "stop", "delta": {}}],
-            },
-            {
-                **chunk,
-                "model": asked["model"],
-                "choices": [],
-                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-            },
-        ]
-        events = [f"data: {json.dumps(sent)}\n\n" for sent in chunks]
-        return httpx2.Response(
-            200,
-            content="".join([*events, "data: [DONE]\n\n"]),
-            headers={"content-type": "text/event-stream"},
-        )
-
-    def language_model(self) -> ChatCompletionsLanguageModel:
-        client = openai.OpenAI(
-            api_key="stub",
-            base_url="https://model.test/v1",
-            http_client=httpx2.Client(transport=httpx2.MockTransport(self.answer)),
-            max_retries=0,
-        )
-        return ChatCompletionsLanguageModel(client=client, name=STUB_MODEL)
-
-
-class App:
-    # infonium's service in this process, on a library of its own, reading from the stand-in
-    # sites with the stand-in model, a stand-in PDF engine and no browser.
-    def __init__(self, client: TestClient, store: LibraryStore, site: Site, model: StubModel):
-        self.client = client
-        self.store = store
-        self.site = site
-        self.model = model
-
-    def link(self, url: str, **headers: str) -> httpx2.Response:
-        return self.client.post("/api/items", json={"url": url}, headers=headers)
-
-    def upload(self, name: str, content: bytes, **headers: str) -> httpx2.Response:
-        files = {"file": (name, content, "application/octet-stream")}
-        return self.client.post("/api/items/upload", files=files, headers=headers)
-
-    def settled(self, item_id: str) -> dict[str, Any]:
-        deadline = time.monotonic() + SETTLE_SECONDS
-        while True:
-            entry: dict[str, Any] = self.client.get(f"/api/items/{item_id}").json()
-            if entry["reading"]["attempt"]["kind"] != "underway":
-                return entry
-            if time.monotonic() > deadline:
-                pytest.fail(f"the reading of {entry['origin']} did not settle in time")
-            time.sleep(POLL_SECONDS)
-
-    def left_in(self, folder: Path) -> list[str]:
-        return sorted(entry.name for entry in folder.iterdir())
-
-
-def stand(entry: dict[str, Any]) -> str:
-    return f"{entry['reading']['kind']}/{entry['reading']['attempt']['kind']}"
-
-
-@pytest.fixture
-def start_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, standin_pdf_engine: Callable[[str], Path]
-) -> Iterator[Callable[[], App]]:
-    site, model = Site(), StubModel()
-    monkeypatch.setattr(httpx, "stream", site.stream)
-    monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
-    monkeypatch.setattr(intake, "FETCH_LIMIT_BYTES", LOWERED_FETCH_BYTES)
-    monkeypatch.setattr(api, "language_model", model.language_model)
-    engines = intake.Engines(
-        pdf=standin_pdf_engine("trap"),
-        recogniser=speech.Recogniser(
-            base_url="https://speech.test/v1", api_key=SecretStr("unused"), model="none"
-        ),
-        browser=Path("no-such-browser"),
-    )
-    started: list[TestClient] = []
-
-    def start() -> App:
-        store = LibraryStore(tmp_path / "data")
-        reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
-        monkeypatch.setattr(api, "library_store", lambda: store)
-        monkeypatch.setattr(api, "intake", lambda: reader)
-        client = TestClient(api.app)
-        client.__enter__()
-        started.append(client)
-        return App(client, store, site, model)
-
-    yield start
-    for client in started:
-        client.__exit__(None, None, None)
-
-
-@pytest.fixture
-def app(start_app: Callable[[], App]) -> App:
-    return start_app()
 
 
 def test_a_link_is_read_into_its_document_source_and_digest(app: App) -> None:
@@ -288,7 +63,7 @@ def test_a_digest_keeps_the_citations_found_in_the_document(app: App) -> None:
         anchor["block_number"]
     ], "a quote cited under another block's number was not found in its own block"
     assert made_up["anchors"] == [], "a quote found nowhere in the document was kept"
-    assert digest["model"] == STUB_MODEL, "the digest does not name the model that wrote it"
+    assert digest["model"] == STANDIN_MODEL, "the digest does not name the model that wrote it"
 
 
 def test_the_same_page_given_again_is_the_same_item_document_and_digest(app: App) -> None:
@@ -300,7 +75,7 @@ def test_the_same_page_given_again_is_the_same_item_document_and_digest(app: App
     kept = app.client.put(f"/api/items/{first['id']}/digest").json()
     assert again["id"] == first["id"], "the page given with a fragment became another item"
     assert reread["reading"] == read["reading"], "reading the same page again changed it"
-    assert (kept, app.model.calls) == (digest, 1), "the kept digest was written anew"
+    assert (kept, len(app.model.asked())) == (digest, 1), "the kept digest was written anew"
 
 
 def test_an_address_imported_many_times_at_once_is_fetched_once(app: App) -> None:
@@ -346,7 +121,7 @@ def test_a_reread_that_fails_keeps_the_document_and_digest(app: App) -> None:
     still = app.client.get(f"/api/items/{item_id}/document")
     kept = app.client.put(f"/api/items/{item_id}/digest").json()
     assert still.status_code == 200, "the document read before is no longer served"
-    assert (kept, app.model.calls) == (digest, 1), "the digest was written anew"
+    assert (kept, len(app.model.asked())) == (digest, 1), "the digest was written anew"
 
 
 def test_a_link_never_read_ends_failed_without_a_document(app: App) -> None:
@@ -468,7 +243,7 @@ def test_a_second_service_on_the_same_library_stops(app: App, tmp_path: Path) ->
 
 
 def test_readings_cut_off_begin_again_until_they_are_given_up(
-    start_app: Callable[[], App], tmp_path: Path
+    start_app: Callable[..., App], tmp_path: Path
 ) -> None:
     store = LibraryStore(tmp_path / "data")
     urls = [f"{SITE}/counted/cut{starts}" for starts in range(READING_STARTS + 1)]
