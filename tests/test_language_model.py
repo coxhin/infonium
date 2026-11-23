@@ -30,12 +30,12 @@ from tests.model_standin import (
     INPUT_TOKENS,
     OUTPUT_TOKENS,
     STANDIN_MODEL,
-    Asked,
     Call,
     Finish,
     ModelStandin,
     Rejection,
     Reply,
+    by_request,
     call_id,
     pieces_of,
 )
@@ -98,12 +98,6 @@ def lookup_tool(run: Callable[[Lookup], str]) -> Tool[Lookup]:
     return Tool(
         name=TOOL_NAME, description="How often a word comes in the text.", arguments=Lookup, run=run
     )
-
-
-def by_request(replies: list[Reply]) -> Callable[[Asked], Reply]:
-    # The stand-in answers each request of a reply with the next of the replies, and the last
-    # one to every request after.
-    return lambda asked: replies[min(asked.number, len(replies) - 1)]
 
 
 @pytest.mark.parametrize("wire_api", list(WireApi))

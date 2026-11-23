@@ -1,12 +1,9 @@
 import json
-import threading
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
 
-import httpx2
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -15,6 +12,15 @@ from pydantic import BaseModel
 from infonium import api
 from infonium.intake import failure_reason
 from infonium.language_model import WireApi, endable_openai_model
+from tests.conversation import (
+    answered_turn,
+    asking,
+    first_line,
+    held,
+    kept_turns,
+    lines_of,
+    statement_texts,
+)
 from tests.model_standin import (
     STANDIN_MODEL,
     Asked,
@@ -42,6 +48,8 @@ MODEL_FAILURES = (
     "filtered",
     "failed",
     "broken_off",
+    "garbled",
+    "severed",
     "unmetered",
     "unparsable",
     "misshapen",
@@ -73,13 +81,6 @@ class Ledger(BaseModel):
     blocks: list[str]
 
 
-class Asking(BaseModel):
-    # What a question's response was: its status and, for a stream, its events in order.
-    status: int
-    events: list[dict[str, Any]]
-    body: str
-
-
 wording = st.lists(st.sampled_from(WORDING), min_size=1, max_size=6).map(" ".join)
 cuts = st.lists(st.integers(0, 10**4), max_size=10)
 
@@ -101,32 +102,8 @@ def conversation_path(item_id: str) -> str:
     return f"/api/items/{item_id}/conversation"
 
 
-def asking(client: httpx2.Client, item_id: str, question: str) -> Asking:
-    with client.stream("POST", conversation_path(item_id), json={"text": question}) as response:
-        lines = [line for line in response.iter_lines() if line.strip()]
-    streamed = response.status_code == HTTPStatus.OK
-    events = [json.loads(line) for line in lines] if streamed else []
-    return Asking(status=response.status_code, events=events, body="\n".join(lines))
-
-
-def turns(app: App, item_id: str) -> list[dict[str, Any]]:
-    answered = app.client.get(conversation_path(item_id))
-    assert answered.status_code == HTTPStatus.OK, f"a conversation was not served: {answered.text}"
-    found: list[dict[str, Any]] = answered.json()["turns"]
-    return found
-
-
-def answered_turn(questioned: Asking) -> dict[str, Any]:
-    assert questioned.status == HTTPStatus.OK, f"a question was refused: {questioned.body}"
-    assert questioned.events and questioned.events[-1]["kind"] == "answered", (
-        f"a question the model answered did not end with the answer: {questioned.events}"
-    )
-    turn: dict[str, Any] = questioned.events[-1]["turn"]
-    return turn
-
-
-def statement_texts(turn: dict[str, Any]) -> list[str]:
-    return [statement["text"] for statement in turn["answer"]["statements"]]
+def item_turns(app: App, item_id: str) -> list[dict[str, Any]]:
+    return kept_turns(app.client, conversation_path(item_id))
 
 
 @pytest.fixture
@@ -138,35 +115,6 @@ def ledger(app: App) -> Ledger:
         document_id=document["id"],
         blocks=[block["text"] for block in document["blocks"]],
     )
-
-
-@contextmanager
-def held(app: App, reply: Reply) -> Iterator[threading.Event]:
-    # The model writes the first piece of the reply and waits until the test opens the gate,
-    # which it does at the latest when the context ends; a server the reply goes through is
-    # stopped after that, or it would wait for the reply.
-    gate = threading.Event()
-    app.model.reset(lambda asked: reply.model_copy(update={"gate": gate}))
-    try:
-        yield gate
-    finally:
-        gate.set()
-
-
-def lines_of(response: httpx2.Response) -> Iterator[dict[str, Any]]:
-    return (json.loads(line) for line in response.iter_lines() if line.strip())
-
-
-def first_line(lines: Iterator[dict[str, Any]]) -> dict[str, Any]:
-    # The first line of an answer that the model has begun and not finished, which a reader
-    # waits for as long as the client's timeout of reading.
-    try:
-        first = next(lines, None)
-    except httpx2.ReadTimeout:
-        pytest.fail("no line of the answer was sent while the model was writing it")
-    if first is None:
-        pytest.fail("a question's response ended before its first line")
-    return first
 
 
 # R3: the answer is grounded.
@@ -198,7 +146,7 @@ def test_the_model_is_given_the_document_as_a_digest_is(app: App, ledger: Ledger
     app.client.put(f"/api/items/{ledger.item_id}/digest")
     [digest_asked] = app.model.asked()
     app.model.reset(says(["The ferry left at nine."]))
-    answered_turn(asking(app.client, ledger.item_id, QUESTION))
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
     [answer_asked] = app.model.asked()
     given_blocks = numbered_blocks_asked(answer_asked)
     assert given_blocks == numbered_blocks_asked(digest_asked), (
@@ -226,7 +174,9 @@ def test_citations_become_anchors_only_where_the_quote_is_in_the_document(
         ]
     )
     app.model.reset(lambda asked: spoken_reply(spoken))
-    answer = answered_turn(asking(app.client, ledger.item_id, QUESTION))["answer"]
+    answer = answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))[
+        "answer"
+    ]
     grounded, unfounded, uncovered = answer["statements"]
     assert grounded["anchors"], "a statement whose quotes are in the document has no anchor"
     for anchor in grounded["anchors"]:
@@ -253,7 +203,9 @@ def test_an_answer_without_anchors_names_no_source(
     app: App, ledger: Ledger, texts: list[str]
 ) -> None:
     app.model.reset(says(texts))
-    answer = answered_turn(asking(app.client, ledger.item_id, QUESTION))["answer"]
+    answer = answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))[
+        "answer"
+    ]
     assert statement_texts({"answer": answer}) == texts, "the answer's statements were changed"
     assert answer["sources"] == [], "an answer without anchors names a source"
 
@@ -278,7 +230,7 @@ def test_the_model_is_given_the_earlier_questions_and_their_statements_in_order(
     app.client.delete(conversation_path(ledger.item_id))
     for question, texts in numbered:
         app.model.reset(says(texts))
-        answered_turn(asking(app.client, ledger.item_id, question))
+        answered_turn(asking(app.client, conversation_path(ledger.item_id), question))
         given = app.model.asked()[-1].text()
         earlier = [part for asked_before, said in numbered for part in [asked_before, *said]]
         expected = [*earlier[: earlier.index(question)], question]
@@ -287,7 +239,7 @@ def test_the_model_is_given_the_earlier_questions_and_their_statements_in_order(
             f"the question {question!r} was not given the earlier questions and their "
             f"statements in order: {list(zip(expected, places, strict=True))}"
         )
-    assert [turn["question"] for turn in turns(app, ledger.item_id)] == [
+    assert [turn["question"] for turn in item_turns(app, ledger.item_id)] == [
         question for question, _ in numbered
     ], "GET does not return the turns in the order they were asked"
 
@@ -296,7 +248,7 @@ def test_the_model_is_given_the_earlier_questions_and_their_statements_in_order(
 
 
 def test_a_conversation_nobody_started_is_empty(app: App, ledger: Ledger) -> None:
-    assert turns(app, ledger.item_id) == [], "a conversation nobody started is not empty"
+    assert item_turns(app, ledger.item_id) == [], "a conversation nobody started is not empty"
 
 
 @pytest.mark.parametrize("item_path", ["/no-such-page", None])
@@ -328,7 +280,7 @@ def test_the_answer_is_sent_as_it_is_written_then_once_whole(
     app: App, ledger: Ledger, texts: list[str], at: list[int]
 ) -> None:
     app.model.reset(lambda asked: spoken_reply(plain(texts), at))
-    asked = asking(app.client, ledger.item_id, QUESTION)
+    asked = asking(app.client, conversation_path(ledger.item_id), QUESTION)
     turn = answered_turn(asked)
     drafts = [event["statements"] for event in asked.events[:-1]]
     assert all(event["kind"] == "drafted" for event in asked.events[:-1]), (
@@ -349,7 +301,9 @@ def test_the_answer_is_sent_as_it_is_written_then_once_whole(
     assert statement_texts(turn) == texts and turn["question"] == QUESTION, (
         "Answered does not hold the question and the statements the model wrote"
     )
-    assert turns(app, ledger.item_id)[-1] == turn, "a GET does not return the turn Answered held"
+    assert item_turns(app, ledger.item_id)[-1] == turn, (
+        "a GET does not return the turn Answered held"
+    )
 
 
 def test_what_is_written_is_sent_before_the_model_has_finished(app: App, ledger: Ledger) -> None:
@@ -359,7 +313,7 @@ def test_what_is_written_is_sent_before_the_model_has_finished(app: App, ledger:
     path = conversation_path(ledger.item_id)
     with (
         app.served() as reader,
-        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
+        held(app.model, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         reader.stream("POST", path, json={"text": QUESTION}) as response,
     ):
         lines = lines_of(response)
@@ -392,6 +346,10 @@ def failing_reply(failure: str) -> Reply | Rejection:
             return Reply(pieces=[half], finish=Finish.FAILED)
         case "broken_off":
             return Reply(pieces=[half], finish=Finish.BROKEN_OFF)
+        case "garbled":
+            return Reply(pieces=[half], finish=Finish.GARBLED)
+        case "severed":
+            return Reply(pieces=[half], finish=Finish.SEVERED)
         case "unmetered":
             return Reply(pieces=[written], metered=False)
         case "unparsable":
@@ -419,9 +377,9 @@ def test_a_failure_of_the_model_ends_the_lines_unanswered_and_keeps_nothing(
     app = start_app(wire_api)
     item_id = app.read("/ledger")
     app.model.reset(says(["Kept before."]))
-    kept = [answered_turn(asking(app.client, item_id, "What came first?"))]
+    kept = [answered_turn(asking(app.client, conversation_path(item_id), "What came first?"))]
     app.model.reset(lambda asked: failing_reply(failure))
-    asked = asking(app.client, item_id, QUESTION)
+    asked = asking(app.client, conversation_path(item_id), QUESTION)
     assert asked.status == HTTPStatus.OK, (
         f"a failure of the model was not told in the lines: {asked.body}"
     )
@@ -437,22 +395,22 @@ def test_a_failure_of_the_model_ends_the_lines_unanswered_and_keeps_nothing(
         assert reason == expected, (
             f"Unanswered is not worded as intake.failure_reason words the failure: {reason!r}"
         )
-    assert turns(app, item_id) == kept, f"a reply that is {failure} left something kept"
+    assert item_turns(app, item_id) == kept, f"a reply that is {failure} left something kept"
     app.model.reset(says(["Kept after."]))
-    assert statement_texts(answered_turn(asking(app.client, item_id, "Again?"))) == [
-        "Kept after."
-    ], "the conversation did not take a question after a failure of the model"
+    assert statement_texts(
+        answered_turn(asking(app.client, conversation_path(item_id), "Again?"))
+    ) == ["Kept after."], "the conversation did not take a question after a failure of the model"
 
 
 def test_a_forgotten_conversation_is_empty_and_not_given_to_the_model(
     app: App, ledger: Ledger
 ) -> None:
     app.model.reset(says(["Forgotten."]))
-    answered_turn(asking(app.client, ledger.item_id, "A question to forget?"))
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), "A question to forget?"))
     forgotten = app.client.delete(conversation_path(ledger.item_id))
     assert forgotten.status_code == HTTPStatus.NO_CONTENT, f"DELETE failed: {forgotten.text}"
-    assert turns(app, ledger.item_id) == [], "a forgotten conversation still has turns"
-    answered_turn(asking(app.client, ledger.item_id, QUESTION))
+    assert item_turns(app, ledger.item_id) == [], "a forgotten conversation still has turns"
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
     assert "A question to forget?" not in app.model.asked()[-1].text(), (
         "a forgotten question was given to the model"
     )
@@ -470,7 +428,7 @@ def test_a_question_or_a_delete_while_answering_is_refused_and_not_queued(
     cut = written.index("left")
     with (
         app.served() as reader,
-        held(app, Reply(pieces=[written[:cut], written[cut:]])) as gate,
+        held(app.model, Reply(pieces=[written[:cut], written[cut:]])) as gate,
         reader.stream("POST", path, json={"text": QUESTION}) as response,
     ):
         lines = lines_of(response)
@@ -489,11 +447,11 @@ def test_a_question_or_a_delete_while_answering_is_refused_and_not_queued(
     assert asked_while == 1, "a question refused while answering was sent to the model"
     assert beside.status_code == HTTPStatus.OK, "another item's conversation was held"
     assert rest and rest[-1]["kind"] == "answered", "the answer under way did not end whole"
-    assert [turn["question"] for turn in turns(app, ledger.item_id)] == [QUESTION], (
+    assert [turn["question"] for turn in item_turns(app, ledger.item_id)] == [QUESTION], (
         "a refused question was kept, or the DELETE was done after all"
     )
     app.model.reset(says(["Next."]))
-    answered_turn(asking(app.client, ledger.item_id, "And the second?"))
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), "And the second?"))
 
 
 # R7: a reader who leaves.
@@ -504,7 +462,7 @@ def test_a_reader_who_leaves_keeps_nothing_and_the_next_question_is_taken_at_onc
 ) -> None:
     written = plain(["The ferry left at nine.", "It ran late in fog."]).model_dump_json()
     path = conversation_path(ledger.item_id)
-    with app.served() as reader, held(app, Reply(pieces=[written[:30], written[30:]])):
+    with app.served() as reader, held(app.model, Reply(pieces=[written[:30], written[30:]])):
         with reader.stream("POST", path, json={"text": QUESTION}) as response:
             assert first_line(lines_of(response))["kind"] == "drafted", (
                 "no Drafted came before leaving"
@@ -513,7 +471,7 @@ def test_a_reader_who_leaves_keeps_nothing_and_the_next_question_is_taken_at_onc
         [cut] = app.model.requests()
         ended = cut.ended.wait(LEAVING_SECONDS)
         app.model.reset(says(["Taken."]))
-        next_asked = asking(reader, ledger.item_id, "Then when?")
+        next_asked = asking(reader, conversation_path(ledger.item_id), "Then when?")
         taken_after = time.monotonic() - left_at
     assert ended and cut.left, (
         f"the model's request went on more than {LEAVING_SECONDS} s after the reader left"
@@ -522,7 +480,7 @@ def test_a_reader_who_leaves_keeps_nothing_and_the_next_question_is_taken_at_onc
         f"the conversation did not take the next question at once after the reader left: "
         f"{next_asked.status} after {taken_after:.2f} s"
     )
-    assert [turn["question"] for turn in turns(app, ledger.item_id)] == ["Then when?"], (
+    assert [turn["question"] for turn in item_turns(app, ledger.item_id)] == ["Then when?"], (
         "a reader who left in the middle of an answer left something of it kept"
     )
 
@@ -534,23 +492,23 @@ def test_a_conversation_survives_a_restart(start_app: Callable[..., App]) -> Non
     first = start_app()
     item_id = first.read("/ledger")
     first.model.reset(says(["Kept across a restart."]))
-    answered_turn(asking(first.client, item_id, QUESTION))
-    before = turns(first, item_id)
+    answered_turn(asking(first.client, conversation_path(item_id), QUESTION))
+    before = item_turns(first, item_id)
     first.stop()
     again = start_app()
-    assert turns(again, item_id) == before, "a conversation did not survive a restart"
+    assert item_turns(again, item_id) == before, "a conversation did not survive a restart"
 
 
 def test_a_conversation_is_kept_by_item_and_by_owner(app: App, ledger: Ledger) -> None:
     other = app.read("/reader")
     app.model.reset(says(["Of the ledger."]))
-    answered_turn(asking(app.client, ledger.item_id, QUESTION))
-    assert turns(app, other) == [], "a conversation of one item shows in another's"
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
+    assert item_turns(app, other) == [], "a conversation of one item shows in another's"
     api.app.dependency_overrides[api.current_owner] = lambda: "another-owner"
     try:
         foreign = app.client.get(conversation_path(ledger.item_id))
         own_item = app.read("/ledger")
-        own = turns(app, own_item)
+        own = item_turns(app, own_item)
     finally:
         api.app.dependency_overrides.clear()
     assert foreign.status_code == HTTPStatus.NOT_FOUND, "another owner reached a conversation"
@@ -564,7 +522,7 @@ def test_asking_leaves_the_item_its_document_and_digest_as_they_were(
     digest = app.client.put(f"/api/items/{ledger.item_id}/digest").json()
     before = [app.client.get(path).json() for path in paths]
     app.model.reset(says(["Nothing changes."]))
-    answered_turn(asking(app.client, ledger.item_id, QUESTION))
+    answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
     after = [app.client.get(path).json() for path in paths]
     kept_digest = app.client.put(f"/api/items/{ledger.item_id}/digest").json()
     assert (after, kept_digest) == (before, digest), (
@@ -590,12 +548,12 @@ def test_an_item_read_again_keeps_its_conversation_and_its_anchors_documents(
         ]
     )
     app.model.reset(lambda asked: spoken_reply(cited))
-    turn = answered_turn(asking(app.client, item_id, QUESTION))
+    turn = answered_turn(asking(app.client, conversation_path(item_id), QUESTION))
     assert turn["answer"]["statements"][0]["anchors"], "a quote of the document found no anchor"
     app.link(f"{SITE}/revised")
     reread = app.settled(item_id)
     assert reread["reading"]["document"] != old_document["id"], "the page was not read anew"
-    kept = turns(app, item_id)
+    kept = item_turns(app, item_id)
     assert kept == [turn], "an item read again lost its conversation"
     [anchor] = kept[0]["answer"]["statements"][0]["anchors"]
     assert anchor["document_id"] == old_document["id"], (
@@ -605,7 +563,7 @@ def test_an_item_read_again_keeps_its_conversation_and_its_anchors_documents(
         "an earlier answer's source no longer names the document it was found in"
     )
     app.model.reset(says(["Revised."]))
-    answered_turn(asking(app.client, item_id, "What does it say now?"))
+    answered_turn(asking(app.client, conversation_path(item_id), "What does it say now?"))
     assert REVISED[0] in app.model.asked()[-1].text(), (
         "a question after the item was read again was not asked of its new document"
     )
