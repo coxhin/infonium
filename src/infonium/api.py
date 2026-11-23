@@ -1,6 +1,6 @@
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, closing
 from datetime import UTC, datetime
 from functools import cache
 from http import HTTPStatus
@@ -244,6 +244,17 @@ def questioned_holding(item_id: str, owner: Owner) -> Iterator[Holding]:
 QuestionedHolding = Annotated[Holding, Depends(questioned_holding)]
 
 
+def answer_scope() -> Iterator[ExitStack]:
+    # What an answer holds open, its request to the model, is let go when the response is
+    # over. A reader who leaves in the middle of it leaves the generator that sends the lines
+    # where it stopped, and nothing else would end that request.
+    with ExitStack() as held:
+        yield held
+
+
+AnswerScope = Annotated[ExitStack, Depends(answer_scope)]
+
+
 def entry_of(item: Item) -> ItemEntry:
     return ItemEntry(id=item.id, origin=item.origin, reading=item.reading)
 
@@ -383,15 +394,18 @@ def item_conversation(item_id: str, owner: Owner) -> Conversation:
 
 @app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
 def ask_about_item(
-    item_id: str, question: Question, owner: Owner, holding: QuestionedHolding
+    item_id: str, question: Question, owner: Owner, holding: QuestionedHolding, held: AnswerScope
 ) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
     # What happens on the way is sent as it happens, each event a line of JSON. The turn is
     # kept before it is sent; a reader who leaves before then leaves nothing kept.
     with library_store().library(owner) as library:
         turns = ItemConversations(library).turns(item_id)
+    progress = held.enter_context(
+        closing(answer_progress(language_model(), holding, turns, question.text))
+    )
     try:
-        for step in answer_progress(language_model(), holding, turns, question.text):
+        for step in progress:
             match step:
                 case Drafted():
                     yield step

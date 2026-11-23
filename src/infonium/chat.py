@@ -1,5 +1,5 @@
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Generator, Iterator
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock
@@ -298,7 +298,7 @@ def answered_turn(
 
 def answer_progress(
     model: LanguageModel, holding: Holding, turns: list[Turn], question: str
-) -> Iterator[Drafted | Turn]:
+) -> Generator[Drafted | Turn]:
     # The answer to a question about an item's document as it is written, a draft each time
     # the texts of its statements grow, and last the whole turn.
     shown: list[str] = []
@@ -308,12 +308,16 @@ def answer_progress(
         DraftAnswer,
         tools=[],
     )
-    for event in replies:
-        match event:
-            case Written(text=text):
-                statements = drafted_statements(text)
-                if statements != shown:
-                    shown = statements
-                    yield Drafted(statements=shown)
-            case Replied(completion=completion):
-                yield answered_turn(holding, question, model.name, completion, datetime.now(UTC))
+    # Closing the answer closes the reply, and with it the request to the model.
+    with closing(replies):
+        for event in replies:
+            match event:
+                case Written(text=text):
+                    statements = drafted_statements(text)
+                    if statements != shown:
+                        shown = statements
+                        yield Drafted(statements=shown)
+                case Replied(completion=completion):
+                    yield answered_turn(
+                        holding, question, model.name, completion, datetime.now(UTC)
+                    )

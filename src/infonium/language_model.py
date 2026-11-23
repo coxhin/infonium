@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
 from typing import Any, Final
 
@@ -156,7 +156,7 @@ class LanguageModel(ABC):
         messages: Sequence[Message],
         output: type[Output],
         tools: Sequence[Tool[Any]],
-    ) -> Iterator[ReplyEvent[Output]]:
+    ) -> Generator[ReplyEvent[Output]]:
         # A reply of the given form to a conversation whose messages are in the order they
         # were written. The reply is handed on as far as it is written, as often as more
         # arrives; each call of a tool before the tool runs, its result going back to the
@@ -189,7 +189,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
         messages: Sequence[Message],
         output: type[Output],
         tools: Sequence[Tool[Any]],
-    ) -> Iterator[ReplyEvent[Output]]:
+    ) -> Generator[ReplyEvent[Output]]:
         sent: list[ChatCompletionMessageParam] = [
             {"role": SYSTEM_ROLE, "content": instructions},
             *(chat_message(message) for message in messages),
@@ -283,7 +283,7 @@ class ResponsesLanguageModel(LanguageModel):
         messages: Sequence[Message],
         output: type[Output],
         tools: Sequence[Tool[Any]],
-    ) -> Iterator[ReplyEvent[Output]]:
+    ) -> Generator[ReplyEvent[Output]]:
         sent = [responses_message(message) for message in messages]
         spent = NO_TOKENS
         for _ in range(REPLY_ROUNDS):
