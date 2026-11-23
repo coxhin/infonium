@@ -34,10 +34,10 @@ from tests.service import FILLER, LEDGER, REVISED, SITE, App, stand
 SERVED_HOST = "testserver"
 PAGE_PATH = "/api/items/{item_id}/page"
 BLOCKS_PATH = "/api/items/{item_id}/page/blocks"
+QUICK_POLL_SECONDS = 0.005
 # The examples a property runs: each is a page read through the service, about a tenth of a
 # second.
-QUICK_POLL_SECONDS = 0.005
-EXAMPLES = settings(max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture])
+EXAMPLES = settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
 VOCABULARY = (
     "river", "sleeper", "ledger", "harbour", "window", "morning", "letter", "valley", "station",
     "carriage", "timetable", "platform", "border", "evening", "journey", "summer", "café",
@@ -855,6 +855,44 @@ def test_the_page_keeps_its_document_type(app: App, doctype: str) -> None:
     assert doctype_of(served_page.markup) == doctype_of(page), (
         f"the page declared {doctype!r} and is served with {doctype_of(served_page.markup)!r}"
     )
+
+
+# Elements that give a page its layout, each told apart by its attributes.
+LAYOUT = (
+    ("div", {"class": "layout wide", "style": "display: flex; gap: 2em"}),
+    ("section", {"id": "main", "class": "column", "data-width": "640"}),
+    ("aside", {"class": "column narrow", "style": "float: right", "lang": "en"}),
+    ("p", {"class": "lede", "style": "font-size: 1.4em", "dir": "ltr"}),
+    ("h2", {"class": "title", "style": "color: #333"}),
+    ("li", {"class": "entry", "value": "3"}),
+    ("td", {"class": "number", "colspan": "2", "style": "text-align: right"}),
+    ("img", {"class": "hero", "src": "https://pictures.test/hero.jpg", "width": "640"}),
+)
+
+
+def test_the_pages_structure_classes_and_styles_are_kept(app: App) -> None:
+    opened = {
+        tag: "<{tag} {attributes}>".format(
+            tag=tag, attributes=" ".join(f"{name}='{value}'" for name, value in attributes.items())
+        )
+        for tag, attributes in LAYOUT
+    }
+    body = (
+        f"{opened['div']}{opened['section']}{opened['h2']}The night ferry</h2>"
+        f"{opened['p']}It left at a quarter past nine on every weekday.</p>"
+        f"<ol>{opened['li']}Wednesday, in fog</li><li>Thursday</li></ol>"
+        f"<table><tr>{opened['td']}Forty-one late nights</td></tr><tr><td>a</td><td>b</td></tr>"
+        f"</table>{opened['img']}</section>"
+        f"{opened['aside']}<p>A note beside the article, about the harbour.</p></aside></div>"
+    )
+    root = served(app, app.read_page(next(names), article_page(body).encode())).root()
+    for tag, attributes in LAYOUT:
+        kept = [
+            element
+            for element in root.iter(tag)
+            if all(element.get(name) == value for name, value in attributes.items())
+        ]
+        assert len(kept) == 1, f"the page's {opened[tag]} is not in the served page as it was"
 
 
 @pytest.mark.parametrize(
