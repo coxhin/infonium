@@ -47,10 +47,6 @@ const MOST_STEP = 3;
 // Boxes in whole points put a 10 point text anywhere from 9 to 11 points, a tenth either way;
 // a footnote of 8 points under 10 point paragraphs is a fifth smaller and keeps its own size.
 const SAME_TYPE = 0.15;
-// A block whose size is told by its boxes alone, with no pitch, is set apart from its kind only
-// beyond this, as one box in whole points may stand a third off its print: the two one-line
-// footnotes of arXiv page 1, in one print, have boxes of 11 and 13 points over a 10 point body.
-const BOX_ALONE = 0.4;
 const PLAIN_SPACING = 1.25;
 // The line spacing of the source is kept between these, as a part of the size of its text.
 const SPACING_BOUNDS = [1, 2.4] as const;
@@ -292,7 +288,13 @@ export function layoutOf(blocks: Block[]): Layout {
     const onPage = typesetOf(measures);
     const type = key.slice(key.indexOf(KEY_PARTS) + 1);
     const whole = typesetOf(throughout.get(type) ?? { sizes: [], pitches: [] });
-    const own = onPage !== undefined && whole !== undefined && Math.abs(onPage.size / whole.size - 1) > SAME_TYPE;
+    // A page keeps its own size only where its lines of the type show a pitch: the box of a
+    // lone line, a heading's above all, tells its print too loosely to set a page apart.
+    const own =
+      onPage !== undefined &&
+      onPage.pitch !== undefined &&
+      whole !== undefined &&
+      Math.abs(onPage.size / whole.size - 1) > SAME_TYPE;
     const typeset = own || whole === undefined ? onPage : whole;
     if (typeset !== undefined) {
       kinds.set(key, typeset);
@@ -303,33 +305,27 @@ export function layoutOf(blocks: Block[]): Layout {
 
 const NO_TYPESET: Typeset = { size: 0, pitch: undefined };
 
-function scaledPitch(kind: Typeset, size: number): number | undefined {
-  return kind.pitch === undefined ? undefined : (kind.pitch * size) / kind.size;
-}
-
 // A block is set in the type of its kind, unless its lines show it clearly larger or smaller.
 // Where the block and its kind both have a pitch, the pitch tells the size, as the steps
 // between lines are surer than boxes in whole points: a footnote among paragraphs is smaller
 // by as much as its lines are closer, and a block is larger only where its smallest line is
-// too. A block of one line has no pitch, and its box alone tells it different only where it
-// differs by a third or more.
+// too. A block of one line has no pitch, and the box of one line tells its print too loosely,
+// from 9 to 17 points for one 12 point heading, so it takes its kind's type.
 function blockTypeset(own: Measures, kind: Typeset | undefined): Typeset {
   const ownTypeset = typesetOf(own);
   if (kind === undefined) {
     return ownTypeset ?? NO_TYPESET;
   }
-  if (ownTypeset === undefined) {
+  if (ownTypeset?.pitch === undefined || kind.pitch === undefined) {
     return kind;
   }
   const smallest = Math.min(...own.sizes);
-  const byPitch = ownTypeset.pitch !== undefined && kind.pitch !== undefined;
-  const told = byPitch ? (kind.size * (ownTypeset.pitch ?? 0)) / (kind.pitch ?? 1) : ownTypeset.size;
-  const margin = byPitch ? SAME_TYPE : BOX_ALONE;
-  if (told > kind.size * (1 + margin) && smallest > kind.size * (1 + margin)) {
-    return { size: ownTypeset.size, pitch: ownTypeset.pitch ?? scaledPitch(kind, ownTypeset.size) };
+  const told = (kind.size * ownTypeset.pitch) / kind.pitch;
+  if (told > kind.size * (1 + SAME_TYPE) && smallest > kind.size * (1 + SAME_TYPE)) {
+    return { size: ownTypeset.size, pitch: ownTypeset.pitch };
   }
-  if (told < kind.size * (1 - margin)) {
-    return { size: told, pitch: ownTypeset.pitch ?? scaledPitch(kind, told) };
+  if (told < kind.size * (1 - SAME_TYPE)) {
+    return { size: told, pitch: ownTypeset.pitch };
   }
   return kind;
 }

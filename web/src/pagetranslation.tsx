@@ -125,7 +125,7 @@ export function coloursOf(canvas: HTMLCanvasElement, box: Box): Colours | undefi
   const width = Math.max(1, Math.floor(box.width * canvas.width));
   const height = Math.max(1, Math.floor(box.height * canvas.height));
   const pixels = context.getImageData(left, top, width, height).data;
-  const counts = new Map<string, { colour: Rgb; count: number }>();
+  const counts = new Map<string, number>();
   const samples: Rgb[] = [];
   const step = 256 / LEVELS;
   for (let row = 0; row < SAMPLES; row += 1) {
@@ -136,13 +136,25 @@ export function coloursOf(canvas: HTMLCanvasElement, box: Box): Colours | undefi
       const colour: Rgb = [pixels[at] ?? 0, pixels[at + 1] ?? 0, pixels[at + 2] ?? 0];
       samples.push(colour);
       const level = colour.map((channel) => Math.floor(channel / step)).join(",");
-      const counted = counts.get(level) ?? { colour, count: 0 };
-      counted.count += 1;
-      counts.set(level, counted);
+      counts.set(level, (counts.get(level) ?? 0) + 1);
     }
   }
-  const ranked = [...counts.values()].sort((first, second) => second.count - first.count);
-  const paper = ranked[0]?.colour;
+  const ranked = [...counts.entries()].sort((first, second) => second[1] - first[1]);
+  const winning = ranked[0]?.[0];
+  if (winning === undefined) {
+    return undefined;
+  }
+  // The paper is the commonest exact colour of the commonest bin: a bin holds the paper and the
+  // soft edges of letters near it alike, and the first sample to fall in may be such an edge.
+  const exact = new Map<string, { colour: Rgb; count: number }>();
+  for (const sample of samples) {
+    if (sample.map((channel) => Math.floor(channel / step)).join(",") === winning) {
+      const counted = exact.get(sample.join(",")) ?? { colour: sample, count: 0 };
+      counted.count += 1;
+      exact.set(sample.join(","), counted);
+    }
+  }
+  const paper = [...exact.values()].sort((first, second) => second.count - first.count)[0]?.colour;
   if (paper === undefined) {
     return undefined;
   }
