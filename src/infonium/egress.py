@@ -82,6 +82,10 @@ HOST_NAME = re.compile(r"\[?(?P<host>[A-Za-z0-9._:-]+)\]?")
 # connection is passed on at a time.
 HANDSHAKE_LIMIT_SECONDS = 10.0
 CONNECTION_LIMIT_SECONDS = 15.0
+# How long a host is given to close its side of a connection once the browser has closed its
+# own: one that holds it open longer is cut off, so that it holds none of the connections the
+# proxy carries at once.
+CLOSING_LIMIT_SECONDS = 5.0
 CONNECTIONS_AT_ONCE = 64
 RELAYED_BYTES = 64 * 1024
 
@@ -293,6 +297,9 @@ class PublicProxy(ThreadingTCPServer):
     def port(self) -> int:
         return int(self.server_address[1])
 
+    def refuse(self, refusal: Refusal) -> None:
+        self.refused.put(refusal)
+
     def refusals(self) -> list[Refusal]:
         # What the proxy refused since it was last asked.
         found: list[Refusal] = []
@@ -307,7 +314,7 @@ class PublicProxy(ThreadingTCPServer):
         # process the renderer started. Another process of this machine, of any user, finds
         # the proxy closed, and a look at one process is all its connection costs.
         sockets = connection_sockets(client_address, (LOOPBACK, self.port()))
-        holders = [holder for holder in self.holders if holder.is_running()]
+        holders = [holder for holder in self.holders if lineage.is_alive(holder)]
         for process in holders or lineage.descendants(os.getpid()):
             if sockets & lineage.held_sockets(lineage.held_descriptors([process])):
                 self.holders = [process]
@@ -350,7 +357,7 @@ class SocksConnection(BaseRequestHandler):
         try:
             upstream = public_connection(host, port)
         except (OSError, NotPublicAddress) as refused:
-            self.server.refused.put(Refusal(host=host, port=port, reason=error_text(refused)))
+            self.server.refuse(Refusal(host=host, port=port, reason=error_text(refused)))
             client.sendall(socks_reply(SocksReply.NOT_ALLOWED))
             return
         with upstream:
@@ -359,4 +366,7 @@ class SocksConnection(BaseRequestHandler):
             answers = Thread(target=relayed, args=(upstream, client), daemon=True)
             answers.start()
             relayed(client, upstream)
+            answers.join(CLOSING_LIMIT_SECONDS)
+            with suppress(OSError):
+                upstream.shutdown(socket.SHUT_RDWR)
             answers.join()
