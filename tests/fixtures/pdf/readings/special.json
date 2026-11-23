@@ -90,7 +90,13 @@
   {
    "kind": "paragraph",
    "text": "Use a < b and c > d, or about ~20 items, i.e. 2^{10} = 1024 .",
-   "marks": [],
+   "marks": [
+    {
+     "kind": "formula",
+     "start": 46,
+     "end": 59
+    }
+   ],
    "places": [
     {
      "kind": "page",
@@ -175,7 +181,23 @@
   {
    "kind": "paragraph",
    "text": "Einstein ^{1} studied water, H_{2}O , at 100 °C, and area in m^{2} .",
-   "marks": [],
+   "marks": [
+    {
+     "kind": "formula",
+     "start": 9,
+     "end": 13
+    },
+    {
+     "kind": "formula",
+     "start": 29,
+     "end": 35
+    },
+    {
+     "kind": "formula",
+     "start": 61,
+     "end": 66
+    }
+   ],
    "places": [
     {
      "kind": "page",
