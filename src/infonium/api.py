@@ -22,7 +22,8 @@ from infonium.digest import (
     digest_prompt,
     grounded_sections,
 )
-from infonium.document import Block, BlockNumber, MediaType, error_text
+from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
+from infonium.framedpage import BLOCK_ATTRIBUTE, framed_page
 from infonium.intake import Engines, Intake
 from infonium.language_model import (
     LanguageModel,
@@ -335,7 +336,14 @@ def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> 
 @app.get("/api/items/{item_id}/page", responses=NOT_IN_LIBRARY)
 def item_page(item_id: str, owner: Owner) -> PageView:
     # The page of an item that was read from a web page; any other item has none.
-    raise NotImplementedError(UNBUILT)
+    store = library_store()
+    with store.library(owner) as library:
+        origin = library.item(item_id).origin
+        document = library.holding(item_id).document
+    if document.media_type != HTML_MEDIA_TYPE:
+        raise NotInLibrary(f"item {item_id} was not read from a web page")
+    page = framed_page(store.snapshot(document.snapshot).read_bytes(), origin, document.blocks)
+    return PageView(html=page.html, block_attribute=BLOCK_ATTRIBUTE, placed=page.placed)
 
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
