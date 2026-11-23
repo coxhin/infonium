@@ -11,6 +11,16 @@
   color-scheme: light;
 }
 
+/* The line above the page is set as the reader's other notes are. */
+.webpage-note {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
 .webpage-loading,
 .webpage-failed {
   padding: 0 1rem;
