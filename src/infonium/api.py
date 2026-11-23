@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
+from infonium.asking import UnusableTranslation
 from infonium.chat import (
     Answered,
     Answering,
@@ -62,6 +63,7 @@ from infonium.search import BlockIndex
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
+from infonium.translator import TranslationNotAsked, TranslationStanding, Translator
 
 JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for
@@ -132,6 +134,21 @@ def answering() -> Answering:
     return Answering()
 
 
+@cache
+def translation_model() -> LanguageModel:
+    return openai_model(name=settings.translation_model, wire_api=settings.wire_api)
+
+
+@cache
+def translator() -> Translator:
+    return Translator(
+        store=library_store(),
+        language=settings.language,
+        translating=translation_model,
+        retranslating=language_model,
+    )
+
+
 @asynccontextmanager
 async def running(service: FastAPI) -> AsyncIterator[None]:
     # infonium's own records are kept from INFO up, and written by the root logger to standard
@@ -140,10 +157,12 @@ async def running(service: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig()
     logging.getLogger(__package__).setLevel(logging.INFO)
     intake().resume()
+    translator().resume()
     block_index().resume()
     yield
     block_index().close()
     intake().close()
+    translator().close()
 
 
 app = FastAPI(title="infonium", lifespan=running)
@@ -226,11 +245,14 @@ app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
+app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
@@ -302,6 +324,17 @@ AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 def entry_of(item: Item) -> ItemEntry:
     return ItemEntry(id=item.id, origin=item.origin, reading=item.reading)
+
+
+def translation_view(standing: TranslationStanding) -> TranslationView:
+    return TranslationView(
+        document=standing.document,
+        language=standing.language,
+        progress=standing.progress,
+        input_tokens=standing.input_tokens,
+        output_tokens=standing.output_tokens,
+        blocks=standing.blocks,
+    )
 
 
 def digest_view(digest: Digest) -> DigestView:
@@ -397,30 +430,31 @@ def ensure_digest(item_id: str, owner: Owner) -> DigestView:
 def item_translation(item_id: str, owner: Owner) -> TranslationView:
     # The translation of the item's document into the language of digests, as far as it has
     # come; nothing is started.
-    raise NotImplementedError(UNBUILT)
+    return translation_view(translator().standing(owner, item_id))
 
 
 @app.put("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
 def ensure_translation(item_id: str, owner: Owner) -> TranslationView:
     # Starts the translation unless it is under way, done or unneeded. One that stopped goes
     # on from the blocks it has.
-    raise NotImplementedError(UNBUILT)
+    return translation_view(translator().ensure(owner, item_id))
 
 
 @app.post("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
 def translate_anew(item_id: str, owner: Owner) -> TranslationView:
     # Starts the translation from its first block, in place of what was translated before.
-    raise NotImplementedError(UNBUILT)
+    return translation_view(translator().anew(owner, item_id))
 
 
 @app.post(
     "/api/items/{item_id}/translation/blocks/{block_number}",
-    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED,
+    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED,
 )
 def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> TranslatedBlock:
     # Translates one block again with the model that writes digests, and keeps the result in
-    # place of the block's earlier translation.
-    raise NotImplementedError(UNBUILT)
+    # place of the block's earlier translation. A translation that was never asked for, or
+    # that is not needed, has no block to translate again.
+    return translator().retranslated(owner, item_id, block_number)
 
 
 @app.get("/api/items/{item_id}/page", responses=NOT_IN_LIBRARY)

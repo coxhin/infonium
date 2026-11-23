@@ -828,7 +828,13 @@
   {
    "kind": "paragraph",
    "text": "\\sum \\int \\partial \\sqrt{} \\approx \\neq \\leq \\geq \\infty \\in \\notin \\subset \\supset \\cup \\cap \\forall \\exists \\nabla \\pm \\times \\div \\rightarrow \\leftarrow \\leftrightarrow \\Rightarrow \\alpha \\beta \\gamma \\delta \\varepsilon \\theta \\lambda \\mu \\pi \\sigma \\varphi \\omega",
-   "marks": [],
+   "marks": [
+    {
+     "kind": "formula",
+     "start": 0,
+     "end": 267
+    }
+   ],
    "places": [
     {
      "kind": "page",
