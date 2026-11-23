@@ -118,6 +118,12 @@ function rangeIn(blockElement: Element, start: number, end: number): Range {
   throw new Error("页面上的这一段比引文的位置短，找不到这段引文。");
 }
 
+// A scroll padding in pixels, as the browser computes it; "auto" sets nothing aside.
+function paddingOf(computed: string): number {
+  const pixels = parseFloat(computed);
+  return Number.isNaN(pixels) ? 0 : pixels;
+}
+
 // Puts the passage in the middle of everything around it that has room to scroll, innermost
 // first: a table that scrolls sideways, then the column that holds the reader. A passage
 // larger than the view is put at its start. The jump is instant: an animated scroll aims at
@@ -134,7 +140,11 @@ function bringIntoView(passage: Range): void {
     const view = isPage ? new DOMRect(0, 0, 0, 0) : ancestor.getBoundingClientRect();
     const place = passage.getBoundingClientRect();
     if ((isPage || scrolls(style.overflowY)) && ancestor.scrollHeight > ancestor.clientHeight) {
-      const margin = Math.max(0, (ancestor.clientHeight - place.height) / 2);
+      // What the scroll padding sets aside, such as the column held at the foot of the window
+      // in one column, is not room to put the passage in.
+      const above = paddingOf(style.scrollPaddingTop);
+      const room = ancestor.clientHeight - above - paddingOf(style.scrollPaddingBottom);
+      const margin = above + Math.max(0, (room - place.height) / 2);
       ancestor.scrollBy({ top: place.top - view.top - margin });
     }
     if ((isPage || scrolls(style.overflowX)) && ancestor.scrollWidth > ancestor.clientWidth) {

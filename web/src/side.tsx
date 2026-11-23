@@ -187,6 +187,14 @@ export function SideColumn({
     onOpen(itemId);
   }
 
+  // Where the app is one column, the column is a drawer at the foot of the window, which folds
+  // to its tabs; choosing a tab opens it, and choosing the open tab again folds it.
+  const [folded, setFolded] = useState(false);
+  function choose(name: Tab) {
+    setFolded(name === tab && !folded);
+    setChosen(name);
+  }
+
   // A digest may take a model call to write, so it is asked for only once its tab is shown,
   // and then kept while the item stays open.
   const [digestShown, setDigestShown] = useState<string>();
@@ -198,7 +206,7 @@ export function SideColumn({
   }, [seat?.itemId, tab]);
 
   return (
-    <aside className="side">
+    <aside className="side" data-folded={folded}>
       <div className="tabs" role="tablist">
         {(Object.keys(TAB_NAMES) as Tab[]).map((name) => (
           <button
@@ -208,12 +216,15 @@ export function SideColumn({
             aria-selected={tab === name}
             aria-controls={panelId(name)}
             disabled={selected === undefined && ITEM_TABS.has(name)}
-            onClick={() => setChosen(name)}
+            onClick={() => choose(name)}
           >
             {TAB_NAMES[name]}
           </button>
         ))}
       </div>
+      <button className="fold" aria-expanded={!folded} onClick={() => setFolded(!folded)}>
+        {folded ? "展开" : "收起"}
+      </button>
       {citing.lost !== undefined && (
         <p className="lost status failed" role="alert">
           {citing.lost}

@@ -168,15 +168,19 @@ button.quiet {
   color: var(--muted);
 }
 
-/* In one column the page scrolls; the conversation keeps a height of its own so that the box
-   stays near it. */
+/* In the drawer of the one-column layout the conversation has little height, so the box takes
+   less of it. */
 @media (max-width: 64rem) {
-  .chat {
-    height: auto;
+  .composer textarea {
+    min-height: 2.6rem;
+    height: 2.6rem;
   }
 
-  .thread {
-    flex: none;
-    max-height: 60vh;
+  .composer small {
+    display: none;
+  }
+
+  .composer .send {
+    justify-content: flex-end;
   }
 }
