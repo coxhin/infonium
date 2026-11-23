@@ -9,6 +9,7 @@ import sys
 import time
 import traceback
 from codecs import BOM_UTF8
+from collections.abc import Iterator
 from contextlib import suppress
 from enum import StrEnum
 from functools import partial
@@ -137,9 +138,12 @@ TOO_MUCH_MEMORY = "{source} needs more memory than infonium gives a page"
 RENDERER = (sys.executable, lineage.RUN_AS_MODULE, __spec__.name)
 RENDERING_REPORT_FILE = "rendering.json"
 WRITTEN_REPORT_FILE = "rendering.json.part"
-# How long the process that started the renderer lets pass between two looks at whether it
-# is done and at what the rendering holds.
+# How long the process that started the renderer lets pass from one look to the next at
+# whether it is done and at what the rendering holds; and how many entries of the work folder
+# each look walks for the disk bound, so that no look takes long however many files a page
+# makes the browser keep: a whole walk of a fresh profile takes one look, of 20,000 files 40.
 RENDERER_WATCH_SECONDS = 0.05
+FOLDER_ENTRIES_PER_LOOK = 500
 # The browser makes the socket that keeps it single in the folder for temporary files, whose
 # path must stay short enough for a socket's address, so that folder is one of its own made
 # where the system keeps temporary files, apart from the work folder.
@@ -483,22 +487,34 @@ def main() -> None:
     lineage.wait_to_be_ended()
 
 
-def folder_bytes(folder: Path) -> int:
-    # What the files of a folder hold, of those that are still there as they are counted.
-    held = 0
-    for place, _, files in os.walk(folder):
-        for name in files:
-            with suppress(FileNotFoundError):
-                held += os.lstat(os.path.join(place, name)).st_size
-    return held
+def folder_sizes(folder: Path) -> Iterator[int | None]:
+    # What the files of a folder hold, of those still there as they are counted, from walks
+    # made one after another a few entries at a time: the step that ends a walk yields its sum,
+    # and every other step nothing.
+    while True:
+        held, entries, pending = 0, 0, [str(folder)]
+        while pending:
+            with suppress(FileNotFoundError), os.scandir(pending.pop()) as listing:
+                for entry in listing:
+                    with suppress(FileNotFoundError):
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                        else:
+                            held += entry.stat(follow_symlinks=False).st_size
+                    entries += 1
+                    if entries % FOLDER_ENTRIES_PER_LOOK == 0:
+                        yield None
+        yield held
 
 
 def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path, temporary: Path) -> None:
     # Waits until the renderer has reported or ended; a rendering that takes longer than its
     # limit, or holds more than its bounds, is ended there. The browser keeps the memory its
     # processes share in files under its temporary folder, removed as soon as they are made,
-    # and these count in both bounds.
-    began = time.monotonic()
+    # and these count in both bounds; the work folder counts in the disk bound as its last
+    # whole walk found it.
+    began = next_look = time.monotonic()
+    sizes, folder = folder_sizes(work), 0
     while not (work / RENDERING_REPORT_FILE).exists() and not renderer.has_ended():
         if time.monotonic() - began > RENDERING_LIMIT_SECONDS:
             raise UnreadableSource(OVERDUE_SOURCE.format(source=url))
@@ -506,9 +522,12 @@ def watch_rendering(url: str, renderer: lineage.HeldProgram, work: Path, tempora
         shared = lineage.held_files(lineage.held_descriptors(processes), temporary)
         if lineage.held_memory(processes) + shared > RENDERING_MEMORY_BYTES:
             raise UnreadableSource(TOO_MUCH_MEMORY.format(source=url))
-        if folder_bytes(work) + shared > RENDERING_DISK_BYTES:
+        if (walked := next(sizes)) is not None:
+            folder = walked
+        if folder + shared > RENDERING_DISK_BYTES:
             raise UnreadableSource(OVERSIZE_SOURCE.format(source=url))
-        time.sleep(RENDERER_WATCH_SECONDS)
+        next_look = max(next_look + RENDERER_WATCH_SECONDS, time.monotonic())
+        time.sleep(max(0.0, next_look - time.monotonic()))
 
 
 def reported_rendering(url: str, work: Path, program: str) -> RenderingReport:
