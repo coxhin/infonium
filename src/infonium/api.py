@@ -13,7 +13,20 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
-from infonium.chat import ChatEvent, Conversation, Question, Unanswered
+from infonium.chat import (
+    Answered,
+    Answering,
+    ChatEvent,
+    Conversation,
+    ConversationBusy,
+    Drafted,
+    ItemConversation,
+    ItemConversations,
+    Question,
+    Turn,
+    Unanswered,
+    answer_progress,
+)
 from infonium.digest import (
     Digest,
     DraftDigest,
@@ -23,7 +36,7 @@ from infonium.digest import (
     grounded_sections,
 )
 from infonium.document import Block, BlockNumber, MediaType, error_text
-from infonium.intake import Engines, Intake
+from infonium.intake import Engines, Intake, failure_reason
 from infonium.language_model import (
     LanguageModel,
     UnmeteredCompletion,
@@ -84,6 +97,11 @@ def intake() -> Intake:
 @cache
 def language_model() -> LanguageModel:
     return openai_model(name=settings.model, wire_api=settings.wire_api)
+
+
+@cache
+def answering() -> Answering:
+    return Answering()
 
 
 @asynccontextmanager
@@ -177,10 +195,14 @@ app.add_exception_handler(NamelessUpload, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(openai.OpenAIError, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnstructuredCompletion, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY))
+app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
+ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# What a model's failure to answer is told as, once the lines of an answer have begun.
+MODEL_FAILURES = (openai.OpenAIError, UnstructuredCompletion, UnmeteredCompletion)
 
 
 @app.middleware("http")
@@ -207,6 +229,19 @@ def current_owner() -> str:
 
 
 Owner = Annotated[str, Depends(current_owner)]
+
+
+def questioned_holding(item_id: str, owner: Owner) -> Iterator[Holding]:
+    # The document a question is asked about, and the conversation about it held for the
+    # question until its response has been sent: an item without a document, or one whose
+    # conversation is answering, is refused before a line of the answer is sent.
+    with library_store().library(owner) as library:
+        holding = library.holding(item_id)
+    with answering().claimed(ItemConversation(owner=owner, item_id=item_id)):
+        yield holding
+
+
+QuestionedHolding = Annotated[Holding, Depends(questioned_holding)]
 
 
 def entry_of(item: Item) -> ItemEntry:
@@ -340,14 +375,32 @@ def item_page(item_id: str, owner: Owner) -> PageView:
 
 @app.get("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
 def item_conversation(item_id: str, owner: Owner) -> Conversation:
-    raise NotImplementedError(UNBUILT)
+    # An item without a document has no conversation.
+    with library_store().library(owner) as library:
+        library.holding(item_id)
+        return Conversation(turns=ItemConversations(library).turns(item_id))
 
 
-@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY)
-def ask_about_item(item_id: str, question: Question, owner: Owner) -> Iterator[ChatEvent]:
+@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
+def ask_about_item(
+    item_id: str, question: Question, owner: Owner, holding: QuestionedHolding
+) -> Iterator[ChatEvent]:
     # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON.
-    yield Unanswered(reason=UNBUILT)
+    # What happens on the way is sent as it happens, each event a line of JSON. The turn is
+    # kept before it is sent; a reader who leaves before then leaves nothing kept.
+    with library_store().library(owner) as library:
+        turns = ItemConversations(library).turns(item_id)
+    try:
+        for step in answer_progress(language_model(), holding, turns, question.text):
+            match step:
+                case Drafted():
+                    yield step
+                case Turn():
+                    with library_store().library(owner) as library:
+                        ItemConversations(library).keep_turn(item_id, step)
+                    yield Answered(turn=step)
+    except MODEL_FAILURES as failure:
+        yield Unanswered(reason=failure_reason(failure))
 
 
 @app.delete(
@@ -356,7 +409,9 @@ def ask_about_item(item_id: str, question: Question, owner: Owner) -> Iterator[C
     status_code=HTTPStatus.NO_CONTENT,
 )
 def forget_item_conversation(item_id: str, owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    with library_store().library(owner) as library:
+        library.holding(item_id)
+        ItemConversations(library).forget(item_id)
 
 
 @app.get("/api/conversation")
