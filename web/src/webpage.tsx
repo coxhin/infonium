@@ -553,16 +553,21 @@ function roomInFrame(frame: HTMLIFrameElement): { top: number; bottom: number } 
   return room.bottom - room.top < LEAST_ROOM ? { top: 0, bottom: frame.clientHeight } : room;
 }
 
-// Brings the reader's column to the top of the reader, where the frame stands whole below its
-// head, then puts the passage in the middle of everything in the frame that scrolls around it,
-// innermost first, and in the page itself in the middle of the room the window shows of the
-// frame. A passage larger than the room is put at its start. The jumps are instant, as the
-// reader's are.
-function bringIntoFrame(frame: HTMLIFrameElement, framed: FramedPage, passage: Range): void {
+// Where the window itself scrolls, as in one column, brings the reader to the top of the
+// window, where the frame stands whole below the reader's head.
+function bringReaderToTop(frame: HTMLIFrameElement): void {
   const main = frame.closest("main");
   if (main !== null && scrollerOf(frame) === null) {
     scrollBy({ top: main.getBoundingClientRect().top, behavior: "instant" });
   }
+}
+
+// Brings the reader to the top of the window where the window scrolls, then puts the passage in the middle of everything in the frame that scrolls around it,
+// innermost first, and in the page itself in the middle of the room the window shows of the
+// frame. A passage larger than the room is put at its start. The jumps are instant, as the
+// reader's are.
+function bringIntoFrame(frame: HTMLIFrameElement, framed: FramedPage, passage: Range): void {
+  bringReaderToTop(frame);
   const room = roomInFrame(frame);
   const page = framed.document;
   for (
@@ -588,7 +593,9 @@ function bringIntoFrame(frame: HTMLIFrameElement, framed: FramedPage, passage: R
 }
 
 // The frame as tall as what the reader has of the window below what stands above the frame in
-// the reader, measured again whenever any of it changes size.
+// the reader, and above the column held at the foot of the window in one column, which the
+// scroll padding sets aside; measured again whenever any of it changes size, as when that
+// column is folded.
 function useFrameHeight(
   frame: RefObject<HTMLIFrameElement | null>,
   onShow: boolean,
@@ -610,11 +617,15 @@ function useFrameHeight(
         main.getBoundingClientRect().top +
         (scrolled ? main.scrollTop : 0);
       const view = scrolled ? main.clientHeight : innerHeight;
+      const setAside = paddingOf(
+        getComputedStyle(scrolled ? main : document.documentElement).scrollPaddingBottom,
+      );
       const border = element.offsetHeight - element.clientHeight;
-      setHeight(Math.max(SHORTEST_FRAME, Math.floor(view - above - border)));
+      setHeight(Math.max(SHORTEST_FRAME, Math.floor(view - setAside - above - border)));
     }
     measure();
     const resized = new ResizeObserver(measure);
+    resized.observe(document.documentElement);
     resized.observe(main);
     for (const child of main.children) {
       resized.observe(child);
@@ -697,6 +708,14 @@ export function WebpageView({
 
   const ready = pageBlocks.state === "ready" ? pageBlocks.value : undefined;
   const failed = pageBlocks.state === "failed" ? pageBlocks.reason : failure;
+
+  // Once the frame has its height, so that the window has the room to scroll to it.
+  const measured = height !== undefined;
+  useLayoutEffect(() => {
+    if (onShow && measured && frame.current !== null) {
+      bringReaderToTop(frame.current);
+    }
+  }, [onShow, measured]);
 
   useLayoutEffect(() => {
     if (framed !== undefined && ready !== undefined && onShow) {
