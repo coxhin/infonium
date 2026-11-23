@@ -297,6 +297,14 @@ class ShownText:
         after: html.HtmlElement | None,
         children: list[html.HtmlElement],
     ) -> RunPlace:
+        # Line breaks at the edges of a run part it from what is around it, and stay outside
+        # it, so that replacing the run's content keeps them.
+        leading_text = parent.text if after is None else after.tail
+        while children and is_bare_break(children[0]) and not (leading_text or "").strip():
+            after, children = children[0], children[1:]
+            leading_text = after.tail
+        while children and is_bare_break(children[-1]):
+            children = children[:-1]
         return RunPlace(
             order=order,
             begin=begin,
@@ -308,6 +316,11 @@ class ShownText:
 
     def text(self) -> str:
         return "".join(self.pieces)
+
+
+def is_bare_break(node: html.HtmlElement) -> bool:
+    # A line break with nothing but spaces after it.
+    return node.tag == LINE_BREAK_TAG and not (node.tail or "").strip()
 
 
 def page_tree(content: bytes, address: str) -> html.HtmlElement:
