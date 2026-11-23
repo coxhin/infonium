@@ -17,7 +17,6 @@ from urllib.parse import urlsplit
 import filetype
 import httpx
 import openai
-from playwright.sync_api import Error as BrowserError
 from pydantic import BaseModel
 
 from infonium import browser, captions, guard, lineage, media, pdf, recording, speech, webpage
@@ -78,9 +77,6 @@ OPENING_BYTES = 1024
 # The most that is kept of the reason a reading failed, and what stands for the rest.
 REASON_LIMIT_CHARACTERS = 500
 CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
-# How a rendering fails: the browser is missing, it cannot open the page or meets a limit,
-# or the page answers with an error status or a check.
-RENDERING_FAILURES = (OSError, BrowserError, UnreadableSource)
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +239,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
     try:
         rendered = browser.rendered_page(source.reference, directory, engines.browser)
         built = page_copy(url, rendered.file, rendered.address)
-    except RENDERING_FAILURES:
+    except UnreadableSource:
         if not plain.text.blocks:
             raise
         logger.warning(
@@ -322,9 +318,8 @@ def failure_reason(error: BaseException) -> str:
     # with; a program that ended without a word, or ran out of time, is named with how it
     # ended. A request that a service refused does not carry what the service answered, and
     # one that no service answered does not say which service that was, so the reason gives
-    # the address and the answer. A browser that fails says what failed in its first line and
-    # goes on with the steps it took, which are left out. A reason is kept as one line of a
-    # length a person reads: a service may answer with a whole page.
+    # the address and the answer. A reason is kept as one line of a length a person reads: a
+    # service may answer with a whole page.
     if isinstance(error, subprocess.CalledProcessError) and error.stderr and error.stderr.strip():
         written = error.stderr if isinstance(error.stderr, str) else error.stderr.decode()
         said = recording.COMPLAINER.sub("", written.strip().splitlines()[-1])
@@ -336,8 +331,6 @@ def failure_reason(error: BaseException) -> str:
         said = f"{asked_address(error)} answered {error.status_code}: {error.response.text}"
     elif isinstance(error, openai.APIConnectionError):
         said = f"{asked_address(error)} did not answer: {error}"
-    elif isinstance(error, BrowserError):
-        said = f"the browser could not render the page: {error.message.splitlines()[0]}"
     else:
         said = error_text(error)
     line = WORD_GAP.join(said.split())
