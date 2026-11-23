@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from infonium import confinement, lineage
 from infonium.document import (
+    BROKEN_OFF_SOURCE,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     Tagged,
@@ -94,7 +95,7 @@ NO_ANSWER = "{source} did not answer within {seconds:g} s"
 WEB_ADDRESS = re.compile(r"\S+://\S*")
 CHROME_ERRORS = {
     "crashed": "the page at {source} crashed in the browser",
-    "net::ERR_NETWORK_CHANGED": "the network of this machine changed while {source} was loading",
+    NETWORK_CHANGED: BROKEN_OFF_SOURCE,
     "net::ERR_UNSAFE_REDIRECT": "{source} led the browser to an address that is not a web page",
     "net::ERR_ABORTED": "loading {source} was broken off",
     "Download is starting": "{source} is a file to download, not a page",
