@@ -465,6 +465,13 @@ class LibraryStore:
         with self.transaction(owner) as transaction:
             yield Library(transaction)
 
+    def owners(self) -> list[str]:
+        # The owners whose items the library holds.
+        with self.engine.begin() as connection:
+            return list(
+                connection.execute(sqlalchemy.select(item_table.c.owner).distinct()).scalars()
+            )
+
     def underway(self) -> list[UnderwayItem]:
         with self.engine.begin() as connection:
             rows = connection.execute(

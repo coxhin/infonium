@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 
+from infonium.asking import UnusableTranslation
 from infonium.chat import (
     Answered,
     Answering,
@@ -60,12 +61,7 @@ from infonium.model_connection import Ending
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.translation import Progress, TranslatedBlock
-from infonium.translator import (
-    TranslationNotAsked,
-    TranslationStanding,
-    Translator,
-    UnusableTranslation,
-)
+from infonium.translator import TranslationNotAsked, TranslationStanding, Translator
 
 JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for

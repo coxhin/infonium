@@ -98,14 +98,6 @@ class TranslationRecord(BaseModel):
     output_tokens: int
 
 
-class RunningTranslation(BaseModel):
-    owner: str
-    item_id: str
-    document_id: str
-    language: str
-    run: int
-
-
 def with_tokens(
     record: TranslationRecord, input_tokens: int, output_tokens: int
 ) -> TranslationRecord:
@@ -205,28 +197,19 @@ class TranslationShelf:
             self.block_insert(document_id, language, block).on_conflict_do_nothing()
         )
 
+    def running(self, language: str) -> list[TranslationRecord]:
+        # The owner's translations into the language that are under way.
+        bodies = self.connection.execute(
+            sqlalchemy.select(translation_table.c.body).where(
+                translation_table.c.owner == self.owner, translation_table.c.language == language
+            )
+        ).scalars()
+        records = [TranslationRecord.model_validate_json(body) for body in bodies]
+        return [record for record in records if isinstance(record.course, Running)]
+
     def discard_blocks(self, document_id: str, language: str) -> None:
         self.connection.execute(
             sqlalchemy.delete(translated_block_table).where(
                 *self.of_document(translated_block_table, document_id, language)
             )
         )
-
-
-def running_translations(connection: sqlalchemy.Connection) -> list[RunningTranslation]:
-    # Every owner's translations that are under way.
-    rows = connection.execute(
-        sqlalchemy.select(translation_table.c.owner, translation_table.c.body)
-    )
-    kept = [(owner, TranslationRecord.model_validate_json(body)) for owner, body in rows]
-    return [
-        RunningTranslation(
-            owner=owner,
-            item_id=record.item_id,
-            document_id=record.document_id,
-            language=record.language,
-            run=record.run,
-        )
-        for owner, record in kept
-        if isinstance(record.course, Running)
-    ]
