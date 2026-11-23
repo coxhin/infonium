@@ -286,14 +286,8 @@ main > .status {
 /* Source: the pages of a paged file, or the player of a recording */
 
 .views {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   display: flex;
   gap: 0.4rem;
-  padding: 0.5rem 1rem;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
 }
 
 .views button {
@@ -344,12 +338,7 @@ main > .status {
 }
 
 .player {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0.5rem 1rem;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
+  padding: 0 1rem 0.5rem;
 }
 
 .player audio {
@@ -377,8 +366,10 @@ main > .status {
 }
 
 @media (max-width: 64rem) {
+  /* As the wide layout's middle column, the one column is never wider than the screen: a
+     plain 1fr grows to the widest table or listing, which scroll inside themselves instead. */
   .app {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
 
