@@ -133,7 +133,8 @@ export const Row = memo(function Row({
         translated={translated}
         beside={setting === "both"}
         again={again}
-        pointed={pointed}
+        // Beside its source, a passage pointed at is highlighted in the source alone.
+        pointed={setting === "translation" ? pointed : undefined}
         onAgain={onAgain}
       />
     </>
