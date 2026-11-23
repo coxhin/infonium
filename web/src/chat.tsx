@@ -126,46 +126,57 @@ function Question({ children }: { children: ReactNode }) {
 }
 
 // The turns of a conversation, followed by the question being answered. It follows what is
-// newest unless the reader has scrolled away from the end, and keeps its place while hidden
-// and while its item is closed.
+// newest unless the reader has scrolled away from the end, and keeps its place while hidden.
+// It starts at the place it was left at, and hands each new place back to be kept for when
+// its item is opened again.
 function Thread({
   chat,
   kind,
   shown,
-  place,
+  startPlace,
+  onPlace,
   onRetry,
   children,
 }: {
   chat: Chat;
   kind: ScopeKind;
   shown: boolean;
-  place: Place;
+  startPlace: Place;
+  onPlace: (place: Place) => void;
   onRetry: () => void;
   children: (turn: Turn) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const place = useRef(startPlace);
   const { conversation, pending } = chat;
+
+  function moveTo(next: Place) {
+    place.current = next;
+    onPlace(next);
+  }
 
   function scrolled() {
     const element = scroller.current;
     if (element !== null && shown) {
-      place.top = element.scrollTop;
-      place.following =
-        element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOWING_SLACK;
+      moveTo({
+        top: element.scrollTop,
+        following:
+          element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOWING_SLACK,
+      });
     }
   }
 
   // A question just sent is followed whatever the reader was looking at.
   useLayoutEffect(() => {
     if (pending !== undefined && pending.statements.length === 0) {
-      place.following = true;
+      moveTo({ ...place.current, following: true });
     }
   }, [pending?.question]);
 
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element !== null && shown) {
-      element.scrollTop = place.following ? element.scrollHeight : place.top;
+      element.scrollTop = place.current.following ? element.scrollHeight : place.current.top;
     }
   });
 
@@ -356,7 +367,8 @@ function ChatScope({
         chat={chat}
         kind={scope.kind}
         shown={shown}
-        place={conversations.placeOf(scope)}
+        startPlace={conversations.placeOf(scope)}
+        onPlace={(place) => conversations.keepPlace(scope, place)}
         onRetry={() => conversations.read(scope)}
       >
         {(turn) => <Answer turn={turn} citing={citing} seat={seat} onOpen={onOpen} />}

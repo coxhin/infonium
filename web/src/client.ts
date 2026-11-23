@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./protocol";
+import { reasonOf } from "./loading";
 
 type Schemas = components["schemas"];
 export type ItemEntry = Schemas["ItemEntry"];
@@ -63,8 +64,18 @@ async function done(request: Promise<{ error?: Refusal; response: Response }>): 
 }
 
 // The service answered a question with a status other than success, so it began no answer.
-// Any other failure of a question is a connection that broke.
 export class RefusedQuestion extends Error {}
+
+// The question never reached the service: the request itself failed, before any answer.
+// Any failure of a question that is neither this nor a refusal is a connection that broke.
+export class UnreachedService extends Error {}
+
+// The request is told apart from what is read after it only by the kind of its failure.
+function reached<Answer>(request: Promise<Answer>): Promise<Answer> {
+  return request.catch((error: unknown) => {
+    throw new UnreachedService(reasonOf(error), { cause: error });
+  });
+}
 
 // The events of one question, read as they arrive: each is one line of JSON.
 async function* eventLines(
@@ -74,7 +85,7 @@ async function* eventLines(
     response: Response;
   }>,
 ): AsyncGenerator<ChatEvent> {
-  const { data, error, response } = await request;
+  const { data, error, response } = await reached(request);
   if (!response.ok) {
     throw new RefusedQuestion(refusalText(error));
   }

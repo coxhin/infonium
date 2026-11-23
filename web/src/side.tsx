@@ -129,10 +129,14 @@ export function SideColumn({
   const seat = seated?.itemId === selected ? seated : undefined;
   const citing = useCiting(pointer, seat);
 
-  // A citation that opens an item leaves the reader in the conversation it was pressed in.
+  // A citation that opens another item leaves the reader in the conversation it was pressed
+  // in: only the library's can cite another item. A citation into the selected item, whose
+  // reader is not on show yet, changes nothing of what is on show.
   function openAt(itemId: string, anchor: Anchor) {
-    setChosen("chat");
-    setChosenScope("library");
+    if (itemId !== selected) {
+      setChosen("chat");
+      setChosenScope("library");
+    }
     citing.awaitOpening(anchor, itemId);
     onOpen(itemId, anchor);
   }

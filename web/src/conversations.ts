@@ -7,6 +7,7 @@ import {
   readItemConversation,
   readLibraryConversation,
   RefusedQuestion,
+  UnreachedService,
   type ChatEvent,
   type Conversation,
   type Turn,
@@ -36,6 +37,8 @@ export type Chat = {
 // Where a conversation is scrolled to, and whether it follows what is newest. It outlives the
 // view of the conversation, which is made anew when its item is opened again.
 export type Place = { top: number; following: boolean };
+
+const START: Place = { top: 0, following: true };
 
 const LIBRARY_KEY = "library";
 const UNREAD: Chat = {
@@ -86,6 +89,7 @@ function heardOf(turn: Turn): string {
 export type Conversations = {
   chatOf: (scope: Scope) => Chat;
   placeOf: (scope: Scope) => Place;
+  keepPlace: (scope: Scope, place: Place) => void;
   read: (scope: Scope) => void;
   type: (scope: Scope, text: string) => void;
   ask: (scope: Scope) => void;
@@ -117,10 +121,11 @@ export function useConversations(): Conversations {
   }
 
   function placeOf(scope: Scope): Place {
-    const key = scopeKey(scope);
-    const place = places.current.get(key) ?? { top: 0, following: true };
-    places.current.set(key, place);
-    return place;
+    return places.current.get(scopeKey(scope)) ?? START;
+  }
+
+  function keepPlace(scope: Scope, place: Place) {
+    places.current.set(scopeKey(scope), place);
   }
 
   // After a connection broke, the service may still have kept the answer, so the
@@ -195,6 +200,9 @@ export function useConversations(): Conversations {
     } catch (error) {
       if (error instanceof RefusedQuestion) {
         update(scope, (chat) => givenBack(chat, question, `问题没有被接受：${error.message}`));
+      } else if (error instanceof UnreachedService) {
+        // The question was never received, so the conversation has nothing new to read.
+        update(scope, (chat) => givenBack(chat, question, `连不上服务，问题没有发出：${error.message}`));
       } else {
         cutOff(scope, question, `：${reasonOf(error)}`);
       }
@@ -234,6 +242,7 @@ export function useConversations(): Conversations {
   return {
     chatOf,
     placeOf,
+    keepPlace,
     read,
     type: (scope, text) => update(scope, (chat) => ({ ...chat, typed: text })),
     ask,
