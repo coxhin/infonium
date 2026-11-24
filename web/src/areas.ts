@@ -79,7 +79,7 @@ function covers(box: Box, others: Box[]): boolean {
   return others.some((other) => overlap(box, other) > SLIVER * other.width * other.height);
 }
 
-function isDownward(places: PagePlace[]): boolean {
+export function isDownward(places: PagePlace[]): boolean {
   const downward = places.filter((place) => place.height > DOWNWARD * place.width);
   return places.length > 0 && downward.length * 2 > places.length;
 }

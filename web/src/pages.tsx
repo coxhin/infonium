@@ -11,6 +11,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AreaText } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
+import { MarksLayer, SelectionDrawing, SelectionLayer } from "./pagemarking";
+import type { MarkState, PageMark } from "./pagemarks";
+import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
 import { scrollerOf } from "./scrolling";
 
@@ -97,6 +100,16 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
 // it, or over the page with each area letting the source through when pressed.
 export type Overlay = { texts: AreaText[]; paired: boolean; revealing: boolean };
 
+// The reader's highlights as the pages draw them: on each page, and by the blocks they run
+// through, for the areas of a translation; and how a selection is made, where one can be.
+export type PageMarks = {
+  onPages: Map<number, PageMark[]>;
+  blocks: ReadonlyMap<number, MarkState>;
+  selecting: PageSelecting | undefined;
+};
+
+const NO_MARKS: PageMark[] = [];
+
 // The outline of the lines pointed at. On a page that shows the translation it lies under the
 // translation: an area that holds the cited block's translation is marked itself, and covers the
 // outline until it is pressed to show the source under it; where the block has no area there,
@@ -121,17 +134,23 @@ function Page({
   number,
   shape,
   boxes,
-  pointedBlock,
+  pointedBlocks,
   onMarked,
   overlay,
+  marks,
+  markedBlocks,
+  drawing,
 }: {
   file: PDFDocumentProxy;
   number: number;
   shape: number;
   boxes: PagePlace[];
-  pointedBlock: number | undefined;
+  pointedBlocks: ReadonlySet<number>;
   onMarked: (area: HTMLElement) => void;
   overlay: Overlay | undefined;
+  marks: PageMark[];
+  markedBlocks: ReadonlyMap<number, MarkState>;
+  drawing: SelectionDrawing;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -234,7 +253,9 @@ function Page({
   }, [paired, drawn]);
 
   // One shape of tree whether or not the source stands beside the page, so that the page's
-  // canvas, and its drawing, stay when the pairing changes.
+  // canvas, and its drawing, stay when the pairing changes. Highlights and a selection are
+  // drawn as lines on the source's page, and under the translation on a page that shows it.
+  const translated = overlay !== undefined;
   return (
     <div className="page-pair">
       <div
@@ -242,12 +263,23 @@ function Page({
         hidden={!paired}
         style={{ aspectRatio: `1 / ${shape}` }}
         aria-label="原文的这一页"
+        data-page={number}
       >
         <canvas ref={copy} />
+        <MarksLayer marks={marks} under={false} />
+        <SelectionLayer drawing={drawing} page={number} under={false} />
         <Boxes boxes={boxes} under={false} />
       </div>
-      <div className="page" ref={frame} style={{ aspectRatio: `1 / ${shape}` }}>
+      <div
+        className="page"
+        ref={frame}
+        style={{ aspectRatio: `1 / ${shape}` }}
+        data-page={number}
+        data-translated={translated ? "" : undefined}
+      >
         <canvas ref={canvas} />
+        <MarksLayer marks={marks} under={translated} />
+        <SelectionLayer drawing={drawing} page={number} under={translated} />
         {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
         {overlay !== undefined && near && drawn !== undefined && (
           <PageTranslation
@@ -256,8 +288,10 @@ function Page({
             drawn={drawn}
             revealing={overlay.revealing}
             width={width}
-            pointedBlock={pointedBlock}
+            pointedBlocks={pointedBlocks}
             onMarked={onMarked}
+            markedBlocks={markedBlocks}
+            drawing={drawing}
           />
         )}
         <Boxes boxes={boxes} under={overlay !== undefined} />
@@ -273,23 +307,28 @@ const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
 const NO_TEXTS: AreaText[] = [];
+const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
   file,
   pointed,
-  pointedBlock,
+  pointedBlocks,
   inView,
   overlays,
   pairing,
+  marks,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
-  pointedBlock: number | undefined;
+  pointedBlocks: ReadonlySet<number>;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
+  marks: PageMarks;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
+  const [drawing] = useState(() => new SelectionDrawing());
+  usePageSelecting(viewer, drawing, marks.selecting, inView);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
   // The outline turned to under the translation before the area over it was set: the area is
@@ -370,8 +409,13 @@ function Pages({
           number={number}
           shape={shapes?.[number] ?? LETTER_SHAPE}
           boxes={pointed.filter((place) => place.page === number)}
-          pointedBlock={pointed.some((place) => place.page === number) ? pointedBlock : undefined}
+          pointedBlocks={
+            pointed.some((place) => place.page === number) ? pointedBlocks : NO_BLOCKS
+          }
           onMarked={marked}
+          marks={marks.onPages.get(number) ?? NO_MARKS}
+          markedBlocks={marks.blocks}
+          drawing={drawing}
           overlay={
             overlays === undefined
               ? undefined
@@ -387,24 +431,28 @@ function Pages({
   );
 }
 
-// Shows a PDF page by page, outlines the boxes that were pointed at, and sets a translation
-// over the pages where one is given, by page; with the source beside each page, or under each
-// area, where pairing is asked for.
+// Shows a PDF page by page, outlines the boxes that were pointed at, draws the reader's
+// highlights, lets the reader select by dragging over the lines, and sets a translation over
+// the pages where one is given, by page; with the source beside each page, or under each area,
+// where pairing is asked for.
 export function PageViewer({
   source,
   pointed,
-  pointedBlock,
+  pointedBlocks,
   inView,
   overlays,
   pairing,
+  marks,
 }: {
   source: string;
   pointed: PagePlace[];
-  // The block the passage pointed at lies in, whose translation is marked where it is set.
-  pointedBlock: number | undefined;
+  // The blocks the passage pointed at runs through, whose translation is marked where it is
+  // set.
+  pointedBlocks: ReadonlySet<number>;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
+  marks: PageMarks;
 }) {
   const file = useFile(source);
   return (
@@ -415,10 +463,11 @@ export function PageViewer({
         <Pages
           file={file.value}
           pointed={pointed}
-          pointedBlock={pointedBlock}
+          pointedBlocks={pointedBlocks}
           inView={inView}
           overlays={overlays}
           pairing={pairing}
+          marks={marks}
         />
       )}
     </>

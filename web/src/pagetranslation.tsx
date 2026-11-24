@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AreaText, Box } from "./areas";
 import { MarkedText } from "./blocks";
+import { useSelectedBlock, type SelectionDrawing } from "./pagemarking";
+import type { MarkState } from "./pagemarks";
 import "./pagetranslation.css";
 
 // Text is made smaller to fit its area, but never below this part of the source's size.
@@ -188,18 +190,25 @@ function TranslatedArea({
   width,
   pointed,
   onMarked,
+  marked,
+  drawing,
 }: {
   text: AreaText;
   shape: number;
   colours: Colours | undefined;
   revealing: boolean;
   width: number;
-  // Whether the area holds the translation of the block a passage pointed at lies in: it is
-  // then marked whole, as the text view marks the translated block.
+  // Whether the area holds the translation of a block a passage pointed at runs through: it
+  // is then marked whole, as the text view marks the translated block.
   pointed: boolean;
   onMarked: (area: HTMLElement) => void;
+  // How the strongest of the highlights that run through the area's block is drawn, if any
+  // does; and the selection, which the area is drawn in where it takes text of its block.
+  marked: MarkState | undefined;
+  drawing: SelectionDrawing;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const selected = useSelectedBlock(drawing, text.blockNumber);
   useEffect(() => {
     if (pointed && element.current !== null) {
       onMarked(element.current);
@@ -272,9 +281,16 @@ function TranslatedArea({
   return (
     <div
       ref={element}
-      className={["area", area.vertical ? "vertical" : "", pointed ? "pointed" : ""]
+      className={[
+        "area",
+        area.vertical ? "vertical" : "",
+        pointed ? "pointed" : "",
+        marked !== undefined ? "marked" : "",
+        selected ? "selected" : "",
+      ]
         .filter(Boolean)
         .join(" ")}
+      data-mark={marked}
       style={style}
       data-fit={fit.ratio.toFixed(2)}
       data-cut={fit.cut ? "" : undefined}
@@ -312,17 +328,21 @@ export function PageTranslation({
   drawn,
   revealing,
   width,
-  pointedBlock,
+  pointedBlocks,
   onMarked,
+  markedBlocks,
+  drawing,
 }: {
   texts: AreaText[];
   shape: number;
   drawn: Drawn;
   revealing: boolean;
   width: number;
-  pointedBlock: number | undefined;
+  pointedBlocks: ReadonlySet<number>;
   // Told of each area that comes to be marked.
   onMarked: (area: HTMLElement) => void;
+  markedBlocks: ReadonlyMap<number, MarkState>;
+  drawing: SelectionDrawing;
 }) {
   const [read, setRead] = useState<ReadonlyMap<string, Colours>>(new Map());
   useEffect(() => {
@@ -350,8 +370,10 @@ export function PageTranslation({
           colours={colours.get(text.key)}
           revealing={revealing}
           width={width}
-          pointed={text.blockNumber === pointedBlock}
+          pointed={pointedBlocks.has(text.blockNumber)}
           onMarked={onMarked}
+          marked={markedBlocks.get(text.blockNumber)}
+          drawing={drawing}
         />
       ))}
     </div>

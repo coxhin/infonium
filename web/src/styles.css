@@ -9,6 +9,12 @@
   --on-accent: light-dark(#ffffff, #17181a);
   --found: light-dark(#ffe08a, #6e5a14);
   --failure: light-dark(#b3261e, #f2a59f);
+  /* Marks on the pages of a PDF, which are light whatever the theme: one colour for both. */
+  --page-mark: rgb(132 222 112 / 0.5);
+  --page-mark-opened: rgb(92 204 76 / 0.7);
+  --page-mark-edge: rgb(36 128 44);
+  --page-area-mark: rgb(132 222 112 / 0.22);
+  --page-selection: rgb(80 140 255 / 0.36);
   font-family:
     system-ui,
     -apple-system,
@@ -326,6 +332,7 @@ main > .status {
 /* A page is light whatever the theme, so its marks keep one colour. */
 .page-box {
   position: absolute;
+  pointer-events: none;
   background: rgb(255 208 64 / 0.38);
   outline: 2px solid #a8481f;
   border-radius: 2px;
