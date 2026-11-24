@@ -7,7 +7,8 @@ import type { Marking } from "./marking";
 import type { Clock } from "./player";
 import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
-import { useTextMarks, type TextOnShow } from "./textmarks";
+import { useTextMarks } from "./textmarks";
+import { useSelectionHandedOver, type TextOnShow } from "./textselection";
 import { rangeIn, textOf } from "./textpieces";
 import { Transcript, LINES_ATTRIBUTE } from "./transcript";
 import { POINTED_CLASS, Row, TRANSLATION_ATTRIBUTE } from "./translated";
@@ -82,6 +83,9 @@ export function Reader({
     );
   }, [translation.loaded, translation.blocks]);
   const translations = setting === "source" ? undefined : translation.blocks;
+  // What is on show is made anew, and the highlights drawn again, when a translation that stops
+  // leaves blocks in their source as well: such a block is drawn anew, in a frame of its own,
+  // and the words the highlights were drawn over leave the page.
   const show = useMemo<TextOnShow>(
     () => ({
       documentId: itemDocument.id,
@@ -89,12 +93,12 @@ export function Reader({
       translations: translations ?? new Map(),
       setting,
       asLines,
-      leftOut,
     }),
     [itemDocument.id, blocks, translations, setting, asLines, leftOut],
   );
   const article = useRef<HTMLElement>(null);
-  const pressed = useTextMarks(article, show, marking, onShow);
+  useSelectionHandedOver(article, show, marking, onShow);
+  const pressed = useTextMarks(article, show, marking);
   // The passage highlighted in this document goes when the document leaves the page. React
   // runs this before the effects of a reader that takes its place, so the passage that reader
   // is opened for stays.

@@ -1,18 +1,19 @@
 import { useEffect, useLayoutEffect, useRef, type MouseEvent, type RefObject } from "react";
 import { BLOCK_ATTRIBUTE } from "./blocks";
-import { pointOffset, unitOffset, unitOffsets } from "./blocktext";
-import type { Anchor, Anchors, Block, TranslatedBlock } from "./client";
-import { NO_MARKING, type Marked, type Marking, type Selected } from "./marking";
-import { SELECTION_ACTIONS_CLASS } from "./selectionactions";
-import type { Setting } from "./setting";
+import { unitOffset, unitOffsets } from "./blocktext";
+import type { Anchor } from "./client";
+import { NO_MARKING, type Marked, type Marking } from "./marking";
+import { characterAt, offsetAt, piecesOf, rangeIn, textOf } from "./textpieces";
 import {
-  characterAt,
-  offsetAt,
-  piecesOf,
-  rangeIn,
-  textOf,
-  type TextPiece,
-} from "./textpieces";
+  LINE_SELECTOR,
+  numberIn,
+  segmentSpans,
+  sourceOf,
+  wordsOf,
+  WORDS_SELECTOR,
+  type Spanned,
+  type TextOnShow,
+} from "./textselection";
 import {
   LINE_END_ATTRIBUTE,
   LINE_START_ATTRIBUTE,
@@ -20,25 +21,13 @@ import {
   SAID_CLASS,
   SPOKEN_CLASS,
 } from "./transcript";
-import { overlaps, SEGMENT_GAP, TRANSLATION_ATTRIBUTE, type TextRange } from "./translated";
+import { overlaps, TRANSLATION_ATTRIBUTE, type TextRange } from "./translated";
 import "./textmarks.css";
 
 // The reader's highlights in the text of a document: drawn over the words wherever they are on
-// show, pressed there, and the passage the reader selects there handed over. Highlights are
-// drawn through the browser's registry of highlights, never into the page, so that drawing
-// them redraws no block, and a copy or a print of the text carries nothing of them.
-
-// What the text view shows of its document: its blocks, the translations on show, the setting,
-// whether a recording's transcript is shown as lines, and the blocks a translation that stopped
-// left in their source, whose drawing that changes.
-export type TextOnShow = {
-  documentId: string;
-  blocks: Block[];
-  translations: ReadonlyMap<number, TranslatedBlock>;
-  setting: Setting;
-  asLines: boolean;
-  leftOut: ReadonlySet<number>;
-};
+// show, and pressed there. Highlights are drawn through the browser's registry of highlights,
+// never into the page, so that drawing them redraws no block, and a copy or a print of the
+// text carries nothing of them.
 
 // The layers of the drawing, each a highlight of the registry, from the lowest: the words of
 // every highlight; the translated segments or lines that overlap one, where only the
@@ -59,229 +48,48 @@ const PRIORITIES: Record<Layer, number> = {
   [OPENED]: 4,
 };
 
-// How long a selection made by keys or by a finger's handles must stay unchanged to count as
-// made: the browser says when a selection changes, never when the reader has done changing it.
-const SELECTION_SETTLES_MS = 300;
+// A press opens a highlight only once it is seen to be a single press: the first press of a
+// double or triple press, which selects a word or a line, comes with nothing selected yet. The
+// browser does not say how long it waits for a second press, so this is a short wait that
+// takes in a quick double press; a slower one opens the highlight as well.
+const PRESS_SETTLES_MS = 250;
+// What CSS takes a "normal" line height to be, as a share of the font's size.
+const NORMAL_LINE_HEIGHT = 1.2;
 
-const LINE_SELECTOR = `[${LINE_START_ATTRIBUTE}]`;
-const WORDS_SELECTOR = [
-  `[${BLOCK_ATTRIBUTE}]`,
-  `[${TRANSLATION_ATTRIBUTE}]`,
-  `${LINE_SELECTOR} .${SAID_CLASS}`,
-  `${LINE_SELECTOR} .${SPOKEN_CLASS}`,
-].join(", ");
+// A press's place comes in whole pixels, which may lie up to one pixel outside the edge of
+// what the browser itself found under the press.
+const PRESS_ROUNDING = 1;
 
-// A stretch of an element's text, in units, that stands for a range of a block's text, in code
-// points: a translated segment, or a line's translation.
-type Spanned = { from: number; to: number; source: TextRange };
-
-// Words of a block on show in one element, and how a stretch of them is taken back to the
-// block's text. Exact words are the block's own, from a code point offset on, and are taken
-// character by character; a translation is taken by whole segments, or whole lines.
-type Words =
-  | { kind: "exact"; number: number; element: Element; start: number; text: string }
-  | { kind: "translated"; number: number; element: Element; spans: Spanned[] };
-
-function numberIn(element: Element, attribute: string): number {
-  return Number(element.getAttribute(attribute));
-}
-
-function segmentSpans(translated: TranslatedBlock): Spanned[] {
-  let from = 0;
-  return translated.segments.map((segment) => {
-    const span = { from, to: from + segment.text.length, source: segment };
-    from = span.to + SEGMENT_GAP.length;
-    return span;
-  });
-}
-
-// The words an element of the text view holds, or none for an element that holds no words of
-// the document.
-function wordsOf(element: Element, show: TextOnShow): Words | undefined {
-  if (element.hasAttribute(BLOCK_ATTRIBUTE)) {
-    const number = numberIn(element, BLOCK_ATTRIBUTE);
-    const text = show.blocks[number]?.text;
-    return text === undefined ? undefined : { kind: "exact", number, element, start: 0, text };
-  }
-  if (element.hasAttribute(TRANSLATION_ATTRIBUTE)) {
-    const number = numberIn(element, TRANSLATION_ATTRIBUTE);
-    const translated = show.translations.get(number);
-    // The first element is the translation's form; the control beside it holds no words.
-    const form = element.firstElementChild;
-    return translated === undefined || form === null
-      ? undefined
-      : { kind: "translated", number, element: form, spans: segmentSpans(translated) };
-  }
-  const line = element.closest(LINE_SELECTOR);
-  const group = element.closest(`[${LINES_ATTRIBUTE}]`);
-  if (line === null || group === null) {
-    return undefined;
-  }
-  const number = numberIn(group, LINES_ATTRIBUTE);
-  const source = {
-    start: numberIn(line, LINE_START_ATTRIBUTE),
-    end: numberIn(line, LINE_END_ATTRIBUTE),
-  };
-  const text = textOf(element);
-  return element.classList.contains(SAID_CLASS)
-    ? { kind: "exact", number, element, start: source.start, text }
-    : { kind: "translated", number, element, spans: [{ from: 0, to: text.length, source }] };
-}
-
-// The range of a block's text, in code points, that a stretch of words on show stands for.
-function sourceOf(words: Words, from: number, to: number): TextRange | undefined {
-  if (words.kind === "exact") {
-    const offsets = unitOffsets(words.text);
-    return {
-      start: words.start + pointOffset(offsets, from, "start"),
-      end: words.start + pointOffset(offsets, to, "end"),
-    };
-  }
-  const touched = words.spans.filter((span) => span.from < to && from < span.to);
-  const first = touched[0];
-  const last = touched[touched.length - 1];
-  return first === undefined || last === undefined
-    ? undefined
-    : { start: first.source.start, end: last.source.end };
-}
-
-const WHITE = /\s/u;
-
-// The anchor of a range of a block's text, with no white space at either end; none if nothing
-// else is left.
-function anchorOf(
-  show: TextOnShow,
-  number: number,
-  range: TextRange,
-): Anchor | undefined {
-  const text = show.blocks[number]?.text ?? "";
-  const characters = Array.from(text);
-  let { start, end } = range;
-  while (start < end && WHITE.test(characters[start] ?? "")) {
-    start += 1;
-  }
-  while (end > start && WHITE.test(characters[end - 1] ?? "")) {
-    end -= 1;
-  }
-  return start === end
-    ? undefined
-    : {
-        document_id: show.documentId,
-        block_number: number,
-        start,
-        end,
-        quote: characters.slice(start, end).join(""),
-      };
-}
-
-// The passage a selection covers in the text: for each block, the range from the first to
-// the last character of its text that the selection takes, in the order of the document.
-function passageOf(article: Element, range: Range, show: TextOnShow): Anchor[] {
-  const taken = new Map<number, TextRange>();
-  for (const element of article.querySelectorAll(WORDS_SELECTOR)) {
-    if (!range.intersectsNode(element)) {
-      continue;
-    }
-    const words = wordsOf(element, show);
-    if (words === undefined || !words.element.checkVisibility()) {
-      continue;
-    }
-    const pieces = piecesOf(words.element);
-    const from = offsetAt(pieces, range.startContainer, range.startOffset, "start");
-    const to = offsetAt(pieces, range.endContainer, range.endOffset, "end");
-    const source = from < to ? sourceOf(words, from, to) : undefined;
-    if (source !== undefined) {
-      const before = taken.get(words.number);
-      taken.set(words.number, {
-        start: Math.min(source.start, before?.start ?? source.start),
-        end: Math.max(source.end, before?.end ?? source.end),
-      });
-    }
-  }
-  return [...taken.entries()]
-    .sort(([first], [second]) => first - second)
-    .flatMap(([number, source]) => anchorOf(show, number, source) ?? []);
-}
-
-function holdsWords(range: Range): boolean {
-  return range.toString().trim() !== "" && range.getClientRects().length > 0;
-}
-
-// The last line of a selection, in the window: that of the last text the selection takes
-// that has words on show, found walking back from the selection's end.
-function lastLineOf(range: Range): DOMRect {
-  const root = range.commonAncestorContainer;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const end = range.endContainer;
-  let node: Node | null;
-  if (end instanceof Text) {
-    node = end;
-  } else {
-    // The last text before the end: the end's own node at the end of the walk's order, and
-    // from there back.
-    const after = end.childNodes[range.endOffset] ?? null;
-    walker.currentNode = after ?? end;
-    node = after === null ? lastTextIn(end) : walker.previousNode();
-  }
-  while (node !== null) {
-    if (node instanceof Text && range.intersectsNode(node)) {
-      const part = document.createRange();
-      part.selectNodeContents(node);
-      if (node === range.startContainer) {
-        part.setStart(node, range.startOffset);
-      }
-      if (node === range.endContainer) {
-        part.setEnd(node, range.endOffset);
-      }
-      if (holdsWords(part)) {
-        const rects = part.getClientRects();
-        return rects[rects.length - 1] ?? part.getBoundingClientRect();
-      }
-    }
-    if (range.comparePoint(node, 0) < 0) {
-      break;
-    }
-    walker.currentNode = node;
-    node = walker.previousNode();
-  }
-  return range.getBoundingClientRect();
-}
-
-function lastTextIn(node: Node): Node | null {
-  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-  let last: Node | null = null;
-  for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
-    last = text;
-  }
-  if (last !== null) {
-    return last;
-  }
-  walker.currentNode = node;
-  return walker.previousNode();
-}
-
-function sameAnchors(first: Anchor[], second: Anchor[]): boolean {
+function contains(rect: DOMRect, x: number, y: number): boolean {
   return (
-    first.length === second.length &&
-    first.every((anchor, index) => {
-      const other = second[index];
-      return (
-        other !== undefined &&
-        anchor.block_number === other.block_number &&
-        anchor.start === other.start &&
-        anchor.end === other.end
-      );
-    })
+    rect.left - PRESS_ROUNDING <= x &&
+    x <= rect.right + PRESS_ROUNDING &&
+    rect.top - PRESS_ROUNDING <= y &&
+    y <= rect.bottom + PRESS_ROUNDING
   );
 }
 
-function contains(rect: DOMRect, x: number, y: number): boolean {
-  return rect.left <= x && x <= rect.right && rect.top <= y && y <= rect.bottom;
+// The rectangles of a range, each stretched to the height of the line it stands on in an
+// element, so that a press in the space between two lines of words lies on one of them.
+function lineRects(range: Range, element: Element): DOMRect[] {
+  const style = getComputedStyle(element);
+  const set = parseFloat(style.lineHeight);
+  const height = Number.isNaN(set) ? parseFloat(style.fontSize) * NORMAL_LINE_HEIGHT : set;
+  return [...range.getClientRects()].map((rect) => {
+    const added = Math.max(0, (height - rect.height) / 2);
+    return new DOMRect(rect.left, rect.top - added, rect.width, rect.height + 2 * added);
+  });
+}
+
+function spanAt(spans: Spanned[], offset: number): Spanned | undefined {
+  return spans.find((span) => span.from <= offset && offset < span.to);
 }
 
 // The range of a block's text whose drawing lies under a point of the window, where the words
-// there are drawn with the highlights: a character or a formula of words in the block's own
-// words, a segment or a line of a translation where only the translation is on show.
+// there are drawn with the highlights: a character or a formula of the block's own words, with
+// the line it stands on; a segment of a translation, with its lines; or a line of a
+// recording's translation, by its whole box. A translation counts only where it is on show
+// alone, since beside its source it is not drawn.
 function pressedRange(
   article: Element,
   x: number,
@@ -299,17 +107,29 @@ function pressedRange(
   if (words === undefined || (words.kind === "translated" && show.setting !== "translation")) {
     return undefined;
   }
-  const pieces: TextPiece[] = piecesOf(words.element);
+  if (words.kind === "translated" && words.element.classList.contains(SPOKEN_CLASS)) {
+    const line = words.spans[0];
+    return line !== undefined && contains(words.element.getBoundingClientRect(), x, y)
+      ? { number: words.number, source: line.source }
+      : undefined;
+  }
+  const pieces = piecesOf(words.element);
   const at = offsetAt(pieces, node, caret.offset, "start");
   // The caret stands between two characters; the one under the point is either.
   for (const offset of [at, at - 1]) {
     const character = offset < 0 ? undefined : characterAt(pieces, offset);
-    if (character === undefined) {
+    const stretch =
+      character === undefined || words.kind === "exact"
+        ? character
+        : spanAt(words.spans, character.start);
+    if (stretch === undefined) {
       continue;
     }
-    const rects = rangeIn(words.element, character.start, character.end).getClientRects();
-    if ([...rects].some((rect) => contains(rect, x, y))) {
-      const source = sourceOf(words, character.start, character.end);
+    const start = "source" in stretch ? stretch.from : stretch.start;
+    const end = "source" in stretch ? stretch.to : stretch.end;
+    const rects = lineRects(rangeIn(words.element, start, end), words.element);
+    if (rects.some((rect) => contains(rect, x, y))) {
+      const source = sourceOf(words, start, end);
       return source === undefined ? undefined : { number: words.number, source };
     }
   }
@@ -527,19 +347,21 @@ function pressedHighlight(
     )?.id;
 }
 
-// Draws the highlights in the text an article shows, hands over what the reader selects in it
-// while it is on show, and gives the handler of a press, to be called before any other in the
-// article, that tells a press on a highlight. Where nothing can be marked, none of it is done,
-// and the page is left as it was.
+
+// Draws the highlights in the text an article shows, and gives the handler of a press, to be
+// called before any other in the article, that tells a press on a highlight. A press on one
+// is held back from what else it would do there at once, as playing from a recording's line,
+// and opens it once it is seen to be a single press. Where nothing can be marked, none of it is
+// done, and the page is left as it was.
 export function useTextMarks(
   article: RefObject<HTMLElement | null>,
   show: TextOnShow,
   marking: Marking,
-  onShow: boolean,
 ): (event: MouseEvent) => void {
   const markable = marking !== NO_MARKING;
   const latest = useRef({ show, marking });
   latest.current = { show, marking };
+  const waiting = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useLayoutEffect(() => {
     const element = article.current;
@@ -550,107 +372,18 @@ export function useTextMarks(
     return () => undraw(drawn);
   }, [markable, show, marking.marked, marking.opened]);
 
+  // The next press, of a double press or of anything else, takes back a press that waits.
   useEffect(() => {
-    const element = article.current;
-    if (!markable || !onShow || element === null) {
+    if (!markable) {
       return;
     }
-    let handed: Selected | undefined;
-    let pressing = false;
-    let settling: ReturnType<typeof setTimeout> | undefined;
-    let measuring: number | undefined;
-
-    const handOver = (selected: Selected | undefined) => {
-      handed = selected;
-      latest.current.marking.onSelect(selected);
-    };
-    const letGo = () => {
-      if (handed !== undefined) {
-        handOver(undefined);
-      }
-    };
-    const clear = () => {
-      getSelection()?.removeAllRanges();
-      letGo();
-    };
-    const selectionNow = (): Range | undefined => {
-      const selection = getSelection();
-      return selection === null || selection.rangeCount === 0 || selection.isCollapsed
-        ? undefined
-        : selection.getRangeAt(0);
-    };
-    const settle = () => {
-      clearTimeout(settling);
-      const range = selectionNow();
-      const anchors = range === undefined ? [] : passageOf(element, range, latest.current.show);
-      const [first, ...rest] = anchors;
-      if (range === undefined || first === undefined) {
-        letGo();
-        return;
-      }
-      if (handed !== undefined && sameAnchors(handed.anchors, anchors)) {
-        return;
-      }
-      const passage: Anchors = [first, ...rest];
-      handOver({ anchors: passage, at: lastLineOf(range), clear });
-    };
-
-    const isOnActions = (event: Event) =>
-      event.target instanceof Element && event.target.closest(`.${SELECTION_ACTIONS_CLASS}`) !== null;
-    const pressed = (event: PointerEvent) => {
-      if (event.isPrimary && !isOnActions(event)) {
-        pressing = true;
-      }
-    };
-    const released = (event: PointerEvent) => {
-      if (pressing && event.isPrimary) {
-        pressing = false;
-        settle();
-      }
-    };
-    const changed = () => {
-      if (pressing) {
-        return;
-      }
-      clearTimeout(settling);
-      if (selectionNow() === undefined) {
-        letGo();
-      } else {
-        settling = setTimeout(settle, SELECTION_SETTLES_MS);
-      }
-    };
-    // What is offered stands by the selection's end, which a scroll moves in the window.
-    const scrolled = () => {
-      if (handed === undefined || measuring !== undefined) {
-        return;
-      }
-      measuring = requestAnimationFrame(() => {
-        measuring = undefined;
-        const range = selectionNow();
-        if (handed !== undefined && range !== undefined) {
-          handOver({ ...handed, at: lastLineOf(range) });
-        }
-      });
-    };
-
-    addEventListener("pointerdown", pressed, true);
-    addEventListener("pointerup", released, true);
-    addEventListener("pointercancel", released, true);
-    document.addEventListener("selectionchange", changed);
-    addEventListener("scroll", scrolled, { capture: true, passive: true });
+    const cancel = () => clearTimeout(waiting.current);
+    addEventListener("pointerdown", cancel, true);
     return () => {
-      clearTimeout(settling);
-      if (measuring !== undefined) {
-        cancelAnimationFrame(measuring);
-      }
-      removeEventListener("pointerdown", pressed, true);
-      removeEventListener("pointerup", released, true);
-      removeEventListener("pointercancel", released, true);
-      document.removeEventListener("selectionchange", changed);
-      removeEventListener("scroll", scrolled, { capture: true });
-      letGo();
+      cancel();
+      removeEventListener("pointerdown", cancel, true);
     };
-  }, [markable, onShow]);
+  }, [markable]);
 
   return (event: MouseEvent) => {
     const element = article.current;
@@ -664,10 +397,13 @@ export function useTextMarks(
     }
     const { show: shown, marking: current } = latest.current;
     const id = pressedHighlight(element, event.clientX, event.clientY, shown, current.marked);
-    if (id !== undefined) {
-      // A press on a highlight in a recording's lines is no request to play from the line.
-      event.stopPropagation();
-      current.onPress(id);
+    if (id === undefined) {
+      return;
+    }
+    // A press on a highlight in a recording's lines is no request to play from the line.
+    event.stopPropagation();
+    if (event.detail <= 1) {
+      waiting.current = setTimeout(() => current.onPress(id), PRESS_SETTLES_MS);
     }
   };
 }
