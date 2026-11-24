@@ -36,6 +36,23 @@ export function unitOffset(offsets: number[], offset: number): number {
   return units;
 }
 
+// The code point offset of a unit offset, the way back from unitOffsets. A unit offset that
+// falls between the two halves of a character is taken before the character at a start and
+// after it at an end, so that a stretch keeps every character it touches.
+export function pointOffset(offsets: number[], units: number, side: "start" | "end"): number {
+  let low = 0;
+  let high = offsets.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high + 1) / 2);
+    if ((offsets[middle] ?? Infinity) <= units) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return side === "end" && (offsets[low] ?? units) < units ? low + 1 : low;
+}
+
 export type Piece = { text: string; marks: Mark[] };
 
 // Cuts the text wherever a mark starts or ends, so the pieces together are the text, character

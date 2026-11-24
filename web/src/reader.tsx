@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { Anchor, ItemDocument, ItemEntry, TimePlace } from "./client";
+import type { Anchor, Anchors, ItemDocument, ItemEntry, TimePlace } from "./client";
 import { BLOCK_ATTRIBUTE, SourceBlock } from "./blocks";
 import { unitOffset, unitOffsets } from "./blocktext";
 import { originLabel } from "./entry";
-import { FORMULA_ATTRIBUTE } from "./formula";
+import type { Marking } from "./marking";
 import type { Clock } from "./player";
 import { inView, scrollerOf, scrolls } from "./scrolling";
 import type { Setting } from "./setting";
+import { useTextMarks, type TextOnShow } from "./textmarks";
+import { rangeIn, textOf } from "./textpieces";
 import { Transcript, LINES_ATTRIBUTE } from "./transcript";
 import { POINTED_CLASS, Row, TRANSLATION_ATTRIBUTE } from "./translated";
 import type { TranslationState } from "./translation";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const ANCHOR_HIGHLIGHT = "anchor";
+// The passage pointed at is drawn above the reader's highlights (textmarks.ts), so that it
+// stays the stronger where the two lie over each other.
+const ANCHOR_PRIORITY = 10;
 const NONE_LEFT_OUT: ReadonlySet<number> = new Set();
+const NONE_POINTED: ReadonlyMap<number, Anchor> = new Map();
 const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
 const CHANGED = "原文已经变化，找不到这段引文";
 
@@ -25,9 +31,9 @@ export type Playing = {
   onPlay: (place: TimePlace) => void;
 };
 
-// The text of a document, in the words the setting asks for. A recording's transcript is
-// shown as lines once a translation is on show; in its source alone it is the text it always
-// was.
+// The text of a document, in the words the setting asks for, with the reader's highlights
+// drawn over it. A recording's transcript is shown as lines once a translation is on show; in
+// its source alone it is the text it always was.
 export function Reader({
   entry,
   title,
@@ -35,19 +41,35 @@ export function Reader({
   setting,
   translation,
   pointed,
+  marking,
   playing,
+  onShow,
 }: {
   entry: ItemEntry;
   title: string;
   itemDocument: ItemDocument;
   setting: Setting;
   translation: TranslationState;
-  pointed: Anchor | undefined;
+  pointed: Anchors | undefined;
+  marking: Marking;
   playing: Playing | undefined;
+  onShow: boolean;
 }) {
   const blocks = itemDocument.blocks;
-  const pointedHere = pointed?.document_id === itemDocument.id ? pointed : undefined;
   const asLines = playing !== undefined && setting !== "source";
+  // The anchors of the passage pointed at in this document, by block, so that each row is
+  // given its own and the others are not drawn again.
+  const pointedHere = useMemo(
+    () =>
+      pointed === undefined
+        ? NONE_POINTED
+        : new Map(
+            pointed
+              .filter((anchor) => anchor.document_id === itemDocument.id)
+              .map((anchor) => [anchor.block_number, anchor] as const),
+          ),
+    [pointed, itemDocument.id],
+  );
   // The blocks a translation that stopped has left in their source: those the service says it
   // translates that have no translation.
   const leftOut = useMemo(() => {
@@ -59,13 +81,29 @@ export function Reader({
       loaded.value.blocks_to_translate.filter((number) => !translation.blocks.has(number)),
     );
   }, [translation.loaded, translation.blocks]);
+  const translations = setting === "source" ? undefined : translation.blocks;
+  const show = useMemo<TextOnShow>(
+    () => ({
+      documentId: itemDocument.id,
+      blocks,
+      translations: translations ?? new Map(),
+      setting,
+      asLines,
+      leftOut,
+    }),
+    [itemDocument.id, blocks, translations, setting, asLines, leftOut],
+  );
+  const article = useRef<HTMLElement>(null);
+  const pressed = useTextMarks(article, show, marking, onShow);
   // The passage highlighted in this document goes when the document leaves the page. React
   // runs this before the effects of a reader that takes its place, so the passage that reader
   // is opened for stays.
   useEffect(() => hideAnchor, []);
   return (
     <article
+      ref={article}
       className="reader"
+      onClickCapture={pressed}
       {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
     >
       <header>
@@ -105,9 +143,9 @@ export function Reader({
             block={block}
             number={number}
             setting={setting}
-            translated={setting === "source" ? undefined : translation.blocks.get(number)}
+            translated={translations?.get(number)}
             again={translation.again.get(number)}
-            pointed={pointedHere?.block_number === number ? pointedHere : undefined}
+            pointed={pointedHere.get(number)}
             onAgain={translation.translateAgain}
             missing={leftOut.has(number)}
           />
@@ -115,79 +153,6 @@ export function Reader({
       )}
     </article>
   );
-}
-
-// One piece of a block's text as its element holds it: a text node, or a formula, whose text is
-// the LaTeX it says of itself and whose every offset lies at the element that draws it.
-type TextPiece = { node: Text; text: string } | { formula: Element; text: string };
-
-// The pieces of a block's element that hold its text, in their order.
-function piecesOf(blockElement: Element): TextPiece[] {
-  const pieces: TextPiece[] = [];
-  const walker = document.createTreeWalker(
-    blockElement,
-    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-  );
-  let node = walker.nextNode();
-  while (node !== null) {
-    if (node instanceof Element && node.hasAttribute(FORMULA_ATTRIBUTE)) {
-      pieces.push({ formula: node, text: node.getAttribute(FORMULA_ATTRIBUTE) ?? "" });
-      node = walker.nextSibling() ?? nextOutside(walker);
-      continue;
-    }
-    if (node instanceof Text) {
-      pieces.push({ node, text: node.data });
-    }
-    node = walker.nextNode();
-  }
-  return pieces;
-}
-
-// The node after the walker's current one and all it holds, or none at the end of the walk.
-function nextOutside(walker: TreeWalker): Node | null {
-  while (walker.parentNode() !== null) {
-    const after = walker.nextSibling();
-    if (after !== null) {
-      return after;
-    }
-  }
-  return null;
-}
-
-// The text a block's element holds, as anchors are resolved against it.
-export function textOf(blockElement: Element): string {
-  return piecesOf(blockElement)
-    .map((piece) => piece.text)
-    .join("");
-}
-
-// The range of the page that shows characters start to end of a block's text. A range that
-// begins or ends inside a formula takes in the whole of its drawing.
-function rangeIn(blockElement: Element, start: number, end: number): Range {
-  const range = document.createRange();
-  let passed = 0;
-  let startSet = false;
-  for (const piece of piecesOf(blockElement)) {
-    const length = piece.text.length;
-    if (!startSet && start < passed + length) {
-      if ("node" in piece) {
-        range.setStart(piece.node, start - passed);
-      } else {
-        range.setStartBefore(piece.formula);
-      }
-      startSet = true;
-    }
-    if (startSet && end <= passed + length) {
-      if ("node" in piece) {
-        range.setEnd(piece.node, end - passed);
-      } else {
-        range.setEndAfter(piece.formula);
-      }
-      return range;
-    }
-    passed += length;
-  }
-  throw new Error("页面上的这一段比引文的位置短，找不到这段引文。");
 }
 
 // A scroll padding in pixels, as the browser computes it; "auto" sets nothing aside.
@@ -257,10 +222,10 @@ export function checkAnchor(itemDocument: ItemDocument, anchor: Anchor): void {
   }
 }
 
-// Highlights an anchor's passage, and refuses when the page does not hold the document the
-// anchor points into or when the text there is no longer the quoted text. The passage is
-// highlighted in the source block whether or not that block is on show.
-export function highlightAnchor(anchor: Anchor): Range {
+// The range of the page that shows an anchor's passage in its source block, and a refusal when
+// the page does not hold the document the anchor points into or when the text there is no
+// longer the quoted text.
+function rangeOfAnchor(anchor: Anchor): Range {
   const blockElement = blockElementOf(anchor);
   const text = textOf(blockElement);
   const offsets = unitOffsets(text);
@@ -270,16 +235,25 @@ export function highlightAnchor(anchor: Anchor): Range {
   if (text.slice(start, end) !== anchor.quote) {
     throw new Error(CHANGED);
   }
-  const passage = rangeIn(blockElement, start, end);
-  CSS.highlights.set(ANCHOR_HIGHLIGHT, new Highlight(passage));
-  return passage;
+  return rangeIn(blockElement, start, end);
 }
 
-// Highlights an anchor's passage and brings into view where it is on show: the passage in its
+// Highlights a passage, every anchor in its source block whether or not that block is on show,
+// and gives the range of its first.
+function highlightPassage(anchors: Anchors): Range {
+  const first = rangeOfAnchor(anchors[0]);
+  const highlight = new Highlight(first, ...anchors.slice(1).map(rangeOfAnchor));
+  highlight.priority = ANCHOR_PRIORITY;
+  CSS.highlights.set(ANCHOR_HIGHLIGHT, highlight);
+  return first;
+}
+
+// Highlights a passage and brings into view where its start is on show: the passage in its
 // source block, or, where only the block's translation or its lines are on show, the parts of
 // them that the reader has marked as pointed at.
-export function showAnchor(anchor: Anchor): void {
-  const passage = highlightAnchor(anchor);
+export function showPassage(anchors: Anchors): void {
+  const passage = highlightPassage(anchors);
+  const anchor = anchors[0];
   if (blockElementOf(anchor).checkVisibility()) {
     bringIntoView(passage);
     return;
