@@ -16,7 +16,7 @@ function onLinkChange(notify: () => void): () => void {
 }
 
 function selectedItem(): string | undefined {
-  return linkedItem(location.hash);
+  return linkedItem(location.hash)?.itemId;
 }
 
 function Notice({ failed, children }: { failed: boolean; children: ReactNode }) {

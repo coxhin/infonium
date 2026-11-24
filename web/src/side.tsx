@@ -9,7 +9,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import type { Anchor } from "./client";
+import type { Anchors } from "./client";
 import { ChatPanel, type ScopeKind } from "./chat";
 import { useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
@@ -70,11 +70,11 @@ export function useSeating(): {
   );
   const pointer = useMemo<Pointer>(
     () => ({
-      show(anchor) {
+      show(anchors) {
         if (current.current === undefined) {
           throw new Error(NOT_ON_SHOW);
         }
-        current.current.show(anchor);
+        current.current.show(anchors);
       },
       hide() {
         current.current?.hide();
@@ -178,12 +178,12 @@ export function SideColumn({
   // A citation that opens another item leaves the reader in the conversation it was pressed
   // in: only the library's can cite another item. A citation into the selected item, whose
   // reader is not on show yet, changes nothing of what is on show.
-  function openAt(itemId: string, anchor: Anchor) {
+  function openAt(itemId: string, anchors: Anchors) {
     if (itemId !== selected) {
       setChosen("chat");
       setChosenScope("library");
     }
-    citing.awaitOpening(anchor, itemId);
+    citing.awaitOpening(anchors, itemId);
     onOpen(itemId);
   }
 

@@ -18,7 +18,7 @@ function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
                   anchors={statement.anchors}
                   citing={citing}
                   titleOf={(anchor) => anchor.quote}
-                  onPoint={citing.point}
+                  onPoint={(anchor) => citing.point([anchor])}
                 />
                 <LostCitations statement={statement} citesAll />
               </li>

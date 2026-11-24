@@ -1,6 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { sourceLink, type ItemDocument, type ItemEntry, type TimePlace } from "./client";
 import type { Pointer } from "./citing";
+import { markedOf, openHighlight, useHighlights, useOpenedHighlight } from "./highlights";
+import { SelectionActions } from "./selectionactions";
+import type { Marking, Selected } from "./marking";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
 import { checkAnchor, hideAnchor } from "./reader";
@@ -65,14 +68,29 @@ export function ReadItem({
   const lose = useLosing();
   const playFrom = useCallback((place: TimePlace) => setPlayed([place]), []);
 
+  // The reader's highlights that stand in this document, for every view to draw, and the
+  // passage last selected in a view, on which the actions are offered.
+  const highlights = useHighlights(entry.id, itemDocument.id);
+  const opened = useOpenedHighlight();
+  const [selected, setSelected] = useState<Selected>();
+  const marking = useMemo<Marking>(
+    () => ({
+      marked: highlights.state === "ready" ? markedOf(highlights.value) : [],
+      opened: opened?.itemId === entry.id ? opened.highlightId : undefined,
+      onSelect: setSelected,
+      onPress: (highlightId) => openHighlight({ itemId: entry.id, highlightId, commenting: false }),
+    }),
+    [highlights, opened, entry.id],
+  );
+
   const pointer: Pointer = {
-    show(anchor) {
-      // Refuses at once an anchor whose passage the document does not hold. Each view works
-      // out where the passage lies in what it shows, and brings it into view there; the
-      // recording, which is not a view, plays from it.
-      checkAnchor(itemDocument, anchor);
-      setPointed({ anchor });
-      setPlayed(timePlaces(placesOf(itemDocument.blocks, anchor)));
+    show(anchors) {
+      // Refuses at once a passage that the document does not hold. Each view works out where
+      // the passage lies in what it shows, and brings it into view there; the recording,
+      // which is not a view, plays from it.
+      anchors.forEach((anchor) => checkAnchor(itemDocument, anchor));
+      setPointed({ anchors });
+      setPlayed(timePlaces(anchors.flatMap((anchor) => placesOf(itemDocument.blocks, anchor))));
     },
     hide() {
       hideAnchor();
@@ -86,6 +104,7 @@ export function ReadItem({
     setting,
     translation,
     pointed,
+    marking,
     playing: surface === "time" ? { clock, played, onPlay: playFrom } : undefined,
     onLost: lose,
   };
@@ -123,6 +142,7 @@ export function ReadItem({
               <view.Draw {...context} onShow={view === shown} />
             </div>
           ))}
+        <SelectionActions itemId={entry.id} selected={selected} />
       </main>
       <SidePanel itemId={entry.id} documentId={itemDocument.id} pointer={pointer} />
     </>

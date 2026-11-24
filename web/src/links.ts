@@ -1,9 +1,21 @@
-const ITEM_LINK = /^#\/items\/([0-9a-f]+)$/;
+const ITEM_LINK = /^#\/items\/([0-9a-f]+)(?:\/revisions\/([1-9][0-9]*))?$/;
+
+// What a link of the app opens: an item, as the document it holds now or, where the link
+// names one, as an earlier revision of it.
+export type Linked = { itemId: string; revision: number | undefined };
 
 export function itemLink(itemId: string): string {
   return `#/items/${itemId}`;
 }
 
-export function linkedItem(link: string): string | undefined {
-  return ITEM_LINK.exec(link)?.[1];
+export function revisionLink(itemId: string, revision: number): string {
+  return `${itemLink(itemId)}/revisions/${revision}`;
+}
+
+export function linkedItem(link: string): Linked | undefined {
+  const [, itemId, revision] = ITEM_LINK.exec(link) ?? [];
+  if (itemId === undefined) {
+    return undefined;
+  }
+  return { itemId, revision: revision === undefined ? undefined : Number(revision) };
 }

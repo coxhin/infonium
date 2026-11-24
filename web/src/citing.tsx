@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Anchor, Statement } from "./client";
+import type { Anchor, Anchors, Statement } from "./client";
 import { reasonOf } from "./loading";
 import type { Seat, Unshown } from "./seat";
 import "./citing.css";
 
-// How citations reach the source: showing an anchor's passage there, which fails at once when
-// the source does not hold it, and taking the passage off show again.
-export type Pointer = { show: (anchor: Anchor) => void; hide: () => void };
+// How citations reach the source: showing a passage there, by its anchors, which fails at once
+// when the source does not hold it, and taking the passage off show again.
+export type Pointer = { show: (anchors: Anchors) => void; hide: () => void };
 
 // Said for a passage of an item that was read again since it was cited: the item now shows
 // another document, which does not hold it.
@@ -18,21 +18,23 @@ const READ_AGAIN = "这一篇后来重新读取过，这段引文出自之前读
 // is neither the one it was pressed in nor the one it opens.
 type Pointing =
   | { state: "nowhere" }
-  | { state: "shown"; anchor: Anchor; item: string | undefined; life: number | undefined }
+  | { state: "shown"; anchors: Anchors; item: string | undefined; life: number | undefined }
   | { state: "lost"; reason: string; item: string | undefined; life: number | undefined }
-  | { state: "awaiting"; anchor: Anchor; itemId: string; from: string | undefined };
+  | { state: "awaiting"; anchors: Anchors; itemId: string; from: string | undefined };
 
 const NOWHERE: Pointing = { state: "nowhere" };
 
-// The one way the column points at passages, shared by the digest and the chat, so that one
-// chip at most is pressed and one reason at most is said.
+// The one way the column points at passages, shared by the digest, the chat and the notebook,
+// so that one passage at most is pressed and one reason at most is said. A passage is given by
+// its anchors: a citation's one, or one for each block a marked passage runs through.
 export type Citing = {
-  point: (anchor: Anchor) => void;
-  // The passage is shown by opening its item at it; its chip is pressed once the item's
-  // reader is on show and shows it.
-  awaitOpening: (anchor: Anchor, itemId: string) => void;
+  point: (anchors: Anchors) => void;
+  // The passage is shown by opening its item at it; it is pressed once the item's reader is
+  // on show and shows it.
+  awaitOpening: (anchors: Anchors, itemId: string) => void;
   fail: (reason: string) => void;
   hide: () => void;
+  // Whether the passage on show begins with this very anchor.
   isPressed: (anchor: Anchor) => boolean;
   lost: string | undefined;
 };
@@ -62,15 +64,15 @@ export function useCiting(
   const [pointing, setPointing] = useState<Pointing>(NOWHERE);
   const life = seat?.life;
 
-  function point(anchor: Anchor) {
-    if (seat !== undefined && anchor.document_id !== seat.documentId) {
+  function point(anchors: Anchors) {
+    if (seat !== undefined && anchors[0].document_id !== seat.documentId) {
       pointer.hide();
       setPointing({ state: "lost", reason: READ_AGAIN, item: selected, life });
       return;
     }
     try {
-      pointer.show(anchor);
-      setPointing({ state: "shown", anchor, item: selected, life });
+      pointer.show(anchors);
+      setPointing({ state: "shown", anchors, item: selected, life });
     } catch (error) {
       pointer.hide();
       setPointing({ state: "lost", reason: reasonOf(error), item: selected, life });
@@ -85,7 +87,7 @@ export function useCiting(
       if (selected !== pointing.itemId && selected !== pointing.from) {
         setPointing(NOWHERE);
       } else if (seat?.itemId === pointing.itemId) {
-        point(pointing.anchor);
+        point(pointing.anchors);
       } else if (seat === undefined && unshown?.itemId === pointing.itemId) {
         setPointing({ state: "lost", reason: unshown.reason, item: selected, life: undefined });
       }
@@ -97,8 +99,8 @@ export function useCiting(
   const current = onShow(pointing, selected, life);
   return {
     point,
-    awaitOpening(anchor, itemId) {
-      setPointing({ state: "awaiting", anchor, itemId, from: selected });
+    awaitOpening(anchors, itemId) {
+      setPointing({ state: "awaiting", anchors, itemId, from: selected });
     },
     fail(reason) {
       setPointing({ state: "lost", reason, item: selected, life });
@@ -108,7 +110,7 @@ export function useCiting(
       setPointing(NOWHERE);
     },
     isPressed(anchor) {
-      return current.state === "shown" && current.anchor === anchor;
+      return current.state === "shown" && current.anchors[0] === anchor;
     },
     lost: current.state === "lost" ? current.reason : undefined,
   };

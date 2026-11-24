@@ -25,7 +25,9 @@ export function PagesView({
   // Worked out anew at every act of pointing, so that the pages turn to the same boxes again.
   const boxes = useMemo(
     () =>
-      pointed === undefined ? NO_PAGES : pagePlaces(placesOf(itemDocument.blocks, pointed.anchor)),
+      pointed === undefined
+        ? NO_PAGES
+        : pointed.anchors.flatMap((anchor) => pagePlaces(placesOf(itemDocument.blocks, anchor))),
     [pointed, itemDocument],
   );
   const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
@@ -62,7 +64,7 @@ export function PagesView({
       <PageViewer
         source={sourceLink(entry.id)}
         pointed={boxes}
-        pointedBlock={pointed?.anchor.block_number}
+        pointedBlock={pointed?.anchors[0].block_number}
         inView={onShow}
         overlays={overlays}
         pairing={setting === "both"}

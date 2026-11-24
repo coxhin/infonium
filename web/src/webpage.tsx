@@ -205,7 +205,7 @@ export function WebpageView({
       const holder =
         pointed === undefined
           ? null
-          : holderOf(framed.document, ready, blocks, pointed.anchor.block_number);
+          : holderOf(framed.document, ready, blocks, pointed.anchors[0].block_number);
       const holders = `[${ready.block_attribute}], [${ready.cell_attribute}]`;
       keepingPlace(placeToKeep(framed.document, holders, holder), framed.view, () =>
         writeBlocks(framed, ready, blocks, setting, translation.blocks),
@@ -231,7 +231,7 @@ export function WebpageView({
     if (framed === undefined || ready === undefined || frame.current === null) {
       return;
     }
-    const lookup = pointedPlaceOf(framed, ready, blocks, pointed.anchor);
+    const lookup = pointedPlaceOf(framed, ready, blocks, pointed.anchors[0]);
     if (!lookup.found) {
       framed.unmark();
       following.follow(undefined);

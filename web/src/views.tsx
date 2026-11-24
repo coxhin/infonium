@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from "react";
-import type { Anchor, ItemDocument, ItemEntry } from "./client";
+import type { Anchors, ItemDocument, ItemEntry } from "./client";
 import { itemTitle } from "./entry";
 import { reasonOf } from "./loading";
+import type { Marking } from "./marking";
 import { PagesView } from "./pagesview";
 import { Reader, showAnchor, usePassageKept, type Playing } from "./reader";
 import type { Setting } from "./setting";
@@ -12,21 +13,24 @@ const PDF_MEDIA_TYPE = "application/pdf";
 const HTML_MEDIA_TYPE = "text/html";
 
 // One act of pointing at a passage: made anew at every click, so that pointing at the same
-// passage again leads there again. Each view works out where the passage lies in what it shows.
-export type Pointed = { anchor: Anchor };
+// passage again leads there again. The passage is given by its anchors, one for each block it
+// runs through. Each view works out where the passage lies in what it shows.
+export type Pointed = { anchors: Anchors };
 
 // The views there are. A view to come is named here, given an entry, and offered in viewsOf.
 export type ViewName = "pages" | "text" | "webpage";
 
 // What the reader tells every view: the item and its document, what the switch is set to, the
-// translation as far as it has come, the passage pointed at, the recording's playing where
-// there is one, and whether this view is the one on show.
+// translation as far as it has come, the passage pointed at, the reader's highlights and how a
+// selection is handed over, the recording's playing where there is one, and whether this view
+// is the one on show.
 export type ViewContext = {
   entry: ItemEntry;
   itemDocument: ItemDocument;
   setting: Setting;
   translation: TranslationState;
   pointed: Pointed | undefined;
+  marking: Marking;
   playing: Playing | undefined;
   onShow: boolean;
   onLost: (reason: string) => void;
@@ -54,12 +58,12 @@ function TextView({
   onShow,
   onLost,
 }: ViewContext) {
-  const anchor = pointed?.anchor;
+  const anchor = pointed?.anchors[0];
   const remember = usePassageKept(anchor, onShow, setting);
   useEffect(() => {
     if (onShow && pointed !== undefined) {
       try {
-        showAnchor(pointed.anchor);
+        showAnchor(pointed.anchors[0]);
         remember();
       } catch (error) {
         onLost(reasonOf(error));

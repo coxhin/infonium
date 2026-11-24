@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { Anchor, Turn } from "./client";
+import type { Anchor, Anchors, Turn } from "./client";
 import { Citations, LostCitations, type Citing } from "./citing";
 import {
   canAsk,
@@ -37,7 +37,7 @@ const FOLLOWING_SLACK = 24;
 
 // Where a cited passage is: in the document on show, which the reader shows, or in another
 // item, which is then opened at it.
-export type Opener = (itemId: string, anchor: Anchor) => void;
+export type Opener = (itemId: string, anchors: Anchors) => void;
 
 function Spent({ answer }: { answer: Turn["answer"] }) {
   return (
@@ -81,11 +81,11 @@ function Answer({
       seat !== undefined &&
       (anchor.document_id === seat.documentId || source?.item === seat.itemId)
     ) {
-      citing.point(anchor);
+      citing.point([anchor]);
     } else if (source === undefined) {
       citing.fail("回答没有说这段引文出自哪一篇");
     } else {
-      onOpen(source.item, anchor);
+      onOpen(source.item, [anchor]);
     }
   }
 
