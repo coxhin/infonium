@@ -87,7 +87,7 @@
     scroll-padding-bottom: 50vh;
   }
 
-  .side[data-folded="true"] > :not(.tabs, .fold) {
+  .side[data-folded="true"] > :not(.tabs, .fold, .announced) {
     display: none;
   }
 
