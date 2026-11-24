@@ -10,7 +10,7 @@ from sqlalchemy.dialects import sqlite
 
 from infonium.library import NotInLibrary, OwnerTransaction, document_table, item_table, metadata
 from infonium.passage import Found, Lost, Passage, held_passage
-from infonium.standings import StandingNow, Standings
+from infonium.standings import MarkedStanding, StandingReader
 
 # The most a reader notes on one highlight.
 COMMENT_CHARACTERS = 10_000
@@ -72,7 +72,7 @@ class Highlight(BaseModel):
 class ShownHighlight(BaseModel):
     # A highlight with where it stands in the document its item holds now.
     highlight: Highlight
-    now: StandingNow
+    marked: MarkedStanding
 
 
 class MarkedItem(BaseModel):
@@ -91,7 +91,7 @@ def reading_order(shown: ShownHighlight) -> tuple[int, int, int, datetime, str]:
     # Those that stand in the document come first, by where they stand in it, and the lost
     # after them, in the order they were made.
     made = shown.highlight.made
-    match shown.now.standing:
+    match shown.marked.standing:
         case Found(passage=passage):
             first = passage.anchors[0]
             return (0, first.block_number, first.start, made, shown.highlight.id)
@@ -108,7 +108,7 @@ class Highlights:
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.connection = transaction.connection
         self.owner = transaction.owner
-        self.standings = Standings(transaction)
+        self.standing_reader = StandingReader(transaction)
 
     def of_highlight(self, item_id: str, highlight_id: str) -> list[sqlalchemy.ColumnElement[bool]]:
         return [
@@ -121,8 +121,8 @@ class Highlights:
         # The passage must lie in a revision of the item and be held there as it is given. A
         # passage the item has a highlight of already is that highlight, unchanged.
         passage = draft.passage
-        self.standings.revision_number(item_id, passage.document_id)
-        held_passage(passage, self.standings.document(passage.document_id))
+        self.standing_reader.revision_number(item_id, passage.document_id)
+        held_passage(passage, self.standing_reader.document(passage.document_id))
         key = passage_key(passage)
         highlight = Highlight(
             id=uuid4().hex, item_id=item_id, passage=passage, comment=draft.comment, made=made
@@ -153,7 +153,8 @@ class Highlights:
 
     def shown(self, highlight: Highlight) -> ShownHighlight:
         return ShownHighlight(
-            highlight=highlight, now=self.standings.now(highlight.item_id, highlight.passage)
+            highlight=highlight,
+            marked=self.standing_reader.marked_standing(highlight.item_id, highlight.passage),
         )
 
     def in_reading_order(self, highlights: list[Highlight]) -> list[ShownHighlight]:
@@ -169,7 +170,7 @@ class Highlights:
 
     def of_item(self, item_id: str) -> list[ShownHighlight]:
         # An item without a document is not in the library, whether it has highlights or not.
-        self.standings.holding(item_id)
+        self.standing_reader.holding(item_id)
         return self.in_reading_order(self.kept(highlight_table.c.item_id == item_id))
 
     def of_library(self) -> list[MarkedItem]:
@@ -185,7 +186,7 @@ class Highlights:
         return [
             MarkedItem(
                 item_id=item_id,
-                title=self.standings.holding(item_id).title,
+                title=self.standing_reader.holding(item_id).title,
                 highlights=self.in_reading_order(highlights),
             )
             for item_id, highlights in latest
@@ -202,11 +203,15 @@ class Highlights:
         highlight = self.highlight(item_id, highlight_id).model_copy(
             update={"comment": comment.text}
         )
-        self.connection.execute(
+        # The highlight may have been removed since it was read: then it is not found, and the
+        # comment is not answered as kept.
+        changed = self.connection.execute(
             sqlalchemy.update(highlight_table)
             .where(*self.of_highlight(item_id, highlight_id))
             .values(format=HIGHLIGHT_FORMAT, body=highlight.model_dump_json())
         )
+        if changed.rowcount == 0:
+            raise missing_highlight(highlight_id)
         return self.shown(highlight)
 
     def remove(self, item_id: str, highlight_id: str) -> None:

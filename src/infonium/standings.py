@@ -18,7 +18,8 @@ class ParsedDocuments:
     # recently leaving first. A kept document cannot go stale for a standing: a document's
     # blocks never change under its id, which is a hash of them, and a standing reads nothing
     # of a document but its blocks. Its snapshot name may change under the same id, so the
-    # library itself keeps nothing of this kind.
+    # library itself keeps nothing of this kind. passage.standing_in keeps a cache of its own,
+    # also by document id: what its search prepares of a document's blocks, not the document.
     def __init__(self, room: int) -> None:
         self.room = room
         self.documents: OrderedDict[tuple[str, str], Document] = OrderedDict()
@@ -44,17 +45,19 @@ class ParsedDocuments:
 parsed_documents = ParsedDocuments(room=DOCUMENTS_KEPT)
 
 
-class StandingNow(BaseModel):
-    # A kept passage as a reader is shown it: the number of the revision it was marked in,
-    # and where it stands in the document its item holds now.
+class MarkedStanding(BaseModel):
+    # What is worked out of a kept passage when it is shown: the number of the revision it was
+    # marked in, and where it stands in the document its item holds now.
     revision: RevisionNumber
     standing: Standing
 
 
-class Standings:
-    # Where kept passages stand in the documents their items hold now, worked out as they are
-    # read in one transaction. Each item's revisions are read once however many passages lie
-    # in them, and each document is parsed once while it stays among the documents kept.
+class StandingReader:
+    # A reader, in one transaction, of what the standings of kept passages are worked out from
+    # (what an item holds now, its revision numbers, the documents passages lie in), which
+    # works out each passage's marked standing. Each item's revisions are read once however
+    # many passages lie in them, and each document is parsed once while it stays among the
+    # documents kept.
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.library = Library(transaction)
         self.owner = transaction.owner
@@ -87,8 +90,8 @@ class Standings:
     def document(self, document_id: str) -> Document:
         return parsed_documents.document(self.library, self.owner, document_id)
 
-    def now(self, item_id: str, passage: Passage) -> StandingNow:
-        return StandingNow(
+    def marked_standing(self, item_id: str, passage: Passage) -> MarkedStanding:
+        return MarkedStanding(
             revision=self.revision_number(item_id, passage.document_id),
             standing=standing_in(
                 passage, self.document(passage.document_id), self.holding(item_id).document

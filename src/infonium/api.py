@@ -795,9 +795,9 @@ def highlight_view(shown: ShownHighlight) -> HighlightView:
     return HighlightView(
         id=highlight.id,
         item=highlight.item_id,
-        revision=shown.now.revision,
+        revision=shown.marked.revision,
         passage=highlight.passage,
-        standing=shown.now.standing,
+        standing=shown.marked.standing,
         comment=highlight.comment,
         made=highlight.made,
     )
@@ -813,9 +813,9 @@ def note_view(shown: ShownNote) -> NoteView:
                 id=linked.note_passage.id,
                 item=linked.item_id,
                 title=linked.title,
-                revision=linked.now.revision,
+                revision=linked.marked.revision,
                 passage=linked.note_passage.passage,
-                standing=linked.now.standing,
+                standing=linked.marked.standing,
             )
             for linked in shown.passages
         ],

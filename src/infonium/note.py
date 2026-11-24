@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Self
 from uuid import uuid4
@@ -8,7 +7,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_v
 
 from infonium.library import NotInLibrary, OwnerTransaction, document_table, item_table, metadata
 from infonium.passage import Passage, held_passage
-from infonium.standings import StandingNow, Standings
+from infonium.standings import MarkedStanding, StandingReader
 
 # How the target of a link in a note's Markdown begins when it leads to one of the note's
 # passages; the passage's id follows.
@@ -17,13 +16,18 @@ PASSAGE_ID_PATTERN = r"^[0-9a-z]{1,32}$"
 TITLE_CHARACTERS = 200
 MARKDOWN_CHARACTERS = 500_000
 REPEATED_ID = "each passage of a note has an id of its own"
+# What the body of a note's passage is called where it is read beside the body of its note.
+PASSAGE_BODY = "passage_body"
 # Stored with every body, as the library's tables do.
 NOTE_FORMAT = 1
 
 # A note is kept in two tables: its title, its Markdown and its times in one row, and each of
 # its passages, as it was linked, in a row of its own under its place in the note. A passage's
 # row names the item and the document it lies in, so that the items of every note are read
-# without reading a document.
+# without reading a document, and so that a document a note links into cannot be deleted.
+# A note is always read by one statement over both tables: two statements of one transaction
+# may see two states of the library, since a transaction begins only at its first write, and
+# a note read by two could show the Markdown of one draft with the passages of another.
 note_table = sqlalchemy.Table(
     "note",
     metadata,
@@ -102,13 +106,26 @@ class KeptPassage(BaseModel):
     note_passage: NotePassage
 
 
+class KeptNote(BaseModel):
+    # A note as it is kept: its text, and its passages in the order of the note.
+    text: NoteText
+    passages: list[KeptPassage]
+
+    def draft(self) -> NoteDraft:
+        return NoteDraft(
+            title=self.text.title,
+            markdown=self.text.markdown,
+            passages=[kept.note_passage for kept in self.passages],
+        )
+
+
 class ShownPassage(BaseModel):
     # A passage of a note as a reader is shown it: the item it lies in and what that item is
     # called now, and where it stands in the document the item holds now.
     note_passage: NotePassage
     item_id: str
     title: str
-    now: StandingNow
+    marked: MarkedStanding
 
 
 class ShownNote(BaseModel):
@@ -132,14 +149,14 @@ class Notes:
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.connection = transaction.connection
         self.owner = transaction.owner
-        self.standings = Standings(transaction)
+        self.standing_reader = StandingReader(transaction)
 
     def linked_items(self, draft: NoteDraft) -> list[str]:
         # The item each passage of the draft lies in. A passage is refused unless its document
         # is one of the owner's and holds it as it is given.
         items = []
         for linked in draft.passages:
-            document = self.standings.document(linked.passage.document_id)
+            document = self.standing_reader.document(linked.passage.document_id)
             held_passage(linked.passage, document)
             items.append(document.item_id)
         return items
@@ -199,17 +216,12 @@ class Notes:
 
     def rewrite(self, note_id: str, draft: NoteDraft, changed: datetime) -> ShownNote:
         # The time it was changed moves only when the draft differs from what was kept.
-        text = self.text(note_id)
+        kept = self.kept_note(note_id)
         items = self.linked_items(draft)
-        kept = NoteDraft(
-            title=text.title,
-            markdown=text.markdown,
-            passages=[kept_passage.note_passage for kept_passage in self.kept_passages(note_id)],
-        )
-        if draft != kept:
+        if draft != kept.draft():
             self.remove(note_id)
             self.keep(
-                text.model_copy(
+                kept.text.model_copy(
                     update={"title": draft.title, "markdown": draft.markdown, "changed": changed}
                 ),
                 draft,
@@ -217,59 +229,66 @@ class Notes:
             )
         return self.shown(note_id)
 
-    def text(self, note_id: str) -> NoteText:
-        body = self.connection.execute(
-            sqlalchemy.select(note_table.c.body).where(
-                note_table.c.owner == self.owner, note_table.c.id == note_id
-            )
-        ).scalar_one_or_none()
-        if body is None:
-            raise missing_note(note_id)
-        return NoteText.model_validate_json(body)
-
-    def kept_passages(self, note_id: str) -> list[KeptPassage]:
+    def kept_notes(self, *where: sqlalchemy.ColumnElement[bool]) -> list[KeptNote]:
+        # The owner's notes, each with its passages, read by one statement.
+        passage_body = note_passage_table.c.body.label(PASSAGE_BODY)
         rows = self.connection.execute(
-            sqlalchemy.select(note_passage_table.c.item_id, note_passage_table.c.body)
-            .where(
-                note_passage_table.c.owner == self.owner, note_passage_table.c.note_id == note_id
+            sqlalchemy.select(
+                note_table.c.id, note_table.c.body, note_passage_table.c.item_id, passage_body
             )
-            .order_by(note_passage_table.c.position)
+            .select_from(
+                note_table.outerjoin(
+                    note_passage_table,
+                    sqlalchemy.and_(
+                        note_passage_table.c.note_id == note_table.c.id,
+                        note_passage_table.c.owner == self.owner,
+                    ),
+                )
+            )
+            .where(note_table.c.owner == self.owner, *where)
+            .order_by(note_table.c.id, note_passage_table.c.position)
         )
-        return [
-            KeptPassage(item_id=item_id, note_passage=NotePassage.model_validate_json(body))
-            for item_id, body in rows
-        ]
+        notes: dict[str, KeptNote] = {}
+        for note_id, note_body, item_id, body in rows:
+            if note_id not in notes:
+                notes[note_id] = KeptNote(text=NoteText.model_validate_json(note_body), passages=[])
+            if body is not None:
+                notes[note_id].passages.append(
+                    KeptPassage(item_id=item_id, note_passage=NotePassage.model_validate_json(body))
+                )
+        return list(notes.values())
+
+    def kept_note(self, note_id: str) -> KeptNote:
+        found = self.kept_notes(note_table.c.id == note_id)
+        if not found:
+            raise missing_note(note_id)
+        return found[0]
 
     def shown(self, note_id: str) -> ShownNote:
+        kept = self.kept_note(note_id)
         return ShownNote(
-            text=self.text(note_id),
+            text=kept.text,
             passages=[
                 ShownPassage(
-                    note_passage=kept.note_passage,
-                    item_id=kept.item_id,
-                    title=self.standings.holding(kept.item_id).title,
-                    now=self.standings.now(kept.item_id, kept.note_passage.passage),
+                    note_passage=linked.note_passage,
+                    item_id=linked.item_id,
+                    title=self.standing_reader.holding(linked.item_id).title,
+                    marked=self.standing_reader.marked_standing(
+                        linked.item_id, linked.note_passage.passage
+                    ),
                 )
-                for kept in self.kept_passages(note_id)
+                for linked in kept.passages
             ],
         )
 
     def listed(self) -> list[NoteListing]:
         # The one changed last first.
-        texts = [
-            NoteText.model_validate_json(body)
-            for body in self.connection.execute(
-                sqlalchemy.select(note_table.c.body).where(note_table.c.owner == self.owner)
-            ).scalars()
-        ]
-        items: dict[str, dict[str, None]] = defaultdict(dict)
-        for note_id, item_id in self.connection.execute(
-            sqlalchemy.select(note_passage_table.c.note_id, note_passage_table.c.item_id)
-            .where(note_passage_table.c.owner == self.owner)
-            .order_by(note_passage_table.c.note_id, note_passage_table.c.position)
-        ):
-            items[note_id][item_id] = None
         return [
-            NoteListing(text=text, items=list(items[text.id]))
-            for text in sorted(texts, key=lambda text: (text.changed, text.id), reverse=True)
+            NoteListing(
+                text=note.text,
+                items=list(dict.fromkeys(kept.item_id for kept in note.passages)),
+            )
+            for note in sorted(
+                self.kept_notes(), key=lambda note: (note.text.changed, note.text.id), reverse=True
+            )
         ]
