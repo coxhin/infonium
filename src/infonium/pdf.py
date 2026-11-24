@@ -15,6 +15,7 @@ from infonium.document import (
     Block,
     Code,
     Extracted,
+    FormulaMark,
     Heading,
     ListItem,
     Mark,
@@ -43,6 +44,7 @@ from infonium.mineru import (
     ParsedPage,
     ParsedPages,
     PicturePages,
+    RegionType,
     TableBody,
     Text,
     TextSpan,
@@ -104,10 +106,11 @@ ONE_CELL = "1"
 
 
 class Piece(BaseModel):
-    # Words of one line that are set alike. A word that ends in a soft hyphen goes on in the
-    # word after it, with no gap between the two.
+    # Words of one line that are set alike, or that make one formula. A word that ends in a
+    # soft hyphen goes on in the word after it, with no gap between the two.
     words: list[str]
     styles: list[Style]
+    formula: bool
 
 
 class Area(BaseModel):
@@ -173,7 +176,8 @@ def respelled(letters: str, spelled: frozenset[str]) -> str:
 
 def span_pieces(span: TextSpan | FormulaSpan, spelled: frozenset[str]) -> list[Piece]:
     if isinstance(span, FormulaSpan):
-        return [Piece(words=words, styles=[])] if (words := words_of(span.content)) else []
+        words = words_of(span.content)
+        return [Piece(words=words, styles=[], formula=True)] if words else []
     content = LETTER_RUN.sub(lambda letters: respelled(letters.group(), spelled), span.content)
     runs: list[tuple[str, list[Style]]] = []
     run_start = 0
@@ -189,7 +193,7 @@ def span_pieces(span: TextSpan | FormulaSpan, spelled: frozenset[str]) -> list[P
         if words := words_of(run):
             touching = not (run[-1].isspace() or after[0].isspace())
             last = f"{words[-1]}{SOFT_HYPHEN if touching else ''}"
-            pieces.append(Piece(words=[*words[:-1], last], styles=styles))
+            pieces.append(Piece(words=[*words[:-1], last], styles=styles, formula=False))
     return pieces
 
 
@@ -440,6 +444,8 @@ def flow(lines: list[ShownLine], findings: PdfFindings) -> Flow:
             marks.extend(
                 StyleMark(style=style, start=start, end=end) for style in piece.styles if believed
             )
+            if piece.formula:
+                marks.append(FormulaMark(start=start, end=end))
             next_word = last_word + 1
         start, end = together.ranges[first_word].start, together.ranges[next_word - 1].end
         places.extend(line_places(line.area, start, end, findings))
@@ -451,6 +457,16 @@ def paragraphs(lines: list[ShownLine], findings: PdfFindings) -> list[Block]:
         return []
     flowing = flow(lines, findings)
     return [Paragraph(text=flowing.text, marks=flowing.marks, places=flowing.places)]
+
+
+def formulas(lines: list[ShownLine], findings: PdfFindings) -> list[Block]:
+    # A formula set apart from the text is a paragraph that one formula mark covers whole,
+    # however many lines the engine gave it in.
+    if not worded(lines, findings):
+        return []
+    flowing = flow(lines, findings)
+    whole = FormulaMark(start=0, end=len(flowing.text))
+    return [Paragraph(text=flowing.text, marks=[whole], places=flowing.places)]
 
 
 def headings(region: Title, page: ParsedPage, findings: PdfFindings) -> list[Block]:
@@ -484,7 +500,8 @@ def items_or_paragraphs(
     if not marker:
         return paragraphs(lines, findings)
     rest = [*words_of(first.words[0][marker.end() :]), *first.words[1:]]
-    pieces = [*([Piece(words=rest, styles=first.styles)] if rest else []), *lines[0].pieces[1:]]
+    kept = [first.model_copy(update={"words": rest})] if rest else []
+    pieces = [*kept, *lines[0].pieces[1:]]
     item = [*([ShownLine(pieces=pieces, area=lines[0].area)] if pieces else []), *lines[1:]]
     if not item:
         return []
@@ -636,6 +653,8 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
                     blocks.extend(items_or_paragraphs(lines, findings, blocks))
                 case Title():
                     blocks.extend(headings(region, page, findings))
+                case OwnParagraph(type=RegionType.DISPLAY_FORMULA):
+                    blocks.extend(formulas(shown_lines(page, region.lines, findings), findings))
                 case OwnParagraph():
                     blocks.extend(paragraphs(shown_lines(page, region.lines, findings), findings))
                 case Group():

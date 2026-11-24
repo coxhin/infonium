@@ -24,18 +24,26 @@ HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 EXSLT_NAMESPACES = {"re": "http://exslt.org/regular-expressions"}
 LINK = "a"
 PICTURE = "img"
+HEAD = "head"
+BODY = "body"
+STYLE_ATTRIBUTE = "style"
+HIDDEN_BY_STYLE = (
+    f"re:test(@{STYLE_ATTRIBUTE}, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i')"
+)
+IS_HIDDEN_BY_STYLE = etree.XPath(
+    f"boolean(self::*[{HIDDEN_BY_STYLE}])", namespaces=EXSLT_NAMESPACES
+)
 # The ways the HTML itself hides an element from the person reading it. A dialog element is
 # shown only while it is open, which a script that shows one marks with the open attribute.
 IS_HIDDEN = etree.XPath(
-    "boolean(self::*[@hidden or self::dialog[not(@open)]"
-    " or re:test(@style, 'display\\s*:\\s*none|visibility\\s*:\\s*hidden', 'i')])",
+    f"boolean(self::*[@hidden or self::dialog[not(@open)] or {HIDDEN_BY_STYLE}])",
     namespaces=EXSLT_NAMESPACES,
 )
 DIALOGS = etree.XPath("//dialog | //*[@role = 'dialog' or @role = 'alertdialog']")
 MAIN_PARTS = etree.XPath("descendant-or-self::*[self::article or self::main or @role = 'main']")
-IN_CODE_FOR_THE_BROWSER = (
-    "ancestor::script or ancestor::style or ancestor::noscript or ancestor::template"
-)
+# What holds code for the browser, not text for a reader.
+CODE_FOR_THE_BROWSER = ("script", "style", "noscript", "template")
+IN_CODE_FOR_THE_BROWSER = " or ".join(f"ancestor::{tag}" for tag in CODE_FOR_THE_BROWSER)
 SHOWN_TEXT = etree.XPath(f".//text()[not({IN_CODE_FOR_THE_BROWSER})]")
 TEXT_OUTSIDE_LINKS = etree.XPath(f".//text()[not(ancestor::{LINK} or {IN_CODE_FOR_THE_BROWSER})]")
 # A shown dialog that holds this share of the page's text outside links or more, counted in

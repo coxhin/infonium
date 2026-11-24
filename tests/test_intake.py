@@ -24,6 +24,7 @@ from infonium.document import (
     turned_away,
     word_count,
 )
+from infonium.reasons import CUT_SHORT, REASON_LIMIT_CHARACTERS, failure_reason
 from tests.test_guard import check_addresses
 
 URL = "https://example.test/posts/night-train"
@@ -206,7 +207,7 @@ def test_a_page_whose_html_holds_enough_words_is_read_without_the_browser(plain:
 
 
 ERROR_KINDS = (ValueError, OSError, RuntimeError, KeyError, UnreadableSource)
-REASON_LENGTH = intake.REASON_LIMIT_CHARACTERS + len(intake.CUT_SHORT)
+REASON_LENGTH = REASON_LIMIT_CHARACTERS + len(CUT_SHORT)
 one_line_texts = (
     st.text(st.characters(exclude_categories=["Cs", "Cc", "Z"]), min_size=1)
     .map(str.strip)
@@ -220,19 +221,19 @@ def is_one_line(reason: str) -> bool:
 
 @given(kind=st.sampled_from(ERROR_KINDS), said=st.text())
 def test_a_reason_is_one_line_a_person_reads(kind: type[Exception], said: str) -> None:
-    reason = intake.failure_reason(kind(said))
+    reason = failure_reason(kind(said))
     assert is_one_line(reason), f"a reason was not given on one line: {reason!r}"
     assert len(reason) <= REASON_LENGTH, f"a reason of {len(reason)} characters was kept whole"
 
 
 @given(kind=st.sampled_from(ERROR_KINDS), said=st.text())
 def test_a_reason_says_something(kind: type[Exception], said: str) -> None:
-    assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
+    assert failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
 
 
 @given(kind=st.sampled_from(ERROR_KINDS), said=st.text(st.sampled_from(" \t\n\x85"), min_size=1))
 def test_an_error_that_says_only_spaces_is_given_a_reason(kind: type[Exception], said: str) -> None:
-    assert intake.failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
+    assert failure_reason(kind(said)), f"an error saying {said!r} was given no reason"
 
 
 @given(lines=st.lists(one_line_texts, min_size=1, max_size=4), status=st.integers(1, 255))
@@ -241,8 +242,8 @@ def test_a_program_that_fails_is_given_by_the_last_line_it_wrote(
 ) -> None:
     written = "".join(f"[aac @ 0x5581d0a0] {line}\n \n" for line in lines)
     error = subprocess.CalledProcessError(status, ["ffmpeg", "-i", "source"], stderr=written)
-    expected = WORD_GAP.join(lines[-1].split())[: intake.REASON_LIMIT_CHARACTERS]
-    assert intake.failure_reason(error).removesuffix(intake.CUT_SHORT) == expected, (
+    expected = WORD_GAP.join(lines[-1].split())[:REASON_LIMIT_CHARACTERS]
+    assert failure_reason(error).removesuffix(CUT_SHORT) == expected, (
         "a program that failed was not given by the last line it wrote"
     )
 
@@ -253,10 +254,10 @@ def test_a_program_that_fails_without_a_word_is_named_with_how_it_ended(
 ) -> None:
     silent = subprocess.CalledProcessError(status, [sys.executable, "-m", module, "work"], "")
     overdue = subprocess.TimeoutExpired(["/usr/local/bin/mineru", "-p", "file.pdf"], 90.5)
-    assert intake.failure_reason(silent) == f"{module} ended with status {status}", (
+    assert failure_reason(silent) == f"{module} ended with status {status}", (
         "a program that ended without a word was not named with its status"
     )
-    assert intake.failure_reason(overdue) == "mineru took longer than 90.5 seconds", (
+    assert failure_reason(overdue) == "mineru took longer than 90.5 seconds", (
         "a program that ran out of time was not named with its time"
     )
 
@@ -285,7 +286,7 @@ def test_a_service_that_failed_is_given_without_the_secrets_of_its_address(
         )
         with pytest.raises(openai.APIError) as raised:
             client.audio.transcriptions.create(file=("a.wav", b"RIFF", "audio/wav"), model="m")
-        reason = intake.failure_reason(raised.value)
+        reason = failure_reason(raised.value)
         assert secret not in reason, f"a reason holds a secret of the address it names: {reason}"
         assert reason.startswith("https://speech.test/v1/audio/transcriptions "), (
             f"a reason does not name the address that was asked: {reason}"

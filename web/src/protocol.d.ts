@@ -4,6 +4,25 @@
  */
 
 export interface paths {
+    "/api/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library Conversation */
+        get: operations["library_conversation_api_conversation_get"];
+        put?: never;
+        /** Ask About Library */
+        post: operations["ask_about_library_api_conversation_post"];
+        /** Forget Library Conversation */
+        delete: operations["forget_library_conversation_api_conversation_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items": {
         parameters: {
             query?: never;
@@ -56,6 +75,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Conversation */
+        get: operations["item_conversation_api_items__item_id__conversation_get"];
+        put?: never;
+        /** Ask About Item */
+        post: operations["ask_about_item_api_items__item_id__conversation_post"];
+        /** Forget Item Conversation */
+        delete: operations["forget_item_conversation_api_items__item_id__conversation_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/digest": {
         parameters: {
             query?: never;
@@ -91,6 +129,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Page */
+        get: operations["item_page_api_items__item_id__page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/page/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Page Blocks */
+        get: operations["item_page_blocks_api_items__item_id__page_blocks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/source": {
         parameters: {
             query?: never;
@@ -102,6 +174,42 @@ export interface paths {
         get: operations["item_source_api_items__item_id__source_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/translation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Translation */
+        get: operations["item_translation_api_items__item_id__translation_get"];
+        /** Ensure Translation */
+        put: operations["ensure_translation_api_items__item_id__translation_put"];
+        /** Translate Anew */
+        post: operations["translate_anew_api_items__item_id__translation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/translation/blocks/{block_number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retranslate Block */
+        post: operations["retranslate_block_api_items__item_id__translation_blocks__block_number__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -134,10 +242,46 @@ export interface components {
              */
             start: number;
         };
+        /** Answer */
+        Answer: {
+            /** Input Tokens */
+            input_tokens: number;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Sources */
+            sources: components["schemas"]["CitedSource"][];
+            /** Statements */
+            statements: components["schemas"]["Statement"][];
+            /**
+             * Written
+             * Format: date-time
+             */
+            written: string;
+        };
+        /** Answered */
+        Answered: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "answered";
+            turn: components["schemas"]["Turn"];
+        };
         /** Body_import_upload_api_items_upload_post */
         Body_import_upload_api_items_upload_post: {
             /** File */
             file: string;
+        };
+        /** CitedSource */
+        CitedSource: {
+            /** Document */
+            document: string;
+            /** Item */
+            item: string;
+            /** Title */
+            title: string;
         };
         /** Code */
         Code: {
@@ -153,6 +297,11 @@ export interface components {
             places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
             /** Text */
             text: string;
+        };
+        /** Conversation */
+        Conversation: {
+            /** Turns */
+            turns: components["schemas"]["Turn"][];
         };
         /** DigestView */
         DigestView: {
@@ -171,6 +320,18 @@ export interface components {
             blocks: (components["schemas"]["Heading"] | components["schemas"]["Paragraph"] | components["schemas"]["ListItem"] | components["schemas"]["Quotation"] | components["schemas"]["Code"] | components["schemas"]["Table"] | components["schemas"]["Figure"])[];
             /** Id */
             id: string;
+            /** Media Type */
+            media_type: string;
+        };
+        /** Drafted */
+        Drafted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "drafted";
+            /** Statements */
+            statements: string[];
         };
         /** Failed */
         Failed: {
@@ -204,6 +365,24 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** FormulaMark */
+        FormulaMark: {
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            end: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "formula";
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            start: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -219,7 +398,7 @@ export interface components {
             /** Level */
             level: number;
             /** Marks */
-            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"] | components["schemas"]["FormulaMark"])[];
             /**
              * Places
              * @default []
@@ -290,7 +469,7 @@ export interface components {
              */
             kind: "list_item";
             /** Marks */
-            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"] | components["schemas"]["FormulaMark"])[];
             /** Ordered */
             ordered: boolean;
             /**
@@ -302,6 +481,29 @@ export interface components {
             position: number;
             /** Text */
             text: string;
+        };
+        /** PageBlocks */
+        PageBlocks: {
+            /**
+             * Block Attribute
+             * @description The name of the attribute that marks, in the served page, the element that holds the whole text of one block that is not a table, and nothing else a reader or the rest of the page needs. Its value is the block's number, and one element at most carries a number. The element's content may be replaced by the block's translation, and the element may be scrolled to. It holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The links, emphasis and line breaks inside it are part of the block's text, and the translation's marks and line breaks stand for them; a line break in the text or the translation is written into the page as a br element. Words that the page shows struck out are not part of the block's text, and go when the content is replaced, as they are left out of the text a reader reads. A place inside the element that the page's own links lead to, an element with an id, goes too: those links then lead nowhere. Where a block's text is only part of an element, the marked element is an infonium-run element added around that text, laid out inline.
+             */
+            block_attribute: string;
+            /**
+             * Cell Attribute
+             * @description The name of the attribute that marks, in the served page, each cell of a table (a td, th or caption element) that holds one cell of a table block's text. Its value is three numbers parted by commas: the block's number, then the row and the cell within the row, counted from 0 as the block's text gives them when it is split at its row separator and each row at its cell separator. A cell of the block's text that says nothing has no element. A marked cell's content may be replaced by the translation of that cell of the block's text; it holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The translation of a table block is one text, which is split at the block's own row and cell separators into the cells that the marks name. The table itself carries no mark: a table block is scrolled to by its first marked cell.
+             */
+            cell_attribute: string;
+            /**
+             * Page Attribute
+             * @description The name of the attribute that the root element of the served page carries, with the item's id as its value. By it the reader knows that a frame holds this item's page and nothing else, such as an error page that a proxy sent in its place, or another item's page. The page's own use of the attribute is removed.
+             */
+            page_attribute: string;
+            /**
+             * Placed
+             * @description The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.
+             */
+            placed: number[];
         };
         /** PagePlace */
         PagePlace: {
@@ -354,12 +556,17 @@ export interface components {
              */
             kind: "paragraph";
             /** Marks */
-            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"] | components["schemas"]["FormulaMark"])[];
             /**
              * Places
              * @default []
              */
             places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
+            /** Text */
+            text: string;
+        };
+        /** Question */
+        Question: {
             /** Text */
             text: string;
         };
@@ -371,7 +578,7 @@ export interface components {
              */
             kind: "quotation";
             /** Marks */
-            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"])[];
+            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"] | components["schemas"]["FormulaMark"])[];
             /**
              * Places
              * @default []
@@ -394,12 +601,39 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** Searched */
+        Searched: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "searched";
+            /** Query */
+            query: string;
+        };
         /** Section */
         Section: {
             /** Statements */
             statements: components["schemas"]["Statement"][];
             /** Title */
             title: string;
+        };
+        /** Segment */
+        Segment: {
+            /**
+             * End
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            end: number;
+            /** Marks */
+            marks: (components["schemas"]["StyleMark"] | components["schemas"]["LinkMark"] | components["schemas"]["FormulaMark"])[];
+            /**
+             * Start
+             * @description A position in a block's text, counted in Unicode code points.
+             */
+            start: number;
+            /** Text */
+            text: string;
         };
         /** Settled */
         Settled: {
@@ -413,8 +647,27 @@ export interface components {
         Statement: {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
+            /**
+             * Lost Citations
+             * @default 0
+             */
+            lost_citations: number;
             /** Text */
             text: string;
+        };
+        /** Stopped */
+        Stopped: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "stopped";
+            /** Reason */
+            reason: string;
+            /** Total */
+            total: number;
+            /** Translated */
+            translated: number;
         };
         /**
          * Style
@@ -495,6 +748,79 @@ export interface components {
              */
             start: number;
         };
+        /** Translated */
+        Translated: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "translated";
+        };
+        /** TranslatedBlock */
+        TranslatedBlock: {
+            /**
+             * Block Number
+             * @description The position of a block in its document, counted from 0.
+             */
+            block_number: number;
+            /** Model */
+            model: string;
+            /** Segments */
+            segments: components["schemas"]["Segment"][];
+        };
+        /** Translating */
+        Translating: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "translating";
+            /** Total */
+            total: number;
+            /** Translated */
+            translated: number;
+        };
+        /** TranslationView */
+        TranslationView: {
+            /** Blocks */
+            blocks: components["schemas"]["TranslatedBlock"][];
+            /** Blocks To Translate */
+            blocks_to_translate: number[];
+            /** Document */
+            document: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Language */
+            language: string;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Progress */
+            progress: components["schemas"]["Unasked"] | components["schemas"]["Translating"] | components["schemas"]["Stopped"] | components["schemas"]["Translated"] | components["schemas"]["Unneeded"];
+        };
+        /** Turn */
+        Turn: {
+            answer: components["schemas"]["Answer"];
+            /** Question */
+            question: string;
+        };
+        /** Unanswered */
+        Unanswered: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unanswered";
+            /** Reason */
+            reason: string;
+        };
+        /** Unasked */
+        Unasked: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unasked";
+        };
         /** Underway */
         Underway: {
             /**
@@ -504,6 +830,14 @@ export interface components {
             kind: "underway";
             /** Starts */
             starts: number;
+        };
+        /** Unneeded */
+        Unneeded: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unneeded";
         };
         /** Unread */
         Unread: {
@@ -547,6 +881,95 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    library_conversation_api_conversation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+        };
+    };
+    ask_about_library_api_conversation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Question"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/jsonl": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forget_library_conversation_api_conversation_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
     list_items_api_items_get: {
         parameters: {
             query?: never;
@@ -664,6 +1087,146 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_conversation_api_items__item_id__conversation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_about_item_api_items__item_id__conversation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Question"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/jsonl": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forget_item_conversation_api_items__item_id__conversation_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -820,6 +1383,86 @@ export interface operations {
             };
         };
     };
+    item_page_api_items__item_id__page_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_page_blocks_api_items__item_id__page_blocks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageBlocks"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     item_source_api_items__item_id__source_get: {
         parameters: {
             query?: never;
@@ -854,6 +1497,186 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_translation_api_items__item_id__translation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ensure_translation_api_items__item_id__translation_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    translate_anew_api_items__item_id__translation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retranslate_block_api_items__item_id__translation_blocks__block_number__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+                /** @description The position of a block in its document, counted from 0. */
+                block_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslatedBlock"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };

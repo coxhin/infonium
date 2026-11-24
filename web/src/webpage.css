@@ -1,0 +1,27 @@
+/* The page a web article was read from, in a frame. The page keeps the colours it was made in
+   on any theme of the app: it is drawn light, on white where it sets no background, as a
+   browser draws a page that says nothing of dark schemes, and a border sets it apart from the
+   app around it. */
+
+.webpage-frame {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color-scheme: light;
+}
+
+/* The line above the page is set as the reader's other notes are. */
+.webpage-note {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.webpage-loading,
+.webpage-failed {
+  padding: 0 1rem;
+}

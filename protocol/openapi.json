@@ -40,6 +40,70 @@
         "title": "Anchor",
         "type": "object"
       },
+      "Answer": {
+        "properties": {
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/CitedSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "written": {
+            "format": "date-time",
+            "title": "Written",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "written",
+          "input_tokens",
+          "output_tokens",
+          "statements",
+          "sources"
+        ],
+        "title": "Answer",
+        "type": "object"
+      },
+      "Answered": {
+        "properties": {
+          "kind": {
+            "const": "answered",
+            "default": "answered",
+            "title": "Kind",
+            "type": "string"
+          },
+          "turn": {
+            "$ref": "#/components/schemas/Turn"
+          }
+        },
+        "required": [
+          "kind",
+          "turn"
+        ],
+        "title": "Answered",
+        "type": "object"
+      },
       "Body_import_upload_api_items_upload_post": {
         "properties": {
           "file": {
@@ -52,6 +116,29 @@
           "file"
         ],
         "title": "Body_import_upload_api_items_upload_post",
+        "type": "object"
+      },
+      "CitedSource": {
+        "properties": {
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "item",
+          "title"
+        ],
+        "title": "CitedSource",
         "type": "object"
       },
       "Code": {
@@ -95,6 +182,22 @@
           "places"
         ],
         "title": "Code",
+        "type": "object"
+      },
+      "Conversation": {
+        "properties": {
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "turns"
+        ],
+        "title": "Conversation",
         "type": "object"
       },
       "DigestView": {
@@ -174,13 +277,42 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "media_type": {
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            "title": "Media Type",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "media_type",
           "blocks"
         ],
         "title": "DocumentView",
+        "type": "object"
+      },
+      "Drafted": {
+        "properties": {
+          "kind": {
+            "const": "drafted",
+            "default": "drafted",
+            "title": "Kind",
+            "type": "string"
+          },
+          "statements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Statements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "statements"
+        ],
+        "title": "Drafted",
         "type": "object"
       },
       "Failed": {
@@ -264,6 +396,35 @@
         "title": "Figure",
         "type": "object"
       },
+      "FormulaMark": {
+        "properties": {
+          "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "formula",
+            "default": "formula",
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "end"
+        ],
+        "title": "FormulaMark",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -295,6 +456,7 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "formula": "#/components/schemas/FormulaMark",
                   "link": "#/components/schemas/LinkMark",
                   "style": "#/components/schemas/StyleMark"
                 },
@@ -306,6 +468,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LinkMark"
+                },
+                {
+                  "$ref": "#/components/schemas/FormulaMark"
                 }
               ]
             },
@@ -492,6 +657,7 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "formula": "#/components/schemas/FormulaMark",
                   "link": "#/components/schemas/LinkMark",
                   "style": "#/components/schemas/StyleMark"
                 },
@@ -503,6 +669,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LinkMark"
+                },
+                {
+                  "$ref": "#/components/schemas/FormulaMark"
                 }
               ]
             },
@@ -556,6 +725,43 @@
           "places"
         ],
         "title": "ListItem",
+        "type": "object"
+      },
+      "PageBlocks": {
+        "properties": {
+          "block_attribute": {
+            "description": "The name of the attribute that marks, in the served page, the element that holds the whole text of one block that is not a table, and nothing else a reader or the rest of the page needs. Its value is the block's number, and one element at most carries a number. The element's content may be replaced by the block's translation, and the element may be scrolled to. It holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The links, emphasis and line breaks inside it are part of the block's text, and the translation's marks and line breaks stand for them; a line break in the text or the translation is written into the page as a br element. Words that the page shows struck out are not part of the block's text, and go when the content is replaced, as they are left out of the text a reader reads. A place inside the element that the page's own links lead to, an element with an id, goes too: those links then lead nowhere. Where a block's text is only part of an element, the marked element is an infonium-run element added around that text, laid out inline.",
+            "title": "Block Attribute",
+            "type": "string"
+          },
+          "cell_attribute": {
+            "description": "The name of the attribute that marks, in the served page, each cell of a table (a td, th or caption element) that holds one cell of a table block's text. Its value is three numbers parted by commas: the block's number, then the row and the cell within the row, counted from 0 as the block's text gives them when it is split at its row separator and each row at its cell separator. A cell of the block's text that says nothing has no element. A marked cell's content may be replaced by the translation of that cell of the block's text; it holds no picture, control, formula, image map or stylesheet, and no words for a browser without scripts. The translation of a table block is one text, which is split at the block's own row and cell separators into the cells that the marks name. The table itself carries no mark: a table block is scrolled to by its first marked cell.",
+            "title": "Cell Attribute",
+            "type": "string"
+          },
+          "page_attribute": {
+            "description": "The name of the attribute that the root element of the served page carries, with the item's id as its value. By it the reader knows that a frame holds this item's page and nothing else, such as an error page that a proxy sent in its place, or another item's page. The page's own use of the attribute is removed.",
+            "title": "Page Attribute",
+            "type": "string"
+          },
+          "placed": {
+            "description": "The numbers of the blocks that the page shows in elements of their own: for a block that is not a table, the element that carries the block attribute; for a table, every cell of its text that says something, each in an element that carries the cell attribute. A block not listed has no element of its own in the page; a figure never has, since the words that describe a picture are not shown in a page.",
+            "items": {
+              "description": "The position of a block in its document, counted from 0.",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Placed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "page_attribute",
+          "block_attribute",
+          "cell_attribute",
+          "placed"
+        ],
+        "title": "PageBlocks",
         "type": "object"
       },
       "PagePlace": {
@@ -638,6 +844,7 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "formula": "#/components/schemas/FormulaMark",
                   "link": "#/components/schemas/LinkMark",
                   "style": "#/components/schemas/StyleMark"
                 },
@@ -649,6 +856,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LinkMark"
+                },
+                {
+                  "$ref": "#/components/schemas/FormulaMark"
                 }
               ]
             },
@@ -691,6 +901,20 @@
         "title": "Paragraph",
         "type": "object"
       },
+      "Question": {
+        "properties": {
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
       "Quotation": {
         "properties": {
           "kind": {
@@ -703,6 +927,7 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "formula": "#/components/schemas/FormulaMark",
                   "link": "#/components/schemas/LinkMark",
                   "style": "#/components/schemas/StyleMark"
                 },
@@ -714,6 +939,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LinkMark"
+                },
+                {
+                  "$ref": "#/components/schemas/FormulaMark"
                 }
               ]
             },
@@ -804,6 +1032,26 @@
         "title": "Read",
         "type": "object"
       },
+      "Searched": {
+        "properties": {
+          "kind": {
+            "const": "searched",
+            "default": "searched",
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "query"
+        ],
+        "title": "Searched",
+        "type": "object"
+      },
       "Section": {
         "properties": {
           "statements": {
@@ -823,6 +1071,59 @@
           "statements"
         ],
         "title": "Section",
+        "type": "object"
+      },
+      "Segment": {
+        "properties": {
+          "end": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "marks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "formula": "#/components/schemas/FormulaMark",
+                  "link": "#/components/schemas/LinkMark",
+                  "style": "#/components/schemas/StyleMark"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StyleMark"
+                },
+                {
+                  "$ref": "#/components/schemas/LinkMark"
+                },
+                {
+                  "$ref": "#/components/schemas/FormulaMark"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "array"
+          },
+          "start": {
+            "description": "A position in a block's text, counted in Unicode code points.",
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "text",
+          "marks"
+        ],
+        "title": "Segment",
         "type": "object"
       },
       "Settled": {
@@ -849,6 +1150,12 @@
             "title": "Anchors",
             "type": "array"
           },
+          "lost_citations": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Lost Citations",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -859,6 +1166,38 @@
           "anchors"
         ],
         "title": "Statement",
+        "type": "object"
+      },
+      "Stopped": {
+        "properties": {
+          "kind": {
+            "const": "stopped",
+            "default": "stopped",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "translated": {
+            "minimum": 0.0,
+            "title": "Translated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "translated",
+          "total",
+          "reason"
+        ],
+        "title": "Stopped",
         "type": "object"
       },
       "Style": {
@@ -1006,6 +1345,205 @@
         "title": "TimePlace",
         "type": "object"
       },
+      "Translated": {
+        "properties": {
+          "kind": {
+            "const": "translated",
+            "default": "translated",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Translated",
+        "type": "object"
+      },
+      "TranslatedBlock": {
+        "properties": {
+          "block_number": {
+            "description": "The position of a block in its document, counted from 0.",
+            "minimum": 0.0,
+            "title": "Block Number",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "block_number",
+          "model",
+          "segments"
+        ],
+        "title": "TranslatedBlock",
+        "type": "object"
+      },
+      "Translating": {
+        "properties": {
+          "kind": {
+            "const": "translating",
+            "default": "translating",
+            "title": "Kind",
+            "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "translated": {
+            "minimum": 0.0,
+            "title": "Translated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "translated",
+          "total"
+        ],
+        "title": "Translating",
+        "type": "object"
+      },
+      "TranslationView": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/TranslatedBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "blocks_to_translate": {
+            "items": {
+              "description": "The position of a block in its document, counted from 0.",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Blocks To Translate",
+            "type": "array"
+          },
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "progress": {
+            "discriminator": {
+              "mapping": {
+                "stopped": "#/components/schemas/Stopped",
+                "translated": "#/components/schemas/Translated",
+                "translating": "#/components/schemas/Translating",
+                "unasked": "#/components/schemas/Unasked",
+                "unneeded": "#/components/schemas/Unneeded"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unasked"
+              },
+              {
+                "$ref": "#/components/schemas/Translating"
+              },
+              {
+                "$ref": "#/components/schemas/Stopped"
+              },
+              {
+                "$ref": "#/components/schemas/Translated"
+              },
+              {
+                "$ref": "#/components/schemas/Unneeded"
+              }
+            ],
+            "title": "Progress"
+          }
+        },
+        "required": [
+          "document",
+          "language",
+          "progress",
+          "input_tokens",
+          "output_tokens",
+          "blocks",
+          "blocks_to_translate"
+        ],
+        "title": "TranslationView",
+        "type": "object"
+      },
+      "Turn": {
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/Answer"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "title": "Turn",
+        "type": "object"
+      },
+      "Unanswered": {
+        "properties": {
+          "kind": {
+            "const": "unanswered",
+            "default": "unanswered",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "title": "Unanswered",
+        "type": "object"
+      },
+      "Unasked": {
+        "properties": {
+          "kind": {
+            "const": "unasked",
+            "default": "unasked",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Unasked",
+        "type": "object"
+      },
       "Underway": {
         "properties": {
           "kind": {
@@ -1025,6 +1563,21 @@
           "starts"
         ],
         "title": "Underway",
+        "type": "object"
+      },
+      "Unneeded": {
+        "properties": {
+          "kind": {
+            "const": "unneeded",
+            "default": "unneeded",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Unneeded",
         "type": "object"
       },
       "Unread": {
@@ -1130,6 +1683,112 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/conversation": {
+      "delete": {
+        "operationId": "forget_library_conversation_api_conversation_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "summary": "Forget Library Conversation"
+      },
+      "get": {
+        "operationId": "library_conversation_api_conversation_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Library Conversation"
+      },
+      "post": {
+        "operationId": "ask_about_library_api_conversation_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Question"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/jsonl": {
+                "itemSchema": {
+                  "discriminator": {
+                    "mapping": {
+                      "answered": "#/components/schemas/Answered",
+                      "drafted": "#/components/schemas/Drafted",
+                      "searched": "#/components/schemas/Searched",
+                      "unanswered": "#/components/schemas/Unanswered"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Drafted"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Searched"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Answered"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Unanswered"
+                    }
+                  ],
+                  "title": "Streamitem Ask About Library Api Conversation Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask About Library"
+      }
+    },
     "/api/items": {
       "get": {
         "operationId": "list_items_api_items_get",
@@ -1283,6 +1942,195 @@
           }
         },
         "summary": "Item Entry"
+      }
+    },
+    "/api/items/{item_id}/conversation": {
+      "delete": {
+        "operationId": "forget_item_conversation_api_items__item_id__conversation_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forget Item Conversation"
+      },
+      "get": {
+        "operationId": "item_conversation_api_items__item_id__conversation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Conversation"
+      },
+      "post": {
+        "operationId": "ask_about_item_api_items__item_id__conversation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Question"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/jsonl": {
+                "itemSchema": {
+                  "discriminator": {
+                    "mapping": {
+                      "answered": "#/components/schemas/Answered",
+                      "drafted": "#/components/schemas/Drafted",
+                      "searched": "#/components/schemas/Searched",
+                      "unanswered": "#/components/schemas/Unanswered"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Drafted"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Searched"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Answered"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Unanswered"
+                    }
+                  ],
+                  "title": "Streamitem Ask About Item Api Items  Item Id  Conversation Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask About Item"
       }
     },
     "/api/items/{item_id}/digest": {
@@ -1450,6 +2298,104 @@
         "summary": "Item Document"
       }
     },
+    "/api/items/{item_id}/page": {
+      "get": {
+        "operationId": "item_page_api_items__item_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Page"
+      }
+    },
+    "/api/items/{item_id}/page/blocks": {
+      "get": {
+        "operationId": "item_page_blocks_api_items__item_id__page_blocks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageBlocks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Page Blocks"
+      }
+    },
     "/api/items/{item_id}/source": {
       "get": {
         "operationId": "item_source_api_items__item_id__source_get",
@@ -1490,6 +2436,230 @@
           }
         },
         "summary": "Item Source"
+      }
+    },
+    "/api/items/{item_id}/translation": {
+      "get": {
+        "operationId": "item_translation_api_items__item_id__translation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Translation"
+      },
+      "post": {
+        "operationId": "translate_anew_api_items__item_id__translation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Translate Anew"
+      },
+      "put": {
+        "operationId": "ensure_translation_api_items__item_id__translation_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ensure Translation"
+      }
+    },
+    "/api/items/{item_id}/translation/blocks/{block_number}": {
+      "post": {
+        "operationId": "retranslate_block_api_items__item_id__translation_blocks__block_number__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The position of a block in its document, counted from 0.",
+            "in": "path",
+            "name": "block_number",
+            "required": true,
+            "schema": {
+              "description": "The position of a block in its document, counted from 0.",
+              "minimum": 0,
+              "title": "Block Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslatedBlock"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Retranslate Block"
       }
     }
   }

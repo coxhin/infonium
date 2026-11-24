@@ -1,0 +1,11 @@
+/* A formula set as MathML, in the run of its text. */
+
+math.formula {
+  font-size: 1.05em;
+}
+
+math.formula.display {
+  display: block;
+  margin: 0.3em 0;
+  overflow-x: auto;
+}

@@ -1,35 +1,14 @@
-import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import {
-  listItems,
-  readDocument,
-  readEntry,
-  sourceLink,
-  type Anchor,
-  type ItemDocument,
-  type ItemEntry,
-  type PagePlace,
-  type TimePlace,
-} from "./client";
-import { DigestPanel, type Pointer } from "./digest";
+import { Component, useState, useSyncExternalStore, type ReactNode } from "react";
+import { listItems, readDocument, readEntry, type ItemEntry } from "./client";
 import { Library } from "./library";
 import { itemLink, linkedItem } from "./links";
-import { reasonOf, useLoaded, useWatched } from "./loading";
-import { isBeingRead, itemTitle } from "./entry";
-import { PageViewer } from "./pages";
-import { pagePlaces, placesOf, surfaceOf, timePlaces } from "./places";
-import { Player } from "./player";
-import { hideAnchor, highlightAnchor, Reader, showAnchor } from "./reader";
+import { reasonOf, useLoaded, useWatched, type Loaded } from "./loading";
+import { isBeingRead } from "./entry";
+import { ReadItem, type ReadEntry } from "./reading";
+import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
 
-// A paged source is shown either as its pages or as the text read from them.
-type View = "pages" | "text";
-const VIEW_NAMES: Record<View, string> = { pages: "原件", text: "文本" };
-
-// One act of pointing at a passage: made anew at every click, so that pointing at the same
-// passage again leads there again.
-type Pointed = { anchor: Anchor; pages: PagePlace[]; times: TimePlace[] };
-const NOWHERE: { pages: PagePlace[]; times: TimePlace[] } = { pages: [], times: [] };
-
-type ReadEntry = ItemEntry & { reading: { kind: "read" } };
+const STILL_READING = "这一篇还在读取，读完后才能打开这段引文。";
+const READING_FAILED = "这一篇读取失败，打不开这段引文。";
 
 function onLinkChange(notify: () => void): () => void {
   addEventListener("hashchange", notify);
@@ -66,88 +45,13 @@ class PaneBoundary extends Component<{ children: ReactNode }, { reason: string |
   }
 }
 
-// What the latest attempt to read an item again has come to, above the document that is kept.
-function RereadingNote({ entry }: { entry: ReadEntry }) {
-  const attempt = entry.reading.attempt;
-  switch (attempt.kind) {
-    case "underway":
-      return <p className="rereading">正在重新读取，下面是上一次读到的内容。</p>;
-    case "failed":
-      return (
-        <p className="rereading failed">
-          重新读取失败，下面是上一次读到的内容。原因：{attempt.reason}
-        </p>
-      );
-    case "settled":
-      return null;
-  }
-}
-
-function ReadItem({ entry, itemDocument }: { entry: ReadEntry; itemDocument: ItemDocument }) {
-  const surface = surfaceOf(itemDocument.blocks);
-  const [view, setView] = useState<View>("pages");
-  const [pointed, setPointed] = useState<Pointed>();
-  const textInView = surface !== "page" || view === "text";
-
-  const pointer: Pointer = {
-    show(anchor) {
-      // Text that is out of view is only marked; bringing it into view would scroll the
-      // pages that are on show instead.
-      (textInView ? showAnchor : highlightAnchor)(anchor);
-      const places = placesOf(itemDocument.blocks, anchor);
-      setPointed({ anchor, pages: pagePlaces(places), times: timePlaces(places) });
-    },
-    hide() {
-      hideAnchor();
-      setPointed(undefined);
-    },
-  };
-
-  // A passage pointed at while the text was out of view is brought into view when the text
-  // comes back.
-  useEffect(() => {
-    if (textInView && pointed !== undefined) {
-      showAnchor(pointed.anchor);
-    }
-  }, [textInView]);
-
-  const { pages, times } = pointed ?? NOWHERE;
-  return (
-    <>
-      <main>
-        <RereadingNote entry={entry} />
-        {surface === "time" && <Player source={sourceLink(entry.id)} pointed={times} />}
-        {surface === "page" && (
-          <div className="views" role="tablist">
-            {(Object.keys(VIEW_NAMES) as View[]).map((name) => (
-              <button
-                key={name}
-                role="tab"
-                aria-selected={view === name}
-                onClick={() => setView(name)}
-              >
-                {VIEW_NAMES[name]}
-              </button>
-            ))}
-          </div>
-        )}
-        {surface === "page" && (
-          <div hidden={view !== "pages"}>
-            <PageViewer source={sourceLink(entry.id)} pointed={pages} inView={view === "pages"} />
-          </div>
-        )}
-        <div hidden={!textInView}>
-          <Reader entry={entry} title={itemTitle(entry)} itemDocument={itemDocument} />
-        </div>
-      </main>
-      <DigestPanel itemId={entry.id} pointer={pointer} />
-    </>
-  );
-}
-
 function DocumentPane({ entry }: { entry: ReadEntry }) {
   // The document is opened again only when another one has taken its place.
   const itemDocument = useLoaded(() => readDocument(entry.id), entry.reading.document);
+  useCannotShow(
+    entry.id,
+    itemDocument.state === "failed" ? `打不开这一篇的原文：${itemDocument.reason}` : undefined,
+  );
   switch (itemDocument.state) {
     case "loading":
       return <Notice failed={false}>正在打开…</Notice>;
@@ -155,13 +59,29 @@ function DocumentPane({ entry }: { entry: ReadEntry }) {
       return <Notice failed>{itemDocument.reason}</Notice>;
     case "ready":
       return (
-        <ReadItem key={itemDocument.value.id} entry={entry} itemDocument={itemDocument.value} />
+        <ReadItem
+          key={itemDocument.value.id}
+          entry={entry}
+          itemDocument={itemDocument.value}
+        />
       );
   }
 }
 
+// Why an item, as far as it is loaded, cannot be shown; nothing while it may yet be.
+function unshownReason(entry: Loaded<ItemEntry>): string | undefined {
+  if (entry.state === "failed") {
+    return `打不开这一篇：${entry.reason}`;
+  }
+  if (entry.state === "loading" || entry.value.reading.kind === "read") {
+    return undefined;
+  }
+  return entry.value.reading.attempt.kind === "failed" ? READING_FAILED : STILL_READING;
+}
+
 function ItemPane({ itemId }: { itemId: string }) {
   const { loaded: entry } = useWatched(() => readEntry(itemId), itemId, isBeingRead);
+  useCannotShow(itemId, unshownReason(entry));
   if (entry.state === "loading") {
     return <Notice failed={false}>正在打开…</Notice>;
   }
@@ -184,6 +104,13 @@ export function App() {
   const selected = useSyncExternalStore(onLinkChange, selectedItem);
   const [imports, setImports] = useState(0);
   const entries = useWatched(listItems, String(imports), (listed) => listed.some(isBeingRead));
+  const { seating, seated, unshown, pointer } = useSeating();
+
+  // The column shows the passage a citation opens the item for, once the item's reader is on
+  // show.
+  function openItem(itemId: string) {
+    location.hash = itemLink(itemId);
+  }
 
   function openImported(entry: ItemEntry) {
     setImports(imports + 1);
@@ -191,22 +118,31 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <Library
-        entries={entries.loaded}
-        interrupted={entries.interrupted}
-        selected={selected}
-        onImported={openImported}
-      />
-      {selected === undefined ? (
-        <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
-      ) : (
-        // An import may have started the open item's reading again, so the pane is rebuilt
-        // after every import and reads the item again.
-        <PaneBoundary key={`${selected}:${imports}`}>
-          <ItemPane itemId={selected} />
-        </PaneBoundary>
-      )}
-    </div>
+    <SeatingProvider value={seating}>
+      <div className="app">
+        <Library
+          entries={entries.loaded}
+          interrupted={entries.interrupted}
+          selected={selected}
+          onImported={openImported}
+        />
+        {selected === undefined ? (
+          <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
+        ) : (
+          // An import may have started the open item's reading again, so the pane is rebuilt
+          // after every import and reads the item again.
+          <PaneBoundary key={`${selected}:${imports}`}>
+            <ItemPane itemId={selected} />
+          </PaneBoundary>
+        )}
+        <SideColumn
+          selected={selected}
+          seated={seated}
+          unshown={unshown}
+          pointer={pointer}
+          onOpen={openItem}
+        />
+      </div>
+    </SeatingProvider>
   );
 }

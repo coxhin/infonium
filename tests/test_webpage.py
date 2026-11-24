@@ -292,5 +292,6 @@ def test_marks_cover_the_words_they_mark(
             mark.style if isinstance(mark, StyleMark) else mark.target,
         )
         for mark in read_sentence.marks
+        if isinstance(mark, StyleMark | LinkMark)
     ]
     assert marked == runs, f"the marks of {markup!r} cover other words than they mark"

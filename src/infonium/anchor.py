@@ -13,6 +13,17 @@ QUOTE_EDGE = (
     "\N{FULLWIDTH COLON}\N{FULLWIDTH EXCLAMATION MARK}\N{FULLWIDTH QUESTION MARK}"
 )
 REFERENCE_MARK = re.compile(r"\[\d+\]")
+JSON_ESCAPE = re.compile(r'\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))')
+JSON_ESCAPES = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+}
 FORMAT_CHARACTER = "Cf"
 COMPARISON_FORM: Final = "NFKD"
 PLAIN_PUNCTUATION = str.maketrans(
@@ -113,11 +124,25 @@ def anchor_in(document: Document, block_number: int, held: Comparable, needle: s
     )
 
 
+def json_unescaped(quote: str) -> str:
+    # A quote as it reads with the escape sequences of JSON decoded: a document is given to a
+    # model as JSON, and a model may copy a tab, a line break or a backslash of a block as the
+    # sequence that stood for it there.
+    return JSON_ESCAPE.sub(
+        lambda escape: chr(int(escape[1], 16)) if escape[1] else JSON_ESCAPES[escape[2]], quote
+    )
+
+
 def anchors_of(document: Document, citations: list[Citation]) -> list[Anchor]:
+    # A quote that is not found as written is looked for once more as it reads with the
+    # escapes of JSON decoded.
     forms = [block_forms(block.text) for block in document.blocks]
     anchors: list[Anchor] = []
     for citation in citations:
-        needle = comparable(citation.quote, ignored=set()).text.strip(QUOTE_EDGE)
-        holders = quote_holders(forms, needle, citation.block_number) if needle else []
-        anchors.extend(anchor_in(document, number, held, needle) for number, held in holders)
+        for quote in dict.fromkeys([citation.quote, json_unescaped(citation.quote)]):
+            needle = comparable(quote, ignored=set()).text.strip(QUOTE_EDGE)
+            holders = quote_holders(forms, needle, citation.block_number) if needle else []
+            anchors.extend(anchor_in(document, number, held, needle) for number, held in holders)
+            if holders:
+                break
     return anchors

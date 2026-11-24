@@ -10,6 +10,7 @@ from tempfile import NamedTemporaryFile
 from typing import Annotated, Any, BinaryIO, Literal
 
 import sqlalchemy
+import sqlite_vec
 from filelock import FileLock
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, TypeAdapter
 from sqlalchemy.dialects import sqlite
@@ -38,6 +39,13 @@ NOT_UNDERWAY = "no reading of the item is under way"
 ALREADY_UNDERWAY = "a reading of the item is under way already"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
+# Several threads write to the library's file: the readings, and the work other modules do in
+# the background on tables of their own. With a write-ahead log one writes while the others
+# read, which the file remembers once it is set; and a writer that finds another at work waits
+# for it this long before it fails.
+WRITE_AHEAD = "PRAGMA journal_mode = WAL"
+WRITER_PATIENCE_MILLISECONDS = 30_000
+AWAIT_WRITER = f"PRAGMA busy_timeout = {WRITER_PATIENCE_MILLISECONDS}"
 TIMESTAMP = TypeAdapter(AwareDatetime)
 
 metadata = sqlalchemy.MetaData()
@@ -273,8 +281,15 @@ def replacing_insert(
     )
 
 
-def enforce_foreign_keys(connection: sqlite3.Connection, record: object) -> None:
-    connection.execute(ENFORCE_FOREIGN_KEYS)
+def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
+    # What every connection to the library's file is given before it is used: the settings,
+    # and sqlite-vec's functions over vectors, for the index of blocks. No other extension can
+    # be loaded through the connection afterwards.
+    for setting in (ENFORCE_FOREIGN_KEYS, WRITE_AHEAD, AWAIT_WRITER):
+        connection.execute(setting)
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
 
 
 def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
@@ -317,10 +332,19 @@ def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
         )
 
 
-class Library:
+class OwnerTransaction:
+    # One transaction on the library's database, and the owner on whose behalf it reads and
+    # writes. Every store of rows is built on one, the library's own and those that other
+    # modules keep in tables of theirs, and holds each of its queries to that owner.
     def __init__(self, connection: sqlalchemy.Connection, owner: str) -> None:
         self.connection = connection
         self.owner = owner
+
+
+class Library:
+    def __init__(self, transaction: OwnerTransaction) -> None:
+        self.connection = transaction.connection
+        self.owner = transaction.owner
 
     def keep_item(self, item: Item) -> None:
         self.connection.execute(
@@ -398,6 +422,18 @@ class Library:
             raise NotInLibrary(f"item {item_id} has no document in the library")
         return Holding(title=kept[0], document=Document.model_validate_json(kept[1]))
 
+    def owned_document(self, document_id: str) -> Document:
+        # A document of the owner's by its id: one that an item of theirs holds, or held when
+        # a reader began to ask of it. Another owner's document is not found.
+        body = self.connection.execute(
+            sqlalchemy.select(document_table.c.body).where(
+                document_table.c.owner == self.owner, document_table.c.id == document_id
+            )
+        ).scalar_one_or_none()
+        if body is None:
+            raise NotInLibrary(f"document {document_id} is not in the library")
+        return Document.model_validate_json(body)
+
     def kept_source(self, item_id: str) -> KeptSource:
         source = self.connection.execute(
             sqlalchemy.select(
@@ -432,15 +468,27 @@ class LibraryStore:
         self.lock = FileLock(directory / LOCK_FILE)
         self.lock.acquire(timeout=0)
         self.engine = sqlalchemy.create_engine(f"sqlite:///{directory / LIBRARY_FILE}")
-        sqlalchemy.event.listen(self.engine, CONNECT, enforce_foreign_keys)
+        sqlalchemy.event.listen(self.engine, CONNECT, set_up_connection)
         metadata.create_all(self.engine)
         with self.engine.begin() as connection:
             bring_up_to_date(connection)
 
     @contextmanager
-    def library(self, owner: str) -> Iterator[Library]:
+    def transaction(self, owner: str) -> Iterator[OwnerTransaction]:
         with self.engine.begin() as connection:
-            yield Library(connection=connection, owner=owner)
+            yield OwnerTransaction(connection=connection, owner=owner)
+
+    @contextmanager
+    def library(self, owner: str) -> Iterator[Library]:
+        with self.transaction(owner) as transaction:
+            yield Library(transaction)
+
+    def owners(self) -> list[str]:
+        # Everyone who has an item in the library.
+        with self.engine.begin() as connection:
+            return list(
+                connection.execute(sqlalchemy.select(item_table.c.owner).distinct()).scalars()
+            )
 
     def underway(self) -> list[UnderwayItem]:
         with self.engine.begin() as connection:
