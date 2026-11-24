@@ -1,22 +1,18 @@
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { layoutOf, placedOf, type AreaText } from "./areas";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
 import { PageViewer, type PageMarks } from "./pages";
-import { linesOf, markedBlocksOf, pageMarksOf, type PageMark } from "./pagemarks";
+import { PageText } from "./pagelines";
+import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
 import { SEGMENT_GAP } from "./translated";
 import type { ViewContext } from "./views";
 
 const NO_PAGES: PagePlace[] = [];
-const NO_CHARACTERS: string[] = [];
 
 // Where each block's translation is set is worked out once for each translation of it.
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
-
-function sameMarks(one: PageMark[], other: PageMark[]): boolean {
-  return one.length === other.length && one.every((mark, index) => mark.key === other[index]?.key);
-}
 
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
 // it stands for, and in 对照 the source stands beside each page, or under each area where
@@ -45,28 +41,18 @@ export function PagesView({
     [pointed],
   );
   const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
-  const lines = useMemo(() => linesOf(itemDocument.blocks), [itemDocument]);
-  // A page whose highlights are drawn as they were keeps them, so that marking one passage
-  // more draws again only the pages it lies on.
-  const kept = useRef(new Map<number, PageMark[]>());
+  const text = useMemo(() => new PageText(itemDocument.blocks), [itemDocument]);
   const marks = useMemo<PageMarks>(() => {
-    const onPages = pageMarksOf(lines, marking.marked, marking.opened);
-    onPages.forEach((pageMarks, page) => {
-      const before = kept.current.get(page);
-      if (before !== undefined && sameMarks(before, pageMarks)) {
-        onPages.set(page, before);
-      }
-    });
-    kept.current = onPages;
+    const onPages = pageMarksOf(text, marking.marked, marking.opened);
     return {
+      text,
       onPages,
       blocks: markedBlocksOf(marking.marked, marking.opened),
       selecting:
         marking === NO_MARKING
           ? undefined
           : {
-              lines,
-              charactersOf: (blockNumber) => lines.characters[blockNumber] ?? NO_CHARACTERS,
+              text,
               documentId: itemDocument.id,
               marked: marking.marked,
               pageMarks: onPages,
@@ -74,7 +60,7 @@ export function PagesView({
               onPress: marking.onPress,
             },
     };
-  }, [lines, marking, itemDocument.id]);
+  }, [text, marking, itemDocument.id]);
   const shown = setting !== "source";
   const overlays = useMemo(() => {
     if (!shown) {

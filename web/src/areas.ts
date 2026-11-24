@@ -3,6 +3,11 @@ import type { Block, Mark, PagePlace, Segment, TranslatedBlock } from "./client"
 // A rectangle on a page, as fractions of the page's width and height from its top left corner.
 export type Box = { left: number; top: number; width: number; height: number };
 
+// A fraction of a page as a length in its style.
+export function percent(fraction: number): string {
+  return `${fraction * 100}%`;
+}
+
 // Where a part of a block's translation is set on a page: the lines of the source it stands
 // for, which follow one another in one column, the rectangle around them, and how the source's
 // text runs there.

@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { AreaText, Box } from "./areas";
+import { percent, type AreaText, type Box } from "./areas";
 import { MarkedText } from "./blocks";
-import { useSelectedBlock, type SelectionDrawing } from "./pagemarking";
-import type { MarkState } from "./pagemarks";
+import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagemarking";
 import "./pagetranslation.css";
 
 // Text is made smaller to fit its area, but never below this part of the source's size.
@@ -99,10 +98,6 @@ function groupOf(text: AreaText, colours: Colours): string {
 
 function brightnessOf(colour: string): number {
   return (colour.match(/\d+/g) ?? []).reduce((sum, channel) => sum + Number(channel), 0);
-}
-
-function percent(fraction: number): string {
-  return `${fraction * 100}%`;
 }
 
 type Rgb = [number, number, number];

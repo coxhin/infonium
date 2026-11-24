@@ -4,12 +4,6 @@
    shows the translation they lie under it, seen where no area covers the lines or where an
    area lets the source through. */
 
-/* The colours blend with the page alone, so that the pages around a page with highlights
-   scroll as they did. */
-.pages .page {
-  isolation: isolate;
-}
-
 .page-marks,
 .page-selection {
   position: absolute;
@@ -47,10 +41,16 @@
   background: var(--page-selection);
 }
 
-/* A press on a line begins a selection, which the browser's own would hide. */
+/* A press on the source's lines begins a selection by boxes, which the browser's own would
+   hide; the text of a translation set over the pages is the browser's to select. */
 .pages {
   user-select: none;
   -webkit-user-select: none;
+}
+
+.pages .page-translation .area {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .page-translation .area.marked {
