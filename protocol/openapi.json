@@ -961,6 +961,12 @@
       },
       "NoteDraft": {
         "properties": {
+          "edition": {
+            "description": "Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.",
+            "minimum": 1.0,
+            "title": "Edition",
+            "type": "integer"
+          },
           "markdown": {
             "maxLength": 500000,
             "title": "Markdown",
@@ -980,6 +986,7 @@
           }
         },
         "required": [
+          "edition",
           "title",
           "markdown",
           "passages"
@@ -1051,6 +1058,12 @@
             "title": "Changed",
             "type": "string"
           },
+          "edition": {
+            "description": "Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.",
+            "minimum": 1.0,
+            "title": "Edition",
+            "type": "integer"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1078,6 +1091,7 @@
         },
         "required": [
           "id",
+          "edition",
           "title",
           "markdown",
           "passages",
@@ -3798,6 +3812,16 @@
               }
             },
             "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Precondition Failed"
           },
           "422": {
             "content": {

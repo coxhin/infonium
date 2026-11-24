@@ -749,6 +749,11 @@ export interface components {
         };
         /** NoteDraft */
         NoteDraft: {
+            /**
+             * Edition
+             * @description Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.
+             */
+            edition: number;
             /** Markdown */
             markdown: string;
             /** Passages */
@@ -791,6 +796,11 @@ export interface components {
              * Format: date-time
              */
             changed: string;
+            /**
+             * Edition
+             * @description Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.
+             */
+            edition: number;
             /** Id */
             id: string;
             /**
@@ -2551,6 +2561,15 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Precondition Failed */
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };

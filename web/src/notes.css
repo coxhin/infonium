@@ -1,0 +1,107 @@
+/* The list of notes: one row a note, its name and when it changed, removed by a quiet button. */
+.notes {
+  padding: 0.8rem 1.2rem 1.5rem;
+}
+
+.notes > header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.4rem;
+}
+
+.notes ul {
+  list-style: none;
+  margin: 0 -0.5rem;
+  padding: 0;
+}
+
+.notes li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.3rem;
+  border-radius: 0.4rem;
+}
+
+.notes li:hover,
+.notes li:focus-within {
+  background: var(--paper);
+}
+
+.notes li .open {
+  display: block;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 0.5rem;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.notes .name {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.notes .name.untitled {
+  color: var(--muted);
+}
+
+.notes small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* A note that cites the item on show. */
+.notes li[data-here="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.notes .stranded small {
+  color: var(--failure);
+}
+
+.notes .here {
+  color: var(--accent);
+}
+
+.notes li .remove {
+  margin: 0.45rem 0.4rem 0 0;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-color: transparent;
+  background: none;
+}
+
+.notes li .remove[aria-label^="确认"] {
+  color: var(--failure);
+  border-color: var(--failure);
+}
+
+.notes li > .status {
+  grid-column: 1 / -1;
+  margin: 0 0.5rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.notes .status button {
+  margin-left: 0.5rem;
+}
+
+.notes-waiting {
+  padding: 0 1.2rem;
+}
+
+@media (hover: hover) {
+  .notes li .remove {
+    opacity: 0;
+  }
+
+  .notes li:hover .remove,
+  .notes li:focus-within .remove {
+    opacity: 1;
+  }
+}

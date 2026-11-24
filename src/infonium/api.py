@@ -78,7 +78,7 @@ from infonium.library_conversation import (
     library_turns,
 )
 from infonium.model_connection import Ending
-from infonium.note import NoteDraft, Notes, ShownNote
+from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
 from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
 from infonium.refinding import standing_in
@@ -370,7 +370,9 @@ class LinkedPassage(BaseModel):
 
 
 class NoteView(BaseModel):
+    # The edition is that of the draft the note holds.
     id: str
+    edition: Edition
     title: str
     markdown: str
     passages: list[LinkedPassage]
@@ -401,6 +403,7 @@ app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY)
 app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(PassageNotHeld, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -415,6 +418,9 @@ NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Fai
 NOT_HELD: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # An upload whose reading never succeeded, of which nothing is kept to read again.
 NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# A draft of a note that holds its edition or a later one already: the note holds a later
+# writing than the one the draft was written from.
+STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 
 
@@ -828,6 +834,7 @@ def highlight_view(shown: ShownHighlight) -> HighlightView:
 def note_view(shown: ShownNote) -> NoteView:
     return NoteView(
         id=shown.text.id,
+        edition=shown.text.edition,
         title=shown.text.title,
         markdown=shown.text.markdown,
         passages=[
@@ -932,9 +939,11 @@ def read_note(note_id: str, owner: Owner) -> NoteView:
     return note_view(shown)
 
 
-@app.put("/api/notes/{note_id}", responses=NOT_IN_LIBRARY | NOT_HELD)
+@app.put("/api/notes/{note_id}", responses=NOT_IN_LIBRARY | NOT_HELD | STALE)
 def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
     # Puts the draft in place of what the note held: its title, its Markdown and its passages.
+    # A draft is taken only of a later edition than the note holds; one that is not is
+    # refused, once the note is found, before its passages are looked at.
     with library_store().transaction(owner) as transaction:
         shown = Notes(transaction).rewrite(note_id, draft, datetime.now(UTC))
     return note_view(shown)

@@ -226,17 +226,8 @@
 }
 
 /* The removal and the note control stay quiet until the entry is under the pointer or holds
-   the keyboard. The foot has room for them, so the note control keeps its place here rather
-   than taking none, as it does after a statement. */
-.highlight .entry-actions > button,
-.highlight .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
-  position: static;
-  width: auto;
-  height: auto;
-  padding: 0 0.45rem;
-  border: 1px solid var(--line);
-  overflow: visible;
-  clip-path: none;
+   the keyboard, keeping their room in the foot meanwhile. */
+.highlight .entry-actions > button {
   opacity: 0;
 }
 
@@ -246,14 +237,9 @@
 }
 
 @media (hover: none) {
-  .highlight .entry-actions > button,
-  .highlight .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+  .highlight .entry-actions > button {
     opacity: 1;
   }
-}
-
-.highlight .entry-actions .notedown {
-  margin-left: 0;
 }
 
 .highlight .confirm {
@@ -321,4 +307,11 @@
 
 .highlight-list .behind:empty {
   margin: 0;
+}
+
+/* Said on an entry the reader marked again from the source. */
+.highlight .marked-again {
+  margin: 0.25rem 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--marked-line);
 }

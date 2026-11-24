@@ -254,15 +254,16 @@ export function useHighlights(
   );
   useEffect(() => {
     if (itemId === undefined || documentId === undefined) {
-      return;
+      return undefined;
     }
     if (shelves.get(itemId)?.documentId === documentId) {
       void reread(itemId);
-      return;
+    } else {
+      shelves.set(itemId, { documentId, loaded: LOADING, behind: false });
+      tell();
+      void read(itemId, documentId);
     }
-    shelves.set(itemId, { documentId, loaded: LOADING, behind: false });
-    tell();
-    void read(itemId, documentId);
+    return watch(itemId);
   }, [itemId, documentId]);
   return loaded;
 }
@@ -281,12 +282,44 @@ export function useHighlightsBehind(itemId: string | undefined): boolean {
 export function useLibraryHighlights(shown: boolean): Loaded<ItemHighlights[]> {
   const loaded = useSyncExternalStore(onChange, () => library);
   useEffect(() => {
-    if (shown) {
-      void readLibrary();
+    if (!shown) {
+      return undefined;
     }
+    void readLibrary();
+    return watch(LIBRARY);
   }, [shown]);
   return loaded;
 }
+
+// The lists on show, by how many views show each: an item's, or the library's. Another tab
+// may change them, so they are read again when the page comes back on show and when its window
+// is turned to again; a read is kept by the rule of every read, so it never undoes a change
+// made here since.
+const watched = new Map<string, number>();
+
+function watch(key: string): () => void {
+  watched.set(key, (watched.get(key) ?? 0) + 1);
+  return () => {
+    const left = (watched.get(key) ?? 1) - 1;
+    if (left === 0) {
+      watched.delete(key);
+    } else {
+      watched.set(key, left);
+    }
+  };
+}
+
+function readWatchedAgain(): void {
+  if (document.visibilityState !== "visible") {
+    return;
+  }
+  for (const key of watched.keys()) {
+    void (key === LIBRARY ? rereadLibrary() : reread(key));
+  }
+}
+
+document.addEventListener("visibilitychange", readWatchedAgain);
+addEventListener("focus", readWatchedAgain);
 
 // The highlights a view draws: those that stand in the document on show.
 export function markedOf(highlights: Highlight[]): Marked[] {
@@ -305,18 +338,43 @@ export function markedOf(highlights: Highlight[]): Marked[] {
 
 // The new highlight is shown at the end of the list until the list, read again, puts it in
 // its place.
+// What marking a passage came to: the highlight the service holds for it, and whether it held
+// it already, as when the very passage was marked before. A highlight held already is not
+// added to a list again.
+export type PassageMarked = { highlight: Highlight; already: boolean };
+
+function holds(highlights: Highlight[], highlightId: string): boolean {
+  return highlights.some((highlight) => highlight.id === highlightId);
+}
+
 export async function markPassage(
   itemId: string,
   passage: Passage,
   comment: string,
-): Promise<Highlight> {
+): Promise<PassageMarked> {
   const made = await makeHighlight(itemId, passage, comment);
-  const added = (highlights: Highlight[]) => [...highlights, made];
+  const shelf = shelves.get(itemId)?.loaded;
+  const already = shelf?.state === "ready" && holds(shelf.value, made.id);
+  const added = (highlights: Highlight[]) =>
+    holds(highlights, made.id) ? highlights : [...highlights, made];
   begin(itemId);
   apply(itemId, { item: added, library: inItem(itemId, added) });
   void rereadLibrary();
   await reread(itemId);
-  return made;
+  return { highlight: made, already };
+}
+
+// Openings of a highlight that the reader marked again, which the notebook says was marked
+// already.
+const markedAgain = new WeakSet<Opened>();
+
+export function openMarkedAgain(next: Opened): void {
+  markedAgain.add(next);
+  openHighlight(next);
+}
+
+export function wasMarkedAgain(opening: Opened): boolean {
+  return markedAgain.has(opening);
 }
 
 export async function noteOnHighlight(

@@ -26,6 +26,11 @@
   scroll-margin: 8rem 0;
 }
 
+/* The time is drawn here, not written into the page, so a selection copies none of it. */
+.line .moment::before {
+  content: attr(data-mark);
+}
+
 .line .moment {
   align-self: start;
   margin-top: 0.15rem;

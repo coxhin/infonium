@@ -18,7 +18,7 @@ import {
   type Place,
   type Scope,
 } from "./conversations";
-import { NoteDown, statementTaking } from "./notedown";
+import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import type { Seat } from "./seat";
 import "./chat.css";
 
@@ -97,7 +97,7 @@ function Answer({
   return (
     <div className="answer">
       {answer.statements.map((statement, statementIndex) => (
-        <p key={statementIndex}>
+        <p key={statementIndex} className={NOTE_GUTTER}>
           {statement.text}
           <Citations
             anchors={statement.anchors}
@@ -106,7 +106,11 @@ function Answer({
             onPoint={point}
           />
           <LostCitations statement={statement} citesAll={false} />
-          <NoteDown taking={statementTaking([statement], itemOf)} label="记到笔记：这句回答" />
+          <NoteDown
+            taking={statementTaking([statement], itemOf)}
+            label="记到笔记：这句回答"
+            shape="mark"
+          />
         </p>
       ))}
       {scope.kind === "library" && answer.sources.length > 0 && (
@@ -119,8 +123,10 @@ function Answer({
           ))}
         </p>
       )}
-      <Spent answer={answer} />
-      <NoteDown taking={statementTaking(answer.statements, itemOf)} label="记到笔记：整个回答" />
+      <div className="answer-foot">
+        <Spent answer={answer} />
+        <NoteDown taking={statementTaking(answer.statements, itemOf)} label="记到笔记：整个回答" />
+      </div>
     </div>
   );
 }
@@ -144,7 +150,7 @@ function Draft({ pending }: { pending: Pending }) {
         </p>
       )}
       {pending.statements.map((statement, statementIndex) => (
-        <p key={statementIndex}>{statement}</p>
+        <p key={statementIndex} className={NOTE_GUTTER}>{statement}</p>
       ))}
       <p className="writing">{writingNote(pending)}</p>
     </div>

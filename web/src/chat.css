@@ -94,9 +94,19 @@
   margin-top: 0.3rem;
 }
 
-/* The control that notes the whole answer down stands under what it cost. */
-.answer > .notedown {
-  margin-left: 0;
+/* The foot of an answer: what it cost, and the control that notes the whole answer down. */
+.answer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.2rem 0.6rem;
+}
+
+/* The whole answer's control shows with the answer under the pointer or holding the keyboard;
+   its room on the foot's line is kept meanwhile. */
+.answer:is(:hover, :focus-within) > .answer-foot .notedown[data-state="idle"] .notedown-press {
+  opacity: 1;
 }
 
 .draft .searched {
