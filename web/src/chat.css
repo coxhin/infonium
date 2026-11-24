@@ -94,6 +94,11 @@
   margin-top: 0.3rem;
 }
 
+/* The control that notes the whole answer down stands under what it cost. */
+.answer > .notedown {
+  margin-left: 0;
+}
+
 .draft .searched {
   display: -webkit-box;
   -webkit-box-orient: vertical;
