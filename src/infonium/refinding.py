@@ -557,10 +557,18 @@ def edge_sides(
 def keeps_its_ends(passage: MarkedLetters, letters: str) -> bool:
     # Whether letters a little unlike a passage's begin and end as it did: its first and its
     # last NEIGHBOURS letters, one read otherwise at most and no digit changed, as its
-    # neighbours are asked; where they differ, its words at that end are another's.
+    # neighbours are asked; where they differ, its words at that end are another's. In a
+    # script written without spaces, where one letter is a word, none may be read otherwise.
     reach = NEIGHBOURS + NEIGHBOUR_CHANGES
-    return is_side_found(passage.letters[:NEIGHBOURS], letters[:reach]) and is_side_found(
-        passage.letters[-NEIGHBOURS:][::-1], letters[-reach:][::-1]
+    ends = [
+        (passage.letters[:NEIGHBOURS], letters[:reach]),
+        (passage.letters[-NEIGHBOURS:][::-1], letters[-reach:][::-1]),
+    ]
+    return all(
+        held.startswith(marked)
+        if any(is_unspaced(letter) for letter in marked)
+        else is_side_found(marked, held)
+        for marked, held in ends
     )
 
 
