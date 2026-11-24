@@ -9,12 +9,16 @@
   --on-accent: light-dark(#ffffff, #17181a);
   --found: light-dark(#ffe08a, #6e5a14);
   --failure: light-dark(#b3261e, #f2a59f);
-  /* The reader's highlights: a blue apart from the yellow of a passage pointed at. */
-  --marked: light-dark(#c6e2f4, #1d3c50);
-  --marked-quietly: light-dark(#dcecf7, #1a3140);
-  --marked-twice: light-dark(#9fcdea, #24506b);
-  --opened: light-dark(#82c0e6, #2a6386);
-  --marked-line: light-dark(#1d6f99, #8fd0f0);
+  /* The reader's highlights, one colour in every view: a green, apart from the yellow of a
+     passage pointed at and from the blue a browser gives a selection. In order: a highlight's
+     own words; what is marked whole for a highlight that covers part of it, as a translated
+     segment is; words two highlights share; the highlight open in the notebook; and the line
+     under a highlight that has a comment. */
+  --marked: light-dark(#cdeccb, #1f4a2a);
+  --marked-quietly: light-dark(#e3f4e1, #1a3a22);
+  --marked-twice: light-dark(#a6dba2, #2a6338);
+  --opened: light-dark(#86cf80, #2f6f3d);
+  --marked-line: light-dark(#2f7d32, #8fd694);
   font-family:
     system-ui,
     -apple-system,
