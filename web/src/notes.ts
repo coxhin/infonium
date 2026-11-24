@@ -4,6 +4,7 @@ import { itemTitle } from "./entry";
 import { appended, quoteMarkdown, statementMarkdown } from "./notemarkdown";
 import {
   addLinked,
+  currentId,
   adopt,
   failureText,
   freshen,
@@ -52,7 +53,9 @@ const ATTEMPTS = 3;
 
 const listeners = new Set<() => void>();
 let shown: Shown | undefined;
-let lastNoted: string | undefined;
+// The note an excerpt was last put into in this tab, kept with the tab so that a reload keeps it.
+const LAST_NOTED_KEY = "infonium.lastNoted";
+let lastNoted: string | undefined = sessionStorage.getItem(LAST_NOTED_KEY) ?? undefined;
 let excerpts: Promise<unknown> = Promise.resolve();
 
 // What the sources of an excerpt are called, by item.
@@ -197,7 +200,7 @@ async function intoNote(
       throw error;
     }
     editor?.append(markdown);
-    return { noteId, title: noteName(before.title, appended(before.markdown, markdown)) };
+    return { noteId: currentId(noteId), title: noteName(before.title, appended(before.markdown, markdown)) };
   }
   throw new NotSent(OVERTAKEN);
 }
@@ -210,6 +213,7 @@ async function putDown(excerpt: Excerpt): Promise<Noted> {
       (target === undefined ? undefined : await intoNote(target, excerpt, titles)) ??
       (await intoNewNote(excerpt, titles));
     lastNoted = noted.noteId;
+    sessionStorage.setItem(LAST_NOTED_KEY, noted.noteId);
     return noted;
   } catch (error) {
     throw notNoted(error, titles);

@@ -368,8 +368,10 @@ export function listNotes(): Promise<NoteEntry[]> {
   return settled(reached(api.GET("/api/notes")));
 }
 
-export function writeNote(draft: NoteDraft): Promise<Note> {
-  return settled(reached(api.POST("/api/notes", { body: draft })));
+// Keeps a new note. One made as the page is left is sent so that the request outlives the page,
+// as rewriteNote's is.
+export function writeNote(draft: NoteDraft, leaving = false): Promise<Note> {
+  return settled(reached(api.POST("/api/notes", { body: draft, keepalive: leaving })));
 }
 
 export function readNote(noteId: string): Promise<Note> {

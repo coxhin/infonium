@@ -23,6 +23,7 @@ import {
   useFirstWords,
   useNotes,
   useOpenedNote,
+  useOpenings,
 } from "./notelist";
 import type { Seat } from "./seat";
 import "./notes.css";
@@ -112,7 +113,6 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
 function NoteList({ seat }: { seat: Seat | undefined }) {
   const notes = useNotes();
   const stranded = useSyncExternalStore(onSessions, strandedNotes);
-  const [making, setMaking] = useState<Doing>(IDLE);
   const list = useRef<HTMLDivElement>(null);
   // Back from a note, the keyboard is given to that note's row, or else to the first control.
   const ready = notes.state === "ready";
@@ -126,26 +126,11 @@ function NoteList({ seat }: { seat: Seat | undefined }) {
     }
   }, [ready]);
 
-  function make() {
-    setMaking({ state: "underway" });
-    makeNote().then(
-      () => setMaking(IDLE),
-      (error: unknown) => setMaking({ state: "failed", reason: failureText(error) }),
-    );
-  }
-
   return (
     <div className="notes" ref={list}>
       <header>
-        <button onClick={make} disabled={making.state === "underway"}>
-          {making.state === "underway" ? "新建中…" : "新建笔记"}
-        </button>
+        <button onClick={makeNote}>新建笔记</button>
       </header>
-      {making.state === "failed" && (
-        <p className="status failed" role="alert">
-          没有新建：{making.reason}
-        </p>
-      )}
       {notes.state === "loading" && <p className="status">正在读取笔记…</p>}
       {notes.state === "failed" && (
         <p className="status failed">
@@ -217,11 +202,12 @@ export function NotesPanel({
   onOpen: Opener;
 }) {
   const opened = useOpenedNote();
+  const openings = useOpenings();
   if (opened === undefined) {
     return <NoteList seat={seat} />;
   }
   return (
-    <EditorBoundary key={opened}>
+    <EditorBoundary key={openings}>
       <Suspense fallback={<p className="status notes-waiting">正在载入编辑器…</p>}>
         <NoteEditor noteId={opened} seat={seat} citing={citing} onOpen={onOpen} />
       </Suspense>

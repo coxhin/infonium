@@ -37,7 +37,8 @@ export type Text = Omit<NoteDraft, "edition">;
 export type Keeping =
   | { state: "kept" }
   | { state: "keeping" }
-  | { state: "unkept"; reason: string }
+  // A text the service did not answer for is sent again by itself; one it refused is not.
+  | { state: "unkept"; reason: string; away: boolean }
   | { state: "overtaken" }
   | { state: "removed" };
 
@@ -68,7 +69,15 @@ export type Ready = {
   onItsWay: OnItsWay[];
   waiters: Waiter[];
   rereading: Promise<Ready | undefined> | undefined;
+  retry: Retry;
+  // A note made here that the service does not hold yet: it comes to be in the library when it
+  // first holds a title or text.
+  unborn: boolean;
 };
+
+// How often a text the service did not answer for was sent again since one was last kept, and
+// when it goes next.
+type Retry = { attempt: number; timer: ReturnType<typeof setTimeout> | undefined };
 
 export type Session =
   | { state: "loading"; reading: number; read: Promise<Ready | undefined> }
@@ -98,6 +107,12 @@ const PASSAGE_ID_LENGTH = 8;
 // The browser sends a request that outlives the page only up to this size.
 const LEAVING_BYTES = 64 * 1024;
 const QUOTED_WORDS = 16;
+// How the id of a note started here begins; the service's ids are hexadecimal.
+const UNBORN = "new-";
+// When a text the service did not answer for goes again: after the first wait, doubled each
+// time, up to the last.
+const RETRY_FIRST_MS = 2000;
+const RETRY_LAST_MS = 30_000;
 export const GONE = "这篇笔记已经不在了。";
 export const UNREACHED = "连不上服务";
 export const OVERTAKEN = "这篇笔记在别处改过，这里写的没有保存。";
@@ -122,15 +137,23 @@ const keptListeners = new Set<(note: Note) => void>();
 let writer: { noteId: string; writer: Writer } | undefined;
 let watching = false;
 let readCount = 0;
+// The notes started here that the service keeps now, by the id they went by before.
+const born = new Map<string, string>();
+const bornListeners = new Set<(unborn: string, noteId: string) => void>();
 let stranded: ReadonlyArray<{ noteId: string; text: Text }> | undefined;
+
+// Whether a request reached no service, or only a gateway the service behind did not answer.
+function unreached(error: unknown): boolean {
+  return (
+    error instanceof UnreachedService ||
+    (error instanceof Refused && GATEWAY_STATUSES.has(error.status))
+  );
+}
 
 // Why a request about a note failed, as a reader is told it: that the service was not reached,
 // or what it refused. Any other failure is a fault of the app, told as it is.
 export function failureText(error: unknown): string {
-  if (
-    error instanceof UnreachedService ||
-    (error instanceof Refused && GATEWAY_STATUSES.has(error.status))
-  ) {
+  if (unreached(error)) {
     return UNREACHED;
   }
   if (error instanceof Refused) {
@@ -168,18 +191,18 @@ export function onKept(notify: (note: Note) => void): void {
 }
 
 export function sessionOf(noteId: string): Session | undefined {
-  return sessions.get(noteId);
+  return sessions.get(currentId(noteId));
 }
 
 function readyOf(noteId: string): Ready | undefined {
-  const session = sessions.get(noteId);
+  const session = sessions.get(currentId(noteId));
   return session?.state === "ready" ? session : undefined;
 }
 
 function update(noteId: string, change: (ready: Ready) => Ready): void {
   const ready = readyOf(noteId);
   if (ready !== undefined) {
-    sessions.set(noteId, change(ready));
+    sessions.set(currentId(noteId), change(ready));
     tell();
   }
 }
@@ -254,6 +277,8 @@ function readyFrom(note: Note, reading: number): Ready {
     onItsWay: [],
     waiters: [],
     rereading: undefined,
+    retry: { attempt: 0, timer: undefined },
+    unborn: false,
   };
 }
 
@@ -264,7 +289,45 @@ export function adopt(note: Note): void {
   tell();
 }
 
+// Starts a note that the service does not hold until something is written in it, under an id
+// of this visit's own, which the note's own id takes the place of once it is kept.
+export function startNote(): string {
+  const noteId = `${UNBORN}${newPassageId(() => false)}`;
+  const now = new Date().toISOString();
+  readCount += 1;
+  sessions.set(noteId, {
+    ...readyFrom(
+      { id: noteId, title: "", markdown: "", passages: [], made: now, changed: now, edition: 0 },
+      readCount,
+    ),
+    unborn: true,
+  });
+  tell();
+  return noteId;
+}
+
+// Whether the note was started here and nothing is written in it yet.
+export function blankAndUnborn(noteId: string): boolean {
+  const ready = readyOf(noteId);
+  return ready !== undefined && ready.unborn && blank(textOf(ready));
+}
+
+function blank(text: Text): boolean {
+  return text.title.trim() === "" && text.markdown.trim() === "" && text.passages.length === 0;
+}
+
+// The id a note goes by now: a note started here goes by its own id once it is kept.
+export function currentId(noteId: string): string {
+  return born.get(noteId) ?? noteId;
+}
+
+// Called with the id of this visit's own and the note's own id when a note started here is kept.
+export function onBorn(notify: (unborn: string, noteId: string) => void): void {
+  bornListeners.add(notify);
+}
+
 export function forget(noteId: string): void {
+  clearTimeout(readyOf(noteId)?.retry.timer);
   sessions.delete(noteId);
   tell();
 }
@@ -274,7 +337,8 @@ export function forget(noteId: string): void {
 // stays as it is when the service holds the same edition of it, when what was typed meanwhile
 // is not kept, or when it cannot be read; so an editor of it is made anew only for another
 // edition.
-function startReading(noteId: string, anew: boolean): Promise<Ready | undefined> {
+function startReading(given: string, anew: boolean): Promise<Ready | undefined> {
+  const noteId = currentId(given);
   readCount += 1;
   const reading = readCount;
   const read: Promise<Ready | undefined> = readNote(noteId).then(
@@ -317,12 +381,12 @@ function startReading(noteId: string, anew: boolean): Promise<Ready | undefined>
 export function freshen(noteId: string): Promise<Ready | undefined> {
   // What is being typed in the note's editor is text not kept yet too.
   const typing = writerOf(noteId)?.flush(false) ?? false;
-  const session = sessions.get(noteId);
+  const session = sessions.get(currentId(noteId));
   if (session?.state === "loading") {
     return session.read;
   }
   if (session?.state === "ready") {
-    if (typing || unkept(session)) {
+    if (typing || unkept(session) || session.unborn) {
       return Promise.resolve(session);
     }
     if (session.rereading !== undefined) {
@@ -333,7 +397,7 @@ export function freshen(noteId: string): Promise<Ready | undefined> {
 }
 
 export function useSession(noteId: string): Session | undefined {
-  return useSyncExternalStore(onSessions, () => sessions.get(noteId));
+  return useSyncExternalStore(onSessions, () => sessions.get(currentId(noteId)));
 }
 
 function settle(noteId: string, draft: number, failure: Error | undefined): void {
@@ -364,7 +428,25 @@ function landed(held: Ready, sent: OnItsWay): OnItsWay[] {
   return held.onItsWay.filter((other) => other !== sent);
 }
 
+// A note started here is kept: from now on it goes by its own id, and whatever went by the id of
+// this visit's own (the open note, the writer, who waits) goes by that id too.
+function bornAndKept(unbornId: string, sent: OnItsWay, note: Note): void {
+  const ready = readyOf(unbornId);
+  if (ready === undefined) {
+    return;
+  }
+  sessions.delete(unbornId);
+  sessions.set(note.id, { ...ready, unborn: false });
+  born.set(unbornId, note.id);
+  if (writer?.noteId === unbornId) {
+    writer = { noteId: note.id, writer: writer.writer };
+  }
+  bornListeners.forEach((notify) => notify(unbornId, note.id));
+  sentAndKept(note.id, sent, note);
+}
+
 function sentAndKept(noteId: string, sent: OnItsWay, note: Note): void {
+  clearTimeout(readyOf(noteId)?.retry.timer);
   update(noteId, (held) => {
     const onItsWay = landed(held, sent);
     return {
@@ -376,6 +458,7 @@ function sentAndKept(noteId: string, sent: OnItsWay, note: Note): void {
       linked: linkedOf(note, held.linked),
       excerpt: held.excerpt === sent.number ? undefined : held.excerpt,
       keeping: held.latest === sent.text && onItsWay.length === 0 ? KEPT : held.keeping,
+      retry: { attempt: 0, timer: undefined },
     };
   });
   keptListeners.forEach((notify) => notify(note));
@@ -401,8 +484,12 @@ async function refusal(
   if (error.status !== NOT_FOUND) {
     return "other";
   }
+  // A note started here is not in the library yet, so only a passage can be not found.
+  if (readyOf(noteId)?.unborn) {
+    return "passage";
+  }
   try {
-    await readNote(noteId);
+    await readNote(currentId(noteId));
     return "passage";
   } catch (reading) {
     return reading instanceof Refused && reading.status === NOT_FOUND ? "removed" : "other";
@@ -463,6 +550,7 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
   const overtaken = kind === "overtaken";
   const removed = kind === "removed";
   const reason = failureText(error);
+  const away = unreached(error);
   update(noteId, (ready) => ({
     ...ready,
     onItsWay: landed(ready, sent),
@@ -470,8 +558,11 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
       ? { state: "overtaken" }
       : removed
         ? { state: "removed" }
-        : { state: "unkept", reason },
+        : { state: "unkept", reason, away },
   }));
+  if (away) {
+    keepLater(noteId);
+  }
   const failure = overtaken
     ? new NotSent(OVERTAKEN)
     : removed
@@ -487,6 +578,42 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
   }
 }
 
+// A text that could not be sent because the service did not answer is sent again by itself:
+// soon the first time, then at growing intervals up to half a minute; at once when the browser
+// is online again or the page comes back on show (keepAway). It goes as any text does,
+// numbered as it is sent, so that a note written elsewhere meanwhile is still told.
+function keepLater(noteId: string): void {
+  const ready = readyOf(noteId);
+  if (ready === undefined) {
+    return;
+  }
+  clearTimeout(ready.retry.timer);
+  const attempt = ready.retry.attempt;
+  const timer = setTimeout(
+    () => keepAway(noteId),
+    Math.min(RETRY_FIRST_MS * 2 ** attempt, RETRY_LAST_MS),
+  );
+  update(noteId, (held) => ({ ...held, retry: { attempt: attempt + 1, timer } }));
+}
+
+function keepAway(noteId: string): void {
+  const ready = readyOf(noteId);
+  if (
+    ready?.keeping.state === "unkept" &&
+    ready.keeping.away &&
+    ready.onItsWay.length === 0
+  ) {
+    keepAgain(noteId);
+  }
+}
+
+// Every text the service did not answer for is sent again at once.
+function keepAllAway(): void {
+  for (const noteId of sessions.keys()) {
+    keepAway(noteId);
+  }
+}
+
 function withoutPassages(text: Text, passageIds: string[]): Text {
   return { ...text, passages: text.passages.filter(({ id }) => !passageIds.includes(id)) };
 }
@@ -495,7 +622,8 @@ function withoutPassages(text: Text, passageIds: string[]): Text {
 // edition the service last showed. One request is under way at a time, and the text handed in
 // while it is goes next. As the page is left, the latest text is sent at once, one after the
 // request on its way, so that it wins over that one and is not lost with the page.
-function keep(noteId: string, leaving: boolean): void {
+function keep(given: string, leaving: boolean): void {
+  const noteId = currentId(given);
   const ready = readyOf(noteId);
   const latest = ready?.latest;
   if (ready === undefined || latest === undefined) {
@@ -510,7 +638,13 @@ function keep(noteId: string, leaving: boolean): void {
     settle(noteId, ready.handedIn, undefined);
     return;
   }
-  if (busy && !leaving) {
+  if (busy && (!leaving || ready.unborn)) {
+    // A note started here is made by one request only, which a second would make twice.
+    return;
+  }
+  if (ready.unborn && blank(latest)) {
+    update(noteId, (held) => ({ ...held, keeping: KEPT }));
+    settle(noteId, ready.handedIn, undefined);
     return;
   }
   const edition = Math.max(ready.shown, ...ready.onItsWay.map((other) => other.edition)) + 1;
@@ -522,14 +656,20 @@ function keep(noteId: string, leaving: boolean): void {
   };
   const draft: NoteDraft = { ...latest, edition };
   const { reading } = ready;
+  clearTimeout(ready.retry.timer);
   update(noteId, (held) => ({
     ...held,
     onItsWay: [...held.onItsWay, sent],
     keeping: { state: "keeping" },
+    retry: { ...held.retry, timer: undefined },
   }));
   // A draft too large to outlive the page goes as any other, which the browser asks about.
-  rewriteNote(noteId, draft, leaving && outlives(draft)).then(
-    (note) => ofReading(noteId, reading) && sentAndKept(noteId, sent, note),
+  const outliving = leaving && outlives(draft);
+  const { unborn } = ready;
+  (unborn ? writeNote(draft, outliving) : rewriteNote(noteId, draft, outliving)).then(
+    (note) =>
+      ofReading(noteId, reading) &&
+      (unborn ? bornAndKept(noteId, sent, note) : sentAndKept(noteId, sent, note)),
     (error: unknown) => ofReading(noteId, reading) && void refused(noteId, sent, error),
   );
 }
@@ -606,7 +746,7 @@ export function withdraw(noteId: string, before: Text): void {
 // read, and the text the reader sees is sent one after the edition it holds.
 export async function putInPlace(noteId: string): Promise<void> {
   writerOf(noteId)?.flush(false);
-  const note = await readNote(noteId);
+  const note = await readNote(currentId(noteId));
   // The text here is set against what the service holds now, which is no longer what this
   // visit last knew it to keep.
   update(noteId, (held) => ({
@@ -681,18 +821,17 @@ export function linkedPassage(noteId: string, passageId: string): Linked | undef
 }
 
 export function attachWriter(noteId: string, attached: Writer): () => void {
-  const held = { noteId, writer: attached };
   watchLeaving();
-  writer = held;
+  writer = { noteId, writer: attached };
   return () => {
-    if (writer === held) {
+    if (writer?.writer === attached) {
       writer = undefined;
     }
   };
 }
 
 export function writerOf(noteId: string): Writer | undefined {
-  return writer?.noteId === noteId ? writer.writer : undefined;
+  return writer?.noteId === currentId(noteId) ? writer.writer : undefined;
 }
 
 // What was typed in the open note is handed in now.
@@ -743,9 +882,13 @@ function warnBeforeLeaving(event: BeforeUnloadEvent): void {
   }
 }
 
-function onHidden(): void {
+// Hidden, the page hands in what was typed; back on show, it sends again what the service did
+// not answer for.
+function onShownOrHidden(): void {
   if (document.visibilityState === "hidden") {
     leaving();
+  } else {
+    keepAllAway();
   }
 }
 
@@ -755,7 +898,8 @@ function watchLeaving(): void {
     watching = true;
     addEventListener("beforeunload", warnBeforeLeaving);
     addEventListener("pagehide", leaving);
-    document.addEventListener("visibilitychange", onHidden);
+    document.addEventListener("visibilitychange", onShownOrHidden);
+    addEventListener("online", keepAllAway);
   }
 }
 

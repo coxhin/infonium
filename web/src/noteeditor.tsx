@@ -1,3 +1,4 @@
+import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 import type { Opener } from "./chat";
@@ -141,6 +142,7 @@ function KeepingNote({
       return (
         <p className="keeping failed" role="alert">
           没有保存：{keeping.reason}
+          {keeping.away && "，服务回来后会自动保存"}
           <button onClick={() => keepAgain(noteId)}>重试</button>
         </p>
       );
@@ -541,6 +543,15 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
         maxLength={TITLE_CHARACTERS}
         value={title}
         onChange={(event) => retitle(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter ends the title, as Tab does, unless it ends a word an input method composes.
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            // Focused at once, so that the keys that follow go into the text, not the title.
+            editor.view.focus();
+            editor.commands.setTextSelection(Selection.atStart(editor.state.doc).from);
+          }
+        }}
         onBlur={() => handInTyped(false)}
       />
       <EditorContent editor={editor} className="note-body" />
