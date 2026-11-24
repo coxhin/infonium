@@ -336,8 +336,6 @@ export function markedOf(highlights: Highlight[]): Marked[] {
   );
 }
 
-// The new highlight is shown at the end of the list until the list, read again, puts it in
-// its place.
 // What marking a passage came to: the highlight the service holds for it, and whether it held
 // it already, as when the very passage was marked before. A highlight held already is not
 // added to a list again.
@@ -347,6 +345,8 @@ function holds(highlights: Highlight[], highlightId: string): boolean {
   return highlights.some((highlight) => highlight.id === highlightId);
 }
 
+// The new highlight is shown at the end of the list until the list, read again, puts it in
+// its place.
 export async function markPassage(
   itemId: string,
   passage: Passage,

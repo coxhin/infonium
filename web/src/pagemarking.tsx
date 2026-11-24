@@ -180,7 +180,9 @@ type Stretch = { box: Box; state: MarkState; count: number };
 
 // The stretches of a page's lines the highlights hold, each drawn once however many hold it:
 // a line is cut at every end of a highlight on it, and each piece between two cuts takes the
-// state of the strongest highlight that holds it, an underline if any holds a comment.
+// one strongest state of the highlights that hold it: opened over commented over plain. A piece
+// that the opened highlight and a commented one both hold is drawn opened, without the
+// commented one's underline.
 function stretchesOn(text: PageText, page: number, marks: PageMark[]): Stretch[] {
   const stretches: Stretch[] = [];
   for (const line of text.onPages.get(page) ?? []) {

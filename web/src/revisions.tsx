@@ -177,6 +177,7 @@ export function RevisionHead({
 
   const revisions = loaded.state === "ready" ? loaded.value : undefined;
   const shown = revisions?.revisions.find((revision) => revision.document === shownDocument);
+  const holding = revisions?.revisions.find((revision) => revision.number === revisions.current);
   // Told once the document the reading gave is on show, not while the one before it stays.
   const told =
     rereading.state === "settled" && revisions !== undefined && shownDocument === rereading.after
@@ -192,7 +193,7 @@ export function RevisionHead({
           <>
             <span className="read-only">只能阅读，不能标注</span>
             <a className="back-to-holding" href={itemLink(itemId)}>
-              回到现在的版本
+              回到现在的版本{holding === undefined ? "" : `（${revisionName(holding)}）`}
             </a>
           </>
         )}
@@ -263,12 +264,11 @@ export function RevisionHead({
   );
 }
 
-// The line above an earlier revision's text: which reading it is and of when, and the way
-// back to what the item holds now.
+// The line above an earlier revision's text: which reading it is and of when, and that it shows
+// the text only. The way back, and that it cannot be marked, are in the head, which stays on
+// show while the line scrolls away.
 export function EarlierLine({
-  itemId,
   earlier,
-  holding,
 }: {
   itemId: string;
   earlier: Revision;
@@ -277,10 +277,7 @@ export function EarlierLine({
   return (
     <p className="earlier-line">
       这是这一篇较早的一次读取：{revisionTold(earlier)}
-      。这里只显示它当时读到的原文，没有译文和原件，也不能标注。
-      <a href={itemLink(itemId)}>
-        回到现在的版本{holding === undefined ? "" : `（${revisionName(holding)}）`}
-      </a>
+      。这里只显示它当时读到的原文，没有译文和原件。
     </p>
   );
 }
