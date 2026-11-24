@@ -15,16 +15,14 @@ import {
 } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
 import { PASSAGE_LINK } from "./client";
-import { inlineText, paragraphLine, passageLink } from "./notemarkdown";
+import { inlineText, isWebAddress, paragraphLine, passageLink } from "./notemarkdown";
 
 // What a note is written in: the editor's kinds of text, read from Markdown and written back to
 // it, and the links that lead to the note's passages, drawn as chips.
 
 export const PASSAGE_NODE = "passageLink";
 const CARRIED_ATTRIBUTE = "data-carried";
-const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
 const FOOTNOTE_DEFINITION = /^ {0,3}\[\^[^\]]+\]:/m;
-const THIS_MACHINE = [/^localhost$/i, /\.localhost$/i, /^127\./, /^0\.0\.0\.0$/, /^\[::1?\]$/];
 // What a link opens in, and what it tells the site it opens, whatever the HTML it came in said.
 const LINK_TARGET = "_blank";
 const LINK_REL = "noreferrer noopener";
@@ -58,21 +56,6 @@ export type Hands = {
 
 const chipsKey = new PluginKey<Chips>("passageChips");
 type Chips = { looks: ReadonlyMap<string, ChipLook>; decorations: DecorationSet };
-
-// A link may lead to a web address only: none that runs a script, and none of this machine,
-// which the app answers at by any of its names: the browser sends the app's cookies to its host
-// at any port.
-export function isWebAddress(address: string): boolean {
-  if (!URL.canParse(address)) {
-    return false;
-  }
-  const { protocol, hostname } = new URL(address);
-  return (
-    WEB_PROTOCOLS.has(protocol) &&
-    hostname !== location.hostname &&
-    !THIS_MACHINE.some((name) => name.test(hostname))
-  );
-}
 
 // The words of a link's text, without its marks.
 function plainText(tokens: MarkdownToken[] | undefined): string {

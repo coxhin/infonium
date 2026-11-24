@@ -154,7 +154,7 @@ async function intoNote(
     }
     // What is under way goes first, so that the excerpt's own request is sent at once and
     // what comes of it is its own.
-    if (read.underway > 0) {
+    if (read.onItsWay.length > 0) {
       await whenKept(noteId, read.handedIn).catch(() => undefined);
     }
     const ready = readyNow(noteId);
@@ -178,6 +178,7 @@ async function intoNote(
         passages: [...before.passages, ...draftPassages(linked)],
       },
       false,
+      true,
     );
     try {
       await whenKept(noteId, number);
@@ -187,12 +188,12 @@ async function intoNote(
         editor === undefined &&
         readyNow(noteId)?.keeping.state === "overtaken"
       ) {
-        letGo(noteId);
+        await letGo(noteId);
         continue;
       }
-      if (!(error instanceof NotSent)) {
-        withdraw(noteId, before);
-      }
+      // The note holds again what it held before the excerpt, which the open editor shows, so
+      // that whatever the reader does next sends only that.
+      withdraw(noteId, before);
       throw error;
     }
     editor?.append(markdown);

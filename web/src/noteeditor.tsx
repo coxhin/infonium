@@ -17,6 +17,7 @@ import {
   passagesOf,
   putInPlace,
   REMOVED,
+  refusedWords,
   textOf,
   TITLE_CHARACTERS,
   useOpening,
@@ -28,9 +29,9 @@ import {
   type Writer,
 } from "./notekeeping";
 import { openNote, takeJustMade } from "./notelist";
+import { isWebAddress } from "./notemarkdown";
 import {
   chipAt,
-  isWebAddress,
   linkedIds,
   markdownOf,
   noteExtensions,
@@ -114,22 +115,27 @@ function carriedLinked(carried: string): Linked | undefined {
 
 // Where the note's text stands, said to a screen reader as it changes; what was written and
 // not sent is offered a way on.
+// The ways on for a text not sent, of which one at a time is under way.
+type Offers = {
+  putInPlace: () => void;
+  keepAsNew: () => void;
+  letGo: () => void;
+  offering: boolean;
+  problem: string | undefined;
+};
+
 function KeepingNote({
   noteId,
   keeping,
   typing,
-  onNew,
+  offers,
 }: {
   noteId: string;
   keeping: Keeping;
   typing: boolean;
-  onNew: () => void;
+  offers: Offers;
 }) {
-  const [problem, setProblem] = useState<string>();
-  function attempt(doing: Promise<unknown>) {
-    setProblem(undefined);
-    doing.catch((error: unknown) => setProblem(failureText(error)));
-  }
+  const said = offers.problem === undefined ? null : <p>没有做到：{offers.problem}</p>;
   switch (keeping.state) {
     case "unkept":
       return (
@@ -140,20 +146,28 @@ function KeepingNote({
       );
     case "overtaken":
       return (
-        <div className="keeping failed" role="alert">
+        <div className="keeping failed" role="alert" aria-busy={offers.offering}>
           <p>{OVERTAKEN}写下的内容都还在这里。</p>
-          <button onClick={() => attempt(putInPlace(noteId))}>用这里的替换那边的</button>
-          <button onClick={onNew}>另存为新笔记</button>
-          <button onClick={() => letGo(noteId)}>放弃这里的，读入那边的</button>
-          {problem !== undefined && <p>没有做到：{problem}</p>}
+          <button disabled={offers.offering} onClick={offers.putInPlace}>
+            用这里的替换那边的
+          </button>
+          <button disabled={offers.offering} onClick={offers.keepAsNew}>
+            另存为新笔记
+          </button>
+          <button disabled={offers.offering} onClick={offers.letGo}>
+            放弃这里的，读入那边的
+          </button>
+          {said}
         </div>
       );
     case "removed":
       return (
-        <div className="keeping failed" role="alert">
+        <div className="keeping failed" role="alert" aria-busy={offers.offering}>
           <p>{REMOVED}写下的内容都还在这里。</p>
-          <button onClick={onNew}>另存为新笔记</button>
-          {problem !== undefined && <p>没有做到：{problem}</p>}
+          <button disabled={offers.offering} onClick={offers.keepAsNew}>
+            另存为新笔记
+          </button>
+          {said}
         </div>
       );
     case "kept":
@@ -178,7 +192,9 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
   const start = textOf(ready);
   const [title, setTitle] = useState(start.title);
   const [typing, setTyping] = useState(false);
-  const [newProblem, setNewProblem] = useState<string>();
+  const [offering, setOffering] = useState(false);
+  const [offerProblem, setOfferProblem] = useState<string>();
+  const refusals = refusedWords(ready);
   // The address being given to a link, and why it was refused.
   const [linking, setLinking] = useState<{ address: string; refused: boolean }>();
   const written = useRef({ title: start.title, dirty: false });
@@ -253,7 +269,7 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
     }
     written.current.dirty = false;
     setTyping(false);
-    handIn(noteId, text(), leaving);
+    handIn(noteId, text(), leaving, false, ready.reading);
     return false;
   }
 
@@ -368,7 +384,9 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
   }, [linking === undefined]);
 
   const looks = new Map(
-    [...ready.linked].map(([passageId, linked]) => [passageId, lookOf(linked, citing)]),
+    [...ready.linked]
+      .filter(([passageId]) => !ready.refused.has(passageId))
+      .map(([passageId, linked]) => [passageId, lookOf(linked, citing)]),
   );
   const lookKey = JSON.stringify([...looks]);
   useEffect(() => showChips(editor, looks), [lookKey, editor]);
@@ -388,14 +406,35 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
   }
 
   // What is written here, overtaken or of a removed note, is kept as a new note, opened.
-  function keepHereAsNew() {
-    handInTyped(false);
-    setNewProblem(undefined);
-    keepAsNew(noteId).then(
-      (note) => openNote(note.id),
-      (error: unknown) => setNewProblem(failureText(error)),
-    );
+  // One way on at a time; while it is under way nothing can be typed, so that what the reader
+  // sees is what it takes.
+  async function offer(doing: () => Promise<unknown>) {
+    setOffering(true);
+    setOfferProblem(undefined);
+    editor.setEditable(false, false);
+    try {
+      await doing();
+    } catch (error) {
+      setOfferProblem(failureText(error));
+    } finally {
+      if (!editor.isDestroyed) {
+        editor.setEditable(true, false);
+      }
+      setOffering(false);
+    }
   }
+
+  const offers: Offers = {
+    putInPlace: () => void offer(() => putInPlace(noteId)),
+    keepAsNew: () =>
+      void offer(async () => {
+        const note = await keepAsNew(noteId);
+        openNote(note.id);
+      }),
+    letGo: () => void offer(() => letGo(noteId)),
+    offering,
+    problem: offerProblem,
+  };
 
   function link(event: FormEvent) {
     event.preventDefault();
@@ -437,11 +476,11 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
           noteId={noteId}
           keeping={ready.keeping}
           typing={typing}
-          onNew={keepHereAsNew}
+          offers={offers}
         />
-        {newProblem !== undefined && (
+        {refusals.length > 0 && (
           <p className="keeping failed" role="alert">
-            没有另存：{newProblem}
+            服务没有收下引文{refusals.join("、")}，它在笔记里只剩文字，可以找到后删去。
           </p>
         )}
         <NoteTools

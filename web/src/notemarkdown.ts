@@ -17,7 +17,22 @@ const UNDERLINE = /^(?:=+|-[-\s]*)$/;
 // around it a table.
 const TABLE_ROW_START = /^\|/;
 const TABLE_DELIMITER = /^(?=.*\|)\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-const WEB_ADDRESS = /https?:\/\/[^\s<>　-〿＀-￯]+/g;
+const WEB_ADDRESS = /https?:\/\/[^\s<>`　-〿＀-￯]+/g;
+const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
+// The names of this machine, as the browser's reader of addresses writes them: loopback and
+// unspecified addresses however they were written, an IPv4 one inside an IPv6 one included,
+// and a name without a dot, as the machine's own name on its network is, or under .local, as
+// the network's own names of its machines are.
+const THIS_MACHINE = [
+  /^localhost$/i,
+  /\.localhost$/i,
+  /\.local$/i,
+  /^127\.\d+\.\d+\.\d+$/,
+  /^0\.0\.0\.0$/,
+  /^\[::1?\]$/,
+  /^\[::ffff:(?:7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)\]$/i,
+  /^[^.[]+$/,
+];
 const ADDRESS_END = /[.,;:!?'"]+$/;
 const LEADING_SPACE = /^[ \t]+/;
 const SPACE_REFERENCES: Record<string, string> = { " ": "&#32;", "\t": "&#9;" };
@@ -55,14 +70,33 @@ export function paragraphLine(line: string): string {
   return spaced.replace(NUMBERED_START, "$1\\$2");
 }
 
+// A link may lead to a web address only: none that runs a script, and none of this machine,
+// which the app answers at by any of its names: the browser sends the app's cookies to its host
+// at any port. A name may end in the dot of the root.
+export function isWebAddress(address: string): boolean {
+  if (!URL.canParse(address)) {
+    return false;
+  }
+  const { protocol, hostname } = new URL(address);
+  const host = hostname.replace(/\.$/, "");
+  return (
+    WEB_PROTOCOLS.has(protocol) &&
+    host !== location.hostname.replace(/\.$/, "") &&
+    !THIS_MACHINE.some((name) => name.test(host))
+  );
+}
+
 // An address in a statement, which Markdown would take as a link by itself, is written as a
-// link to it, so that nothing in it is escaped and it comes back the same. The marks that end
-// a sentence are not part of it.
+// link to it, so that nothing in it is escaped and it comes back the same; an address the
+// editor would not link is left as text. The marks that end a sentence are not part of it.
 function linkedAddresses(text: string): string {
   let written = "";
   let from = 0;
   for (const found of text.matchAll(WEB_ADDRESS)) {
     const address = found[0].replace(ADDRESS_END, "");
+    if (!isWebAddress(address)) {
+      continue;
+    }
     const at = found.index;
     written += `${inlineText(text.slice(from, at))}[${inlineText(address)}](${address
       .replace(/\(/g, "%28")

@@ -14,10 +14,10 @@ import {
 } from "./client";
 
 // What is written in each note this visit, and its keeping: a note is read, what is typed in
-// it is handed in a draft at a time, and each draft is sent to the service, one request at a
-// time and the latest text winning. Each draft is numbered with an edition when it is made,
-// one after the note's own, so that the service refuses a draft that was overtaken by one kept
-// elsewhere, and a draft sent late never takes the place of a later one.
+// it is handed in a text at a time, and the text is sent to the service, one request at a time
+// and the latest text winning. A draft is numbered when it is sent, one after the edition the
+// service last showed this visit, so that the service refuses a draft that another writer
+// overtook; nothing else moves the number, so that this visit never runs ahead of the service.
 
 // Where one of a note's passages lies in the document its item holds now: at these anchors,
 // with the very words that were linked or words that differ a little; or nowhere, so that it
@@ -43,28 +43,35 @@ export type Keeping =
 
 type Waiter = { draft: number; resolve: () => void; reject: (error: Error) => void };
 
-// A note read: the note as the service last gave it, every passage it has linked to since,
-// the edition of the last draft made and of the last the service kept, the newest text handed
-// in and not known to be kept, what the service is known to keep, the drafts handed in, the
-// requests under way, and who waits for a draft to be kept. Each reading of the note is told from the one before, so that an
-// editor of it is made anew.
+// A request on its way: the edition it was sent at, the text it carries, the number of the text
+// handed in last when it was sent, and whether it carries an excerpt that waits for its fate.
+type OnItsWay = { edition: number; text: Text; number: number; excerpt: boolean };
+
+// A note read: the note as the service last gave it, every passage it has linked to since and
+// those the service refused, the edition the service last showed this visit, the newest text
+// handed in and not known to be kept, what the service is known to keep, how many texts were
+// handed in and which of them carries an excerpt, the requests on their way, who waits for a
+// text to be kept, and a reading again under way. Each reading of the note is told from the one
+// before, so that an editor of it is made anew.
 export type Ready = {
   state: "ready";
   reading: number;
   note: Note;
   linked: ReadonlyMap<string, Linked>;
-  edition: number;
-  keptEdition: number;
-  latest: NoteDraft | undefined;
+  refused: ReadonlySet<string>;
+  shown: number;
+  latest: Text | undefined;
   kept: Text;
   keeping: Keeping;
   handedIn: number;
-  underway: number;
+  excerpt: number | undefined;
+  onItsWay: OnItsWay[];
   waiters: Waiter[];
+  rereading: Promise<Ready | undefined> | undefined;
 };
 
 export type Session =
-  | { state: "loading"; reading: number }
+  | { state: "loading"; reading: number; read: Promise<Ready | undefined> }
   | { state: "failed"; reason: string; gone: boolean }
   | Ready;
 
@@ -78,6 +85,7 @@ export type Writer = {
 };
 
 const NOT_FOUND = 404;
+const CONFLICT = 409;
 const STALE = 412;
 const KEPT: Keeping = { state: "kept" };
 // The service keeps a title of up to this many characters (TITLE_CHARACTERS in note.py).
@@ -89,6 +97,7 @@ const PASSAGE_ID_CHARACTERS = "0123456789abcdefghijklmnopqrstuvwxyz";
 const PASSAGE_ID_LENGTH = 8;
 // The browser sends a request that outlives the page only up to this size.
 const LEAVING_BYTES = 64 * 1024;
+const QUOTED_WORDS = 16;
 export const GONE = "这篇笔记已经不在了。";
 export const UNREACHED = "连不上服务";
 export const OVERTAKEN = "这篇笔记在别处改过，这里写的没有保存。";
@@ -103,14 +112,13 @@ const REFUSALS: Record<number, string | undefined> = {
   422: "标题或正文超出了服务能保存的长度",
 };
 
-// A draft overtaken by one kept elsewhere, or of a note removed elsewhere; the session says
+// A text overtaken by one kept elsewhere, or of a note removed elsewhere; the session says
 // which, and what was written is held there.
 export class NotSent extends Error {}
 
 const sessions = new Map<string, Session>();
 const listeners = new Set<() => void>();
 const keptListeners = new Set<(note: Note) => void>();
-const readings = new Map<string, Promise<Ready | undefined>>();
 let writer: { noteId: string; writer: Writer } | undefined;
 let watching = false;
 let readCount = 0;
@@ -225,7 +233,9 @@ export function textOf(ready: Ready): Text {
 
 // Whether the note holds text this visit that the service is not known to keep.
 function unkept(ready: Ready): boolean {
-  return ready.underway > 0 || (ready.latest !== undefined && !sameText(ready.latest, ready.kept));
+  return (
+    ready.onItsWay.length > 0 || (ready.latest !== undefined && !sameText(ready.latest, ready.kept))
+  );
 }
 
 function readyFrom(note: Note, reading: number): Ready {
@@ -234,14 +244,16 @@ function readyFrom(note: Note, reading: number): Ready {
     reading,
     note,
     linked: linkedOf(note, new Map()),
-    edition: note.edition,
-    keptEdition: note.edition,
+    refused: new Set(),
+    shown: note.edition,
     latest: undefined,
     kept: textOfNote(note),
     keeping: KEPT,
     handedIn: 0,
-    underway: 0,
+    excerpt: undefined,
+    onItsWay: [],
     waiters: [],
+    rereading: undefined,
   };
 }
 
@@ -257,23 +269,20 @@ export function forget(noteId: string): void {
   tell();
 }
 
-// Reads a note. A note this visit holds already stays on show while it is read again, and
-// stays as it is when the service holds the same edition of it or cannot be read; so an editor
-// of it is made anew only for another edition.
-function startReading(noteId: string, anew = false): Promise<Ready | undefined> {
+// Reads a note. Read anew, it is loading until it is read. Otherwise a note this visit holds
+// already stays on show while it is read again, and
+// stays as it is when the service holds the same edition of it, when what was typed meanwhile
+// is not kept, or when it cannot be read; so an editor of it is made anew only for another
+// edition.
+function startReading(noteId: string, anew: boolean): Promise<Ready | undefined> {
   readCount += 1;
   const reading = readCount;
-  const held = readyOf(noteId);
-  if (held === undefined) {
-    sessions.set(noteId, { state: "loading", reading });
-    tell();
-  }
-  return readNote(noteId).then(
+  const read: Promise<Ready | undefined> = readNote(noteId).then(
     (note) => {
-      // What was typed while the note was read again stays, and so does a note unchanged.
       const now = readyOf(noteId);
       if (now !== undefined && (unkept(now) || (!anew && now.note.edition === note.edition))) {
-        return now;
+        update(noteId, (held) => ({ ...held, rereading: undefined }));
+        return readyOf(noteId);
       }
       const ready = readyFrom(note, reading);
       sessions.set(noteId, ready);
@@ -282,7 +291,8 @@ function startReading(noteId: string, anew = false): Promise<Ready | undefined> 
     },
     (error: unknown) => {
       const gone = error instanceof Refused && error.status === NOT_FOUND;
-      if (!gone && held !== undefined) {
+      if (!gone && readyOf(noteId) !== undefined) {
+        update(noteId, (held) => ({ ...held, rereading: undefined }));
         throw error;
       }
       sessions.set(noteId, { state: "failed", reason: gone ? GONE : failureText(error), gone });
@@ -293,6 +303,13 @@ function startReading(noteId: string, anew = false): Promise<Ready | undefined> 
       throw error;
     },
   );
+  if (anew || readyOf(noteId) === undefined) {
+    sessions.set(noteId, { state: "loading", reading, read });
+  } else {
+    update(noteId, (held) => ({ ...held, rereading: read }));
+  }
+  tell();
+  return read;
 }
 
 // The note as the service holds it now: read again unless this visit holds text of it that is
@@ -300,17 +317,19 @@ function startReading(noteId: string, anew = false): Promise<Ready | undefined> 
 export function freshen(noteId: string): Promise<Ready | undefined> {
   // What is being typed in the note's editor is text not kept yet too.
   const typing = writerOf(noteId)?.flush(false) ?? false;
-  const ready = readyOf(noteId);
-  if (ready !== undefined && (typing || unkept(ready))) {
-    return Promise.resolve(ready);
+  const session = sessions.get(noteId);
+  if (session?.state === "loading") {
+    return session.read;
   }
-  const underway = readings.get(noteId);
-  if (underway !== undefined) {
-    return underway;
+  if (session?.state === "ready") {
+    if (typing || unkept(session)) {
+      return Promise.resolve(session);
+    }
+    if (session.rereading !== undefined) {
+      return session.rereading;
+    }
   }
-  const read = startReading(noteId).finally(() => readings.delete(noteId));
-  readings.set(noteId, read);
-  return read;
+  return startReading(noteId, false);
 }
 
 export function useSession(noteId: string): Session | undefined {
@@ -341,61 +360,112 @@ function ofReading(noteId: string, reading: number): boolean {
   return readyOf(noteId)?.reading === reading;
 }
 
-function sent(noteId: string, draft: NoteDraft, number: number, note: Note): void {
-  update(noteId, (held) => ({
-    ...held,
-    underway: held.underway - 1,
-    note,
-    keptEdition: Math.max(held.keptEdition, draft.edition),
-    kept: draft,
-    linked: linkedOf(note, held.linked),
-    keeping: held.latest === draft ? KEPT : held.keeping,
-  }));
+function landed(held: Ready, sent: OnItsWay): OnItsWay[] {
+  return held.onItsWay.filter((other) => other !== sent);
+}
+
+function sentAndKept(noteId: string, sent: OnItsWay, note: Note): void {
+  update(noteId, (held) => {
+    const onItsWay = landed(held, sent);
+    return {
+      ...held,
+      onItsWay,
+      note,
+      shown: Math.max(held.shown, note.edition),
+      kept: sent.text,
+      linked: linkedOf(note, held.linked),
+      excerpt: held.excerpt === sent.number ? undefined : held.excerpt,
+      keeping: held.latest === sent.text && onItsWay.length === 0 ? KEPT : held.keeping,
+    };
+  });
   keptListeners.forEach((notify) => notify(note));
-  settle(noteId, number, undefined);
+  settle(noteId, sent.number, undefined);
   keep(noteId, false);
 }
 
 // The service answers not found both for a note that is not there and for a passage whose
 // document is not there, so a note is asked for to tell the two apart.
-async function refusal(noteId: string, error: unknown): Promise<"overtaken" | "removed" | "other"> {
+async function refusal(
+  noteId: string,
+  error: unknown,
+): Promise<"overtaken" | "removed" | "passage" | "other"> {
   if (!(error instanceof Refused)) {
     return "other";
   }
   if (error.status === STALE) {
     return "overtaken";
   }
+  if (error.status === CONFLICT) {
+    return "passage";
+  }
   if (error.status !== NOT_FOUND) {
     return "other";
   }
   try {
     await readNote(noteId);
-    return "other";
+    return "passage";
   } catch (reading) {
     return reading instanceof Refused && reading.status === NOT_FOUND ? "removed" : "other";
   }
 }
 
-async function refused(noteId: string, draft: NoteDraft, error: unknown): Promise<void> {
+// The passages of a text that the service is not known to have taken: those it refused are
+// among them.
+function newPassages(text: Text, kept: Text): string[] {
+  const held = new Set(kept.passages.map((passage) => JSON.stringify(passage)));
+  return text.passages
+    .filter((passage) => !held.has(JSON.stringify(passage)))
+    .map((passage) => passage.id);
+}
+
+// The words of a refused passage, as a reader finds its chip by them.
+export function refusedWords(ready: Ready): string[] {
+  return [...ready.refused].flatMap((passageId) => {
+    const linked = ready.linked.get(passageId);
+    const quote = linked?.passage.anchors.map((anchor) => anchor.quote).join(" … ") ?? "";
+    return linked === undefined
+      ? []
+      : [`「${[...quote].slice(0, QUOTED_WORDS).join("")}${[...quote].length > QUOTED_WORDS ? "…" : ""}」`];
+  });
+}
+
+async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<void> {
   const kind = await refusal(noteId, error);
   const held = readyOf(noteId);
+  if (held === undefined) {
+    return;
+  }
+  const others = landed(held, sent);
   // A draft overtaken by a later one of this visit, sent as the page was hidden or left while
   // it was on its way, is no text written elsewhere: what came of the later one stands.
   if (
     kind === "overtaken" &&
-    held !== undefined &&
-    (held.underway > 1 || held.keptEdition >= draft.edition)
+    (held.shown >= sent.edition || others.some((other) => other.edition > sent.edition))
   ) {
-    update(noteId, (ready) => ({ ...ready, underway: ready.underway - 1 }));
+    update(noteId, (ready) => ({ ...ready, onItsWay: landed(ready, sent) }));
+    keep(noteId, false);
+    return;
+  }
+  // A passage refused in a text typed here, as one pasted from elsewhere, does not hold the rest
+  // of the note back: the passages the service had not taken before are linked no more, their
+  // chips stand as their words, and the text is sent again.
+  const suspects = newPassages(sent.text, held.kept);
+  if (kind === "passage" && held.excerpt !== sent.number && suspects.length > 0) {
+    update(noteId, (ready) => ({
+      ...ready,
+      onItsWay: landed(ready, sent),
+      refused: new Set([...ready.refused, ...suspects]),
+      latest: ready.latest === undefined ? undefined : withoutPassages(ready.latest, suspects),
+    }));
     keep(noteId, false);
     return;
   }
   const overtaken = kind === "overtaken";
   const removed = kind === "removed";
   const reason = failureText(error);
-  update(noteId, (held) => ({
-    ...held,
-    underway: held.underway - 1,
+  update(noteId, (ready) => ({
+    ...ready,
+    onItsWay: landed(ready, sent),
     keeping: overtaken
       ? { state: "overtaken" }
       : removed
@@ -411,16 +481,20 @@ async function refused(noteId: string, draft: NoteDraft, error: unknown): Promis
   settle(noteId, Infinity, failure);
   // A refused text that was overtaken by a newer one of this visit does not hold the newer back.
   const ready = readyOf(noteId);
-  if (!overtaken && !removed && ready?.latest !== undefined && ready.latest !== draft) {
-    update(noteId, (held) => ({ ...held, keeping: { state: "keeping" } }));
+  if (!overtaken && !removed && ready?.latest !== undefined && ready.latest !== sent.text) {
+    update(noteId, (now) => ({ ...now, keeping: { state: "keeping" } }));
     keep(noteId, false);
   }
 }
 
-// Sends the latest text of a note unless the service keeps it already. One request is under
-// way at a time, and the text handed in while it is goes next. As the page is left, the latest
-// text is sent at once under the next edition, whatever is under way, so that it wins over the
-// request on its way and is not lost with the page.
+function withoutPassages(text: Text, passageIds: string[]): Text {
+  return { ...text, passages: text.passages.filter(({ id }) => !passageIds.includes(id)) };
+}
+
+// Sends the latest text of a note unless the service keeps it already, numbered one after the
+// edition the service last showed. One request is under way at a time, and the text handed in
+// while it is goes next. As the page is left, the latest text is sent at once, one after the
+// request on its way, so that it wins over that one and is not lost with the page.
 function keep(noteId: string, leaving: boolean): void {
   const ready = readyOf(noteId);
   const latest = ready?.latest;
@@ -430,37 +504,48 @@ function keep(noteId: string, leaving: boolean): void {
   if (ready.keeping.state === "overtaken" || ready.keeping.state === "removed") {
     return;
   }
-  if (sameText(latest, ready.kept) && ready.underway === 0) {
+  const busy = ready.onItsWay.length > 0;
+  if (!busy && sameText(latest, ready.kept)) {
     update(noteId, (held) => ({ ...held, keeping: KEPT }));
     settle(noteId, ready.handedIn, undefined);
     return;
   }
-  if (ready.underway > 0 && !leaving) {
+  if (busy && !leaving) {
     return;
   }
-  const draft =
-    leaving && ready.underway > 0 ? { ...latest, edition: ready.edition + 1 } : latest;
-  const number = ready.handedIn;
+  const edition = Math.max(ready.shown, ...ready.onItsWay.map((other) => other.edition)) + 1;
+  const sent: OnItsWay = {
+    edition,
+    text: latest,
+    number: ready.handedIn,
+    excerpt: ready.excerpt === ready.handedIn,
+  };
+  const draft: NoteDraft = { ...latest, edition };
   const { reading } = ready;
   update(noteId, (held) => ({
     ...held,
-    edition: Math.max(held.edition, draft.edition),
-    latest: draft,
-    underway: held.underway + 1,
+    onItsWay: [...held.onItsWay, sent],
     keeping: { state: "keeping" },
   }));
   // A draft too large to outlive the page goes as any other, which the browser asks about.
   rewriteNote(noteId, draft, leaving && outlives(draft)).then(
-    (note) => ofReading(noteId, reading) && sent(noteId, draft, number, note),
-    (error: unknown) => ofReading(noteId, reading) && void refused(noteId, draft, error),
+    (note) => ofReading(noteId, reading) && sentAndKept(noteId, sent, note),
+    (error: unknown) => ofReading(noteId, reading) && void refused(noteId, sent, error),
   );
 }
 
-// Takes a note's text to be kept, numbered as the note's next edition; the number it answers
-// tells this text from those handed in before it.
-export function handIn(noteId: string, text: Text, leaving: boolean): number {
+// Takes a note's text to be kept; the number it answers tells this text from those handed in
+// before it. A text that carries an excerpt is refused as a whole, never in part. A text typed
+// into a reading of the note that was given up since is not this note's text any more.
+export function handIn(
+  noteId: string,
+  text: Text,
+  leaving: boolean,
+  excerpt = false,
+  reading?: number,
+): number {
   const ready = readyOf(noteId);
-  if (ready === undefined) {
+  if (ready === undefined || (reading !== undefined && reading !== ready.reading)) {
     return 0;
   }
   watchLeaving();
@@ -468,8 +553,8 @@ export function handIn(noteId: string, text: Text, leaving: boolean): number {
   update(noteId, (held) => ({
     ...held,
     handedIn: number,
-    edition: held.edition + 1,
-    latest: { ...text, edition: held.edition + 1 },
+    excerpt: excerpt ? number : held.excerpt,
+    latest: withoutPassages(text, [...held.refused]),
   }));
   keep(noteId, leaving);
   return number;
@@ -486,7 +571,7 @@ export function whenKept(noteId: string, draft: number): Promise<void> {
   if (ready === undefined) {
     return Promise.reject(new Error(GONE));
   }
-  if (ready.keeping.state === "kept" && ready.underway === 0) {
+  if (ready.keeping.state === "kept" && ready.onItsWay.length === 0) {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
@@ -497,39 +582,48 @@ export function whenKept(noteId: string, draft: number): Promise<void> {
   });
 }
 
-// Gives up a text handed in that the service refused, and keeps instead what the note held
-// before it, if this visit has anything of it unkept.
+// Gives up a text handed in that was not kept, and puts back what the note held before it: kept
+// again, or, where the note was overtaken or removed, held as the text the reader sees.
 export function withdraw(noteId: string, before: Text): void {
   const ready = readyOf(noteId);
   if (ready === undefined) {
     return;
   }
-  if (sameText(before, ready.kept)) {
-    update(noteId, (held) => ({ ...held, latest: undefined, keeping: KEPT }));
+  const stuck = ready.keeping.state === "overtaken" || ready.keeping.state === "removed";
+  if (stuck || sameText(before, ready.kept)) {
+    update(noteId, (held) => ({
+      ...held,
+      excerpt: undefined,
+      latest: sameText(before, held.kept) ? undefined : before,
+      keeping: stuck ? held.keeping : KEPT,
+    }));
     return;
   }
   handIn(noteId, before, false);
 }
 
-// The text of an overtaken note takes the place of what the service holds now: the note's
-// edition is read, and the text is sent as the next one.
+// The text of an overtaken note takes the place of what the service holds now: the note is
+// read, and the text the reader sees is sent one after the edition it holds.
 export async function putInPlace(noteId: string): Promise<void> {
-  const ready = readyOf(noteId);
-  if (ready?.latest === undefined) {
-    return;
-  }
+  writerOf(noteId)?.flush(false);
   const note = await readNote(noteId);
-  const now = readyOf(noteId);
-  if (now === undefined) {
-    return;
-  }
-  update(noteId, (held) => ({ ...held, edition: note.edition, keeping: { state: "keeping" } }));
-  handIn(noteId, textOf(now), false);
+  // The text here is set against what the service holds now, which is no longer what this
+  // visit last knew it to keep.
+  update(noteId, (held) => ({
+    ...held,
+    note,
+    shown: Math.max(held.shown, note.edition),
+    latest: textOf(held),
+    kept: textOfNote(note),
+    keeping: { state: "keeping" },
+  }));
+  keep(noteId, false);
 }
 
-// The text of an overtaken or removed note is kept as a new note, which is answered; the note
-// it was written in is read as the service holds it.
+// The text of an overtaken or removed note, all that was typed in it, is kept as a new note,
+// which is answered; the note it was written in is read as the service holds it.
 export async function keepAsNew(noteId: string): Promise<Note> {
+  writerOf(noteId)?.flush(true);
   const ready = readyOf(noteId);
   if (ready === undefined) {
     throw new Error(GONE);
@@ -539,27 +633,19 @@ export async function keepAsNew(noteId: string): Promise<Note> {
   const note = await writeNote({ ...text, title: `${title.join("")}${KEPT_APART}`, edition: 1 });
   adopt(note);
   keptListeners.forEach((notify) => notify(note));
-  letGo(noteId);
+  void letGo(noteId);
   return note;
 }
 
 // What this visit holds of a note is given up, and the note is read as the service holds it.
-export function letGo(noteId: string): void {
-  const ready = readyOf(noteId);
-  if (ready === undefined) {
+// Until it is read the note is loading, so that nothing is typed into the text given up, and
+// what comes of the requests on their way, which belongs to that text, is dropped.
+export async function letGo(noteId: string): Promise<void> {
+  if (readyOf(noteId) === undefined) {
     return;
   }
   settle(noteId, Infinity, new NotSent(OVERTAKEN));
-  // What comes of the requests on their way belongs to the text given up.
-  readCount += 1;
-  sessions.set(noteId, {
-    ...ready,
-    reading: readCount,
-    latest: undefined,
-    underway: 0,
-    keeping: KEPT,
-  });
-  startReading(noteId, true).catch(() => undefined);
+  await startReading(noteId, true).catch(() => undefined);
 }
 
 // Passages a note links to from now on, given before the text that links to them.
@@ -580,12 +666,13 @@ export function newPassageId(taken: (passageId: string) => boolean): string {
   }
 }
 
-// The passages a draft of a note carries: those of these ids that the note holds.
+// The passages a text of a note carries: those of these ids that the note holds and the
+// service has not refused.
 export function passagesOf(noteId: string, passageIds: string[]): Text["passages"] {
-  const linked = readyOf(noteId)?.linked ?? new Map<string, Linked>();
+  const ready = readyOf(noteId);
   return passageIds.flatMap((id) => {
-    const held = linked.get(id);
-    return held === undefined ? [] : [{ id, passage: held.passage }];
+    const held = ready?.linked.get(id);
+    return held === undefined || ready?.refused.has(id) ? [] : [{ id, passage: held.passage }];
   });
 }
 
@@ -613,7 +700,7 @@ export function flushWriter(): void {
   writer?.writer.flush(false);
 }
 
-function unkeptDrafts(): NoteDraft[] {
+function unkeptDrafts(): Text[] {
   return [...sessions.values()].flatMap((session) =>
     session.state === "ready" && session.latest !== undefined && unkept(session)
       ? [session.latest]
@@ -630,8 +717,7 @@ function leaving(): void {
       session.state === "ready" &&
       session.latest !== undefined &&
       !sameText(session.latest, session.kept) &&
-      session.keeping.state !== "overtaken" &&
-      session.keeping.state !== "removed"
+      !session.onItsWay.some((sent) => sent.text === session.latest)
     ) {
       keep(noteId, true);
     }
@@ -644,9 +730,15 @@ function warnBeforeLeaving(event: BeforeUnloadEvent): void {
   leaving();
   const drafts = unkeptDrafts();
   const stuck = [...sessions.values()].some(
-    (session) => session.state === "ready" && session.keeping.state !== "kept" && session.keeping.state !== "keeping",
+    (session) =>
+      session.state === "ready" &&
+      session.keeping.state !== "kept" &&
+      session.keeping.state !== "keeping",
   );
-  if (drafts.length > 0 && (stuck || drafts.some((draft) => !outlives(draft)))) {
+  if (
+    drafts.length > 0 &&
+    (stuck || drafts.some((text) => !outlives({ ...text, edition: Number.MAX_SAFE_INTEGER })))
+  ) {
     event.preventDefault();
   }
 }

@@ -276,6 +276,11 @@ div.keeping button {
   border-style: dashed;
 }
 
+.note-text .passage-link.chip[data-standing="lost"]:hover,
+.note-text .passage-link.chip[data-standing="lost"][aria-pressed="true"] {
+  color: var(--on-accent);
+}
+
 .note-text .passage-link.chip[data-standing="lost"]::after {
   content: " · " attr(data-revision);
 }
