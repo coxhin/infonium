@@ -29,12 +29,16 @@ const UNNUMBERED = "这一篇较早的一次读取";
 // the revision it is of.
 export type Opening = { label: string; open: () => void };
 
+// Where a passage awaited stands in the document the item holds now, as the service said, and
+// what is said quietly of it there.
+type KnownPlace = { at: Anchors; said: string | undefined };
+
 // What the column last pointed at. A passage pointed at, asked about, or lost belongs to the
 // life of the reader it was pointed at in. A passage that opens an item waits for that item's
-// reader, opened by the link the window is at, and is shown through it once it is on show;
-// where it is known already where the passage stands there, it is shown there. It is given up
-// when the reader selects an item that is neither the one it was pressed in nor the one it
-// opens.
+// reader, opened by the link it names (or, where it names none, the link the window is at),
+// and is shown through it once it is on show; where it is known already where the passage
+// stands there, it is shown there. It is given up when the reader selects an item that is
+// neither the one it was pressed in nor the one it opens.
 type Pointing =
   | { state: "nowhere" }
   | {
@@ -55,9 +59,9 @@ type Pointing =
   | {
       state: "awaiting";
       anchors: Anchors;
-      at: Anchors | undefined;
-      said: string | undefined;
+      standing: KnownPlace | undefined;
       itemId: string;
+      link: string | undefined;
       from: string | undefined;
     };
 
@@ -73,6 +77,10 @@ export type Citing = {
   // The passage is shown by opening its item at it; it is pressed once the item's reader is
   // on show and shows it.
   awaitOpening: (anchors: Anchors, itemId: string) => void;
+  // The passage is shown in the revision of that number of its item, which is opened for it:
+  // the passage is awaited and the link changed at once, so that no reader on show before it
+  // is taken for the one opened.
+  openInRevision: (anchors: Anchors, itemId: string, revision: number) => void;
   fail: (reason: string) => void;
   hide: () => void;
   // Whether the passage on show begins with this anchor: one of the same place in the same
@@ -195,23 +203,41 @@ export function useCiting(
   }
 
   function awaitOpening(anchors: Anchors, itemId: string) {
-    settle({ state: "awaiting", anchors, at: undefined, said: undefined, itemId, from: selected });
+    settle({
+      state: "awaiting",
+      anchors,
+      standing: undefined,
+      itemId,
+      link: undefined,
+      from: selected,
+    });
+  }
+
+  // Awaits the passage in the reader the link opens, and opens it.
+  function openAt(
+    anchors: Anchors,
+    itemId: string,
+    link: string,
+    standing: KnownPlace | undefined,
+  ) {
+    settle({ state: "awaiting", anchors, standing, itemId, link, from: selected });
+    location.hash = link;
+  }
+
+  function openInRevision(anchors: Anchors, itemId: string, revision: number) {
+    openAt(anchors, itemId, revisionLink(itemId, revision), undefined);
   }
 
   // An earlier revision is on show: the reader returns to what the item holds now, and shows
   // the passage there once it is on show.
-  function returnTo(on: Seat, anchors: Anchors, at: Anchors, said: string | undefined) {
-    settle({ state: "awaiting", anchors, at, said, itemId: on.itemId, from: selected });
-    location.hash = itemLink(on.itemId);
+  function returnTo(on: Seat, anchors: Anchors, standing: KnownPlace) {
+    openAt(anchors, on.itemId, itemLink(on.itemId), standing);
   }
 
   function openingOf(itemId: string, anchors: Anchors, revision: number): Opening {
     return {
       label: `打开第 ${revision} 次读取的版本，看这段文字`,
-      open() {
-        awaitOpening(anchors, itemId);
-        location.hash = revisionLink(itemId, revision);
-      },
+      open: () => openInRevision(anchors, itemId, revision),
     };
   }
 
@@ -229,7 +255,7 @@ export function useCiting(
           if (on.documentId === on.holding) {
             show(anchors, answer.at, said);
           } else {
-            returnTo(on, anchors, answer.at, said);
+            returnTo(on, anchors, { at: answer.at, said });
           }
           return;
         }
@@ -263,7 +289,7 @@ export function useCiting(
     if (seat === undefined || documentId === seat.documentId) {
       show(anchors, anchors, undefined);
     } else if (documentId === seat.holding) {
-      returnTo(seat, anchors, anchors, undefined);
+      returnTo(seat, anchors, { at: anchors, said: undefined });
     } else {
       // A second press while the answer is on its way waits for that answer.
       const before = latest.current;
@@ -277,19 +303,18 @@ export function useCiting(
     }
   }
 
-  // A passage that waits for its item is shown once the item's reader is on show as the link
-  // the window is at opens it, or said to be lost when the item cannot be shown; it is dropped
-  // when the reader turns to another item. What was pointed at in a reader that has gone is
-  // dropped.
+  // A passage that waits for its item is shown once the item's reader is on show as the link it
+  // waits for opens it, or said to be lost when the item cannot be shown; it is dropped when
+  // the reader turns to another item. What was pointed at in a reader that has gone is dropped.
   useEffect(() => {
     if (pointing.state === "awaiting") {
       if (selected !== pointing.itemId && selected !== pointing.from) {
         settle(NOWHERE);
-      } else if (seat?.itemId === pointing.itemId && seat.link === linkNow()) {
-        if (pointing.at === undefined) {
+      } else if (seat?.itemId === pointing.itemId && seat.link === (pointing.link ?? linkNow())) {
+        if (pointing.standing === undefined) {
           point(pointing.anchors);
         } else {
-          show(pointing.anchors, pointing.at, pointing.said);
+          show(pointing.anchors, pointing.standing.at, pointing.standing.said);
         }
       } else if (seat === undefined && unshown?.itemId === pointing.itemId) {
         settle({
@@ -309,6 +334,7 @@ export function useCiting(
   return {
     point,
     awaitOpening,
+    openInRevision,
     fail(reason) {
       settle({ state: "lost", reason, opening: undefined, item: selected, life });
     },

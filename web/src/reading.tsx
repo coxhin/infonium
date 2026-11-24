@@ -25,16 +25,22 @@ export type ShownRevision =
   | { kind: "holding" }
   | { kind: "earlier"; holding: string; line: ReactNode };
 
-// What the latest attempt to read an item again has come to, above the document that is kept.
-function RereadingNote({ entry }: { entry: ReadEntry }) {
+// What the latest attempt to read an item again has come to, above the document that is kept,
+// or above an earlier revision, which is not what the last reading gave.
+function RereadingNote({ entry, earlier }: { entry: ReadEntry; earlier: boolean }) {
   const attempt = entry.reading.attempt;
   switch (attempt.kind) {
     case "underway":
-      return <p className="rereading">正在重新读取，下面是上一次读到的内容。</p>;
+      return (
+        <p className="rereading">
+          {earlier ? "正在重新读取这一篇。" : "正在重新读取，下面是上一次读到的内容。"}
+        </p>
+      );
     case "failed":
       return (
         <p className="rereading failed">
-          重新读取失败，下面是上一次读到的内容。原因：{attempt.reason}
+          {earlier ? "重新读取失败。" : "重新读取失败，下面是上一次读到的内容。"}原因：
+          {attempt.reason}
         </p>
       );
     case "settled":
@@ -134,7 +140,7 @@ export function ReadItem({
   return (
     <>
       <main>
-        <RereadingNote entry={entry} />
+        <RereadingNote entry={entry} earlier={earlier} />
         <div className="reading-head">
           <div className="reading-bar">
             {views.length > 1 && (

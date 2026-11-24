@@ -1,18 +1,20 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { ItemRevisions, Revision } from "./client";
 import { itemLink, revisionLink } from "./links";
+import type { Loaded } from "./loading";
 import { revisionName, revisionTold, whenRead } from "./revisionwords";
 import "./revisions.css";
 
-// Where a reading of the item that the reader started stands, as the head tells it: being
-// asked for, refused, under way from the document the item held and the documents its
-// revisions held, or settled into a document, which is told once and then let go.
+// Where a reading of the item that the reader started, or found under way, stands as the head
+// tells it: being asked for, refused, under way from the document the item held and the
+// documents its revisions held (not yet known of a reading found under way before its
+// revisions are read), or settled into a document, which is told once and then let go.
 export type Rereading =
   | { state: "idle" }
   | { state: "asking" }
   | { state: "refused"; reason: string }
-  | { state: "reading"; before: string; known: string[] }
-  | { state: "settled"; before: string; known: string[]; after: string };
+  | { state: "reading"; before: string; known: string[] | undefined }
+  | { state: "settled"; before: string; known: string[] | undefined; after: string };
 
 export const NOT_REREADING: Rereading = { state: "idle" };
 
@@ -33,7 +35,7 @@ function settledText(
   if (rereading.after === rereading.before) {
     return `重新读取完了：内容没有变，仍是${revisionName(holding)}的版本。`;
   }
-  if (rereading.known.includes(rereading.after)) {
+  if (rereading.known?.includes(rereading.after) === true) {
     return `重新读取完了：内容和${revisionName(holding)}的版本相同，现在显示的是它。`;
   }
   return `重新读取完了：得到了新的版本，${revisionTold(holding)}。`;
@@ -94,7 +96,6 @@ function RevisionPicker({
       <button
         ref={toggle}
         className="quiet"
-        aria-haspopup="true"
         aria-expanded={open}
         aria-controls={listId}
         aria-label={spoken}
@@ -132,20 +133,24 @@ function RevisionPicker({
 
 // The part of the reader's head that is about revisions: which one is on show and the others,
 // the offer to read the source again, which says first what will happen and starts only once
-// the reader confirms, and what came of the last reading the reader started.
+// the reader confirms, and what came of the last reading. It says why the revisions could not
+// be read, and, as the library does, that the watch of a reading has lost the service and is
+// trying again.
 export function RevisionHead({
   itemId,
-  revisions,
+  revisions: loaded,
   shownDocument,
   underway,
+  interrupted,
   rereading,
   onReadAgain,
   onTold,
 }: {
   itemId: string;
-  revisions: ItemRevisions | undefined;
+  revisions: Loaded<ItemRevisions>;
   shownDocument: string;
   underway: boolean;
+  interrupted: boolean;
   rereading: Rereading;
   onReadAgain: () => void;
   onTold: () => void;
@@ -167,6 +172,7 @@ export function RevisionHead({
     offer.current?.focus();
   }
 
+  const revisions = loaded.state === "ready" ? loaded.value : undefined;
   const shown = revisions?.revisions.find((revision) => revision.document === shownDocument);
   const told =
     rereading.state === "settled" && revisions !== undefined
@@ -220,6 +226,16 @@ export function RevisionHead({
       {rereading.state === "refused" && (
         <p className="reading-line failed" role="alert">
           没能开始重新读取：{rereading.reason}
+        </p>
+      )}
+      {loaded.state === "failed" && (
+        <p className="reading-line failed" role="alert">
+          读不到这一篇的各次读取，不知道还有没有别的版本：{loaded.reason}
+        </p>
+      )}
+      {interrupted && (
+        <p className="reading-line failed" role="alert">
+          连接不上服务，正在重试…
         </p>
       )}
       {/* Stays in the page while it says nothing, so that what it comes to say is read out. */}

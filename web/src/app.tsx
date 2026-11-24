@@ -3,16 +3,18 @@ import {
   listItems,
   readAgain,
   readDocument,
+  readEntry,
   readRevisionDocument,
+  type ItemDocument,
   type ItemEntry,
   type ItemRevisions,
   type Revision,
 } from "./client";
 import { Library } from "./library";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
-import { reasonOf, useLoaded, useWatched, type Loaded } from "./loading";
+import { reasonOf, useWatched, type Loaded } from "./loading";
 import { isBeingRead } from "./entry";
-import { useRevisions, useWatchedEntry } from "./itemwatch";
+import { useRevisions } from "./itemrevisions";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
 import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
@@ -57,127 +59,141 @@ function UnshownRevision({ itemId, reason }: { itemId: string; reason: string })
   );
 }
 
-// The document the item holds now. It is opened again only when another one has taken its
-// place.
-function HoldingPane({ entry, link, head }: { entry: ReadEntry; link: string; head: ReactNode }) {
-  const itemDocument = useLoaded(() => readDocument(entry.id), entry.reading.document);
-  useCannotShow(
-    entry.id,
-    itemDocument.state === "failed" ? `打不开这一篇的原文：${itemDocument.reason}` : undefined,
-  );
-  switch (itemDocument.state) {
-    case "loading":
-      return <Notice failed={false}>正在打开…</Notice>;
-    case "failed":
-      return <Notice failed>{itemDocument.reason}</Notice>;
-    case "ready":
-      return (
-        <ReadItem
-          key={itemDocument.value.id}
-          entry={entry}
-          itemDocument={itemDocument.value}
-          revision={{ kind: "holding" }}
-          link={link}
-          head={head}
-        />
-      );
-  }
-}
+// What a link opens of a read item: the document the item holds now, which its plain link and
+// the link of the revision that holds it both open; an earlier revision; a revision that cannot
+// be shown; or nothing yet, while the revisions the link names a number of are read.
+type Shown =
+  | { kind: "holding"; document: string; link: string }
+  | { kind: "earlier"; earlier: Revision; holding: Revision | undefined; link: string };
+type Wanted = Shown | { kind: "unshown"; reason: string } | { kind: "pending" };
 
-// An earlier revision's document, as its text alone under the line that says which it is.
-function EarlierPane({
-  entry,
-  earlier,
-  holding,
-  link,
-  head,
-}: {
-  entry: ReadEntry;
-  earlier: Revision;
-  holding: Revision | undefined;
-  link: string;
-  head: ReactNode;
-}) {
-  const itemDocument = useLoaded(
-    () => readRevisionDocument(entry.id, earlier.number),
-    `${earlier.number}:${earlier.document}`,
-  );
-  useCannotShow(
-    entry.id,
-    itemDocument.state === "failed"
-      ? `打不开第 ${earlier.number} 次读取的版本：${itemDocument.reason}`
-      : undefined,
-  );
-  switch (itemDocument.state) {
-    case "loading":
-      return <Notice failed={false}>正在打开…</Notice>;
-    case "failed":
-      return <Notice failed>{itemDocument.reason}</Notice>;
-    case "ready":
-      return (
-        <ReadItem
-          key={`${itemDocument.value.id}:earlier`}
-          entry={entry}
-          itemDocument={itemDocument.value}
-          revision={{
-            kind: "earlier",
-            holding: entry.reading.document,
-            line: <EarlierLine itemId={entry.id} earlier={earlier} holding={holding} />,
-          }}
-          link={link}
-          head={head}
-        />
-      );
-  }
-}
-
-// What the link opens of a read item: the document it holds now, which its plain link and the
-// link of the revision that holds it both open, or an earlier revision.
-function RevisionPane({
-  entry,
-  revision,
-  revisions,
-  head,
-}: {
-  entry: ReadEntry;
-  revision: number | undefined;
-  revisions: Loaded<ItemRevisions>;
-  head: (shownDocument: string) => ReactNode;
-}) {
+function wantedOf(
+  entry: ReadEntry,
+  revision: number | undefined,
+  revisions: Loaded<ItemRevisions>,
+): Wanted {
   const link = linkOf({ itemId: entry.id, revision });
+  const holding: Wanted = { kind: "holding", document: entry.reading.document, link };
   if (revision === undefined) {
-    return <HoldingPane entry={entry} link={link} head={head(entry.reading.document)} />;
+    return holding;
   }
   switch (revisions.state) {
     case "loading":
-      return <Notice failed={false}>正在打开…</Notice>;
+      return { kind: "pending" };
     case "failed":
-      return (
-        <UnshownRevision itemId={entry.id} reason={`读不到这一篇的版本：${revisions.reason}`} />
-      );
+      return { kind: "unshown", reason: `读不到这一篇的版本：${revisions.reason}` };
     case "ready":
       break;
   }
   const named = revisions.value.revisions.find((held) => held.number === revision);
   if (named === undefined) {
-    return (
-      <UnshownRevision itemId={entry.id} reason={`这一篇没有第 ${revision} 次读取的版本。`} />
-    );
+    return { kind: "unshown", reason: `这一篇没有第 ${revision} 次读取的版本。` };
   }
   if (named.document === entry.reading.document) {
-    return <HoldingPane entry={entry} link={link} head={head(entry.reading.document)} />;
+    return holding;
   }
+  return {
+    kind: "earlier",
+    earlier: named,
+    holding: revisions.value.revisions.find((held) => held.document === entry.reading.document),
+    link,
+  };
+}
+
+function shownKey(shown: Shown): string {
+  return shown.kind === "holding"
+    ? `holding:${shown.document}`
+    : `earlier:${shown.earlier.number}:${shown.earlier.document}`;
+}
+
+function shownDocument(shown: Shown): string {
+  return shown.kind === "holding" ? shown.document : shown.earlier.document;
+}
+
+// A document of the item that the reader has opened, which of the item's documents it is, and
+// the document the item held when it was opened.
+type Opened = { shown: Shown; itemDocument: ItemDocument; holding: string };
+
+// The reader of a read item. A document of another revision is loaded while the one on show
+// stays, so that the column beside it never sees the reader gone between two revisions of the
+// item. Once the item has come to hold another document, the reader on show goes at once: the
+// column's digest is of the item's document, and is asked for again when the reader returns.
+function DocumentPane({
+  entry,
+  wanted,
+  head,
+}: {
+  entry: ReadEntry;
+  wanted: Shown | undefined;
+  head: (shownDocument: string) => ReactNode;
+}) {
+  const [opened, setOpened] = useState<Opened>();
+  const [failed, setFailed] = useState<{ key: string; reason: string }>();
+  const key = wanted === undefined ? undefined : shownKey(wanted);
+  useEffect(() => {
+    if (wanted === undefined) {
+      return undefined;
+    }
+    let current = true;
+    const holding = entry.reading.document;
+    const loading =
+      wanted.kind === "holding"
+        ? readDocument(entry.id)
+        : readRevisionDocument(entry.id, wanted.earlier.number);
+    loading.then(
+      (itemDocument) => current && setOpened({ shown: wanted, itemDocument, holding }),
+      (error: unknown) =>
+        current &&
+        setFailed({
+          key: shownKey(wanted),
+          reason:
+            wanted.kind === "holding"
+              ? `打不开这一篇的原文：${reasonOf(error)}`
+              : `打不开第 ${wanted.earlier.number} 次读取的版本：${reasonOf(error)}`,
+        }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [key]);
+  const failure = failed !== undefined && failed.key === key ? failed.reason : undefined;
+  useCannotShow(entry.id, failure);
+  if (failure !== undefined) {
+    return <Notice failed>{failure}</Notice>;
+  }
+  if (opened === undefined || opened.holding !== entry.reading.document) {
+    return <Notice failed={false}>正在打开…</Notice>;
+  }
+  const { shown, itemDocument } = opened;
   return (
-    <EarlierPane
+    <ReadItem
+      key={shownKey(shown)}
       entry={entry}
-      earlier={named}
-      holding={revisions.value.revisions.find(
-        (held) => held.document === entry.reading.document,
-      )}
-      link={link}
-      head={head(named.document)}
+      itemDocument={itemDocument}
+      revision={
+        shown.kind === "holding"
+          ? { kind: "holding" }
+          : {
+              kind: "earlier",
+              holding: entry.reading.document,
+              line: (
+                <EarlierLine itemId={entry.id} earlier={shown.earlier} holding={shown.holding} />
+              ),
+            }
+      }
+      link={shown.link}
+      head={head(shownDocument(shown))}
     />
   );
+}
+
+// Where a reading of the item stands when the reader opens it: one found under way is watched
+// as one the reader started, though what the item held before it is told only as far as the
+// revisions read meanwhile tell it.
+function rereadingAtOpening(reading: ReadEntry["reading"]): Rereading {
+  return reading.attempt.kind === "underway"
+    ? { state: "reading", before: reading.document, known: undefined }
+    : NOT_REREADING;
 }
 
 // A read item, with its revisions and a reading of it the reader may start. The revisions are
@@ -185,18 +201,32 @@ function RevisionPane({
 function ReadPane({
   entry,
   revision,
+  interrupted,
   onWatch,
 }: {
   entry: ReadEntry;
   revision: number | undefined;
+  interrupted: boolean;
   onWatch: (entry: ItemEntry) => void;
 }) {
   const { reading } = entry;
   const revisions = useRevisions(entry.id, `${reading.document}:${reading.attempt.kind}`);
-  const [rereading, setRereading] = useState<Rereading>(NOT_REREADING);
+  const [rereading, setRereading] = useState<Rereading>(() => rereadingAtOpening(reading));
 
-  // A reading the reader started, once it has settled, is told once; the reader shows what the
-  // item holds now, even where an earlier revision was on show.
+  // A reading found under way learns the revisions there were before it, once they are read.
+  useEffect(() => {
+    if (
+      rereading.state === "reading" &&
+      rereading.known === undefined &&
+      reading.attempt.kind === "underway" &&
+      revisions.state === "ready"
+    ) {
+      setRereading({ ...rereading, known: revisions.value.revisions.map((held) => held.document) });
+    }
+  }, [rereading, reading, revisions]);
+
+  // A reading that has settled is told once; the reader shows what the item holds now, even
+  // where an earlier revision was on show.
   useEffect(() => {
     if (rereading.state !== "reading" || reading.attempt.kind === "underway") {
       return;
@@ -214,7 +244,9 @@ function ReadPane({
   async function startReading() {
     const before = reading.document;
     const known =
-      revisions.state === "ready" ? revisions.value.revisions.map((held) => held.document) : [];
+      revisions.state === "ready"
+        ? revisions.value.revisions.map((held) => held.document)
+        : undefined;
     setRereading({ state: "asking" });
     try {
       const started = await readAgain(entry.id);
@@ -225,13 +257,14 @@ function ReadPane({
     }
   }
 
-  function head(shownDocument: string): ReactNode {
+  function head(shown: string): ReactNode {
     return (
       <RevisionHead
         itemId={entry.id}
-        revisions={revisions.state === "ready" ? revisions.value : undefined}
-        shownDocument={shownDocument}
+        revisions={revisions}
+        shownDocument={shown}
         underway={reading.attempt.kind === "underway"}
+        interrupted={interrupted}
         rereading={rereading}
         onReadAgain={() => void startReading()}
         onTold={() => setRereading(NOT_REREADING)}
@@ -239,7 +272,17 @@ function ReadPane({
     );
   }
 
-  return <RevisionPane entry={entry} revision={revision} revisions={revisions} head={head} />;
+  const wanted = wantedOf(entry, revision, revisions);
+  if (wanted.kind === "unshown") {
+    return <UnshownRevision itemId={entry.id} reason={wanted.reason} />;
+  }
+  return (
+    <DocumentPane
+      entry={entry}
+      wanted={wanted.kind === "pending" ? undefined : wanted}
+      head={head}
+    />
+  );
 }
 
 // Why an item, as far as it is loaded, cannot be shown; nothing while it may yet be.
@@ -262,7 +305,11 @@ function ItemPane({
   revision: number | undefined;
   onReading: () => void;
 }) {
-  const { loaded: entry, watchFrom } = useWatchedEntry(itemId);
+  const {
+    loaded: entry,
+    interrupted,
+    watchFrom,
+  } = useWatched(() => readEntry(itemId), itemId, isBeingRead);
   useCannotShow(itemId, unshownReason(entry));
   if (entry.state === "loading") {
     return <Notice failed={false}>正在打开…</Notice>;
@@ -276,6 +323,7 @@ function ItemPane({
       <ReadPane
         entry={{ ...entry.value, reading }}
         revision={revision}
+        interrupted={interrupted}
         onWatch={(started) => {
           watchFrom(started);
           onReading();
