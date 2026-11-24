@@ -224,12 +224,12 @@ The blocks of every document the library holds are indexed in the library's file
 
 ### Highlights
 
-- In the text, a press opens a highlight 250 ms later, so that a double click selects a word instead. Two presses 300 ms apart or more both open the highlight and select the word.
-- In the text, a highlight made with only a translation on show, or with an end in a translation, covers whole sentences or paragraphs of the source. The translations read so far hold a block as one piece, so such a highlight covers a whole paragraph, and a whole table.
-- Selecting in the text by keyboard needs the browser's caret browsing (F7 in Chrome). Telling the words under a press needs Chrome 128 or later.
+- In the text, a press opens a highlight 250 ms later, so that a double click selects a word instead. A slow double click, its presses 300 ms apart or more, opens the highlight and selects the word as well.
+- In the text, a highlight made with only a translation on show, or with an end in a translation, covers each piece of the source it touches whole: a sentence of a recording, a paragraph of anything else, and a table for one of its cells.
+- The notebook was tried in Chrome only. Pressing a highlight in the text opens it only in a browser that tells the words under a point, Chrome from 128 on. Selecting in the text by keyboard needs the browser's caret browsing (F7 in Chrome).
 - In a narrow window, when a selection ends at the window's foot, its actions stand above its last line and cover the line before it.
 - On a scan, the ends of a highlight on the pages are read off the print where the reading engine's line breaks agree with it. Where the engine broke a line inside a word, a highlight may be drawn up to a word away from its words: 7 of 42 random highlights on seven test scans.
-- On the lines whose gaps could be measured, of five scans and three PDFs with a text layer, a word's edge lies a median 0.03 to 0.06 of a character from the print, and more than two characters off at 1.8% of edges at most. On a scan whose engine split its blocks into lines of even length, 13.7% are more than two characters off.
+- On the lines whose gaps could be measured, of five scans and three PDFs with a text layer, a word's edge lies a median 0.03 to 0.06 of a character from the print. It lies more than two characters off at no edge of the three PDFs with a text layer, at 1.8% of edges at most on four of the scans, and at 13.7% on the fifth, whose blocks the engine split into lines of even length.
 - A line whose print is not dark on light paper, such as light text on a dark page or grey text, is cut by the widths of its characters, which on scans puts a word's edge a median 0.9 to 2.6 characters off.
 - A highlight on a page not yet read is first drawn by the widths of its characters, and moves once the page is read: in the case watched, 2 seconds later and by about two characters.
 - In the one PDF tried whose text layer runs downwards, the engine's line places do not match its columns, and highlights are drawn away from their words.
