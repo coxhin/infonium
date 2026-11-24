@@ -310,7 +310,8 @@ function keep(noteId: string, leaving: boolean): void {
   }
   underway.set(noteId, running + 1);
   update(noteId, (held) => ({ ...held, keeping: { state: "keeping" } }));
-  rewriteNote(noteId, draft, leaving).then(
+  // A draft too large to outlive the page goes as any other, which the browser asks about.
+  rewriteNote(noteId, draft, leaving && outlives(draft)).then(
     (note) => {
       underway.set(noteId, (underway.get(noteId) ?? 1) - 1);
       update(noteId, (held) => ({
@@ -375,6 +376,11 @@ export function linkedPassage(noteId: string, passageId: string): Linked | undef
   return sessions.get(noteId)?.linked.get(passageId);
 }
 
+// Whether a request with the draft can outlive the page it is sent from.
+function outlives(draft: NoteDraft): boolean {
+  return new Blob([JSON.stringify(draft)]).size <= LEAVING_BYTES;
+}
+
 function unkeptText(): NoteDraft[] {
   return [...sessions.values()].flatMap((session) =>
     session.latest !== undefined && !sameDraft(session.latest, session.kept)
@@ -398,9 +404,7 @@ function warnBeforeLeaving(event: BeforeUnloadEvent): void {
   leaving();
   const unkept = unkeptText();
   const failed = [...sessions.values()].some((session) => session.keeping.state === "unkept");
-  const large = unkept.some(
-    (draft) => new Blob([JSON.stringify(draft)]).size > LEAVING_BYTES,
-  );
+  const large = unkept.some((draft) => !outlives(draft));
   if (unkept.length > 0 && (failed || large)) {
     event.preventDefault();
   }
