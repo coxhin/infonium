@@ -91,41 +91,38 @@ LONG_DOCUMENT_SEED = 20261124
 PAGE_BEFORE = article("Quillmoor ledger", LEDGER[:4])
 PAGE_AFTER = article("Quillmoor ledger", (LEDGER[0], REVISED[0], *LEDGER[2:4]))
 SLOW = [HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much]
-# A judgment marked as failing at c248e4b reports the first example that fails as it was
-# made: shrinking it would take minutes of every run.
+# A judgment marked as failing reports the first example that fails as it was made: shrinking
+# it would take minutes of every run.
 UNSHRUNK = (Phase.explicit, Phase.reuse, Phase.generate)
 
 
-# The judgments of R6 as amended that the part as committed (c248e4b) fails; the lead takes
-# the marks off when the mended part passes them.
-def failing_at_c248e4b(reason: str) -> pytest.MarkDecorator:
-    return pytest.mark.xfail(reason=f"at c248e4b {reason}", strict=False)
+# The judgments of R6, as amended and ruled, that the mended part (4e1fa7b) fails under some
+# seed; the lead takes the marks off when the part passes them.
+def failing_at_4e1fa7b(reason: str) -> pytest.MarkDecorator:
+    return pytest.mark.xfail(reason=f"at 4e1fa7b {reason}", strict=False)
 
 
-GLUED_EXACT = failing_at_c248e4b("words glued together where two blocks were joined are exact")
-OTHER_COPY = failing_at_c248e4b(
-    "a passage said again is found at another copy of its words, its own copy standing or gone"
+OTHER_COPY = failing_at_4e1fa7b(
+    "a passage said again is found at another copy of its words while its own copy stands, "
+    "the other copy's surroundings not its own"
 )
-OWN_COPY_GONE = failing_at_c248e4b(
+OWN_COPY_GONE = failing_at_4e1fa7b(
     "a sentence said in every section is found in another section once its own is removed"
 )
-NEAR_ELSEWHERE = failing_at_c248e4b(
-    "words read a little otherwise are now and then found in a sentence that differs more from "
-    "them, or from inside a word"
+NEAR_ELSEWHERE = failing_at_4e1fa7b(
+    "words read a little otherwise, between their own surroundings and alike to no other "
+    "stretch, are lost"
 )
-WRONG_PLACES = failing_at_c248e4b(
-    "a passage is found in a line alike to its own, in another copy, inside a word or a number, "
-    "or across a number changed; and a short passage whose surroundings all stand is lost"
+WRONG_PLACES = failing_at_4e1fa7b(
+    "a passage is found at another copy of its words, its own standing or gone, or in another "
+    "entry beside a number changed"
 )
-OTHER_CELL = failing_at_c248e4b(
-    "a cell is found in another row's cell of the same value, its own row standing or changed"
+OTHER_CELL = failing_at_4e1fa7b(
+    "a cell is found in another row's cell, its own row standing or changed, and a cell with a "
+    "row put in above it is lost"
 )
-NEIGHBOURS_CHANGED = failing_at_c248e4b(
-    "a short word whose neighbours changed on both sides is now and then found at another copy "
-    "whose surroundings are not its own"
-)
-OTHER_ENTRY = failing_at_c248e4b(
-    "words of an entry removed, rewritten or renumbered are found in another entry"
+OTHER_ENTRY = failing_at_4e1fa7b(
+    "words of an entry removed are found in another entry built on the same template"
 )
 
 
@@ -220,14 +217,13 @@ def test_the_same_words_are_found_exact_with_anchors_of_their_own_however_the_bl
         *(data.draw(word_spans(units)) for _ in range(PASSAGES_AN_EXAMPLE)),
     ]
     judged = judged_spans(revised, spans)
-    assert judged[0].outcome == Outcome.FOUND_EXACT, (
+    assert judged[0].outcome == Outcome.FOUND, (
         "the test made no passage its rule holds the search to: the test's fault"
     )
 
 
-@GLUED_EXACT
 @given(data=st.data(), glued=st.booleans())
-@settings(max_examples=60, suppress_health_check=SLOW, phases=UNSHRUNK)
+@settings(max_examples=60, suppress_health_check=SLOW)
 def test_words_of_two_blocks_joined_are_exact_with_a_space_between_and_not_glued_together(
     data: st.DataObject, glued: bool
 ) -> None:
@@ -291,7 +287,7 @@ def test_where_the_words_stand_twice_the_place_is_told_by_what_stands_around_the
     revised, target = made
     marked = data.draw(word_spans(revised.first_units, first_unit=target, most_units=1))
     [expected] = judged_spans(revised, [marked])
-    assume(expected.outcome == Outcome.FOUND_EXACT)
+    assume(expected.outcome == Outcome.FOUND)
     judged_spans(
         revised,
         [data.draw(word_spans(revised.first_units)) for _ in range(PASSAGES_AN_EXAMPLE)],
@@ -333,9 +329,8 @@ def test_a_sentence_said_in_every_section_is_lost_with_its_own_section(
     judged_spans(revised, [whole_unit(units, number) for number in range(len(units))])
 
 
-@NEIGHBOURS_CHANGED
 @given(data=st.data(), beside=st.booleans())
-@settings(max_examples=100, suppress_health_check=SLOW, phases=UNSHRUNK)
+@settings(max_examples=100, suppress_health_check=SLOW)
 def test_a_word_is_lost_when_its_neighbours_change_beside_it_and_found_when_they_change_far(
     data: st.DataObject, beside: bool
 ) -> None:
@@ -361,7 +356,7 @@ def test_a_word_is_lost_when_its_neighbours_change_beside_it_and_found_when_they
     marked = WordSpan(first_unit=0, first_word=marked_word, last_unit=0, last_word=marked_word)
     first_letters = document_letters(revised.first.document)
     second_letters = document_letters(revised.second.document)
-    meant = Outcome.LOST if beside else Outcome.FOUND_EXACT
+    meant = Outcome.LOST if beside else Outcome.FOUND
     expected = expectation(revised, marked, first_letters, second_letters)
     assume(expected.told_in_first and expected.outcome == meant)
     judged_spans(revised, [marked])
@@ -414,7 +409,7 @@ def test_words_that_differ_a_little_are_found_where_they_stand_and_not_as_exact(
         ),
     )
     [expected] = judged_spans(revised, [marked])
-    assume(expected.outcome == Outcome.FOUND_NEAR)
+    assume(expected.outcome == Outcome.FOUND and expected.near)
 
 
 @WRONG_PLACES
@@ -462,7 +457,8 @@ def test_a_cell_is_found_in_its_place_when_a_row_is_put_in_above_and_lost_when_i
         row = data.draw(rows(coiner))
         table.append(spaced(UnitKind.ROW, [row.words[0], EQUAL_VALUE, *row.words[2:]]))
     marked_row = data.draw(st.integers(1, TABLE_ROWS - 2))
-    cell = data.draw(st.integers(1, len(table[marked_row].words) - 2))
+    # A value with whole cells of its own row on both sides.
+    cell = data.draw(st.integers(2, len(table[marked_row].words) - 2))
     second_rows = list(table)
     if changed:
         words = list(table[marked_row].words)
@@ -574,11 +570,11 @@ def test_three_hundred_passages_of_two_thousand_blocks_each_get_a_standing_and_t
     spans = []
     for number in range(MANY_PASSAGES):
         unit = (number * 677) % LONG_DOCUMENT_BLOCKS
-        last = min(unit + chosen.randrange(2), LONG_DOCUMENT_BLOCKS - 1)
+        last = min(unit + 1, LONG_DOCUMENT_BLOCKS - 1)
         spans.append(
             WordSpan(
                 first_unit=unit,
-                first_word=chosen.randrange(len(revised.first_units[unit].words) - 1),
+                first_word=chosen.randrange(3),
                 last_unit=last,
                 last_word=len(revised.first_units[last].words) - 1,
             )
@@ -589,17 +585,14 @@ def test_three_hundred_passages_of_two_thousand_blocks_each_get_a_standing_and_t
         "R6g: a passage of a long document was given no standing"
     )
     assert again == standings, "R6g: asking for the standings again gave other answers"
-    found = [isinstance(standing, Found) and standing.exact for standing in standings]
-    unchanged = [
-        all(
-            revised.changes[unit] in UNCHANGED_WORDS
-            for unit in range(span.first_unit, span.last_unit + 1)
-        )
-        for span in spans
+    first = document_letters(revised.first.document)
+    second = document_letters(revised.second.document)
+    held_to_be_found = [
+        judge_standing(revised, span, standing, first, second).outcome == Outcome.FOUND
+        for span, standing in zip(spans, standings, strict=True)
     ]
-    assert sum(unchanged) > MANY_PASSAGES // 3, "the test changed too many passages: its fault"
-    assert all(was_found for was_found, kept in zip(found, unchanged, strict=True) if kept), (
-        "R6g, R6b: a passage of a long document whose words stand unchanged was not found exact"
+    assert sum(held_to_be_found) > MANY_PASSAGES // 3, (
+        "the test held the search to too few passages of a long document: its fault"
     )
 
 

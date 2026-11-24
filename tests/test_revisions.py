@@ -485,9 +485,8 @@ def test_a_library_made_before_revisions_numbers_its_documents_and_changes_none(
         )
         for paragraphs in texts
     ]
-    assert sorted(document.id for document in documents) != [doc.id for doc in documents], (
-        "the documents' ids are in the order they were kept: a test's fault"
-    )
+    # Kept in the order opposite to their ids, so that numbering them by id is seen to be wrong.
+    documents.sort(key=lambda document: document.id, reverse=True)
     kept_at = [KEPT_EARLIER + timedelta(days=number) for number in range(len(documents))]
     with store.library(LOCAL_OWNER) as library:
         reading = Read(title=TITLE, document=documents[1].id, attempt=Settled())

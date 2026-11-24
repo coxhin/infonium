@@ -118,6 +118,17 @@ CHANGED_SIDE = 0.25
 # leave the passage's place in doubt.
 RIVAL_SIDE = 32
 RIVAL_LIKENESS = 1.0
+RIVAL_SIDE_LIKENESS = 0.5
+# Words found for a passage that keep fewer of its letters than this are other words; between
+# this and NEAR_ALIKE lies the edge of the search's bound, where either answer is right.
+EDGE_LIKENESS = 0.7
+# Sides that keep this share of their letters stand at the edge of the search's count of
+# neighbouring letters with one change allowed.
+EDGE_SIDE = 0.75
+# Another stretch this like a passage leaves a place of words that differ a little in doubt; a
+# letter no text holds stands in for the place itself.
+RIVAL_NEAR = 0.6
+MASKED = "\x00"
 NEAR_SLACK = 3
 NEAR_COVER = 0.8
 UNSPACED_WEIGHT = 3
@@ -647,6 +658,21 @@ def occurrences(text: str, sought: str) -> list[int]:
     return found
 
 
+def best_likeness_elsewhere(sought: str, text: str, place: tuple[int, int]) -> float:
+    # The likeness to the passage of the likest stretch of the text that leaves out the place:
+    # the fewest letters put in, left out or read otherwise that make the passage any stretch.
+    masked = text[: place[0]] + MASKED * (place[1] - place[0]) + text[place[1] :]
+    row = [0] * (len(masked) + 1)
+    for number, letter in enumerate(sought, start=1):
+        previous, row[0] = row[0], number
+        for at, other_letter in enumerate(masked, start=1):
+            previous, row[at] = (
+                row[at],
+                min(row[at] + 1, row[at - 1] + 1, previous + (letter != other_letter)),
+            )
+    return 1 - min(row) / max(1, len(sought))
+
+
 def edits(one: str, other: str) -> int:
     # The fewest letters put in, left out or read otherwise that make one text the other.
     row = list(range(len(other) + 1))
@@ -681,9 +707,10 @@ def is_inside_a_word(before: str, after: str) -> bool:
     )
 
 
-def well_formed(found: Found, document: Document, letters: Letters) -> tuple[int, int]:
-    # The stretch of the document's letters a found passage covers, once its anchors are seen
-    # to be the document's own (R6b, R6f), of whole words and whole characters.
+def well_formed(found: Found, document: Document, letters: Letters) -> list[tuple[int, int]]:
+    # The stretches of the document's letters a found passage covers, one for each anchor,
+    # once its anchors are seen to be the document's own (R6b, R6f), in the order of the
+    # document, of whole words and whole characters.
     anchors = found.passage.anchors
     assert anchors, "R6b: a passage was found with no anchor"
     for anchor in anchors:
@@ -720,14 +747,10 @@ def well_formed(found: Found, document: Document, letters: Letters) -> tuple[int
         "R6 (whole words): a passage of whole words was found beginning or ending inside a word "
         f"or a number: {described(document, anchors)}"
     )
-    spans = [letters.span(anchor.block_number, anchor.start, anchor.end) for anchor in anchors]
-    assert all(
-        earlier.block_number < later.block_number for earlier, later in pairwise(anchors)
-    ) and all(before[1] == after[0] for before, after in pairwise(spans)), (
-        "R6b: the anchors of a passage found are not one stretch of the document, a block after "
-        f"another in its order: {described(document, anchors)}"
+    assert all(earlier.block_number < later.block_number for earlier, later in pairwise(anchors)), (
+        f"R6b: the anchors of a passage found are not in the document's order: {anchors}"
     )
-    return spans[0][0], spans[-1][1]
+    return [letters.span(anchor.block_number, anchor.start, anchor.end) for anchor in anchors]
 
 
 def table_parts(document: Document, anchors: list[Anchor]) -> int:
@@ -749,21 +772,33 @@ def parts_marked(document: Document, anchors: list[Anchor]) -> int:
 
 
 class Outcome(StrEnum):
-    # What the rule holds the search to for one passage.
-    FOUND_EXACT = "found exact where its words stand"
-    FOUND_NEAR = "found, not exact, where its words stand a little otherwise"
+    # The three answers the rule holds the search to: found where the passage's words stand,
+    # lost, or either of the two, and never found anywhere else.
+    FOUND = "found where its words stand"
     LOST = "lost"
-    LOST_OR_THERE = "lost, or found where its words stand"
+    EITHER = "lost, or found where its words stand"
 
 
 class Expectation(BaseModel):
     # What a rule that knows how the second document was made expects of a passage: where its
-    # words stand there, the very same or otherwise, and what the search must answer.
+    # words stand there, the very same or otherwise, and what the search must answer. A passage
+    # held once in each revision may stand at the one copy of its words in the other wherever
+    # the operations put that copy (a move).
     sought: str
     marked_at: tuple[int, int]
     region: tuple[int, int] | None
+    # Every word of the passage stands unchanged, in its order, perhaps with units put in
+    # between; and with nothing between.
+    same_words: bool
     same: bool
     expected_anchors: list[Anchor]
+    moved_to: tuple[int, int] | None
+    # The letters between the units next to the passage that stand again, where its words
+    # stood; and the copies of its very words there with the same letters right around them,
+    # which no reading of the text tells from its own words.
+    envelope: tuple[int, int]
+    copies_in_place: list[tuple[int, int]]
+    near: bool
     outcome: Outcome
     # Whether no other copy of the passage's words in the revision it was marked in had
     # surroundings alike to its own.
@@ -772,15 +807,28 @@ class Expectation(BaseModel):
 
 def has_rival(text: str, sought: str, place: int, marked_sides: tuple[str, str]) -> bool:
     # Whether a copy of the words other than the one at the place has surroundings that may
-    # leave the place in doubt.
-    return any(
-        side_likeness(marked_sides[0], held_sides[0], before=True)
-        + side_likeness(marked_sides[1], held_sides[1], before=False)
-        > RIVAL_LIKENESS
-        for copy in occurrences(text, sought)
-        if copy != place
-        for held_sides in [sides(text, (copy, copy + len(sought)), RIVAL_SIDE)]
+    # leave the place in doubt: either side half alike or more, or both together.
+    for copy in occurrences(text, sought):
+        if copy == place:
+            continue
+        held_sides = sides(text, (copy, copy + len(sought)), RIVAL_SIDE)
+        before = side_likeness(marked_sides[0], held_sides[0], before=True)
+        after = side_likeness(marked_sides[1], held_sides[1], before=False)
+        if max(before, after) > RIVAL_SIDE_LIKENESS or before + after > RIVAL_LIKENESS:
+            return True
+    return False
+
+
+def unit_letter_span(laid: Laid, letters: Letters, unit: int) -> tuple[int, int]:
+    first, last = laid.places[unit][0], laid.places[unit][-1]
+    return (
+        letters.span(first.block, first.start, first.end)[0],
+        letters.span(last.block, last.start, last.end)[1],
     )
+
+
+def likeness(sought: str, held: str) -> float:
+    return 1 - edits(sought, held) / max(1, len(sought))
 
 
 def sides(text: str, place: tuple[int, int], size: int) -> tuple[str, str]:
@@ -800,6 +848,32 @@ def side_likeness(marked: str, held: str, before: bool) -> float:
     return sum(one == other for one, other in pairs) / len(marked)
 
 
+def sides_changed(
+    first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
+) -> bool:
+    # Whether the letters right before and right after a passage have changed on both sides,
+    # far past the search's count of neighbouring letters.
+    before, after = sides(first.text, marked, TELLING_SIDE)
+    held_before, held_after = sides(second.text, place, TELLING_SIDE)
+    return (
+        side_likeness(before, held_before, before=True) <= CHANGED_SIDE
+        and side_likeness(after, held_after, before=False) <= CHANGED_SIDE
+    )
+
+
+def moved_outcome(
+    sought: str, first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
+) -> Outcome:
+    # A passage held once in each revision, whose one copy in the other stands at a place its
+    # own words were not carried to (ruling 1): a distinct one is found by its letters; one
+    # whose neighbours changed on both sides is lost; else either.
+    if weight(sought) >= DISTINCT_LETTERS:
+        return Outcome.FOUND
+    if weight(sought) < SHORT_LETTERS and sides_changed(first, marked, second, place):
+        return Outcome.LOST
+    return Outcome.EITHER
+
+
 def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letters) -> Expectation:
     words = span_words(span, revised.first_units)
     head = revised.first.places[words[0][0]][words[0][1]]
@@ -809,6 +883,9 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         first.span(tail.block, tail.start, tail.end)[1],
     )
     sought = first.text[marked[0] : marked[1]]
+    copies_first = occurrences(first.text, sought)
+    copies_second = occurrences(second.text, sought)
+    held_once = len(copies_first) == len(copies_second) == 1
     told_in_first = not has_rival(
         first.text, sought, marked[0], sides(first.text, marked, RIVAL_SIDE)
     )
@@ -816,70 +893,116 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         origin: number for number, origin in enumerate(revised.origins) if origin is not None
     }
     surviving = [(second_unit[unit], word) for unit, word in words if unit in second_unit]
-    if not surviving:
-        return Expectation(
-            sought=sought,
-            marked_at=marked,
-            region=None,
-            same=False,
-            expected_anchors=[],
-            outcome=Outcome.LOST,
-            told_in_first=told_in_first,
-        )
     units = range(span.first_unit, span.last_unit + 1)
+    region: tuple[int, int] | None = None
+    held_words = ""
+    if surviving:
+        head = revised.second.places[surviving[0][0]][surviving[0][1]]
+        tail = revised.second.places[surviving[-1][0]][surviving[-1][1]]
+        region = (
+            second.span(head.block, head.start, head.end)[0],
+            second.span(tail.block, tail.start, tail.end)[1],
+        )
+        held_words = "".join(
+            second.text[slice(*second.span(place.block, place.start, place.end))]
+            for place in (revised.second.places[unit][word] for unit, word in surviving)
+        )
+    same_words = len(surviving) == len(words) and held_words == sought
+    same = same_words and region is not None and second.text[region[0] : region[1]] == sought
+    moved_to = (
+        (copies_second[0], copies_second[0] + len(sought)) if held_once and not same_words else None
+    )
     whole = all(unit in second_unit for unit in units) and all(
         second_unit[later] == second_unit[earlier] + 1 for earlier, later in pairwise(units)
     )
-    head = revised.second.places[surviving[0][0]][surviving[0][1]]
-    tail = revised.second.places[surviving[-1][0]][surviving[-1][1]]
-    region = (
-        second.span(head.block, head.start, head.end)[0],
-        second.span(tail.block, tail.start, tail.end)[1],
+    before_kept = [second_unit[unit] for unit in range(span.first_unit) if unit in second_unit]
+    after_kept = [
+        second_unit[unit]
+        for unit in range(span.last_unit + 1, len(revised.first_units))
+        if unit in second_unit
+    ]
+    envelope = (
+        unit_letter_span(revised.second, second, before_kept[-1])[1] if before_kept else 0,
+        unit_letter_span(revised.second, second, after_kept[0])[0]
+        if after_kept
+        else len(second.text),
     )
-    held = second.text[region[0] : region[1]]
-    same = whole and held == sought
-    marked_sides = sides(first.text, marked, SURROUNDINGS)
-    intact = sides(second.text, region, SURROUNDINGS) == marked_sides
-    before, after = sides(first.text, marked, TELLING_SIDE)
-    held_before, held_after = sides(second.text, region, TELLING_SIDE)
-    changed = (
-        side_likeness(before, held_before, before=True) <= CHANGED_SIDE
-        and side_likeness(after, held_after, before=False) <= CHANGED_SIDE
-    )
-    copies_first = len(occurrences(first.text, sought))
-    copies_second = len(occurrences(second.text, sought))
-    held_once = copies_first == copies_second == 1
-    others_told_alike = has_rival(
-        second.text, sought, region[0], sides(first.text, marked, RIVAL_SIDE)
-    )
-    if same and (
-        (held_once and weight(sought) >= DISTINCT_LETTERS) or (intact and not others_told_alike)
-    ):
-        outcome = Outcome.FOUND_EXACT
-    elif same and changed and not (held_once and weight(sought) >= SHORT_LETTERS):
-        outcome = Outcome.LOST
+    marked_sides = sides(first.text, marked, TELLING_SIDE)
+    copies_in_place = [
+        (copy, copy + len(sought))
+        for copy in copies_second
+        if envelope[0] <= copy
+        and copy + len(sought) <= envelope[1]
+        and all(
+            side_likeness(marked_side, held_side, before=number == 0) >= EDGE_SIDE
+            for number, (marked_side, held_side) in enumerate(
+                zip(
+                    marked_sides,
+                    sides(second.text, (copy, copy + len(sought)), TELLING_SIDE),
+                    strict=True,
+                )
+            )
+        )
+    ]
+    # A passage of a table's lines takes its neighbours from its own line (the lead's decision
+    # on cells), so lines changed around it do not make it lost.
+    in_table = any(revised.first_units[unit].kind in ROW_KINDS for unit in units)
+    near = False
+    if moved_to is not None:
+        outcome = moved_outcome(sought, first, marked, second, moved_to)
+    elif region is None:
+        outcome = Outcome.EITHER if copies_in_place else Outcome.LOST
     elif same:
-        outcome = Outcome.LOST_OR_THERE
-    elif (whole and digits_of(held) != digits_of(sought)) or changed:
-        outcome = Outcome.LOST
-    elif (
-        whole
-        and intact
-        and edits(sought, held) <= (1 - NEAR_ALIKE) * len(sought)
-        and weight(sought) >= DISTINCT_LETTERS
-        and copies_first == 1
-        and copies_second == 0
-        and all(revised.first_units[unit].kind in OWN_KINDS for unit in units)
-    ):
-        outcome = Outcome.FOUND_NEAR
+        intact = sides(second.text, region, SURROUNDINGS) == sides(first.text, marked, SURROUNDINGS)
+        rival = has_rival(second.text, sought, region[0], sides(first.text, marked, RIVAL_SIDE))
+        if (held_once and weight(sought) >= DISTINCT_LETTERS) or (
+            told_in_first and intact and not rival
+        ):
+            outcome = Outcome.FOUND
+        elif (
+            told_in_first
+            and not in_table
+            and sides_changed(first, marked, second, region)
+            and not (held_once and weight(sought) >= SHORT_LETTERS)
+        ):
+            outcome = Outcome.LOST
+        else:
+            outcome = Outcome.EITHER
+    elif same_words or copies_in_place:
+        # Units put in between the passage's own blocks (ruling 3), or its very words at its
+        # place with the same letters around them.
+        outcome = Outcome.EITHER
     else:
-        outcome = Outcome.LOST_OR_THERE
+        held = second.text[region[0] : region[1]]
+        near = True
+        if (whole and digits_of(held) != digits_of(sought)) or (
+            told_in_first and not in_table and sides_changed(first, marked, second, region)
+        ):
+            outcome = Outcome.LOST
+        elif (
+            whole
+            and sides(second.text, region, SURROUNDINGS) == sides(first.text, marked, SURROUNDINGS)
+            and likeness(sought, held) >= NEAR_ALIKE
+            and best_likeness_elsewhere(sought, second.text, region) < RIVAL_NEAR
+            and weight(sought) >= DISTINCT_LETTERS
+            and len(copies_first) == 1
+            and not copies_second
+            and all(revised.first_units[unit].kind in OWN_KINDS for unit in units)
+        ):
+            outcome = Outcome.FOUND
+        else:
+            outcome = Outcome.EITHER
     return Expectation(
         sought=sought,
         marked_at=marked,
         region=region,
+        same_words=same_words,
         same=same,
         expected_anchors=anchors_over(revised.second, surviving),
+        moved_to=moved_to,
+        envelope=envelope,
+        copies_in_place=copies_in_place,
+        near=near,
         outcome=outcome,
         told_in_first=told_in_first,
     )
@@ -893,35 +1016,39 @@ def judge_standing(
     second: Letters,
 ) -> Expectation:
     # Judges where a search says a passage of the first document stands in the second (R6b to
-    # R6f as the lead amended them), by where the operations that made the second document put
-    # its words: a passage is found only where its own words stand, the very same or a little
-    # otherwise, or it is lost.
+    # R6f as the lead amended and ruled them), by where the operations that made the second
+    # document put its words: a passage is found only where its own words stand, the very
+    # same or a little otherwise, or at the one copy of a passage each revision holds once;
+    # or it is lost.
     expected = expectation(revised, span, first, second)
     document = revised.second.document
     marked = marked_passage(revised, span)
+    if expected.moved_to is not None:
+        where = f"stand once in it at letters {expected.moved_to}"
+    elif expected.region is None:
+        where = "are gone"
+    else:
+        where = f"stand at {described(document, expected.expected_anchors)}" + (
+            "" if expected.same else " otherwise, in part, or with units between"
+        )
     told = (
         f"the passage {described(revised.first.document, marked.anchors)}, whose words "
-        + (
-            "are gone"
-            if expected.region is None
-            else f"stand at {described(document, expected.expected_anchors)}"
-            + ("" if expected.same else " otherwise or in part")
-        )
-        + f", must be {expected.outcome.value}, and was said to stand: {standing}"
+        f"{where}, must be {expected.outcome.value}, and was said to stand: {standing}"
     )
     match expected.outcome:
-        case Outcome.FOUND_EXACT:
-            assert isinstance(standing, Found) and standing.exact, (
-                f"R6b, R6c: a passage whose very words stand where its letters or its "
-                f"surroundings tell was not found exact: {told}"
-            )
-        case Outcome.FOUND_NEAR:
-            assert isinstance(standing, Found) and not standing.exact, (
-                f"R6d: a passage of many letters whose words stand a little otherwise between "
-                f"its own surroundings was not found as differing: {told}"
+        case Outcome.FOUND:
+            assert isinstance(standing, Found) and standing.exact == (not expected.near), (
+                "R6b, R6c, R6d: a passage whose words stand where its letters or its "
+                "surroundings tell was not found there, "
+                + ("not exact" if expected.near else "exact")
+                + f": {told}"
             )
         case Outcome.LOST:
-            assert not isinstance(standing, Found), (
+            # A passage whose words are gone may yet be found in words at their place that
+            # keep nearly as many of its letters as the search's bound asks (ruling 5).
+            assert not isinstance(standing, Found) or (
+                expected.region is None and not standing.exact
+            ), (
                 "R6c, R6d, R6e: a passage whose own words are gone, changed in a number, or "
                 f"whose surroundings changed on both sides was found: {told}"
             )
@@ -929,38 +1056,49 @@ def judge_standing(
             pass
     if not isinstance(standing, Found):
         return expected
-    found_at = well_formed(standing, document, second)
+    spans = well_formed(standing, document, second)
     assert table_parts(document, standing.passage.anchors) <= parts_marked(
         revised.first.document, marked.anchors
     ), f"R6 (table cells): a passage was found across the cells of a table: {told}"
-    found_letters = second.text[found_at[0] : found_at[1]]
-    if expected.region is None:
-        raise AssertionError(f"R6e: a passage whose words are gone was found: {told}")
+    found_letters = "".join(second.text[start:end] for start, end in spans)
+    whole_span = (spans[0][0], spans[-1][1])
     if standing.exact:
         assert found_letters == expected.sought, (
             f"R6b: a passage was found exact in words that are not its own: "
             f"{found_letters!r} for {expected.sought!r}: {told}"
         )
-        assert expected.same and standing.passage.anchors == expected.expected_anchors, (
+        assert (
+            (expected.same_words and standing.passage.anchors == expected.expected_anchors)
+            or whole_span == expected.moved_to
+            or whole_span in expected.copies_in_place
+        ), (
             f"R6c, R6e: a passage was found exact at another place than where its own words "
             f"stand, or without the anchors of its words there: {told}"
         )
         return expected
-    assert (
-        expected.region[0] - NEAR_SLACK <= found_at[0]
-        and found_at[1] <= expected.region[1] + NEAR_SLACK
-    ), (
+    assert not expected.same, (
+        f"R6b: a passage was found in words that differ from it, though its very words stand "
+        f"where it was marked: {told}"
+    )
+    low, high = (
+        expected.region
+        if expected.outcome == Outcome.FOUND and expected.region is not None
+        else expected.envelope
+    )
+    assert low - NEAR_SLACK <= whole_span[0] and whole_span[1] <= high + NEAR_SLACK, (
         f"R6d, R6e: a passage was found in words that differ from it, away from where its "
-        f"words stand: {told}"
+        f"words stood: {told}"
     )
     assert digits_of(found_letters) == digits_of(expected.sought), (
         f"R6d: a passage was found in words that differ from it in a number: {told}"
     )
-    assert not expected.same, (
-        f"R6b: a passage was found where its very words stand, but said not to be exact: {told}"
+    assert likeness(expected.sought, found_letters) >= EDGE_LIKENESS, (
+        f"R6d, R6e: a passage was found in words that keep far fewer of its letters than words "
+        f"that differ a little: {told}"
     )
-    covered = min(found_at[1], expected.region[1]) - max(found_at[0], expected.region[0])
-    assert expected.outcome != Outcome.FOUND_NEAR or covered >= NEAR_COVER * (
-        expected.region[1] - expected.region[0]
-    ), f"R6d: a passage found in words that differ a little covers too little of them: {told}"
+    if expected.outcome == Outcome.FOUND and expected.region is not None:
+        covered = min(whole_span[1], high) - max(whole_span[0], low)
+        assert covered >= NEAR_COVER * (high - low), (
+            f"R6d: a passage found in words that differ a little covers too little of them: {told}"
+        )
     return expected
