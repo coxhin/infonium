@@ -4,6 +4,7 @@ import type { Marked, Selected } from "./marking";
 import type { PageMark, SelectionDrawing } from "./pagemarking";
 import { nearestLine, type PageText, type Point, type Span } from "./pagelines";
 import { scrollerOf, viewOf } from "./scrolling";
+import { SELECTION_ACTIONS_CLASS } from "./selectionactions";
 
 // How a reader selects on the pages of a PDF, and presses a highlight drawn there. A drag over
 // the source's lines selects by their boxes; the text of a translation set over the pages is
@@ -655,12 +656,13 @@ export function usePageSelecting(
     }
 
     // A press anywhere else lets go of the selection, but not one on what is offered on it,
-    // which says so by taking the press for itself, nor one on a scroll bar.
+    // nor one on a scroll bar.
     function pressedElsewhere(event: MouseEvent): void {
+      const target = event.target;
       if (
-        !event.defaultPrevented &&
+        !(target instanceof Element && target.closest(`.${SELECTION_ACTIONS_CLASS}`) !== null) &&
         !onScrollBar(event) &&
-        !(event.target instanceof Node && root?.contains(event.target))
+        !(target instanceof Node && root?.contains(target))
       ) {
         letGo();
       }
