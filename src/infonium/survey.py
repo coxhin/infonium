@@ -32,15 +32,17 @@ Simplified Chinese is asked for, is not.
 
 If it is, list no terms: leave the list empty. Otherwise list the names and terms that \
 recur in the passages and that pieces translated apart could render differently, in this \
-order. First every term of art that recurs and stays in English by the rule below, as \
-itself, in the singular and without a capital that only begins a sentence. Then every \
-technical word that recurs and is translated by the rule, as its settled word in \
-{language}. Then the names of people, places, organisations, works and products, as \
-{language} writes them, unchanged where {language} keeps them as they are written. List a \
-term once, in the language and letters the passages write it in, with the forms of it that \
-they write, such as its singular and its plural, separated by " / ", and give it the one \
-rendering to use for it throughout the document, alone, with nothing after it in brackets. \
-List at most {terms}.
+order. First, in a technical document only, every term of art that recurs and stays in \
+English by the rule below, as itself, in the singular and without a capital that only \
+begins a sentence, with nothing after it in brackets. Then every technical word that \
+recurs and is translated by the rule. Then the names of people, places, organisations, \
+works, products, programmes and laws. The rule below is about technical terms and has no \
+bearing on names: a name is given as {language} writes it in ordinary use, as its \
+newspapers and reference works do. List a term once, in the language and letters the \
+passages write it in, with the forms of it that they write, such as its singular and its \
+plural, separated by " / ". Give each the one translation into {language} to use for it \
+throughout the document; where {language} keeps a name as it is written, give it \
+unchanged. List at most {terms}.
 
 {terms_kept_in_english}
 """

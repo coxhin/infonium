@@ -110,8 +110,8 @@ it.
 same in every passage. Where the request lists terms, translate a listed term as it is \
 listed wherever a passage uses it in that sense; words that only look like a listed term \
 are translated for what they say.
-- {terms_kept_in_english} Do not follow a term kept in English with its translation in \
-brackets, nor a translated term with its English, unless the passage itself gives both.
+- {terms_kept_in_english} A term kept in English stands alone, with no translation after \
+it in brackets.
 - Keep the value of every number, and write numbers and units the way {language} writes \
 them.
 - Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \

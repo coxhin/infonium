@@ -34,11 +34,11 @@ word for it. Everything else is translated: the general vocabulary that all of s
 computing share, which a first course teaches in {language} with a settled word, such as \
 the words for the common kinds of data, the parts of a program, mathematics, and what any \
 technical work does; general nouns and describing words, even beside a term of art; and \
-all of a writing that is not technical, such as a talk, a news report or an essay, but its \
-names. Between the two, keep the English where the {language} word would send the reader \
-back to the English to know what is meant. A text in another language than English keeps \
-in English only what it writes in English, in Latin letters; a term it writes in its own \
-words and letters, a word borrowed from English among them, is translated into {language}.
+all of a writing that is not technical, such as a talk, a news report or an essay. Between \
+the two, keep the English where the {language} word would send the reader back to the \
+English to know what is meant. A text in another language than English keeps in English \
+only what it writes in English, in Latin letters; a term it writes in its own words and \
+letters, a word borrowed from English among them, is translated into {language}.
 
 A term kept in English takes the form of its name: in the singular where {language} marks \
 no plural, with the capitals that a name or a heading gives it, and without one that only \
