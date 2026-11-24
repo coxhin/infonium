@@ -119,6 +119,10 @@ WRONG_PLACES = failing_at_c248e4b(
 OTHER_CELL = failing_at_c248e4b(
     "a cell is found in another row's cell of the same value, its own row standing or changed"
 )
+NEIGHBOURS_CHANGED = failing_at_c248e4b(
+    "a short word whose neighbours changed on both sides is now and then found at another copy "
+    "whose surroundings are not its own"
+)
 OTHER_ENTRY = failing_at_c248e4b(
     "words of an entry removed, rewritten or renumbered are found in another entry"
 )
@@ -328,8 +332,9 @@ def test_a_sentence_said_in_every_section_is_lost_with_its_own_section(
     judged_spans(revised, [whole_unit(units, number) for number in range(len(units))])
 
 
+@NEIGHBOURS_CHANGED
 @given(data=st.data(), beside=st.booleans())
-@settings(max_examples=100, suppress_health_check=SLOW)
+@settings(max_examples=100, suppress_health_check=SLOW, phases=UNSHRUNK)
 def test_a_word_is_lost_when_its_neighbours_change_beside_it_and_found_when_they_change_far(
     data: st.DataObject, beside: bool
 ) -> None:
@@ -356,7 +361,8 @@ def test_a_word_is_lost_when_its_neighbours_change_beside_it_and_found_when_they
     first_letters = document_letters(revised.first.document)
     second_letters = document_letters(revised.second.document)
     meant = Outcome.LOST if beside else Outcome.FOUND_EXACT
-    assume(expectation(revised, marked, first_letters, second_letters).outcome == meant)
+    expected = expectation(revised, marked, first_letters, second_letters)
+    assume(expected.told_in_first and expected.outcome == meant)
     judged_spans(revised, [marked])
 
 

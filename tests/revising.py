@@ -113,6 +113,11 @@ LETTERS_A_CHANGE = 25
 SURROUNDINGS = 64
 TELLING_SIDE = 16
 CHANGED_SIDE = 0.25
+# A copy of a passage's words whose RIVAL_SIDE letters on each side stand at their distance as
+# they stood around the passage, more than RIVAL_LIKENESS of them in sum over both sides, may
+# leave the passage's place in doubt.
+RIVAL_SIDE = 32
+RIVAL_LIKENESS = 1.0
 NEAR_SLACK = 3
 NEAR_COVER = 0.8
 UNSPACED_WEIGHT = 3
@@ -760,6 +765,22 @@ class Expectation(BaseModel):
     same: bool
     expected_anchors: list[Anchor]
     outcome: Outcome
+    # Whether no other copy of the passage's words in the revision it was marked in had
+    # surroundings alike to its own.
+    told_in_first: bool
+
+
+def has_rival(text: str, sought: str, place: int, marked_sides: tuple[str, str]) -> bool:
+    # Whether a copy of the words other than the one at the place has surroundings that may
+    # leave the place in doubt.
+    return any(
+        side_likeness(marked_sides[0], held_sides[0], before=True)
+        + side_likeness(marked_sides[1], held_sides[1], before=False)
+        > RIVAL_LIKENESS
+        for copy in occurrences(text, sought)
+        if copy != place
+        for held_sides in [sides(text, (copy, copy + len(sought)), RIVAL_SIDE)]
+    )
 
 
 def sides(text: str, place: tuple[int, int], size: int) -> tuple[str, str]:
@@ -788,6 +809,9 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         first.span(tail.block, tail.start, tail.end)[1],
     )
     sought = first.text[marked[0] : marked[1]]
+    told_in_first = not has_rival(
+        first.text, sought, marked[0], sides(first.text, marked, RIVAL_SIDE)
+    )
     second_unit = {
         origin: number for number, origin in enumerate(revised.origins) if origin is not None
     }
@@ -800,6 +824,7 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
             same=False,
             expected_anchors=[],
             outcome=Outcome.LOST,
+            told_in_first=told_in_first,
         )
     units = range(span.first_unit, span.last_unit + 1)
     whole = all(unit in second_unit for unit in units) and all(
@@ -824,10 +849,8 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
     copies_first = len(occurrences(first.text, sought))
     copies_second = len(occurrences(second.text, sought))
     held_once = copies_first == copies_second == 1
-    others_told_alike = any(
-        sides(second.text, (copy, copy + len(sought)), SURROUNDINGS) == marked_sides
-        for copy in occurrences(second.text, sought)
-        if copy != region[0]
+    others_told_alike = has_rival(
+        second.text, sought, region[0], sides(first.text, marked, RIVAL_SIDE)
     )
     if same and (
         (held_once and weight(sought) >= DISTINCT_LETTERS) or (intact and not others_told_alike)
@@ -858,6 +881,7 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         same=same,
         expected_anchors=anchors_over(revised.second, surviving),
         outcome=outcome,
+        told_in_first=told_in_first,
     )
 
 
