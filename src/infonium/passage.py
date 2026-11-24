@@ -610,8 +610,8 @@ def surrounded_places(
 
 def distinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
     # A distinct passage, where the other revision holds its very letters, or else letters a
-    # little unlike them with each side of its surroundings found: a text a little unlike
-    # with other surroundings, as the next of a list of references is, is another text. Of
+    # little unlike them with a side of its surroundings found: a text a little unlike with
+    # other surroundings, as the next of a list of references is, is another text. Of
     # several places of letters a little unlike, which are copies of one text, the one whose
     # wider surroundings stand out, and failing that the likest, then the one with the likest
     # surroundings, then the nearest to where it stood. Of copies of a text, one may have
