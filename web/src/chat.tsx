@@ -18,6 +18,7 @@ import {
   type Place,
   type Scope,
 } from "./conversations";
+import { NoteDown, statementTaking } from "./notedown";
 import type { Seat } from "./seat";
 import "./chat.css";
 
@@ -50,13 +51,13 @@ function Spent({ answer }: { answer: Turn["answer"] }) {
 
 function Answer({
   turn,
-  kind,
+  scope,
   citing,
   seat,
   onOpen,
 }: {
   turn: Turn;
-  kind: ScopeKind;
+  scope: Scope;
   citing: Citing;
   seat: Seat | undefined;
   onOpen: Opener;
@@ -64,6 +65,10 @@ function Answer({
   const { answer } = turn;
   const sourceOf = (anchor: Anchor) =>
     answer.sources.find((source) => source.document === anchor.document_id);
+  // The item a citation lies in: the conversation's own, or, in the library's, the item of the
+  // source that holds the citation's document.
+  const itemOf = (anchor: Anchor) =>
+    scope.kind === "item" ? scope.itemId : sourceOf(anchor)?.item;
 
   function titleOf(anchor: Anchor): string {
     const source = sourceOf(anchor);
@@ -101,9 +106,10 @@ function Answer({
             onPoint={point}
           />
           <LostCitations statement={statement} citesAll={false} />
+          <NoteDown taking={statementTaking([statement], itemOf)} label="记到笔记：这句回答" />
         </p>
       ))}
-      {kind === "library" && answer.sources.length > 0 && (
+      {scope.kind === "library" && answer.sources.length > 0 && (
         <p className="sources">
           出处：
           {answer.sources.map((source) => (
@@ -113,7 +119,13 @@ function Answer({
           ))}
         </p>
       )}
-      <Spent answer={answer} />
+      <div className="whole">
+        <Spent answer={answer} />
+        <NoteDown
+          taking={statementTaking(answer.statements, itemOf)}
+          label="记到笔记：整个回答"
+        />
+      </div>
     </div>
   );
 }
@@ -416,7 +428,7 @@ function ChatScope({
         onRetry={() => conversations.read(scope)}
       >
         {(turn) => (
-          <Answer turn={turn} kind={scope.kind} citing={citing} seat={seat} onOpen={onOpen} />
+          <Answer turn={turn} scope={scope} citing={citing} seat={seat} onOpen={onOpen} />
         )}
       </Thread>
       {/* An answer that has arrived is told to a screen reader once, not as it grows. */}

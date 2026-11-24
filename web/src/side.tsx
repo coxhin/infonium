@@ -13,6 +13,8 @@ import type { Anchors } from "./client";
 import { ChatPanel, type ScopeKind } from "./chat";
 import { useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
+import { Heard } from "./heard";
+import { NotebookPanel, useNotebookAsked } from "./notebook";
 import type { Seat, Unshown } from "./seat";
 import "./side.css";
 
@@ -138,7 +140,7 @@ export function SidePanel({
 type Tab = "digest" | "chat" | "notes";
 const TAB_NAMES: Record<Tab, string> = { digest: "摘要", chat: "对话", notes: "笔记" };
 // The tabs that are about one item, which cannot be chosen while none is open.
-const ITEM_TABS: ReadonlySet<Tab> = new Set(["digest", "notes"]);
+const ITEM_TABS: ReadonlySet<Tab> = new Set(["digest"]);
 
 function tabId(tab: Tab): string {
   return `side-tab-${tab}`;
@@ -163,11 +165,12 @@ export function SideColumn({
   onOpen: (itemId: string) => void;
 }) {
   const seating = useSeatingContext();
-  // What the reader chose. With no item open, the library's chat is on show without being
-  // chosen, so that an item opened from the list shows what was chosen before.
+  // What the reader chose. With no item open, the library's chat is on show in place of a tab
+  // about one item without being chosen, so that an item opened from the list shows what was
+  // chosen before.
   const [chosen, setChosen] = useState<Tab>("digest");
   const [chosenScope, setChosenScope] = useState<ScopeKind>("item");
-  const tab: Tab = selected === undefined ? "chat" : chosen;
+  const tab: Tab = selected === undefined && ITEM_TABS.has(chosen) ? "chat" : chosen;
   // Until the reader shows the selected item, the column points at nothing.
   const seat = seated?.itemId === selected ? seated : undefined;
   const citing = useCiting(pointer, selected, seat, unshown);
@@ -194,6 +197,20 @@ export function SideColumn({
   function choose(name: Tab) {
     setFolded(name === tab && !folded);
     setChosen(name);
+  }
+
+  // The notebook asked for from elsewhere comes on show, unfolded.
+  useNotebookAsked(() => {
+    setChosen("notes");
+    setFolded(false);
+  });
+
+  // A passage opened from the notebook leaves the reader in the notebook, and the chat as it
+  // was.
+  function openFromNotebook(itemId: string, anchors: Anchors) {
+    openAt(itemId, anchors);
+    setChosen("notes");
+    setChosenScope(chosenScope);
   }
 
   // A digest may take a model call to write, so it is asked for only once its tab is shown,
@@ -265,11 +282,18 @@ export function SideColumn({
         id={panelId("notes")}
         role="tabpanel"
         aria-labelledby={tabId("notes")}
-        className="panel scrolled"
+        className="panel"
         hidden={tab !== "notes"}
       >
-        <p className="status">笔记本会在以后的版本里加入。</p>
+        <NotebookPanel
+          selected={selected}
+          seat={seat}
+          shown={tab === "notes"}
+          citing={citing}
+          onOpen={openFromNotebook}
+        />
       </div>
+      <Heard />
     </aside>
   );
 }
