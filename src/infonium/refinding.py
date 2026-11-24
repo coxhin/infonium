@@ -554,6 +554,32 @@ def edge_sides(
     )
 
 
+def keeps_its_ends(passage: MarkedLetters, letters: str) -> bool:
+    # Whether letters a little unlike a passage's begin and end as it did: its first and its
+    # last NEIGHBOURS letters, one read otherwise at most and no digit changed, as its
+    # neighbours are asked; where they differ, its words at that end are another's.
+    reach = NEIGHBOURS + NEIGHBOUR_CHANGES
+    return is_side_found(passage.letters[:NEIGHBOURS], letters[:reach]) and is_side_found(
+        passage.letters[-NEIGHBOURS:][::-1], letters[-reach:][::-1]
+    )
+
+
+def has_a_side(passage: MarkedLetters, marked: Spelling, held: Spelling, stretch: Stretch) -> bool:
+    # Whether one side of the passage at least is borne out at a place: by its letters, by
+    # its block's edge, or by its document's edge, which the place keeps too.
+    by_letters = sides_found(passage, marked, held, stretch, ([], []))
+    by_edge = edge_sides(passage, marked, held, stretch)
+    at_edges = (
+        passage.begin == 0 and stretch.start == 0,
+        passage.finish == len(marked.letters) and stretch.end == len(held.letters),
+    )
+    has = (passage.begin > 0, passage.finish < len(marked.letters))
+    return any(
+        (side and (letters or edge)) or kept
+        for side, letters, edge, kept in zip(has, by_letters, by_edge, at_edges, strict=True)
+    )
+
+
 def row_bounds(spelling: Spelling, start: int, end: int) -> tuple[int, int]:
     # Where the table's row that holds a stretch begins and ends.
     before = bisect_right(spelling.row_edges, start) - 1
@@ -1304,7 +1330,8 @@ def found_places(
         # A distinct passage that its revision held once, and that the other holds a little
         # unlike itself at one place only, saying the same and standing nowhere else in its
         # revision, is found there by its letters, as it is where the other holds its very
-        # letters once: what stood around it may have changed with its words. Not where it
+        # letters once: what stood around it may have changed with its words, on one side at
+        # most, but its own first and last words stand there (keeps_its_ends). Not where it
         # stands block by block with new blocks between (parts_apart), found exact there.
         alone = one_place(
             passage,
@@ -1315,6 +1342,8 @@ def found_places(
                 for place in candidates
                 if says_the_same(passage, held.letters[place.start : place.end])
                 and not stood_elsewhere(passage, marked, held, place)
+                and has_a_side(passage, marked, held, place)
+                and keeps_its_ends(passage, held.letters[place.start : place.end])
             ],
         )
         if alone and len(candidates) == 1:
