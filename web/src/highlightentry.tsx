@@ -182,10 +182,17 @@ function CommentField({
     }
   }, [editing, draft, highlight.comment]);
 
+  // The field takes the keyboard when it opens, without scrolling the page: in the one-column
+  // layout the drawer stands over the reader, and the reader's place would be lost.
   useLayoutEffect(() => {
-    if (!editing && returnFocus.current) {
+    const opened = field.current;
+    if (editing && opened !== null) {
+      // What was noted before is gone on with, so the caret stands after it.
+      opened.focus({ preventScroll: true });
+      opened.setSelectionRange(opened.value.length, opened.value.length);
+    } else if (returnFocus.current) {
       returnFocus.current = false;
-      editButton.current?.focus();
+      editButton.current?.focus({ preventScroll: true });
     }
   }, [editing]);
 
@@ -250,7 +257,6 @@ function CommentField({
         <div className="comment-field">
           <textarea
             ref={field}
-            autoFocus
             aria-label="对这条高亮的评论"
             aria-describedby={`comment-keys-${highlight.id}`}
             placeholder="写下你的评论…"
@@ -421,12 +427,22 @@ function useOpening(
       return;
     }
     actedOn.add(opening);
-    if (entry.current !== null) {
-      bringIntoView(entry.current);
-    }
     if (opening.commenting) {
       setEditing(true);
     }
+    // Once the field that opens is drawn: the entry, and then its field, which matters more
+    // where the entry is taller than the list.
+    requestAnimationFrame(() => {
+      const shown = entry.current;
+      if (shown === null) {
+        return;
+      }
+      bringIntoView(shown);
+      const field = shown.querySelector("textarea");
+      if (field !== null) {
+        bringIntoView(field);
+      }
+    });
     if (!chosenInList.has(opening)) {
       const words = wordsOf(passageNow(highlight)).slice(0, SAID_WORDS).trim();
       say(`笔记本里打开了高亮：${words}${opening.commenting ? "。可以写评论了" : ""}`);

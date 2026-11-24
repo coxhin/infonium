@@ -54,14 +54,15 @@
 }
 
 /* An entry: the marked words as a quotation, then what stands under them. The opened one is
-   told apart by a rule of the accent at its edge. */
+   told apart by a rule of the accent at its edge. An entry far down the list is laid out only
+   when it comes near the view; that also clips what it paints to its box, so the box leaves
+   room for a focus ring at its right edge. */
 .highlight {
   position: relative;
-  padding: 0.7rem 0 0.7rem 0.8rem;
+  padding: 0.7rem 0.25rem 0.7rem 0.8rem;
   border-bottom: 1px solid var(--line);
   border-left: 3px solid transparent;
   margin-left: -0.8rem;
-  /* An entry far down the list is laid out only when it comes near the view. */
   content-visibility: auto;
   contain-intrinsic-size: auto 7rem;
 }
