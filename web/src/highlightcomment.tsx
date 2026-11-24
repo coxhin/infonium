@@ -6,16 +6,17 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from "react";
-import type { Highlight } from "./client";
+import { announce } from "./announce";
+import { requestReason, type Highlight } from "./client";
 import { CutText, useCut } from "./cuttext";
-import { noteOnHighlight } from "./highlights";
-import { requestReason } from "./loading";
+import { highlightGone, noteOnHighlight } from "./highlights";
 
 // The most the service keeps of one comment: COMMENT_CHARACTERS in src/infonium/highlight.py.
 // The service counts code points and the field counts UTF-16 units, so a field held to this
 // many never holds more than the service keeps.
 const COMMENT_CHARACTERS = 10_000;
 const AT_BOUND = `评论最多 ${COMMENT_CHARACTERS.toLocaleString()} 字，已经写满。`;
+const GONE = "这条高亮已在别处移除，评论没有保存。";
 // A comment on show is cut after this many lines, as the marked words are cut.
 const COMMENT_LINES = 6;
 // The key code a browser gives a key that an input method takes while it composes.
@@ -103,6 +104,11 @@ export function CommentField({
       setKeeping({ state: "idle" });
       close();
     } catch (error) {
+      // A highlight removed elsewhere has left the list with its entry and this field.
+      if (highlightGone(error)) {
+        announce(GONE);
+        return;
+      }
       settled.current = false;
       setKeeping({ state: "failed", reason: requestReason(error) });
     }

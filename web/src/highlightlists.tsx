@@ -14,6 +14,7 @@ import {
   openHighlight,
   readHighlightsAgain,
   useHighlights,
+  useHighlightsBehind,
   useLibraryHighlights,
   useOpenedHighlight,
   type Opened,
@@ -102,17 +103,24 @@ function Entries({
 }
 
 // A list's place in the notebook, which keeps the keyboard when an entry in it goes away.
+// It says quietly when the list could not be read again, so that the reader knows the list
+// on show may be behind what the service holds.
 function ListPlace({
   label,
   list,
+  behind,
   children,
 }: {
   label: string;
   list: RefObject<HTMLDivElement | null>;
+  behind: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="highlight-list" ref={list} tabIndex={-1} role="region" aria-label={label}>
+      <p className="behind" role="status">
+        {behind && "没能重新读取高亮，下面的列表可能不是最新的。"}
+      </p>
       {children}
     </div>
   );
@@ -161,6 +169,7 @@ export function ItemHighlights({
   // one does not read them again.
   const documentId = seat?.itemId === itemId ? seat.holding : undefined;
   const highlights = useHighlights(itemId, documentId);
+  const behind = useHighlightsBehind(itemId);
   // Another tab may have changed the item's highlights since they were read.
   useEffect(() => {
     if (shown && documentId !== undefined) {
@@ -171,7 +180,7 @@ export function ItemHighlights({
   const list = useRef<HTMLDivElement>(null);
   const actions = useEntryActions(() => ({ citing, onOpen: undefined }), list);
   return (
-    <ListPlace label="这一篇的高亮" list={list}>
+    <ListPlace label="这一篇的高亮" list={list} behind={behind}>
       <ItemHighlightsBody documentId={documentId} highlights={highlights}>
         {(value) => (
           <ul className="highlights">
@@ -223,11 +232,12 @@ export function LibraryHighlights({
   onOpen: Opener;
 }) {
   const library = useLibraryHighlights(shown);
+  const behind = useHighlightsBehind(undefined);
   const opened = useOpenedHighlight();
   const list = useRef<HTMLDivElement>(null);
   const actions = useEntryActions(() => ({ citing, onOpen }), list);
   return (
-    <ListPlace label="库里各篇的高亮" list={list}>
+    <ListPlace label="库里各篇的高亮" list={list} behind={behind}>
       <LibraryHighlightsBody library={library}>
         {(value) =>
           value.map((held) => (

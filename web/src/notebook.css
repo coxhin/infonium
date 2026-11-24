@@ -310,3 +310,15 @@
   font-size: 0.75rem;
   color: var(--muted);
 }
+
+/* Said only when the list could not be read again; empty, it takes no room but stays a live
+   region, so that what it comes to say is heard. */
+.highlight-list .behind {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight-list .behind:empty {
+  margin: 0;
+}

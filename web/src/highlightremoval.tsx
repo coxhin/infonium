@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { Highlight } from "./client";
+import { requestReason, type Highlight } from "./client";
 import { unmark } from "./highlights";
-import { requestReason } from "./loading";
 
 // Why the service refused to remove a highlight, by highlight. The entry leaves the list as
 // soon as its removal is asked for, and is drawn anew when the refusal puts it back, so the

@@ -5,6 +5,7 @@ import {
   makeHighlight,
   readHighlights,
   readLibraryHighlights,
+  Refused,
   removeHighlight,
   type Highlight,
   type ItemHighlights,
@@ -18,7 +19,9 @@ import type { Marked } from "./marking";
 // they stand in the document the item holds now, so they are read again when that document is
 // another, and again whenever the item is opened or the notebook shows them, since another tab
 // may have changed them. A change is shown at once, and taken back when the service refuses it.
-type Shelf = { documentId: string; loaded: Loaded<Highlight[]> };
+// Behind says that the list on show could not be read again when it was last asked for, so
+// that it may not hold what the service holds now.
+type Shelf = { documentId: string; loaded: Loaded<Highlight[]>; behind: boolean };
 
 // The highlight the reader has opened: pressed in the source or chosen in the notebook, which
 // shows it; commenting says that the reader means to note something on it.
@@ -51,6 +54,10 @@ let counted = 0;
 let opened: Opened | undefined;
 // Every item's highlights, as the notebook lists them with no item open.
 let library: Loaded<ItemHighlights[]> = LIBRARY_LOADING;
+let libraryBehind = false;
+// The service answers a change of a highlight that is not in the library, as one removed in
+// another tab, with this status.
+const NOT_FOUND = 404;
 
 function tell(): void {
   listeners.forEach((notify) => notify());
@@ -119,8 +126,8 @@ function read(itemId: string, documentId: string): Promise<void> {
       if (shelf?.documentId !== documentId) {
         return;
       }
-      const kept = loaded.state === "failed" && shelf.loaded.state === "ready";
-      shelves.set(itemId, { documentId, loaded: kept ? shelf.loaded : loaded });
+      const behind = loaded.state === "failed" && shelf.loaded.state === "ready";
+      shelves.set(itemId, { documentId, loaded: behind ? shelf.loaded : loaded, behind });
       tell();
     },
   );
@@ -135,7 +142,8 @@ function reread(itemId: string): Promise<void> {
 
 function readLibrary(): Promise<void> {
   return readList(LIBRARY, readLibraryHighlights, (loaded) => {
-    library = loaded.state === "failed" && library.state === "ready" ? library : loaded;
+    libraryBehind = loaded.state === "failed" && library.state === "ready";
+    library = libraryBehind ? library : loaded;
     tell();
   });
 }
@@ -173,7 +181,7 @@ function apply(itemId: string, change: Change): void {
   const shelf = shelves.get(itemId);
   if (shelf?.loaded.state === "ready") {
     shelves.set(itemId, {
-      documentId: shelf.documentId,
+      ...shelf,
       loaded: { state: "ready", value: change.item(shelf.loaded.value) },
     });
   }
@@ -191,12 +199,30 @@ function begin(itemId: string): void {
   }
 }
 
+// Whether the service refused a change because the highlight is no longer in the library.
+export function highlightGone(error: unknown): boolean {
+  return error instanceof Refused && error.status === NOT_FOUND;
+}
+
+// Takes a highlight out of both lists, and an item with no highlights left out of the
+// library's.
+function removal(itemId: string, highlightId: string): Change {
+  const left = (highlights: Highlight[]) =>
+    highlights.filter((held) => held.id !== highlightId);
+  return {
+    item: left,
+    library: (held) => inItem(itemId, left)(held).filter((kept) => kept.highlights.length > 0),
+  };
+}
+
 // Shows a change before the service has answered it, and takes it back if the service
-// refuses it; the refusal goes on to the caller, which says why. Either way both lists are
-// read again once the service has answered, since a refusal may mean that the list on show
-// was already wrong, as when another tab removed the highlight.
+// refuses it; the refusal goes on to the caller, which says why. A highlight the service no
+// longer holds is taken out of the lists at once, whatever comes of the reading that follows.
+// Either way both lists are read again once the service has answered, since a refusal may mean
+// that the list on show was already wrong, as when another tab removed the highlight.
 async function shownAtOnce(
   itemId: string,
+  highlightId: string,
   change: Change,
   restore: Change,
   request: () => Promise<unknown>,
@@ -208,7 +234,7 @@ async function shownAtOnce(
   try {
     await request();
   } catch (error) {
-    apply(itemId, restore);
+    apply(itemId, highlightGone(error) ? removal(itemId, highlightId) : restore);
     throw error;
   } finally {
     keys.forEach((key) => (paceOf(key).awaited -= 1));
@@ -234,11 +260,19 @@ export function useHighlights(
       void reread(itemId);
       return;
     }
-    shelves.set(itemId, { documentId, loaded: LOADING });
+    shelves.set(itemId, { documentId, loaded: LOADING, behind: false });
     tell();
     void read(itemId, documentId);
   }, [itemId, documentId]);
   return loaded;
+}
+
+// Whether an item's list on show, or the library's where no item is given, could not be read
+// again when it was last asked for.
+export function useHighlightsBehind(itemId: string | undefined): boolean {
+  return useSyncExternalStore(onChange, () =>
+    itemId === undefined ? libraryBehind : (shelves.get(itemId)?.behind ?? false),
+  );
 }
 
 // Every item that has highlights, with them; read again each time the list comes on show,
@@ -304,6 +338,7 @@ export async function noteOnHighlight(
   const restoring = commented((was) => before ?? was);
   await shownAtOnce(
     itemId,
+    highlightId,
     { item: writing, library: inItem(itemId, writing) },
     { item: restoring, library: inItem(itemId, restoring) },
     () => commentHighlight(itemId, highlightId, text),
@@ -335,15 +370,10 @@ export async function unmark(itemId: string, highlightId: string): Promise<void>
   const itemAt = placeIn(listed, highlightId);
   const groupItemAt = placeIn(group?.highlights, highlightId);
   const highlight = listed?.[itemAt] ?? group?.highlights[groupItemAt];
-  const left = (highlights: Highlight[]) =>
-    highlights.filter((held) => held.id !== highlightId);
-  await shownAtOnce(
+  const removed = shownAtOnce(
     itemId,
-    {
-      item: left,
-      library: (held) =>
-        inItem(itemId, left)(held).filter((kept) => kept.highlights.length > 0),
-    },
+    highlightId,
+    removal(itemId, highlightId),
     {
       item: (highlights) =>
         highlight === undefined ? highlights : putBack(highlights, itemAt, highlight),
@@ -358,6 +388,12 @@ export async function unmark(itemId: string, highlightId: string): Promise<void>
     },
     () => removeHighlight(itemId, highlightId),
   );
+  // A highlight already gone, as one removed in another tab, is removed as was asked.
+  await removed.catch((error: unknown) => {
+    if (!highlightGone(error)) {
+      throw error;
+    }
+  });
   if (opened?.itemId === itemId && opened.highlightId === highlightId) {
     opened = undefined;
   }
