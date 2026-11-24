@@ -4,6 +4,12 @@
    shows the translation they lie under it, seen where no area covers the lines or where an
    area lets the source through. */
 
+/* The colours blend with the page alone, so that the pages around a page with highlights
+   scroll as they did. */
+.pages .page {
+  isolation: isolate;
+}
+
 .page-marks,
 .page-selection {
   position: absolute;
@@ -51,10 +57,12 @@
   background-image: linear-gradient(var(--page-area-mark), var(--page-area-mark));
 }
 
+/* An area holds lines up to the next area's paper, which would cover a line under its foot:
+   a commented highlight's area is told by a bar at its side. */
 .page-translation .area.marked[data-mark="commented"] {
   box-shadow:
     0 0 0 max(2px, 0.2em) var(--paper, transparent),
-    inset 0 -2px 0 var(--page-mark-edge);
+    inset 3px 0 0 var(--page-mark-edge);
 }
 
 .page-translation .area.marked[data-mark="opened"] {

@@ -9,11 +9,13 @@
   --on-accent: light-dark(#ffffff, #17181a);
   --found: light-dark(#ffe08a, #6e5a14);
   --failure: light-dark(#b3261e, #f2a59f);
-  /* Marks on the pages of a PDF, which are light whatever the theme: one colour for both. */
-  --page-mark: rgb(132 222 112 / 0.5);
-  --page-mark-opened: rgb(92 204 76 / 0.7);
-  --page-mark-edge: rgb(36 128 44);
-  --page-area-mark: rgb(132 222 112 / 0.22);
+  /* Marks on the pages of a PDF, which are light whatever the theme: one colour for both,
+     multiplied into the paper, so that on white they come to the light colours of --marked,
+     --opened and --marked-line. */
+  --page-mark: rgb(155 217 151 / 0.5);
+  --page-mark-opened: rgb(104 195 96 / 0.8);
+  --page-mark-edge: rgb(47 125 50);
+  --page-area-mark: rgb(155 217 151 / 0.25);
   --page-selection: rgb(80 140 255 / 0.36);
   font-family:
     system-ui,

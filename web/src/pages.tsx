@@ -266,8 +266,8 @@ function Page({
         data-page={number}
       >
         <canvas ref={copy} />
-        <MarksLayer marks={marks} under={false} />
-        <SelectionLayer drawing={drawing} page={number} under={false} />
+        {paired && <MarksLayer marks={marks} under={false} />}
+        {paired && <SelectionLayer drawing={drawing} page={number} under={false} />}
         <Boxes boxes={boxes} under={false} />
       </div>
       <div

@@ -66,6 +66,12 @@ type Press = {
   timer: number | undefined;
 };
 
+function sameSpan(one: Span, other: Span): boolean {
+  return (
+    one.blockNumber === other.blockNumber && one.start === other.start && one.end === other.end
+  );
+}
+
 function pointOn(page: HTMLElement, x: number, y: number): Point {
   const rect = page.getBoundingClientRect();
   return { x: (x - rect.left) / rect.width, y: (y - rect.top) / rect.height };
@@ -262,7 +268,8 @@ export function usePageSelecting(
         return;
       }
       const focus = spotAt(pointer.x, pointer.y, false);
-      if (focus !== undefined) {
+      // Within the same word nothing is drawn again.
+      if (focus !== undefined && !(shown !== undefined && sameSpan(shown.to, focus.span))) {
         draw(press.spot.span, focus.span);
       }
       const view = viewOf(root as Element);
