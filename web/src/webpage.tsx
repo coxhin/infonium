@@ -163,6 +163,12 @@ export function WebpageView({
   // again when the view comes on show again.
   const shownPointing = useRef<Pointed>(undefined);
   const settled = useRef<Document>(undefined);
+  // Counted once for each change of the highlights, not at each drawing of the view, which
+  // happens at every step of a scroll while a selection is handed over.
+  const unplaced = useMemo(
+    () => (ready === undefined ? 0 : unplacedCount(marking.marked, ready.placed)),
+    [marking.marked, ready],
+  );
   const holders = useMemo(
     () =>
       framed === undefined || ready === undefined ? undefined : holdersOf(framed.document, ready),
@@ -343,7 +349,7 @@ export function WebpageView({
       <UnplacedNote
         total={blocks.length}
         placed={ready.placed.length}
-        marked={unplacedCount(marking.marked, ready.placed)}
+        marked={unplaced}
         setting={setting}
       />
       <iframe
