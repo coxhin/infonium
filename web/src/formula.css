@@ -1,11 +1,31 @@
-/* A formula set as MathML, in the run of its text. */
+/* A formula set by KaTeX, in the run of its text, at KaTeX's own size: 1.21 times the text's,
+   which gives its letters the height of the reader's (an x 0.44 of the size in KaTeX's font,
+   0.54 in the text's and 0.52 in a translated page's).
 
-math.formula {
-  font-size: 1.05em;
+   A formula draws within its own box and a little past it, as letters do: what it moves out
+   of the box with a negative space or an overlap is cut, and it grows no taller than 40 times
+   the size of its text, over three times the tallest formula of the papers tried (12 times).
+   Clipped, the box still stands on the baseline of its text. */
+
+.formula[role="math"] {
+  display: inline-block;
+  max-height: 40em;
+  overflow: clip;
+  overflow-clip-margin: 0.25em;
 }
 
-math.formula.display {
+/* A formula on lines of its own scrolls sideways in its own box where it is wider than that,
+   and never widens the page. Its letters reach a few pixels above and below the box KaTeX
+   gives them, which would scroll it up and down as well: it is given room for them, and the
+   rest is cut. */
+.formula.display {
   display: block;
-  margin: 0.3em 0;
+  margin: 0.15em 0;
+  padding: 0.15em 0;
   overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.formula.display .katex-display {
+  margin: 0;
 }

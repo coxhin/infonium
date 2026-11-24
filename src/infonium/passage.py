@@ -220,8 +220,10 @@ def block_letters(text: str) -> BlockLetters:
 
 
 class KeptSpellings:
-    # The letters of the documents searched last. A document never changes under its id, so
-    # its letters are dropped only for room.
+    # The letters of the documents searched last, kept by document id: what the search
+    # prepares of a document's blocks, not the document. A document never changes under its
+    # id, so its letters are dropped only for room. The documents themselves, parsed from the
+    # library, are kept by owner and document id in standings.ParsedDocuments.
     def __init__(self, room: int) -> None:
         self.room = room
         self.spellings: OrderedDict[str, Spelling] = OrderedDict()

@@ -28,7 +28,10 @@ class Revision(BaseModel):
 
 class Revisions:
     # The revisions of one owner's items, read in one transaction. A revision is numbered when
-    # its document is kept (Library.keep_document), and its number never changes.
+    # its document is kept (Library.keep_document), and its number never changes. No revision
+    # or document is ever removed; one that would be must reckon with the rows of highlights
+    # and of notes' passages, whose foreign keys to the document and the item it points into
+    # forbid deleting them.
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.connection = transaction.connection
         self.owner = transaction.owner
