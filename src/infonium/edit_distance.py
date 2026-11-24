@@ -68,16 +68,24 @@ def partings(head: str, tail: str, text: str) -> list[int]:
 def nearest_stretches(needle: str, text: str, apart: int) -> list[Stretch]:
     # The stretches of the text that the fewest changes make the needle: one for each place
     # they end at, ends no more than apart letters from the one before being one place, as
-    # they are where a letter could go with the stretch or beside it. A text that repeats
-    # itself, as some recognitions write, holds the needle at several places.
+    # they are where a letter could go with the stretch or beside it. Of such ends and of the
+    # beginnings that go with one, the stretch takes the widest: a letter that could go with
+    # it or beside it goes with it. A text that repeats itself, as some recognitions write,
+    # holds the needle at several places.
     ends = end_distances(needle, text, ANYWHERE)
     distance = min(ends)
     places: list[int] = []
     for at, held in enumerate(ends):
-        if held == distance and (not places or at - places[-1] > apart):
+        if held == distance and places and at - places[-1] <= apart:
+            places[-1] = at
+        elif held == distance:
             places.append(at)
     return [
-        Stretch(start=at - starts.index(min(starts)), end=at + 1, distance=distance)
+        Stretch(
+            start=at - (len(starts) - 1 - starts[::-1].index(min(starts))),
+            end=at + 1,
+            distance=distance,
+        )
         for at in places
         for starts in [end_distances(needle[::-1], text[: at + 1][::-1], AT_THE_BEGINNING)]
     ]
