@@ -1,35 +1,32 @@
-import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-  type Ref,
-} from "react";
+import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 import type { Opener } from "./chat";
 import type { Citing } from "./citing";
-import type { Anchors, NoteDraft } from "./client";
-import { revisionLink } from "./links";
 import {
+  addLinked,
   attachWriter,
-  GONE,
+  failureText,
+  freshen,
   handIn,
   keepAgain,
+  keepAsNew,
+  letGo,
   linkedPassage,
-  openNote,
+  newPassageId,
+  OVERTAKEN,
   passagesOf,
-  readAgain,
-  takeJustMade,
+  putInPlace,
+  REMOVED,
   textOf,
+  useOpening,
   useSession,
   type Keeping,
   type Linked,
-  type Session,
+  type Ready,
+  type Text,
   type Writer,
-} from "./notes";
+} from "./notekeeping";
+import { openNote, takeJustMade } from "./notelist";
 import {
   chipAt,
   isWebAddress,
@@ -41,6 +38,7 @@ import {
   type ChipLook,
   type Hands,
 } from "./noteschema";
+import { NoteTools } from "./notetools";
 import type { Seat } from "./seat";
 import "./noteeditor.css";
 
@@ -51,8 +49,9 @@ type Shown = { noteId: string; seat: Seat | undefined; citing: Citing; onOpen: O
 
 // How long after the last key a change is kept.
 const MOMENT_MS = 800;
-const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
-const NO_WEB_ADDRESS = "链接只能指向 http 或 https 开头的网址，不能指向本应用自己。";
+// The service keeps a title of up to this many characters (TITLE_CHARACTERS in note.py).
+const TITLE_CHARACTERS = 200;
+const NO_WEB_ADDRESS = "链接只能指向其他网站的 http 或 https 网址。";
 const EDITOR_PROPS = {
   attributes: {
     class: "note-text",
@@ -62,163 +61,6 @@ const EDITOR_PROPS = {
     "aria-description": "Esc 回到格式按钮；Alt+Enter 打开光标处的引文或链接",
   },
 };
-
-const LINK_TOOL = "链接";
-const SINK_TOOL = "缩进一层";
-const LIFT_TOOL = "退出一层";
-
-type Control = {
-  name: string;
-  glyph: string;
-  keys: string | undefined;
-  typed: string | undefined;
-  run: (editor: Editor) => boolean;
-  active: ((editor: Editor) => boolean) | undefined;
-};
-
-const CONTROLS: Control[] = [
-  {
-    name: "一级标题",
-    glyph: "H1",
-    keys: `${MOD}+Alt+1`,
-    typed: "# ",
-    run: (editor) => editor.chain().focus().toggleHeading({ level: 1 }).run(),
-    active: (editor) => editor.isActive("heading", { level: 1 }),
-  },
-  {
-    name: "二级标题",
-    glyph: "H2",
-    keys: `${MOD}+Alt+2`,
-    typed: "## ",
-    run: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run(),
-    active: (editor) => editor.isActive("heading", { level: 2 }),
-  },
-  {
-    name: "三级标题",
-    glyph: "H3",
-    keys: `${MOD}+Alt+3`,
-    typed: "### ",
-    run: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run(),
-    active: (editor) => editor.isActive("heading", { level: 3 }),
-  },
-  {
-    name: "加粗",
-    glyph: "B",
-    keys: `${MOD}+B`,
-    typed: "**文字**",
-    run: (editor) => editor.chain().focus().toggleBold().run(),
-    active: (editor) => editor.isActive("bold"),
-  },
-  {
-    name: "斜体",
-    glyph: "I",
-    keys: `${MOD}+I`,
-    typed: "*文字*",
-    run: (editor) => editor.chain().focus().toggleItalic().run(),
-    active: (editor) => editor.isActive("italic"),
-  },
-  {
-    name: "删除线",
-    glyph: "S",
-    keys: `${MOD}+Shift+S`,
-    typed: "~~文字~~",
-    run: (editor) => editor.chain().focus().toggleStrike().run(),
-    active: (editor) => editor.isActive("strike"),
-  },
-  {
-    name: "行内代码",
-    glyph: "`",
-    keys: `${MOD}+E`,
-    typed: "`文字`",
-    run: (editor) => editor.chain().focus().toggleCode().run(),
-    active: (editor) => editor.isActive("code"),
-  },
-  {
-    name: "无序列表",
-    glyph: "•",
-    keys: `${MOD}+Shift+8`,
-    typed: "- ",
-    run: (editor) => editor.chain().focus().toggleBulletList().run(),
-    active: (editor) => editor.isActive("bulletList"),
-  },
-  {
-    name: "有序列表",
-    glyph: "1.",
-    keys: `${MOD}+Shift+7`,
-    typed: "1. ",
-    run: (editor) => editor.chain().focus().toggleOrderedList().run(),
-    active: (editor) => editor.isActive("orderedList"),
-  },
-  {
-    name: SINK_TOOL,
-    glyph: "⇥",
-    keys: "Tab",
-    typed: undefined,
-    run: (editor) => editor.chain().focus().sinkListItem("listItem").run(),
-    active: undefined,
-  },
-  {
-    name: LIFT_TOOL,
-    glyph: "⇤",
-    keys: "Shift+Tab",
-    typed: undefined,
-    run: (editor) => editor.chain().focus().liftListItem("listItem").run(),
-    active: undefined,
-  },
-  {
-    name: "引用",
-    glyph: "❝",
-    keys: `${MOD}+Shift+B`,
-    typed: "> ",
-    run: (editor) => editor.chain().focus().toggleBlockquote().run(),
-    active: (editor) => editor.isActive("blockquote"),
-  },
-  {
-    name: "代码块",
-    glyph: "{ }",
-    keys: `${MOD}+Alt+C`,
-    typed: "``` ",
-    run: (editor) => editor.chain().focus().toggleCodeBlock().run(),
-    active: (editor) => editor.isActive("codeBlock"),
-  },
-  {
-    name: "分隔线",
-    glyph: "—",
-    keys: undefined,
-    typed: "---",
-    run: (editor) => editor.chain().focus().setHorizontalRule().run(),
-    active: undefined,
-  },
-];
-
-const ROVING_KEYS: Record<string, ((at: number, count: number) => number) | undefined> = {
-  ArrowRight: (at, count) => (at + 1) % count,
-  ArrowLeft: (at, count) => (at - 1 + count) % count,
-  Home: () => 0,
-  End: (_, count) => count - 1,
-};
-
-// The toolbar is one stop of the keyboard's Tab; the arrows, Home and End move within it.
-function rove(event: KeyboardEvent<HTMLDivElement>) {
-  const move = ROVING_KEYS[event.key];
-  if (move === undefined) {
-    return;
-  }
-  const buttons = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
-  ];
-  const at = buttons.findIndex((button) => button === document.activeElement);
-  buttons[move(Math.max(at, 0), buttons.length)]?.focus();
-  event.preventDefault();
-}
-
-function controlTitle(control: Control): string {
-  const ways = [
-    control.keys === undefined ? undefined : `按 ${control.keys}`,
-    control.typed === undefined ? undefined : `或输入 ${control.typed}`,
-  ].filter((way) => way !== undefined);
-  return ways.length === 0 ? control.name : `${control.name}（${ways.join("，")}）`;
-}
 
 function chipTitle(linked: Linked): string {
   const lines = [
@@ -239,18 +81,10 @@ function lookOf(linked: Linked, citing: Citing): ChipLook {
   const { whereabouts } = linked;
   return {
     title: chipTitle(linked),
-    standing:
-      whereabouts.kind === "lost" ? "lost" : whereabouts.exact ? "found" : "moved",
+    standing: whereabouts.kind === "lost" ? "lost" : whereabouts.exact ? "found" : "moved",
     revision: whereabouts.kind === "lost" ? `第 ${whereabouts.revision} 版` : undefined,
     pressed: whereabouts.kind === "found" && citing.isPressed(whereabouts.anchors[0]),
   };
-}
-
-// A passage the item's current document has lost is shown in the revision it was linked in.
-// Both steps run in one task, so that the column waits for that revision's reader.
-function openInRevision(citing: Citing, anchors: Anchors, itemId: string, revision: number) {
-  citing.awaitOpening(anchors, itemId);
-  location.hash = revisionLink(itemId, revision);
 }
 
 function openAddress(address: string): void {
@@ -259,56 +93,95 @@ function openAddress(address: string): void {
   }
 }
 
+// A passage carried on the clipboard, which may come from any page: what is not a passage of
+// a note as this app writes it is not taken as one.
+function carriedLinked(carried: string): Linked | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(carried);
+  } catch {
+    // Not JSON: the chip is pasted as words that link to nothing.
+    return undefined;
+  }
+  const linked = value as Partial<Linked> | null;
+  return typeof linked?.itemId === "string" &&
+    typeof linked.title === "string" &&
+    Array.isArray(linked.passage?.anchors) &&
+    linked.passage.anchors.length > 0 &&
+    (linked.whereabouts?.kind === "found" || linked.whereabouts?.kind === "lost")
+    ? (linked as Linked)
+    : undefined;
+}
+
+// Where the note's text stands, said to a screen reader as it changes; what was written and
+// not sent is offered a way on.
 function KeepingNote({
   noteId,
   keeping,
   typing,
+  onNew,
 }: {
   noteId: string;
   keeping: Keeping;
   typing: boolean;
+  onNew: () => void;
 }) {
-  if (keeping.state === "unkept") {
-    return (
-      <p className="keeping failed" role="alert">
-        没有保存：{keeping.reason}
-        <button onClick={() => keepAgain(noteId)}>重试</button>
-      </p>
-    );
+  const [problem, setProblem] = useState<string>();
+  function attempt(doing: Promise<unknown>) {
+    setProblem(undefined);
+    doing.catch((error: unknown) => setProblem(failureText(error)));
   }
-  return (
-    <p className="keeping">
-      {typing || keeping.state === "keeping" ? "正在保存…" : "已保存"}
-    </p>
-  );
+  switch (keeping.state) {
+    case "unkept":
+      return (
+        <p className="keeping failed" role="alert">
+          没有保存：{keeping.reason}
+          <button onClick={() => keepAgain(noteId)}>重试</button>
+        </p>
+      );
+    case "overtaken":
+      return (
+        <div className="keeping failed" role="alert">
+          <p>{OVERTAKEN}写下的内容都还在这里。</p>
+          <button onClick={() => attempt(putInPlace(noteId))}>用这里的替换那边的</button>
+          <button onClick={onNew}>另存为新笔记</button>
+          <button onClick={() => letGo(noteId)}>放弃这里的，读入那边的</button>
+          {problem !== undefined && <p>没有做到：{problem}</p>}
+        </div>
+      );
+    case "removed":
+      return (
+        <div className="keeping failed" role="alert">
+          <p>{REMOVED}写下的内容都还在这里。</p>
+          <button onClick={onNew}>另存为新笔记</button>
+          {problem !== undefined && <p>没有做到：{problem}</p>}
+        </div>
+      );
+    case "kept":
+    case "keeping":
+      return (
+        <p className="keeping" role="status">
+          {typing || keeping.state === "keeping" ? "正在保存…" : "已保存"}
+        </p>
+      );
+  }
 }
 
 function Back({ ref }: { ref?: Ref<HTMLButtonElement> }) {
   return (
-    <button
-      ref={ref}
-      className="back"
-      aria-label="回到笔记列表"
-      onClick={() => openNote(undefined)}
-    >
+    <button ref={ref} className="back" aria-label="回到笔记列表" onClick={() => openNote(undefined)}>
       ←<span className="back-words"> 笔记列表</span>
     </button>
   );
 }
 
-function Writing({
-  noteId,
-  seat,
-  citing,
-  onOpen,
-  session,
-  start,
-}: Shown & { session: Session; start: NoteDraft }) {
+function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready }) {
+  const start = textOf(ready);
   const [title, setTitle] = useState(start.title);
   const [typing, setTyping] = useState(false);
+  const [newProblem, setNewProblem] = useState<string>();
   // The address being given to a link, and why it was refused.
   const [linking, setLinking] = useState<{ address: string; refused: boolean }>();
-  const [toolAt, setToolAt] = useState(CONTROLS[0]?.name ?? LINK_TOOL);
   const written = useRef({ title: start.title, dirty: false });
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const toolbar = useRef<HTMLDivElement>(null);
@@ -333,14 +206,16 @@ function Writing({
   // What the editor asks of the note, and what the note asks of the editor, reach both as they
   // are at the latest render: React may make the editor anew, as it does while it checks a
   // component twice in development, and a closure of an earlier render holds the editor gone.
-  const acts = useRef<Hands>({ press() {}, openHere: () => false, leave() {}, askLink() {} });
-  const writing = useRef<Writer>({ append: () => 0, flush() {} });
+  const acts = useRef<Hands | undefined>(undefined);
+  const writing = useRef<Writer | undefined>(undefined);
   const hands = useMemo<Hands>(
     () => ({
-      press: (passageId) => acts.current.press(passageId),
-      openHere: () => acts.current.openHere(),
-      leave: () => acts.current.leave(),
-      askLink: () => acts.current.askLink(),
+      press: (passageId) => acts.current?.press(passageId),
+      openHere: () => acts.current?.openHere() ?? false,
+      leave: () => acts.current?.leave(),
+      askLink: () => acts.current?.askLink(),
+      carry: (passageId) => acts.current?.carry(passageId),
+      adopt: (passageId, carried) => acts.current?.adopt(passageId, carried) ?? passageId,
     }),
     [],
   );
@@ -357,7 +232,7 @@ function Writing({
     onBlur: () => handInTyped(false),
   });
 
-  function draft(): NoteDraft {
+  function text(): Text {
     return {
       title: written.current.title,
       markdown: markdownOf(editor),
@@ -365,21 +240,27 @@ function Writing({
     };
   }
 
-  function handInTyped(leaving: boolean): number | undefined {
+  // What was typed is handed in, unless a word is still being composed by an input method,
+  // which is handed in once it is written; as the page is left it is handed in as it stands.
+  function handInTyped(leaving: boolean): void {
     clearTimeout(timer.current);
     if (!written.current.dirty) {
-      return undefined;
+      return;
+    }
+    if (editor.view.composing && !leaving) {
+      timer.current = setTimeout(() => writing.current?.flush(false), MOMENT_MS);
+      return;
     }
     written.current.dirty = false;
     setTyping(false);
-    return handIn(noteId, draft(), leaving);
+    handIn(noteId, text(), leaving);
   }
 
   function changed() {
     written.current.dirty = true;
     setTyping(true);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => writing.current.flush(false), MOMENT_MS);
+    timer.current = setTimeout(() => writing.current?.flush(false), MOMENT_MS);
   }
 
   function press(passageId: string) {
@@ -390,12 +271,31 @@ function Writing({
     const { whereabouts, itemId } = linked;
     const { seat: seated, citing: pointing, onOpen: opening } = near.current;
     if (whereabouts.kind === "lost") {
-      openInRevision(pointing, whereabouts.anchors, itemId, whereabouts.revision);
+      pointing.openInRevision(whereabouts.anchors, itemId, whereabouts.revision);
     } else if (seated?.itemId === itemId) {
       pointing.point(whereabouts.anchors);
     } else {
       opening(itemId, whereabouts.anchors);
     }
+  }
+
+  // A pasted chip goes under the id this note holds its very passage by; one this note does
+  // not hold is taken with its passage under a new id; one that carries no passage links to
+  // nothing unless this note holds its id.
+  function adoptPasted(passageId: string, carried: string | undefined): string {
+    const held = linkedPassage(noteId, passageId);
+    const linked = carried === undefined ? undefined : carriedLinked(carried);
+    const taken = (id: string) => linkedPassage(noteId, id) !== undefined;
+    if (linked === undefined) {
+      return held !== undefined && carried === undefined ? passageId : newPassageId(taken);
+    }
+    const same = JSON.stringify(linked.passage);
+    if (held !== undefined && JSON.stringify(held.passage) === same) {
+      return passageId;
+    }
+    const fresh = newPassageId(taken);
+    addLinked(noteId, new Map([[fresh, linked]]));
+    return fresh;
   }
 
   acts.current = {
@@ -418,33 +318,37 @@ function Writing({
     askLink() {
       setLinking({ address: String(editor.getAttributes("link").href ?? ""), refused: false });
     },
+    carry(passageId) {
+      const linked = linkedPassage(noteId, passageId);
+      return linked === undefined ? undefined : JSON.stringify(linked);
+    },
+    adopt: adoptPasted,
   };
 
   writing.current = {
+    text,
     append(markdown) {
       const end = editor.state.doc.content.size;
       editor.commands.insertContentAt(editor.isEmpty ? { from: 0, to: end } : end, markdown, {
         contentType: "markdown",
         updateSelection: false,
       });
-      written.current.dirty = true;
-      return handInTyped(false) ?? 0;
+      changed();
     },
-    flush: (leaving) => {
-      handInTyped(leaving);
-    },
+    flush: handInTyped,
   };
 
   useEffect(
     () =>
       attachWriter(noteId, {
-        append: (markdown) => writing.current.append(markdown),
-        flush: (leaving) => writing.current.flush(leaving),
+        text: () => writing.current?.text() ?? start,
+        append: (markdown) => writing.current?.append(markdown),
+        flush: (leaving) => writing.current?.flush(leaving),
       }),
     [],
   );
   // What was typed is handed in when the note is left, and when another item comes on show.
-  useEffect(() => () => writing.current.flush(false), [seat?.itemId]);
+  useEffect(() => () => writing.current?.flush(false), [seat?.itemId]);
   useEffect(() => {
     if (linking !== undefined) {
       addressField.current?.focus();
@@ -452,26 +356,33 @@ function Writing({
   }, [linking === undefined]);
 
   const looks = new Map(
-    [...session.linked].map(([passageId, linked]) => [passageId, lookOf(linked, citing)]),
+    [...ready.linked].map(([passageId, linked]) => [passageId, lookOf(linked, citing)]),
   );
   const lookKey = JSON.stringify([...looks]);
   useEffect(() => showChips(editor, looks), [lookKey, editor]);
 
-  const active = useEditorState({
+  const here = useEditorState({
     editor,
     selector: ({ editor: shown }) => ({
-      controls: CONTROLS.map((control) => control.active?.(shown)),
-      sinkable: shown.can().sinkListItem("listItem"),
-      liftable: shown.can().liftListItem("listItem"),
       chip: chipAt(shown.state),
       address: shown.isActive("link") ? String(shown.getAttributes("link").href ?? "") : undefined,
     }),
   });
 
-  function retitle(text: string) {
-    setTitle(text);
-    written.current.title = text;
+  function retitle(words: string) {
+    setTitle(words);
+    written.current.title = words;
     changed();
+  }
+
+  // What is written here, overtaken or of a removed note, is kept as a new note, opened.
+  function keepHereAsNew() {
+    handInTyped(false);
+    setNewProblem(undefined);
+    keepAsNew(noteId).then(
+      (note) => openNote(note.id),
+      (error: unknown) => setNewProblem(failureText(error)),
+    );
   }
 
   function link(event: FormEvent) {
@@ -485,7 +396,11 @@ function Writing({
     if (editor.state.selection.empty && !editor.isActive("link")) {
       // What is typed after the address is not part of the link.
       chain
-        .insertContent({ type: "text", text: address, marks: [{ type: "link", attrs: { href: address } }] })
+        .insertContent({
+          type: "text",
+          text: address,
+          marks: [{ type: "link", attrs: { href: address } }],
+        })
         .unsetMark("link")
         .run();
     } else {
@@ -499,56 +414,30 @@ function Writing({
     setLinking(undefined);
   }
 
-  function disabled(tool: string): boolean {
-    return (tool === SINK_TOOL && !active.sinkable) || (tool === LIFT_TOOL && !active.liftable);
-  }
-  // The control the keyboard's Tab stops at: the one last focused, while it can be used.
-  const stop = disabled(toolAt) ? CONTROLS[0]?.name : toolAt;
-
-  const chipLinked = active.chip === undefined ? undefined : session.linked.get(active.chip);
+  const chipLinked = here.chip === undefined ? undefined : ready.linked.get(here.chip);
   const [strange] = useState(() => unheld(editor, start.markdown));
 
   return (
     <div className="note-editor">
       <header>
         <Back ref={back} />
-        <KeepingNote noteId={noteId} keeping={session.keeping} typing={typing} />
-        <div
-          className="note-tools"
-          role="toolbar"
-          aria-label="格式"
+        <KeepingNote
+          noteId={noteId}
+          keeping={ready.keeping}
+          typing={typing}
+          onNew={keepHereAsNew}
+        />
+        {newProblem !== undefined && (
+          <p className="keeping failed" role="alert">
+            没有另存：{newProblem}
+          </p>
+        )}
+        <NoteTools
           ref={toolbar}
-          onKeyDown={rove}
-        >
-          {CONTROLS.map((control, index) => (
-            <button
-              key={control.name}
-              aria-label={control.name}
-              title={controlTitle(control)}
-              aria-keyshortcuts={control.keys?.replace("⌘", "Meta").replace("Ctrl", "Control")}
-              aria-pressed={control.active === undefined ? undefined : active.controls[index]}
-              disabled={disabled(control.name)}
-              tabIndex={control.name === stop ? 0 : -1}
-              onFocus={() => setToolAt(control.name)}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => control.run(editor)}
-            >
-              {control.glyph}
-            </button>
-          ))}
-          <button
-            aria-label={LINK_TOOL}
-            title={`链接（按 ${MOD}+K，或输入 [文字](网址)）`}
-            aria-keyshortcuts={MOD === "⌘" ? "Meta+K" : "Control+K"}
-            aria-pressed={active.address !== undefined}
-            tabIndex={LINK_TOOL === stop ? 0 : -1}
-            onFocus={() => setToolAt(LINK_TOOL)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => acts.current.askLink()}
-          >
-            链接
-          </button>
-        </div>
+          editor={editor}
+          linking={here.address !== undefined}
+          onLink={() => acts.current?.askLink()}
+        />
         {linking !== undefined && (
           <form className="note-linking" onSubmit={link}>
             <input
@@ -566,7 +455,7 @@ function Writing({
               }}
             />
             <button>确定</button>
-            {active.address !== undefined && (
+            {here.address !== undefined && (
               <button type="button" onClick={unlink}>
                 去掉链接
               </button>
@@ -598,28 +487,29 @@ function Writing({
         className="note-title"
         aria-label="标题"
         placeholder="标题"
+        maxLength={TITLE_CHARACTERS}
         value={title}
         onChange={(event) => retitle(event.target.value)}
         onBlur={() => handInTyped(false)}
       />
       <EditorContent editor={editor} className="note-body" />
-      {chipLinked !== undefined && active.chip !== undefined && (
+      {chipLinked !== undefined && here.chip !== undefined && (
         <p className="note-here">
           <span>引文：{chipLinked.title}</span>
-          <button onClick={() => press(active.chip ?? "")} title="Alt+Enter">
+          <button onClick={() => press(here.chip ?? "")} title="Alt+Enter">
             显示这段原文
           </button>
         </p>
       )}
-      {active.address !== undefined && active.chip === undefined && (
+      {here.address !== undefined && here.chip === undefined && (
         <p className="note-here">
-          <span>链接：{active.address}</span>
-          {isWebAddress(active.address) && (
-            <a href={active.address} target="_blank" rel="noreferrer noopener">
+          <span>链接：{here.address}</span>
+          {isWebAddress(here.address) && (
+            <a href={here.address} target="_blank" rel="noreferrer noopener">
               在新标签页打开
             </a>
           )}
-          <button onClick={() => acts.current.askLink()}>修改</button>
+          <button onClick={() => acts.current?.askLink()}>修改</button>
         </p>
       )}
     </div>
@@ -627,24 +517,24 @@ function Writing({
 }
 
 export default function NoteEditor({ noteId, seat, citing, onOpen }: Shown) {
+  useOpening(noteId);
   const session = useSession(noteId);
-  const text = session === undefined ? undefined : textOf(session);
-  if (session?.note.state === "failed") {
+  if (session?.state === "failed") {
     return (
       <div className="note-editor">
         <header>
           <Back />
         </header>
         <p className="status failed">
-          {session.note.reason}
-          {session.note.reason !== GONE && (
-            <button onClick={() => readAgain(noteId)}>重试</button>
+          {session.reason}
+          {!session.gone && (
+            <button onClick={() => void freshen(noteId).catch(() => undefined)}>重试</button>
           )}
         </p>
       </div>
     );
   }
-  if (session === undefined || text === undefined) {
+  if (session?.state !== "ready") {
     return (
       <div className="note-editor">
         <header>
@@ -654,14 +544,15 @@ export default function NoteEditor({ noteId, seat, citing, onOpen }: Shown) {
       </div>
     );
   }
+  // Each reading of the note is written in an editor of its own.
   return (
     <Writing
+      key={session.reading}
       noteId={noteId}
       seat={seat}
       citing={citing}
       onOpen={onOpen}
-      session={session}
-      start={text}
+      ready={session}
     />
   );
 }

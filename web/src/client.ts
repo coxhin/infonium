@@ -27,8 +27,12 @@ export type ItemRevisions = Schemas["ItemRevisions"];
 export type Highlight = Schemas["HighlightView"];
 export type ItemHighlights = Schemas["ItemHighlights"];
 export type NoteEntry = Schemas["NoteEntry"];
-export type Note = Schemas["NoteView"];
-export type NoteDraft = Schemas["NoteDraft"];
+// A note's edition, a whole number from 1: the service keeps a draft only of a later edition
+// than the note's. The service's side of it is being built; until the protocol names it, it is
+// added to the protocol's own types here.
+type Edition = { edition: number };
+export type Note = Schemas["NoteView"] & Edition;
+export type NoteDraft = Schemas["NoteDraft"] & Edition;
 export type LinkedPassage = Schemas["LinkedPassage"];
 // The anchors of a passage: one at least, of one document, in the order of its blocks.
 export type Anchors = [Anchor, ...Anchor[]];
@@ -348,30 +352,39 @@ export function readLibraryHighlights(): Promise<ItemHighlights[]> {
   return settled(api.GET("/api/highlights"));
 }
 
+// The requests about notes tell a request that reached no service from a refusal, as a reader
+// is told the two apart: the text is kept once the service is back, and not after it refused.
 export function listNotes(): Promise<NoteEntry[]> {
-  return settled(api.GET("/api/notes"));
+  return settled(reached(api.GET("/api/notes")));
 }
 
 export function writeNote(draft: NoteDraft): Promise<Note> {
-  return settled(api.POST("/api/notes", { body: draft }));
+  return settled(reached(api.POST("/api/notes", { body: draft }))) as Promise<Note>;
 }
 
 export function readNote(noteId: string): Promise<Note> {
-  return settled(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
+  return settled(
+    reached(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  ) as Promise<Note>;
 }
 
-// Puts the draft in place of what the note held. A draft sent as the page is left is sent so
-// that the request outlives the page; the browser refuses such a request above 64 KiB.
+// Puts the draft in place of what the note held, unless the note holds an edition as late as
+// the draft's. A draft sent as the page is left is sent so that the request outlives the page;
+// the browser refuses such a request above 64 KiB.
 export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): Promise<Note> {
   return settled(
-    api.PUT("/api/notes/{note_id}", {
-      params: { path: { note_id: noteId } },
-      body: draft,
-      keepalive: leaving,
-    }),
-  );
+    reached(
+      api.PUT("/api/notes/{note_id}", {
+        params: { path: { note_id: noteId } },
+        body: draft,
+        keepalive: leaving,
+      }),
+    ),
+  ) as Promise<Note>;
 }
 
 export function removeNote(noteId: string): Promise<void> {
-  return done(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
+  return done(
+    reached(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
 }

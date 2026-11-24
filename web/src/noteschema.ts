@@ -1,8 +1,8 @@
 import { Link } from "@tiptap/extension-link";
-import { OrderedList } from "@tiptap/extension-list";
+import { OrderedList, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Paragraph } from "@tiptap/extension-paragraph";
 import { Markdown } from "@tiptap/markdown";
-import type { Node as ProseNode } from "@tiptap/pm/model";
+import { DOMSerializer, Fragment, Slice, type Node as ProseNode } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey, type EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
@@ -21,7 +21,12 @@ import { inlineText, paragraphLine, passageLink } from "./notemarkdown";
 // it, and the links that lead to the note's passages, drawn as chips.
 
 export const PASSAGE_NODE = "passageLink";
+const CARRIED_ATTRIBUTE = "data-carried";
 const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
+const THIS_MACHINE = [/^localhost$/i, /\.localhost$/i, /^127\./, /^0\.0\.0\.0$/, /^\[::1?\]$/];
+// What a link opens in, and what it tells the site it opens, whatever the HTML it came in said.
+const LINK_TARGET = "_blank";
+const LINK_REL = "noreferrer noopener";
 const UNHELD_KINDS: Record<string, string | undefined> = {
   table: "表格",
   image: "图片",
@@ -44,16 +49,28 @@ export type Hands = {
   openHere: () => boolean;
   leave: () => void;
   askLink: () => void;
+  // The passage of a chip, as JSON, for the clipboard.
+  carry: (passageId: string) => string | undefined;
+  // The id a pasted chip goes under in this note, given the passage it carries.
+  adopt: (passageId: string, carried: string | undefined) => string;
 };
 
 const chipsKey = new PluginKey<Chips>("passageChips");
 type Chips = { looks: ReadonlyMap<string, ChipLook>; decorations: DecorationSet };
 
-// A link may lead to a web address only: none that runs a script or opens something of the app
-// itself.
+// A link may lead to a web address only: none that runs a script, and none of this machine,
+// which the app answers at by any of its names: the browser sends the app's cookies to its host
+// at any port.
 export function isWebAddress(address: string): boolean {
-  const url = URL.parse(address);
-  return url !== null && WEB_PROTOCOLS.has(url.protocol) && url.origin !== location.origin;
+  if (!URL.canParse(address)) {
+    return false;
+  }
+  const { protocol, hostname } = new URL(address);
+  return (
+    WEB_PROTOCOLS.has(protocol) &&
+    hostname !== location.hostname &&
+    !THIS_MACHINE.some((name) => name.test(hostname))
+  );
 }
 
 // The words of a link's text, without its marks.
@@ -85,6 +102,13 @@ const PassageLink = Node.create({
         rendered: false,
       },
       text: { default: "", parseHTML: (element) => element.textContent ?? "", rendered: false },
+      // The passage itself, as JSON, which a chip carries on the clipboard only, so that it is
+      // pasted into another note with its passage.
+      carried: {
+        default: null,
+        parseHTML: (element) => element.getAttribute(CARRIED_ATTRIBUTE),
+        rendered: false,
+      },
     };
   },
   parseHTML() {
@@ -120,6 +144,13 @@ const WebLink = Link.extend({
       return content;
     }
     return helpers.applyMark("link", content, { href: address, title: token.title || null });
+  },
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      target: { default: LINK_TARGET, parseHTML: () => LINK_TARGET },
+      rel: { default: LINK_REL, parseHTML: () => LINK_REL },
+    };
   },
 });
 
@@ -170,6 +201,27 @@ function chipsIn(doc: ProseNode, looks: ReadonlyMap<string, ChipLook>): Decorati
   return DecorationSet.create(doc, decorations);
 }
 
+// Pasted chips, each under the id the note holds its passage by: the note's own where it holds
+// the very passage, a new one where it does not, which the note takes with the passage.
+function adopted(content: Fragment, hands: Hands): Fragment {
+  const nodes: ProseNode[] = [];
+  content.forEach((node) => {
+    if (node.type.name === PASSAGE_NODE) {
+      const carried = node.attrs.carried as string | null;
+      nodes.push(
+        node.type.create({
+          ...node.attrs,
+          id: hands.adopt(String(node.attrs.id), carried || undefined),
+          carried: null,
+        }),
+      );
+    } else {
+      nodes.push(node.isLeaf ? node : node.copy(adopted(node.content, hands)));
+    }
+  });
+  return Fragment.from(nodes);
+}
+
 // Draws the passage links as chips, and shows a chip's passage when it is pressed.
 const PassageChips = Extension.create<{ hands: Hands }>({
   name: "passageChips",
@@ -182,6 +234,22 @@ const PassageChips = Extension.create<{ hands: Hands }>({
   },
   addProseMirrorPlugins() {
     const { hands: held } = this.options;
+    const { schema } = this.editor;
+    const plain = DOMSerializer.fromSchema(schema);
+    // A chip on the clipboard carries its passage, as no chip in the note does.
+    const clipboard = new DOMSerializer(
+      {
+        ...plain.nodes,
+        [PASSAGE_NODE]: (node) => {
+          const element = document.createElement("span");
+          element.setAttribute("data-passage", String(node.attrs.id));
+          element.setAttribute(CARRIED_ATTRIBUTE, held.carry(String(node.attrs.id)) ?? "");
+          element.textContent = String(node.attrs.text);
+          return element;
+        },
+      },
+      plain.marks,
+    );
     return [
       new Plugin<Chips>({
         key: chipsKey,
@@ -197,6 +265,9 @@ const PassageChips = Extension.create<{ hands: Hands }>({
         },
         props: {
           decorations: (state) => chipsKey.getState(state)?.decorations,
+          clipboardSerializer: clipboard,
+          transformPasted: (slice) =>
+            new Slice(adopted(slice.content, held), slice.openStart, slice.openEnd),
           handleClickOn(_, __, node, ___, ____, direct) {
             if (!direct || node.type.name !== PASSAGE_NODE) {
               return false;
@@ -219,6 +290,8 @@ export function noteExtensions(noteHands: Hands): AnyExtension[] {
       underline: false,
     }),
     NumberedList,
+    TaskList,
+    TaskItem.configure({ nested: true }),
     KeptParagraph,
     WebLink.configure({
       openOnClick: false,
@@ -228,7 +301,7 @@ export function noteExtensions(noteHands: Hands): AnyExtension[] {
       defaultProtocol: "https",
       isAllowedUri: isWebAddress,
       shouldAutoLink: isWebAddress,
-      HTMLAttributes: { target: "_blank", rel: "noreferrer noopener", class: null },
+      HTMLAttributes: { target: LINK_TARGET, rel: LINK_REL, class: null },
     }),
     PassageLink,
     PassageChips.configure({ hands: noteHands }),

@@ -50,6 +50,25 @@
   color: var(--failure);
 }
 
+/* A text not sent, with the ways on that are offered for it, across the head of the note. */
+div.keeping {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  text-align: left;
+}
+
+div.keeping p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+div.keeping button {
+  margin-left: 0;
+}
+
 .keeping button {
   margin-left: 0.4rem;
   padding: 0 0.5rem;

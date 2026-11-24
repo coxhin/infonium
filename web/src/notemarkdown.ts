@@ -13,6 +13,12 @@ const HEADING_START = /^#{1,6}(?=[ \t]|$)/;
 const ITEM_START = /^[-+*](?=[ \t]|$)/;
 const NUMBERED_START = /^(\d{1,9})([.)])(?=[ \t]|$)/;
 const UNDERLINE = /^(?:=+|-[-\s]*)$/;
+// A line that a table's row or its delimiter row could start with, which would make the lines
+// around it a table.
+const TABLE_ROW_START = /^\|/;
+const TABLE_DELIMITER = /^(?=.*\|)\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+const WEB_ADDRESS = /https?:\/\/[^\s<>　-〿＀-￯]+/g;
+const ADDRESS_END = /[.,;:!?'"]+$/;
 const LEADING_SPACE = /^[ \t]+/;
 const SPACE_REFERENCES: Record<string, string> = { " ": "&#32;", "\t": "&#9;" };
 const FIRST_WORDS = 24;
@@ -37,10 +43,33 @@ export function paragraphLine(line: string): string {
   const spaced = line.replace(LEADING_SPACE, (spaces) =>
     [...spaces].map((space) => SPACE_REFERENCES[space] ?? space).join(""),
   );
-  if (HEADING_START.test(spaced) || ITEM_START.test(spaced) || UNDERLINE.test(spaced)) {
+  if (
+    HEADING_START.test(spaced) ||
+    ITEM_START.test(spaced) ||
+    UNDERLINE.test(spaced) ||
+    TABLE_ROW_START.test(spaced) ||
+    TABLE_DELIMITER.test(spaced)
+  ) {
     return `\\${spaced}`;
   }
   return spaced.replace(NUMBERED_START, "$1\\$2");
+}
+
+// An address in a statement, which Markdown would take as a link by itself, is written as a
+// link to it, so that nothing in it is escaped and it comes back the same. The marks that end
+// a sentence are not part of it.
+function linkedAddresses(text: string): string {
+  let written = "";
+  let from = 0;
+  for (const found of text.matchAll(WEB_ADDRESS)) {
+    const address = found[0].replace(ADDRESS_END, "");
+    const at = found.index;
+    written += `${inlineText(text.slice(from, at))}[${inlineText(address)}](${address
+      .replace(/\(/g, "%28")
+      .replace(/\)/g, "%29")})`;
+    from = at + address.length;
+  }
+  return written + inlineText(text.slice(from));
 }
 
 export function paragraph(text: string): string {
@@ -54,7 +83,7 @@ export function passageLink(words: string, passageId: string): string {
 // A statement, then a link to each passage it cites, numbered from 1.
 export function statementMarkdown(text: string, passageIds: string[]): string {
   const links = passageIds.map((passageId, index) => passageLink(String(index + 1), passageId));
-  return [paragraph(inlineText(text)), ...links].join(" ");
+  return [paragraph(linkedAddresses(text)), ...links].join(" ");
 }
 
 // The words of a passage, a paragraph for each block it runs through, as a quotation; then a

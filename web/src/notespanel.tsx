@@ -3,9 +3,9 @@ import type { Opener } from "./chat";
 import type { Citing } from "./citing";
 import type { NoteEntry } from "./client";
 import { reasonOf } from "./loading";
+import { failureText } from "./notekeeping";
 import {
   dropNote,
-  failureText,
   makeNote,
   noteLeft,
   openNote,
@@ -13,7 +13,7 @@ import {
   useFirstWords,
   useNotes,
   useOpenedNote,
-} from "./notes";
+} from "./notelist";
 import type { Seat } from "./seat";
 import "./notes.css";
 
@@ -42,22 +42,22 @@ function sourcesText(count: number): string {
   return count === 0 ? "没有引文" : `引自 ${count} 篇`;
 }
 
-function NoteName({ entry }: { entry: NoteEntry }) {
+// What a note is called in the list, and whether that is its title or stands for one.
+function useNoteName(entry: NoteEntry): { name: string; titled: boolean } {
   const words = useFirstWords(entry);
   if (entry.title.trim() !== "") {
-    return <span className="name">{entry.title}</span>;
+    return { name: entry.title, titled: true };
   }
   if (words.state === "ready") {
-    return (
-      <span className="name untitled">{words.value === "" ? "空白笔记" : words.value}</span>
-    );
+    return { name: words.value === "" ? "空白笔记" : words.value, titled: false };
   }
-  return <span className="name untitled">无题笔记</span>;
+  return { name: "无题笔记", titled: false };
 }
 
 function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
   // Removing takes a second press, which confirms the first.
   const [confirming, setConfirming] = useState(false);
+  const { name, titled } = useNoteName(entry);
   const [removing, setRemoving] = useState<Doing>(IDLE);
 
   function remove() {
@@ -75,7 +75,7 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
   return (
     <li data-here={here} data-note={entry.id}>
       <button className="open" onClick={() => openNote(entry.id)}>
-        <NoteName entry={entry} />
+        <span className={titled ? "name" : "name untitled"}>{name}</span>
         <small>
           {changedText(entry.changed)} · {sourcesText(entry.items.length)}
           {here && <span className="here"> · 引自本篇</span>}
@@ -83,7 +83,7 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
       </button>
       <button
         className="remove"
-        aria-label={confirming ? "确认删除这篇笔记" : "删除这篇笔记"}
+        aria-label={confirming ? `确认删除笔记“${name}”` : `删除笔记“${name}”`}
         disabled={removing.state === "underway"}
         onClick={remove}
         onBlur={() => setConfirming(false)}
