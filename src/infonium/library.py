@@ -32,6 +32,9 @@ CONTENT_HASH = "sha256"
 # a title. Form 2 gave documents a media type. Form 3 gave items an origin and a reading.
 BODY_FORMAT = 3
 EARLIER_DOCUMENT_FORMAT = 1
+# The form of a revision's row: its number and when it was read, beside its document and item.
+REVISION_FORMAT = 1
+FIRST_REVISION = 1
 # A reading that the service's stopping cut off this many times is given up.
 READING_STARTS = 3
 CUT_OFF = "the reading was cut off {starts} times by the service stopping"
@@ -73,6 +76,28 @@ document_table = sqlalchemy.Table(
     sqlalchemy.Column("kept", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
+)
+# The revisions of the items: each document an item was read into, under the number it was
+# given when it was first read, and the time it was. A row is written with its document and
+# never changed, so a number is not given twice. It is kept here, beside the documents, for
+# keeping a document and numbering it are one step.
+revision_table = sqlalchemy.Table(
+    "revision",
+    metadata,
+    sqlalchemy.Column(
+        "document_id",
+        sqlalchemy.String,
+        sqlalchemy.ForeignKey(document_table.c.id),
+        primary_key=True,
+    ),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column(
+        "item_id", sqlalchemy.String, sqlalchemy.ForeignKey(item_table.c.id), nullable=False
+    ),
+    sqlalchemy.Column("number", sqlalchemy.Integer, nullable=False),
+    sqlalchemy.Column("read", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
+    sqlalchemy.UniqueConstraint("item_id", "number"),
 )
 digest_table = sqlalchemy.Table(
     "digest",
@@ -233,6 +258,12 @@ class KeptSource(BaseModel):
     media_type: MediaType
 
 
+class StagedSnapshot(BaseModel):
+    # A source's file, staged in the work directory to be kept under its name.
+    name: str
+    file: Path
+
+
 class UnderwayItem(BaseModel):
     owner: str
     item_id: str
@@ -330,6 +361,45 @@ def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
         connection.execute(
             sqlalchemy.update(table).where(table.c.format < BODY_FORMAT).values(format=BODY_FORMAT)
         )
+    number_unnumbered_documents(connection)
+
+
+def number_unnumbered_documents(connection: sqlalchemy.Connection) -> None:
+    # A library kept before revisions were numbered holds documents without a number: each
+    # item's are numbered after the numbers it has, in the order they were kept, and read when
+    # they were kept. What a document holds is left as it is.
+    unnumbered = connection.execute(
+        sqlalchemy.select(
+            document_table.c.id,
+            document_table.c.owner,
+            document_table.c.item_id,
+            document_table.c.kept,
+        )
+        .outerjoin(revision_table, revision_table.c.document_id == document_table.c.id)
+        .where(revision_table.c.document_id.is_(None))
+        .order_by(document_table.c.item_id, document_table.c.kept, document_table.c.id)
+    ).all()
+    numbered = connection.execute(
+        sqlalchemy.select(
+            revision_table.c.item_id, sqlalchemy.func.max(revision_table.c.number)
+        ).group_by(revision_table.c.item_id)
+    )
+    highest: dict[str, int] = {item_id: number for item_id, number in numbered}
+    rows: list[dict[str, str | int]] = []
+    for document_id, owner, item_id, kept in unnumbered:
+        highest[item_id] = highest.get(item_id, FIRST_REVISION - 1) + 1
+        rows.append(
+            {
+                revision_table.c.document_id.name: document_id,
+                revision_table.c.owner.name: owner,
+                revision_table.c.item_id.name: item_id,
+                revision_table.c.number.name: highest[item_id],
+                revision_table.c.read.name: kept,
+                revision_table.c.format.name: REVISION_FORMAT,
+            }
+        )
+    if rows:
+        connection.execute(sqlalchemy.insert(revision_table), rows)
 
 
 class OwnerTransaction:
@@ -360,20 +430,53 @@ class Library:
             )
         )
 
-    def keep_document(self, document: Document, kept: datetime) -> None:
-        self.connection.execute(
-            replacing_insert(
-                document_table,
+    def keep_document(self, document: Document, read: datetime) -> bool:
+        # A document read from an item's source is a revision of the item: a new one, numbered
+        # one above the item's highest, unless the item was read into this document before.
+        # Then the document stays as it was first kept, with the file kept beside it then, and
+        # so does its revision: a document never changes under its id. Whether the document
+        # is new to the library.
+        kept = self.connection.execute(
+            sqlite.insert(document_table)
+            .values(
                 {
                     document_table.c.id: document.id,
                     document_table.c.owner: self.owner,
                     document_table.c.item_id: document.item_id,
-                    document_table.c.kept: timestamp_text(kept),
+                    document_table.c.kept: timestamp_text(read),
                     document_table.c.format: BODY_FORMAT,
                     document_table.c.body: document.model_dump_json(),
-                },
+                }
             )
+            .on_conflict_do_nothing(index_elements=[document_table.c.id])
         )
+        next_number = sqlalchemy.select(
+            sqlalchemy.literal(document.id),
+            sqlalchemy.literal(self.owner),
+            sqlalchemy.literal(document.item_id),
+            sqlalchemy.func.coalesce(
+                sqlalchemy.func.max(revision_table.c.number), FIRST_REVISION - 1
+            )
+            + 1,
+            sqlalchemy.literal(timestamp_text(read)),
+            sqlalchemy.literal(REVISION_FORMAT),
+        ).where(revision_table.c.item_id == document.item_id)
+        self.connection.execute(
+            sqlite.insert(revision_table)
+            .from_select(
+                [
+                    revision_table.c.document_id,
+                    revision_table.c.owner,
+                    revision_table.c.item_id,
+                    revision_table.c.number,
+                    revision_table.c.read,
+                    revision_table.c.format,
+                ],
+                next_number,
+            )
+            .on_conflict_do_nothing(index_elements=[revision_table.c.document_id])
+        )
+        return bool(kept.rowcount)
 
     def keep_digest(self, digest: Digest) -> None:
         self.connection.execute(
@@ -520,15 +623,16 @@ class LibraryStore:
     def snapshot(self, name: str) -> Path:
         return self.snapshots / name[:2] / name
 
-    def keep_snapshot(self, file: Path) -> str:
+    def staged_snapshot(self, file: Path) -> StagedSnapshot:
         with file.open("rb") as content:
             name = file_digest(content, CONTENT_HASH).hexdigest()
             content.seek(0)
-            arrived = self.staged(content)
-        kept = self.snapshot(name)
+            return StagedSnapshot(name=name, file=self.staged(content))
+
+    def keep_snapshot(self, staged: StagedSnapshot) -> None:
+        kept = self.snapshot(staged.name)
         kept.parent.mkdir(parents=True, exist_ok=True)
-        arrived.replace(kept)
-        return name
+        staged.file.replace(kept)
 
     def upload(self, item_id: str) -> Path:
         # Where an upload waits, under the id of its item, while its reading is under way.

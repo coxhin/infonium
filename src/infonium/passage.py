@@ -4,7 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from infonium.anchor import Anchor, Citation, anchors_of
+from infonium.anchor import Anchor
 from infonium.document import Document, Tagged
 
 SEVERAL_DOCUMENTS = "the anchors of a passage lie in one document"
@@ -78,23 +78,3 @@ def held_passage(passage: Passage, document: Document) -> Passage:
                 NOT_HELD.format(block=anchor.block_number, start=anchor.start, end=anchor.end)
             )
     return passage
-
-
-def standing_in(passage: Passage, marked_in: Document, document: Document) -> Standing:
-    # Where a passage that was marked in one revision of a source stands in another: in the
-    # revision it was marked in, where it is. This first form finds each anchor's quote by
-    # itself, in the block of the same number or the nearest that holds it, and takes the
-    # passage as lost unless every anchor is found; what stands around the passage in the
-    # revision it was marked in is not used yet.
-    if document.id == marked_in.id:
-        return Found(passage=passage, exact=True)
-    found = [
-        anchors_of(document, [Citation(block_number=anchor.block_number, quote=anchor.quote)])
-        for anchor in passage.anchors
-    ]
-    anchors = [anchor for anchors in found for anchor in anchors]
-    numbers = [anchor.block_number for anchor in anchors]
-    in_order = all(later > earlier for earlier, later in pairwise(numbers))
-    if not all(found) or not in_order:
-        return Lost()
-    return Found(passage=Passage(anchors=anchors), exact=True)

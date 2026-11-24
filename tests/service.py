@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 from typing import Any
 from uuid import uuid4
 
@@ -94,6 +95,13 @@ class Site:
         # Pages a test makes up, served under /page/ by their names until it changes them,
         # as the bytes they are, so that a page may be in any encoding.
         self.pages: dict[str, bytes] = {}
+        # Pages whose first fetch is held until the test lets it go, so that a reading stays
+        # under way as long as a test needs; later fetches are answered at once.
+        self.held: dict[str, Event] = {}
+
+    def let_go(self) -> None:
+        for held in self.held.values():
+            held.set()
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -108,6 +116,8 @@ class Site:
             case ["revised"]:
                 return httpx.Response(200, html=article("Quillmoor revised", REVISED).decode())
             case ["page", name] if name in self.pages:
+                if name in self.held and self.hits[path] == 1:
+                    self.held[name].wait(SETTLE_SECONDS)
                 return httpx.Response(
                     200, headers={"content-type": "text/html"}, content=self.pages[name]
                 )

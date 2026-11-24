@@ -41,7 +41,7 @@ from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, er
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
 from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
-from infonium.intake import Engines, Intake
+from infonium.intake import Engines, Intake, NothingToReadAgain
 from infonium.item_conversation import (
     ITEM_BUSY,
     ItemConversation,
@@ -66,6 +66,7 @@ from infonium.library import (
     NotInLibrary,
     Origin,
     OwnerTransaction,
+    Read,
     Reading,
 )
 from infonium.library_conversation import (
@@ -78,9 +79,10 @@ from infonium.library_conversation import (
 )
 from infonium.model_connection import Ending
 from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
-from infonium.passage import Passage, PassageNotHeld, Standing
+from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
-from infonium.revision import Revision, RevisionNumber
+from infonium.refinding import standing_in
+from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
@@ -117,7 +119,6 @@ ORIGIN = "origin"
 HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
-UNBUILT = "this part of infonium is not built yet"
 OPENAI_LOGGER = "openai"
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
@@ -401,6 +402,7 @@ app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(PassageNotHeld, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
@@ -414,6 +416,8 @@ NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Fai
 # A passage that its own document does not hold as it was given: a block it names is not
 # there, or the words at a range are not its quote.
 NOT_HELD: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# An upload whose reading never succeeded, of which nothing is kept to read again.
+NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # A draft of a note that holds its edition or a later one already: the note holds a later
 # writing than the one the draft was written from.
 STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
@@ -565,32 +569,50 @@ def item_document(item_id: str, owner: Owner) -> DocumentView:
     return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
 
 
-@app.post("/api/items/{item_id}/reading", responses=NOT_IN_LIBRARY)
+@app.post("/api/items/{item_id}/reading", responses=NOT_IN_LIBRARY | NOTHING_KEPT)
 def read_again(item_id: str, owner: Owner) -> ItemEntry:
     # Starts a new reading of the item's source: a link is fetched again, and an upload is
     # read again from the file the library keeps of it. Where a reading of the item is under
     # way already, that one goes on and no other starts. The document the item holds stays
-    # until the new reading has given another.
-    raise NotImplementedError(UNBUILT)
+    # until the new reading has given another. An upload whose reading never succeeded has no
+    # file kept to read again, and is refused as a conflict.
+    return entry_of(intake().begin_again(owner, item_id))
 
 
 @app.get("/api/items/{item_id}/revisions", responses=NOT_IN_LIBRARY)
 def item_revisions(item_id: str, owner: Owner) -> ItemRevisions:
     # An item without a document has no revisions.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        match Library(transaction).item(item_id).reading:
+            case Read(document=document_id):
+                revisions = Revisions(transaction)
+                return ItemRevisions(
+                    current=revisions.of_document(document_id).number,
+                    revisions=revisions.of_item(item_id),
+                )
+            case _:
+                raise NotInLibrary(f"item {item_id} has no document in the library")
 
 
 @app.get("/api/items/{item_id}/revisions/{number}/document", responses=NOT_IN_LIBRARY)
 def revision_document(item_id: str, number: RevisionNumber, owner: Owner) -> DocumentView:
     # The document of one revision of the item, the one it holds now or an earlier one.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        revision = Revisions(transaction).numbered(item_id, number)
+        document = Library(transaction).owned_document(revision.document)
+    return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
 
 
 @app.post("/api/items/{item_id}/standing", responses=NOT_IN_LIBRARY | NOT_HELD)
 def passage_standing(item_id: str, passage: Passage, owner: Owner) -> Standing:
     # Where a passage of any revision of the item stands in the document the item holds now.
     # A passage of a document that is no revision of the item is not in the library.
-    raise NotImplementedError(UNBUILT)
+    with library_store().library(owner) as library:
+        holding = library.holding(item_id)
+        marked_in = library.owned_document(passage.document_id)
+    if marked_in.item_id != item_id:
+        raise NotInLibrary(f"document {marked_in.id} is no revision of item {item_id}")
+    return standing_in(held_passage(passage, marked_in), marked_in, holding.document)
 
 
 @app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)
