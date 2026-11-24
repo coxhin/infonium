@@ -119,7 +119,6 @@ ORIGIN = "origin"
 HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
-UNBUILT = "this part of infonium is not built yet"
 OPENAI_LOGGER = "openai"
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
