@@ -333,6 +333,10 @@ main > .status {
   max-width: 62rem;
   background: #ffffff;
   box-shadow: 0 0 0 1px var(--line);
+  /* What is drawn on a page is layered within the page alone: its highlights, a selection and
+     a citation's outline stay under the reader's head, a drawer, a menu and the actions on a
+     selection, which lie over the page as it scrolls. */
+  isolation: isolate;
 }
 
 .page canvas {
