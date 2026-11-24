@@ -49,7 +49,7 @@ function placeBy(at: DOMRect, width: number, height: number): Place {
 }
 
 // Keeps the element inside the window by the rectangle it is to stand by, once its size is
-// known.
+// known, and again whenever what it says changes its size.
 function usePlaced(at: DOMRect | undefined): {
   own: RefObject<HTMLDivElement | null>;
   style: CSSProperties;
@@ -58,10 +58,14 @@ function usePlaced(at: DOMRect | undefined): {
   const [place, setPlace] = useState<Place>();
   useLayoutEffect(() => {
     const element = own.current;
-    if (at !== undefined && element !== null) {
-      setPlace(placeBy(at, element.offsetWidth, element.offsetHeight));
+    if (at === undefined || element === null) {
+      return;
     }
-  }, [at]);
+    const next = placeBy(at, element.offsetWidth, element.offsetHeight);
+    if (next.left !== place?.left || next.top !== place.top) {
+      setPlace(next);
+    }
+  });
   return {
     own,
     style:

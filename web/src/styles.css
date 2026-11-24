@@ -10,10 +10,10 @@
   --found: light-dark(#ffe08a, #6e5a14);
   --failure: light-dark(#b3261e, #f2a59f);
   /* The reader's highlights: a blue apart from the yellow of a passage pointed at. */
-  --marked: light-dark(#cfe6f4, #1d3c50);
-  --marked-quietly: light-dark(#e5f1f9, #1a2f3c);
-  --marked-twice: light-dark(#a8d2ec, #24506b);
-  --opened: light-dark(#8cc6ea, #2a6386);
+  --marked: light-dark(#c6e2f4, #1d3c50);
+  --marked-quietly: light-dark(#dcecf7, #1a3140);
+  --marked-twice: light-dark(#9fcdea, #24506b);
+  --opened: light-dark(#82c0e6, #2a6386);
   --marked-line: light-dark(#1d6f99, #8fd0f0);
   font-family:
     system-ui,
