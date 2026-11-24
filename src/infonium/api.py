@@ -79,8 +79,9 @@ from infonium.library_conversation import (
 )
 from infonium.model_connection import Ending
 from infonium.note import NoteDraft, Notes, ShownNote
-from infonium.passage import Passage, PassageNotHeld, Standing, held_passage, standing_in
+from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
+from infonium.refinding import standing_in
 from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
