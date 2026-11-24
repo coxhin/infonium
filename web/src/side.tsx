@@ -11,13 +11,14 @@ import {
 } from "react";
 import type { Anchors } from "./client";
 import { ChatPanel, type ScopeKind } from "./chat";
-import { useCiting, type Pointer } from "./citing";
+import { CitingNote, useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
 import type { Seat, Unshown } from "./seat";
 import "./side.css";
 
-// What the reader tells of itself: its item and the document it shows.
-type Shown = { itemId: string; documentId: string };
+// What the reader tells of itself: its item, the document it shows, the document the item
+// holds now, and the link it was opened by.
+type Shown = { itemId: string; documentId: string; holding: string; link: string };
 
 type Seating = {
   seat: (shown: Shown) => Seat;
@@ -117,10 +118,14 @@ export function useLosing(): (reason: string) => void {
 export function SidePanel({
   itemId,
   documentId,
+  holding,
+  link,
   pointer,
 }: {
   itemId: string;
   documentId: string;
+  holding: string;
+  link: string;
   pointer: Pointer;
 }) {
   const seating = useSeatingContext();
@@ -129,9 +134,9 @@ export function SidePanel({
     seating.pointer.current = pointer;
   });
   useLayoutEffect(() => {
-    const seat = seating.seat({ itemId, documentId });
+    const seat = seating.seat({ itemId, documentId, holding, link });
     return () => seating.unseat(seat);
-  }, [itemId, documentId]);
+  }, [itemId, documentId, holding, link]);
   return null;
 }
 
@@ -226,11 +231,7 @@ export function SideColumn({
       <button className="fold" aria-expanded={!folded} onClick={() => setFolded(!folded)}>
         {folded ? "展开" : "收起"}
       </button>
-      {citing.lost !== undefined && (
-        <p className="lost status failed" role="alert">
-          {citing.lost}
-        </p>
-      )}
+      <CitingNote citing={citing} />
       <div
         id={panelId("digest")}
         role="tabpanel"

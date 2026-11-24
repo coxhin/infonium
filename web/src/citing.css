@@ -43,3 +43,29 @@
   font-size: 0.75rem;
   color: var(--muted);
 }
+
+/* A chip whose passage is being looked for in the document the item holds now: waiting, which
+   a chip on show never looks like. */
+.citation.asking,
+.citation.asking:hover {
+  background: none;
+  border-style: dashed;
+  border-color: var(--muted);
+  color: var(--muted);
+  cursor: progress;
+}
+
+/* The way to show a lost passage in the revision it is of, beside the reason. */
+.lost .opening {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+/* A quiet line that says nothing takes no room, and stays where a screen reader listens. */
+.lost.said:empty {
+  position: absolute;
+  padding: 0;
+  border: 0;
+}
