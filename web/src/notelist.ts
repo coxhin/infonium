@@ -11,6 +11,7 @@ import type { Loaded } from "./loading";
 import { firstWords } from "./notemarkdown";
 import {
   blankAndUnborn,
+  currentId,
   failureText,
   flushWriter,
   forget,
@@ -90,9 +91,15 @@ function remember(): void {
   }
 }
 
-export function openNote(noteId: string | undefined): void {
+// Opens a note, or the list when none is given. The note open already stays open in its editor,
+// with its undo history, its cursor and its scroll; an editor is made only for another note.
+export function openNote(given: string | undefined): void {
   flushWriter();
-  if (opened !== undefined && opened !== noteId && blankAndUnborn(opened)) {
+  const noteId = given === undefined ? undefined : currentId(given);
+  if (noteId === opened) {
+    return;
+  }
+  if (opened !== undefined && blankAndUnborn(opened)) {
     forget(opened);
   }
   left = opened ?? left;
