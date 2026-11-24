@@ -592,9 +592,19 @@ def body_of(root: html.HtmlElement) -> html.HtmlElement:
     return body
 
 
-def body_text(page: ServedPage, root: html.HtmlElement) -> str:
+def body_runs(page: ServedPage, root: html.HtmlElement) -> list[str]:
+    # The page's words, each run that no block's edge and no marked element's edge parts by
+    # itself: words that only meet across such an edge are no words of one block.
     marks = (page.block_attribute, page.cell_attribute)
-    return same_text(shown_text(body_of(root), parted_at=marks))
+    return [same_text(run) for run in shown_text(body_of(root), parted_at=marks).split(LINE_BREAK)]
+
+
+def block_runs(block: Block) -> list[str]:
+    return [same_text(part) for part in re.split(r"[\t\n]", block.text)]
+
+
+def times_held(words: str, runs: list[str]) -> int:
+    return sum(run.count(words) for run in runs)
 
 
 def pictures(root: html.HtmlElement) -> set[str]:
@@ -606,13 +616,22 @@ def pictures(root: html.HtmlElement) -> set[str]:
 def test_replacing_every_marked_element_loses_nothing_of_another_block(app: App, page: str) -> None:
     served_page = read_made_up(app, page)
     root = served_page.root()
-    before, pictures_before = body_text(served_page, root), pictures(root)
+    before, pictures_before = body_runs(served_page, root), pictures(root)
     marks = page_marks(served_page, root)
     for element in marks:
         for child in list(element):
             element.remove(child)
         element.text = "#"
-    after, pictures_after = body_text(served_page, root), pictures(root)
+    after, pictures_after = body_runs(served_page, root), pictures(root)
+    # What goes with the marked elements by right: the words of the blocks they stand for.
+    # Another block may say the same words, so a block's words count as lost only as often
+    # as they went beyond that.
+    own = [
+        run
+        for number in served_page.placed
+        if not isinstance(block := served_page.blocks[number], Figure)
+        for run in block_runs(block)
+    ]
     others = [
         (number, block)
         for number, block in enumerate(served_page.blocks)
@@ -624,10 +643,12 @@ def test_replacing_every_marked_element_loses_nothing_of_another_block(app: App,
                 f"the picture of figure {number} went with the content of a marked element"
             )
             continue
-        for part in re.split(r"[\t\n]", block.text):
-            words = same_text(part)
-            assert words not in before or words in after, (
-                f"the words {part!r} of block {number}, which has no element of its own, went "
+        for words in block_runs(block):
+            if not words:
+                continue
+            gone = times_held(words, before) - times_held(words, after)
+            assert gone <= times_held(words, own), (
+                f"the words {words!r} of block {number}, which has no element of its own, went "
                 "with the content of a marked element"
             )
 
