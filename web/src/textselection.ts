@@ -146,15 +146,17 @@ function holdsPoint(element: Element, node: Node, offset: number): boolean {
   return range.comparePoint(node, offset) === 0;
 }
 
-// The stretch of words in an element that a selection takes, in units of the element's text,
-// or none. Where the block's own words are on show beside its translation, a translation that
-// the selection runs over whole adds nothing: only one that an end of the selection lies in
-// adds the segment that end lies in, or the segments from the one end to the other.
-function takenIn(
-  words: Words,
-  range: Range,
-  show: TextOnShow,
-): { from: number; to: number } | undefined {
+// What a selection takes of the words of one element. Words it covers are taken, the block's
+// own character for character and a translation shown alone by its whole segments. Beside its
+// source, a translation is taken only for the ends of the selection that lie in it: the end
+// where the selection begins gives where the passage begins, the start of the segment it lies
+// in, and the end where it stops gives where the passage stops, the end of the segment it lies
+// in; a translation the selection runs over adds nothing.
+type Taken =
+  | { kind: "covered"; source: TextRange }
+  | { kind: "ends"; begins: TextRange | undefined; stops: TextRange | undefined };
+
+function takenIn(words: Words, range: Range, show: TextOnShow): Taken | undefined {
   const pieces = piecesOf(words.element);
   const from = offsetAt(pieces, range.startContainer, range.startOffset, "start");
   const to = offsetAt(pieces, range.endContainer, range.endOffset, "end");
@@ -162,26 +164,25 @@ function takenIn(
     return undefined;
   }
   if (words.kind === "exact" || show.setting !== "both") {
-    return { from, to };
+    const source = sourceOf(words, from, to);
+    return source === undefined ? undefined : { kind: "covered", source };
   }
-  const startsHere = holdsPoint(words.element, range.startContainer, range.startOffset);
-  const endsHere = holdsPoint(words.element, range.endContainer, range.endOffset);
-  if (startsHere && endsHere) {
-    return { from, to };
-  }
-  if (startsHere) {
-    return { from, to: from + 1 };
-  }
-  if (endsHere) {
-    return { from: to - 1, to };
-  }
-  return undefined;
+  const beginsHere = holdsPoint(words.element, range.startContainer, range.startOffset);
+  const stopsHere = holdsPoint(words.element, range.endContainer, range.endOffset);
+  const begins = beginsHere ? words.spans.find((span) => from < span.to)?.source : undefined;
+  const before = words.spans.filter((span) => span.from < to);
+  const stops = stopsHere ? before[before.length - 1]?.source : undefined;
+  return begins === undefined && stops === undefined
+    ? undefined
+    : { kind: "ends", begins, stops };
 }
 
 // The passage a selection covers in the text: for each block, the range from the first to
 // the last character of its text that the selection takes, in the order of the document.
 function passageOf(article: Element, range: Range, show: TextOnShow): Anchor[] {
   const taken = new Map<number, TextRange>();
+  let begins: { number: number; segment: TextRange } | undefined;
+  let stops: { number: number; segment: TextRange } | undefined;
   for (const element of article.querySelectorAll(WORDS_SELECTOR)) {
     if (!range.intersectsNode(element)) {
       continue;
@@ -190,15 +191,31 @@ function passageOf(article: Element, range: Range, show: TextOnShow): Anchor[] {
     if (words === undefined || !words.element.checkVisibility()) {
       continue;
     }
-    const stretch = takenIn(words, range, show);
-    const source = stretch === undefined ? undefined : sourceOf(words, stretch.from, stretch.to);
-    if (source !== undefined) {
+    const part = takenIn(words, range, show);
+    if (part?.kind === "covered") {
       const before = taken.get(words.number);
       taken.set(words.number, {
-        start: Math.min(source.start, before?.start ?? source.start),
-        end: Math.max(source.end, before?.end ?? source.end),
+        start: Math.min(part.source.start, before?.start ?? part.source.start),
+        end: Math.max(part.source.end, before?.end ?? part.source.end),
       });
+    } else if (part?.kind === "ends") {
+      begins = part.begins === undefined ? begins : { number: words.number, segment: part.begins };
+      stops = part.stops === undefined ? stops : { number: words.number, segment: part.stops };
     }
+  }
+  // A passage that begins in a translation runs on from its segment to the end of the block,
+  // after which the selection goes on; one that stops in a translation ends with its segment.
+  if (begins !== undefined) {
+    const length = Array.from(show.blocks[begins.number]?.text ?? "").length;
+    const before = taken.get(begins.number);
+    taken.set(begins.number, { start: begins.segment.start, end: before?.end ?? length });
+  }
+  if (stops !== undefined) {
+    const before = taken.get(stops.number);
+    taken.set(stops.number, {
+      start: before?.start ?? stops.segment.start,
+      end: stops.segment.end,
+    });
   }
   return [...taken.entries()]
     .sort(([first], [second]) => first - second)
