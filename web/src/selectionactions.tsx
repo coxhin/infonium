@@ -29,27 +29,48 @@ const HANDLES_ROOM = 32;
 const WINDOW_MARGIN = 8;
 const FINGER = "(pointer: coarse)";
 
+// How finely the foot of the reader's visible area is looked for, in pixels.
+const PROBE_STEP = 4;
+
 type Place = { left: number; top: number };
 
+// Where the area the actions are drawn in, the reader's, stops being on show at the foot of
+// the window: above whatever lies over its end there, as the column held at the foot of the
+// window in one column does, whether folded to its bar or open.
+function footOf(own: HTMLElement, x: number): number {
+  const area = own.parentElement;
+  for (let y = innerHeight - 1; y > 0 && area !== null; y -= PROBE_STEP) {
+    const top = document.elementsFromPoint(x, y).find((element) => !own.contains(element));
+    if (top === undefined || area.contains(top)) {
+      return y + 1;
+    }
+  }
+  return innerHeight;
+}
+
 // Where the actions stand: below the selection's last line, else beside its end, else above
-// it, and always wholly inside the window.
-function placeBy(at: DOMRect, width: number, height: number): Place {
+// it; always wholly inside the window, and clear of what covers the reader's foot. A last line
+// that is itself under such a cover has the actions just above the cover.
+function placeBy(at: DOMRect, width: number, height: number, foot: number): Place {
   const below = at.bottom + (matchMedia(FINGER).matches ? HANDLES_ROOM : GAP);
   const right = innerWidth - WINDOW_MARGIN - width;
-  const bottom = innerHeight - WINDOW_MARGIN - height;
+  const bottom = foot - WINDOW_MARGIN - height;
   const within = (value: number, highest: number) =>
     Math.max(WINDOW_MARGIN, Math.min(value, highest));
   if (below <= bottom) {
     return { left: within(at.right - width / 2, right), top: below };
   }
-  if (at.right + GAP <= right) {
+  if (at.right + GAP <= right && at.top <= bottom) {
     return { left: at.right + GAP, top: within(at.top, bottom) };
   }
-  return { left: within(at.right - width / 2, right), top: within(at.top - GAP - height, bottom) };
+  return {
+    left: within(at.right - width / 2, right),
+    top: within(Math.min(at.top, foot) - GAP - height, bottom),
+  };
 }
 
-// Keeps the element inside the window by the rectangle it is to stand by, once its size is
-// known, and again whenever what it says changes its size.
+// Keeps the element inside the reader's visible area by the rectangle it is to stand by, once
+// its size is known, and again whenever what it says changes its size.
 function usePlaced(at: DOMRect | undefined): {
   own: RefObject<HTMLDivElement | null>;
   style: CSSProperties;
@@ -61,7 +82,8 @@ function usePlaced(at: DOMRect | undefined): {
     if (at === undefined || element === null) {
       return;
     }
-    const next = placeBy(at, element.offsetWidth, element.offsetHeight);
+    const x = Math.max(0, Math.min(at.right, innerWidth - 1));
+    const next = placeBy(at, element.offsetWidth, element.offsetHeight, footOf(element, x));
     if (next.left !== place?.left || next.top !== place.top) {
       setPlace(next);
     }
