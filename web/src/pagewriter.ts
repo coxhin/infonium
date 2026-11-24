@@ -1,11 +1,12 @@
 import { cellTexts, cutAtMarks, STYLE_ELEMENTS } from "./blocktext";
 import type { Block, Mark, PageBlocks, TranslatedBlock } from "./client";
+import { PageText } from "./pagetext";
 import type { Setting } from "./setting";
 
 // What infonium adds to the page goes in an element of a name of its own: the service takes
 // every element of such a name out of the page before it marks the blocks, so none is the
 // page's. Unknown to the page's stylesheet, it is styled by infonium's alone.
-const TRANSLATION_ELEMENT = "infonium-translation";
+export const TRANSLATION_ELEMENT = "infonium-translation";
 const POINTED_HIGHLIGHT = "infonium-pointed";
 const LINK_ELEMENT = "a";
 const AREA_ELEMENT = "area";
@@ -24,12 +25,16 @@ const WEB_PROTOCOLS = ["http:", "https:"];
 const NEW_TAB = "_blank";
 const NEW_TAB_FEATURES = "noopener,noreferrer";
 const MIDDLE_BUTTON = 1;
+// A pointer moved further than this, in pixels, between its press and its release dragged.
+const DRAG_DISTANCE = 4;
 // A fragment that names no element of the page leads to its top, as in a browser.
 const TOP_FRAGMENT = "top";
 const PERCENT_ESCAPE = /^%([0-9a-f]{2})$/i;
 const ESCAPE_LENGTH = 3;
 const HEXADECIMAL = 16;
 const INLINE_DISPLAY = "inline";
+// The passage pointed at is drawn over the reader's highlights where they overlap.
+const POINTED_PRIORITY = 10;
 
 // A passage pointed at is marked in colours of its own, the same on any page, light or dark:
 // an outline in two colours that shows against either, and its words dark on yellow. The
@@ -41,7 +46,9 @@ const POINTED_OUTLINE =
   " box-shadow: 0 0 0 5px rgb(0 0 0 / 0.45) !important;";
 // The translation beside its source is set quieter in the page's own colours and type: a rule
 // of the text's own colour before it, the words faded. The browser's own anchoring of the
-// scroll is left to infonium, which keeps the place as it changes the page.
+// scroll is left to infonium, which keeps the place as it changes the page. A link is not
+// dragged, and its words may be selected, which a browser does not let a press in a link begin
+// otherwise, so that a drag from or over one selects its words.
 const FRAME_STYLE = `
 ${TRANSLATION_ELEMENT} {
   display: block;
@@ -59,21 +66,31 @@ ${TRANSLATION_ELEMENT} {
 html, body {
   overflow-anchor: none !important;
 }
+a, a * {
+  -webkit-user-drag: none !important;
+  user-select: text !important;
+}
 `;
 
 // Where a passage stands in the page: the element that stands for its block, what to mark of
 // it, and the attribute and value that name the element alone.
 export type PointedPlace = { holder: Element; selector: string; passage: Range };
 
+// What an element that stands for a block shows of it: its source, its translation in place
+// of the source, or the source followed by the translation.
+export type Shown = "source" | "translation" | "both";
+
 // The page in the frame, as it was served and as far as infonium has changed it: the elements
 // whose content holds a translation now, each with the nodes it held as served, put back as
-// they were when the page is shown in its source again.
+// they were when the page is shown in its source again; and, of the elements whose words
+// have been compared with their text, the correspondence, until their content changes.
 export class FramedPage {
   readonly document: Document;
   readonly view: Window & typeof globalThis;
   readonly pointedRule: CSSStyleSheet;
   readonly served = new Map<Element, Node[]>();
   readonly written = new Map<Element, { setting: Setting; translated: TranslatedBlock }>();
+  readonly texts = new Map<Element, PageText>();
   marked = false;
 
   constructor(document: Document, view: Window & typeof globalThis) {
@@ -91,6 +108,22 @@ export class FramedPage {
     return !this.written.has(element);
   }
 
+  shownIn(element: Element): Shown {
+    const setting = this.written.get(element)?.setting;
+    return setting === "translation" ? "translation" : setting === "both" ? "both" : "source";
+  }
+
+  // The correspondence between the source an element shows and the text it stands for.
+  textOf(element: Element, text: string): PageText {
+    const known = this.texts.get(element);
+    if (known?.text === text) {
+      return known;
+    }
+    const compared = new PageText(element, text);
+    this.texts.set(element, compared);
+    return compared;
+  }
+
   // Puts in an element the content the setting asks for: the nodes it was served with, these
   // nodes in their place, or these nodes after them.
   write(
@@ -106,6 +139,7 @@ export class FramedPage {
     }
     const served = this.served.get(element) ?? [...element.childNodes];
     this.served.set(element, served);
+    this.texts.delete(element);
     if (wanted === undefined) {
       element.replaceChildren(...served);
       this.written.delete(element);
@@ -125,12 +159,22 @@ export class FramedPage {
     return "highlights" in this.view.CSS && typeof this.view.Highlight === "function";
   }
 
-  mark({ holder, selector, passage }: PointedPlace): void {
+  // Marks the places of a passage, which stands above every other highlight of the page.
+  mark(places: PointedPlace[]): void {
     const words = this.marksWords();
-    const inline = this.view.getComputedStyle(holder).display.startsWith(INLINE_DISPLAY);
-    this.pointedRule.replaceSync(inline && words ? "" : `${selector} { ${POINTED_OUTLINE} }`);
+    const outlined = places.filter(
+      ({ holder }) =>
+        !(words && this.view.getComputedStyle(holder).display.startsWith(INLINE_DISPLAY)),
+    );
+    this.pointedRule.replaceSync(
+      outlined.length === 0
+        ? ""
+        : `${outlined.map(({ selector }) => selector).join(", ")} { ${POINTED_OUTLINE} }`,
+    );
     if (words) {
-      this.view.CSS.highlights.set(POINTED_HIGHLIGHT, new this.view.Highlight(passage));
+      const highlight = new this.view.Highlight(...places.map(({ passage }) => passage));
+      highlight.priority = POINTED_PRIORITY;
+      this.view.CSS.highlights.set(POINTED_HIGHLIGHT, highlight);
     }
     this.marked = true;
   }
@@ -175,7 +219,7 @@ function linkAddress(element: Element): string | null {
 }
 
 // The link an event happened in, wherever in the page it stands, a shadow tree included.
-function linkOf(event: Event): string | null {
+export function linkOf(event: Event): string | null {
   for (const target of event.composedPath()) {
     if (isElement(target)) {
       const address = linkAddress(target);
@@ -231,14 +275,20 @@ function scrollToFragment(page: Document, fragment: string): void {
 // Nothing in the page is let to load in the frame: a click on a link, by any button, is taken
 // from the page. A link to a place in the page itself scrolls the frame there; one to the web
 // opens in a tab of its own, unless it leads to infonium itself; any other does nothing. A
-// form is never sent.
+// click that ends a drag which selected words opens nothing. A form is never sent.
 export function guardLinks(page: Document): void {
+  let pressedAt = { x: 0, y: 0 };
   function follow(event: MouseEvent) {
     const raw = linkOf(event);
     if (raw === null) {
       return;
     }
     event.preventDefault();
+    const dragged =
+      Math.hypot(event.clientX - pressedAt.x, event.clientY - pressedAt.y) > DRAG_DISTANCE;
+    if (dragged && page.getSelection()?.isCollapsed === false) {
+      return;
+    }
     const address = webAddress(raw.trim(), page.baseURI);
     if (address === null || address.origin === location.origin) {
       return;
@@ -258,6 +308,13 @@ export function guardLinks(page: Document): void {
     true,
   );
   page.addEventListener("submit", (event) => event.preventDefault(), true);
+  page.addEventListener(
+    "pointerdown",
+    (event) => {
+      pressedAt = { x: event.clientX, y: event.clientY };
+    },
+    { capture: true, passive: true },
+  );
 }
 
 function linesOf(page: Document, text: string): Node[] {
@@ -322,13 +379,56 @@ function cellsOf(page: Document, pageBlocks: PageBlocks, number: number): Cell[]
   const attribute = pageBlocks.cell_attribute;
   const selector = `[${attribute}^="${number}${CELL_PLACE_SEPARATOR}"]`;
   return [...page.querySelectorAll(selector)].flatMap((element) => {
-    const [block, row, cell] = (element.getAttribute(attribute) ?? "")
-      .split(CELL_PLACE_SEPARATOR)
-      .map(Number);
-    return block === number && row !== undefined && cell !== undefined
-      ? [{ element, row, cell }]
-      : [];
+    const place = cellPlaceOf(pageBlocks, element);
+    return place?.number === number ? [{ element, row: place.row, cell: place.cell }] : [];
   });
+}
+
+// The block a cell's element stands in, and the cell's place in the block's text.
+function cellPlaceOf(
+  pageBlocks: PageBlocks,
+  element: Element,
+): { number: number; row: number; cell: number } | null {
+  const [number, row, cell] = (element.getAttribute(pageBlocks.cell_attribute) ?? "")
+    .split(CELL_PLACE_SEPARATOR)
+    .map(Number);
+  return number === undefined || row === undefined || cell === undefined
+    ? null
+    : { number, row, cell };
+}
+
+// What an element of the page stands for: a block whole, or a cell of a table block.
+export type HolderPlace = { number: number; cell: { row: number; cell: number } | undefined };
+
+// The elements of the page that stand for blocks or for cells, found once, since the page never
+// changes which elements those are: what each stands for, and each block's elements in the
+// page's order.
+export type Holders = {
+  pageBlocks: PageBlocks;
+  selector: string;
+  places: Map<Element, HolderPlace>;
+  ofBlock: Map<number, Element[]>;
+};
+
+export function holdersOf(page: Document, pageBlocks: PageBlocks): Holders {
+  const selector = `[${pageBlocks.block_attribute}], [${pageBlocks.cell_attribute}]`;
+  const places = new Map<Element, HolderPlace>();
+  const ofBlock = new Map<number, Element[]>();
+  for (const element of page.querySelectorAll(selector)) {
+    const cell = element.hasAttribute(pageBlocks.cell_attribute)
+      ? cellPlaceOf(pageBlocks, element)
+      : null;
+    const number = cell?.number ?? Number(element.getAttribute(pageBlocks.block_attribute));
+    if (!Number.isInteger(number)) {
+      continue;
+    }
+    places.set(element, {
+      number,
+      cell: cell === null ? undefined : { row: cell.row, cell: cell.cell },
+    });
+    ofBlock.set(number, [...(ofBlock.get(number) ?? []), element]);
+  }
+  return { pageBlocks, selector, places, ofBlock };
 }
 
 function blockElementOf(page: Document, pageBlocks: PageBlocks, number: number): Element | null {

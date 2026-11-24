@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { pageLink, readPageBlocks, type Anchor, type Block, type PageBlocks } from "./client";
 import {
   bringIntoFrame,
@@ -8,11 +8,15 @@ import {
   useFrameHeight,
   usePassageFollowed,
 } from "./frameroom";
+import { usePageMarking } from "./framemarking";
 import { useLoaded } from "./loading";
+import type { Marked } from "./marking";
+import { PageMarks } from "./pagemarks";
 import {
   FramedPage,
   guardLinks,
   holderOf,
+  holdersOf,
   selectorOf,
   writeBlocks,
   type PointedPlace,
@@ -92,13 +96,24 @@ function holdingOf(
   return { kind: "other", reason: said === "" ? OTHER_PAGE : `${OTHER_PAGE}：「${said}」` };
 }
 
+// The highlights that run through a block that has no element of its own in the page, and so
+// cannot be drawn there whole.
+function unplacedCount(marked: Marked[], placed: number[]): number {
+  const known = new Set(placed);
+  return marked.filter((highlight) =>
+    highlight.anchors.some((anchor) => !known.has(anchor.block_number)),
+  ).length;
+}
+
 function UnplacedNote({
   total,
   placed,
+  marked,
   setting,
 }: {
   total: number;
   placed: number;
+  marked: number;
   setting: Setting;
 }) {
   const unplaced = total - placed;
@@ -109,27 +124,31 @@ function UnplacedNote({
     <p className="webpage-note">
       本文 {total} 段中有 {unplaced} 段在原件里没有单独的位置，按网页原样显示
       {setting !== "source" && "，不换成译文"}；「文本」里有全部 {total} 段。
+      {marked > 0 && `你的高亮中有 ${marked} 处落在这些段里，这里标不出，「文本」里有。`}
     </p>
   );
 }
 
 // A web article as the page it was read from, kept and inert, in the frame: in its source, its
 // translation in the place of each block's text, or each block followed by its translation. A
-// passage pointed at is marked and brought into view in the frame, and one whose block has no
-// element of its own in the page is said to be lost. The frame shows nothing but this item's
-// page: anything else it comes to hold is a failure, said in its place.
+// passage pointed at is marked and brought into view in the frame, and one whose blocks have no
+// element of their own in the page is said to be lost. The reader's highlights are drawn in
+// the page, and what the reader selects or presses in it is handed over. The frame shows
+// nothing but this item's page: anything else it comes to hold is a failure, said in its place.
 export function WebpageView({
   entry,
   itemDocument,
   setting,
   translation,
   pointed,
+  marking,
   onShow,
   onLost,
 }: ViewContext) {
   const pageBlocks = useLoaded(() => readPageBlocks(entry.id), entry.id);
   const frame = useRef<HTMLIFrameElement>(null);
   const [framed, setFramed] = useState<FramedPage>();
+  const [marks, setMarks] = useState<PageMarks>();
   const [failure, setFailure] = useState<string>();
   const height = useFrameHeight(frame, onShow && pageBlocks.state === "ready");
   const following = usePassageFollowed(frame, framed?.view, onShow);
@@ -140,6 +159,12 @@ export function WebpageView({
   // again when the view comes on show again.
   const shownPointing = useRef<Pointed>(undefined);
   const settled = useRef<Document>(undefined);
+  const holders = useMemo(
+    () =>
+      framed === undefined || ready === undefined ? undefined : holdersOf(framed.document, ready),
+    [framed, ready],
+  );
+  usePageMarking(frame, marks, holders, itemDocument, marking, onShow);
 
   // Takes what the frame holds once it holds something: the page is guarded from the moment
   // its document can be reached, before anything in it can be clicked; it is shown, written
@@ -163,7 +188,11 @@ export function WebpageView({
           guardLinks(holding.page);
           holding.view.addEventListener("pagehide", () => setFailure(REPLACED));
           const { page, view } = holding;
-          const parsed = () => setFramed(new FramedPage(page, view));
+          const parsed = () => {
+            const shown = new FramedPage(page, view);
+            setFramed(shown);
+            setMarks(new PageMarks(shown));
+          };
           if (page.readyState === PARSING) {
             page.addEventListener("DOMContentLoaded", parsed, { once: true });
           } else {
@@ -231,24 +260,35 @@ export function WebpageView({
     if (framed === undefined || ready === undefined || frame.current === null) {
       return;
     }
-    const lookup = pointedPlaceOf(framed, ready, blocks, pointed.anchors[0]);
-    if (!lookup.found) {
+    // Each anchor is marked where its block has an element; the passage is lost only where
+    // none has.
+    const lookups = pointed.anchors.map((anchor) => pointedPlaceOf(framed, ready, blocks, anchor));
+    const places = lookups.flatMap((lookup) => (lookup.found ? [lookup.place] : []));
+    const start = places[0];
+    if (start === undefined) {
       framed.unmark();
       following.follow(undefined);
       if (first) {
-        onLost(lookup.reason);
+        onLost(lookups.find((lookup) => !lookup.found)?.reason ?? UNPLACED);
       }
     } else {
-      framed.mark(lookup.place);
+      framed.mark(places);
       if (first) {
-        bringIntoFrame(frame.current, framed.view, lookup.place.passage);
-        following.follow(lookup.place.passage);
+        bringIntoFrame(frame.current, framed.view, start.passage);
+        following.follow(start.passage);
       } else {
-        following.renew(lookup.place.passage);
+        following.renew(start.passage);
       }
     }
     shownPointing.current = pointed;
   }, [framed, ready, failed, blocks, pointed, onShow, setting, translation.blocks]);
+
+  // Drawn after the blocks are written, since writing a block replaces the words drawn in it.
+  useLayoutEffect(() => {
+    if (marks !== undefined && holders !== undefined && onShow) {
+      marks.draw(holders, blocks, marking.marked, marking.opened);
+    }
+  }, [marks, holders, blocks, setting, translation.blocks, onShow, marking.marked, marking.opened]);
 
   if (failed !== undefined) {
     return (
@@ -262,7 +302,12 @@ export function WebpageView({
   }
   return (
     <div className="webpage">
-      <UnplacedNote total={blocks.length} placed={ready.placed.length} setting={setting} />
+      <UnplacedNote
+        total={blocks.length}
+        placed={ready.placed.length}
+        marked={unplacedCount(marking.marked, ready.placed)}
+        setting={setting}
+      />
       <iframe
         ref={frame}
         className="webpage-frame"
