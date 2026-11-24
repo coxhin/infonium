@@ -267,6 +267,8 @@ The blocks of every document the library holds are indexed in the library's file
 - A passage is lost where a digit of it other than a footnote mark's changed, however little else did, and where more than one letter in five changed: of 100 passages of a PDF in Hebrew, Georgian, Armenian, Amharic and Khmer, read again as pictures, 44 were lost because the recognition wrote other text.
 - The notebook works out where each highlight stands each time it lists them. 300 highlights on a made-up page of 2,001 blocks and 1.05 million characters, read again with its text cut and misread, took 2.89 seconds the first time and 2.68 seconds after, on a busy machine, against 0.01 seconds before the second reading.
 - Every revision is kept with its document and its snapshot, and none is ever removed.
+- Where a new paragraph of a few words came to stand inside a passage that runs over several paragraphs, the passage is found with the new paragraph inside it.
+- A passage that begins with a combining mark set after white space is lost even in a reading that changed nothing: 15 of 3,988 such made-up passages.
 - An earlier revision is shown as its text only, without its pages, its kept page, its player or a translation, and nothing can be marked in it.
 - An upload whose reading never succeeded cannot be read again; it has to be uploaded again.
 - In a library kept before revisions, an item's earlier readings are numbered in the order they were last read, not first read.
@@ -287,7 +289,7 @@ The blocks of every document the library holds are indexed in the library's file
 ### In general
 
 - The reason shown when a call of the model or of an engine fails gives the address the call went to and what was answered.
-- An address is fetched for up to ten minutes and up to 2 GiB. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
+- An address is fetched for up to ten minutes and up to 2 GiB, and given up once its server sends nothing for 20 seconds. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
 - The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
 - The other programs infonium starts are given none of them either, nor any variable named like a key, a token, a password or a secret: FFmpeg only `PATH`; the fetcher of video and podcast pages `PATH`, the locale, the proxies and yt-dlp's `YTDLP_` settings; MinerU `PATH`, the locale, the proxies, `HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH`, its own `MINERU_` settings, the GPU's `CUDA_` settings and the `HF_`, `HUGGINGFACE_` and `MODELSCOPE_` settings of the hubs it fetches its models from. Only `file` is given all of infonium's environment: when infonium loads yt-dlp, once each time infonium starts and each time `--reload` restarts it, Python runs `file` on its own executable, and `file` reads that executable and its magic database and nothing else.
 - infonium serves one person on one machine. It has no accounts and no authentication, so keep its ports off the network.
