@@ -96,33 +96,27 @@ SLOW = [HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too
 UNSHRUNK = (Phase.explicit, Phase.reuse, Phase.generate)
 
 
-# The judgments of R6, as amended and ruled, that the mended part (4e1fa7b) fails under some
-# seed; the lead takes the marks off when the part passes them.
-def failing_at_4e1fa7b(reason: str) -> pytest.MarkDecorator:
-    return pytest.mark.xfail(reason=f"at 4e1fa7b {reason}", strict=False)
+# The judgments of R6, as amended and ruled, that the part at 5b1758c fails under some seed;
+# the lead takes the marks off when the part passes them.
+def failing_at_5b1758c(reason: str) -> pytest.MarkDecorator:
+    return pytest.mark.xfail(reason=f"at 5b1758c {reason}", strict=False)
 
 
-OTHER_COPY = failing_at_4e1fa7b(
-    "a passage said again is found at another copy of its words while its own copy stands, "
-    "the other copy's surroundings not its own"
+OTHER_COPY = failing_at_5b1758c(
+    "a passage said again is found at another copy of its words, its own copy standing or gone"
 )
-OWN_COPY_GONE = failing_at_4e1fa7b(
+OWN_COPY_GONE = failing_at_5b1758c(
     "a sentence said in every section is found in another section once its own is removed"
 )
-NEAR_ELSEWHERE = failing_at_4e1fa7b(
-    "words read a little otherwise, between their own surroundings and alike to no other "
-    "stretch, are lost"
+WRONG_PLACES = failing_at_5b1758c(
+    "a passage is found at another copy of its words, its own standing, gone or changed in a "
+    "number; and the search fails with an IndexError on a table of rows said again"
 )
-WRONG_PLACES = failing_at_4e1fa7b(
-    "a passage is found at another copy of its words, its own standing or gone, or in another "
-    "entry beside a number changed"
+OTHER_CELL = failing_at_5b1758c(
+    "a cell is found in another row's cell, its own row standing or changed in a number"
 )
-OTHER_CELL = failing_at_4e1fa7b(
-    "a cell is found in another row's cell, its own row standing or changed, and a cell with a "
-    "row put in above it is lost"
-)
-OTHER_ENTRY = failing_at_4e1fa7b(
-    "words of an entry removed are found in another entry built on the same template"
+OTHER_ENTRY = failing_at_5b1758c(
+    "now and then words of an entry removed are found in another entry built on the same template"
 )
 
 
@@ -392,9 +386,8 @@ def read_a_little_otherwise(draw: st.DrawFn) -> tuple[Revised, int]:
     return draw(revisions(coiner, units, EVERY_CHANGE, put_in=True, fixed=fixed)), target
 
 
-@NEAR_ELSEWHERE
 @given(data=st.data(), made=read_a_little_otherwise())
-@settings(max_examples=150, suppress_health_check=SLOW, phases=UNSHRUNK)
+@settings(max_examples=150, suppress_health_check=SLOW)
 def test_words_that_differ_a_little_are_found_where_they_stand_and_not_as_exact(
     data: st.DataObject, made: tuple[Revised, int]
 ) -> None:
@@ -444,9 +437,8 @@ def test_a_cell_or_line_of_a_table_is_found_at_its_place_and_lost_with_it_never_
     judged_spans(revised, [*(whole_unit(units, number) for number in range(len(units))), *cells])
 
 
-@OTHER_CELL
 @given(data=st.data(), changed=st.booleans())
-@settings(max_examples=60, suppress_health_check=SLOW, phases=UNSHRUNK)
+@settings(max_examples=60, suppress_health_check=SLOW)
 def test_a_cell_is_found_in_its_place_when_a_row_is_put_in_above_and_lost_when_it_changed(
     data: st.DataObject, changed: bool
 ) -> None:

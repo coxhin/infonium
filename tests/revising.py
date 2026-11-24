@@ -119,12 +119,12 @@ CHANGED_SIDE = 0.25
 RIVAL_SIDE = 32
 RIVAL_LIKENESS = 1.0
 RIVAL_SIDE_LIKENESS = 0.5
+# A copy is clearly another place when no more than this share of the RIVAL_SIDE letters, and
+# of the SURROUNDINGS letters, on either of its sides stands as around the passage.
+CLEARLY_OTHER = 0.25
 # Words found for a passage that keep fewer of its letters than this are other words; between
 # this and NEAR_ALIKE lies the edge of the search's bound, where either answer is right.
 EDGE_LIKENESS = 0.7
-# Sides that keep this share of their letters stand at the edge of the search's count of
-# neighbouring letters with one change allowed.
-EDGE_SIDE = 0.75
 # Another stretch this like a passage leaves a place of words that differ a little in doubt; a
 # letter no text holds stands in for the place itself.
 RIVAL_NEAR = 0.6
@@ -819,6 +819,23 @@ def has_rival(text: str, sought: str, place: int, marked_sides: tuple[str, str])
     return False
 
 
+def told_clearly(text: str, sought: str, place: int, marked_sides: tuple[str, str]) -> bool:
+    # Whether every other copy of the words stands among letters far from the passage's own
+    # on both sides, well past the search's count of letters that tell copies apart.
+    for copy in occurrences(text, sought):
+        if copy == place:
+            continue
+        for size in (RIVAL_SIDE, SURROUNDINGS):
+            marked_before, marked_after = marked_sides[0][-size:], marked_sides[1][:size]
+            held_before, held_after = sides(text, (copy, copy + len(sought)), size)
+            if (
+                side_likeness(marked_before, held_before, before=True) > CLEARLY_OTHER
+                or side_likeness(marked_after, held_after, before=False) > CLEARLY_OTHER
+            ):
+                return False
+    return True
+
+
 def unit_letter_span(laid: Laid, letters: Letters, unit: int) -> tuple[int, int]:
     first, last = laid.places[unit][0], laid.places[unit][-1]
     return (
@@ -927,22 +944,14 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         if after_kept
         else len(second.text),
     )
-    marked_sides = sides(first.text, marked, TELLING_SIDE)
+    # The very words at the passage's own place, whatever the unit around them became, with
+    # the letters right around them not changed on both sides (ruling 7).
     copies_in_place = [
         (copy, copy + len(sought))
         for copy in copies_second
         if envelope[0] <= copy
         and copy + len(sought) <= envelope[1]
-        and all(
-            side_likeness(marked_side, held_side, before=number == 0) >= EDGE_SIDE
-            for number, (marked_side, held_side) in enumerate(
-                zip(
-                    marked_sides,
-                    sides(second.text, (copy, copy + len(sought)), TELLING_SIDE),
-                    strict=True,
-                )
-            )
-        )
+        and not sides_changed(first, marked, second, (copy, copy + len(sought)))
     ]
     # A passage of a table's lines takes its neighbours from its own line (the lead's decision
     # on cells), so lines changed around it do not make it lost.
@@ -954,9 +963,11 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         outcome = Outcome.EITHER if copies_in_place else Outcome.LOST
     elif same:
         intact = sides(second.text, region, SURROUNDINGS) == sides(first.text, marked, SURROUNDINGS)
-        rival = has_rival(second.text, sought, region[0], sides(first.text, marked, RIVAL_SIDE))
+        marked_wide = sides(first.text, marked, SURROUNDINGS)
         if (held_once and weight(sought) >= DISTINCT_LETTERS) or (
-            told_in_first and intact and not rival
+            intact
+            and told_clearly(first.text, sought, marked[0], marked_wide)
+            and told_clearly(second.text, sought, region[0], marked_wide)
         ):
             outcome = Outcome.FOUND
         elif (
@@ -1037,7 +1048,11 @@ def judge_standing(
     )
     match expected.outcome:
         case Outcome.FOUND:
-            assert isinstance(standing, Found) and standing.exact == (not expected.near), (
+            # Something put in right after or before the passage's words leaves them its very
+            # words (ruling 6): found exact is right there too.
+            assert isinstance(standing, Found) and (
+                standing.exact == (not expected.near) or standing.exact
+            ), (
                 "R6b, R6c, R6d: a passage whose words stand where its letters or its "
                 "surroundings tell was not found there, "
                 + ("not exact" if expected.near else "exact")
@@ -1071,6 +1086,11 @@ def judge_standing(
             (expected.same_words and standing.passage.anchors == expected.expected_anchors)
             or whole_span == expected.moved_to
             or whole_span in expected.copies_in_place
+            or (
+                expected.region is not None
+                and expected.region[0] <= whole_span[0]
+                and whole_span[1] <= expected.region[1]
+            )
         ), (
             f"R6c, R6e: a passage was found exact at another place than where its own words "
             f"stand, or without the anchors of its words there: {told}"
