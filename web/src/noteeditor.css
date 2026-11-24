@@ -1,0 +1,366 @@
+/* An open note takes the panel: the way back and where it stands, the controls of its text,
+   held at the head while the text scrolls under them; then its title and its text. */
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.note-editor > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 0.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 1.2rem 0.4rem;
+}
+
+.note-editor > header > :is(.note-tools, .note-linking) {
+  grid-column: 1 / -1;
+}
+
+.note-editor > .status {
+  padding: 0 1.2rem;
+}
+
+.note-editor .back {
+  align-self: flex-start;
+  flex: none;
+  white-space: nowrap;
+  border: 0;
+  background: none;
+  padding: 0.2rem 0.3rem;
+  margin-left: -0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.keeping {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+.keeping.failed {
+  color: var(--failure);
+}
+
+/* A text not sent, with the ways on that are offered for it, across the head of the note. */
+div.keeping {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  text-align: left;
+}
+
+div.keeping p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+div.keeping button {
+  margin-left: 0;
+}
+
+.keeping button {
+  margin-left: 0.4rem;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+.note-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  margin-top: 0.3rem;
+}
+
+.note-tools button {
+  flex: none;
+  white-space: nowrap;
+  min-width: 1.9rem;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.85rem;
+  border-color: transparent;
+  background: none;
+}
+
+.note-tools button:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--paper);
+}
+
+.note-tools button[aria-pressed="true"] {
+  background: var(--paper);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.note-linking {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.note-linking input {
+  flex: 1;
+  min-width: 10rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+  padding: 0.2rem 0.5rem;
+}
+
+.note-linking .status {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.note-unheld {
+  margin: 0.6rem 1.2rem 0;
+  font-size: 0.85rem;
+}
+
+.note-title {
+  margin: 0.8rem 1.2rem 0;
+  padding: 0.2rem 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.note-title:hover {
+  border-bottom-color: var(--line);
+}
+
+.note-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The text, in the manner of the reader's. */
+.note-text {
+  flex: 1;
+  min-height: 10rem;
+  padding: 0.5rem 1.2rem 2rem;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.side .note-text:focus-visible {
+  outline: 0;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.note-text > :first-child {
+  margin-top: 0;
+}
+
+.note-text :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.3;
+  margin: 1.2em 0 0.4em;
+}
+
+.note-text h1 {
+  font-size: 1.35rem;
+}
+
+.note-text h2 {
+  font-size: 1.2rem;
+}
+
+.note-text :is(h3, h4, h5, h6) {
+  font-size: 1.05rem;
+}
+
+.note-text p {
+  margin: 0 0 0.7em;
+}
+
+.note-text :is(ul, ol) {
+  margin: 0 0 0.7em;
+  padding-left: 1.4rem;
+}
+
+.note-text li > p {
+  margin: 0 0 0.2em;
+}
+
+.note-text blockquote {
+  margin: 0 0 0.7em;
+  padding-left: 0.9rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.note-text :is(code, pre) {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--paper);
+  border-radius: 0.3rem;
+}
+
+.note-text code {
+  padding: 0.1em 0.3em;
+}
+
+.note-text pre {
+  margin: 0 0 0.7em;
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.note-text pre code {
+  padding: 0;
+  background: none;
+}
+
+.note-text hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1em 0;
+}
+
+.note-text hr.ProseMirror-selectednode {
+  border-top-color: var(--accent);
+}
+
+/* A link of a note to one of its passages, drawn as a citation's chip is. */
+.note-text .passage-link.chip {
+  display: inline-block;
+  margin: 0 0.15rem;
+  padding: 0 0.45rem;
+  min-width: 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.4rem;
+  text-align: center;
+  color: var(--accent);
+  background: var(--paper);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: 0.05em;
+}
+
+.note-text .passage-link.chip:hover,
+.note-text .passage-link.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.note-text .passage-link.chip[data-standing="moved"] {
+  border-style: dashed;
+}
+
+.note-text .passage-link.chip[data-standing="lost"] {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.note-text .passage-link.chip[data-standing="lost"]:hover,
+.note-text .passage-link.chip[data-standing="lost"][aria-pressed="true"] {
+  color: var(--on-accent);
+}
+
+.note-text .passage-link.chip[data-standing="lost"]::after {
+  content: " · " attr(data-revision);
+}
+
+.note-text .passage-link.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* What the cursor is on, with the way to open it. */
+.note-here {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.35rem 1.2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.note-here span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-here button {
+  padding: 0.05rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+/* In the drawer the controls stay on one line, which scrolls sideways, so that the text keeps
+   what room the drawer has. */
+@media (max-width: 64rem) {
+  .note-editor > header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 0.3rem 1.2rem;
+  }
+
+  .note-editor > header > .note-tools {
+    grid-column: 2;
+    grid-row: 1;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-top: 0;
+  }
+
+  .note-editor .back-words {
+    display: none;
+  }
+
+  .note-editor > header > .keeping.failed {
+    grid-column: 1 / -1;
+  }
+
+  .note-title {
+    margin-top: 0.4rem;
+  }
+
+  .note-text {
+    min-height: 6rem;
+  }
+}
+
+/* With a screen keyboard up the drawer is short: what the cursor is on is said only where
+   there is room for it, and the text takes the rest. */
+@media (max-width: 64rem) and (max-height: 34rem) {
+  .note-here,
+  .note-unheld {
+    display: none;
+  }
+
+  .note-text {
+    min-height: 3rem;
+    padding-bottom: 0.5rem;
+  }
+}

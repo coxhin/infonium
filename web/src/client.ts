@@ -362,25 +362,39 @@ export function readLibraryHighlights(): Promise<ItemHighlights[]> {
   return settled(api.GET("/api/highlights"));
 }
 
+// The requests about notes tell a request that reached no service from a refusal, as a reader
+// is told the two apart: the text is kept once the service is back, and not after it refused.
 export function listNotes(): Promise<NoteEntry[]> {
-  return settled(api.GET("/api/notes"));
+  return settled(reached(api.GET("/api/notes")));
 }
 
 export function writeNote(draft: NoteDraft): Promise<Note> {
-  return settled(api.POST("/api/notes", { body: draft }));
+  return settled(reached(api.POST("/api/notes", { body: draft })));
 }
 
 export function readNote(noteId: string): Promise<Note> {
-  return settled(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
+  return settled(
+    reached(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
 }
 
-// Puts the draft in place of what the note held.
-export function rewriteNote(noteId: string, draft: NoteDraft): Promise<Note> {
+// Puts the draft in place of what the note held, unless the note holds an edition as late as
+// the draft's. A draft sent as the page is left is sent so that the request outlives the page;
+// the browser refuses such a request above 64 KiB.
+export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): Promise<Note> {
   return settled(
-    api.PUT("/api/notes/{note_id}", { params: { path: { note_id: noteId } }, body: draft }),
+    reached(
+      api.PUT("/api/notes/{note_id}", {
+        params: { path: { note_id: noteId } },
+        body: draft,
+        keepalive: leaving,
+      }),
+    ),
   );
 }
 
 export function removeNote(noteId: string): Promise<void> {
-  return done(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
+  return done(
+    reached(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
 }
