@@ -103,7 +103,7 @@ FORMULA = ("$\\frac{{{rare}}}{{3}}", "=", "\\int_0^1", "x^2\\,dx$")
 # SHORT_LETTERS; one of words that differ is held to be found when they keep NEAR_ALIKE of its
 # letters. A passage is told by its surroundings when SURROUNDINGS letters on each side stand
 # again as they stood, and the surroundings are changed when no more than CHANGED_SIDE of the
-# TELLING_SIDE letters next to it on either side stand at their distance again. A passage
+# TELLING_SIDE letters next to it on a side are kept by the fewest letters changed. A passage
 # found in words that differ begins and ends within NEAR_SLACK letters of where its words
 # stand, and covers NEAR_COVER of them when it must be found.
 SHORT_LETTERS = 30
@@ -113,6 +113,9 @@ LETTERS_A_CHANGE = 25
 SURROUNDINGS = 64
 TELLING_SIDE = 16
 CHANGED_SIDE = 0.25
+# A side is borne out by its block's edge when the passage lies fewer letters than this from
+# it (ruling 9).
+EDGE_LETTERS = 10
 # A copy of a passage's words whose RIVAL_SIDE letters on each side stand at their distance as
 # they stood around the passage, more than RIVAL_LIKENESS of them in sum over both sides, may
 # leave the passage's place in doubt.
@@ -798,6 +801,8 @@ class Expectation(BaseModel):
     # which no reading of the text tells from its own words.
     envelope: tuple[int, int]
     copies_in_place: list[tuple[int, int]]
+    edge_copies: list[tuple[int, int]]
+    run_copies: list[tuple[int, int]]
     near: bool
     outcome: Outcome
     # Whether no other copy of the passage's words in the revision it was marked in had
@@ -865,16 +870,75 @@ def side_likeness(marked: str, held: str, before: bool) -> float:
     return sum(one == other for one, other in pairs) / len(marked)
 
 
-def sides_changed(
+def side_kept(marked: str, held: str) -> float:
+    # The share of a side's letters that the fewest letters put in, left out or read otherwise
+    # leave as they were; a side at a document's edge is kept only at the edge.
+    if not marked or not held:
+        return float(marked == held)
+    return 1 - edits(marked, held) / len(marked)
+
+
+def changed_sides(
     first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
-) -> bool:
-    # Whether the letters right before and right after a passage have changed on both sides,
-    # far past the search's count of neighbouring letters.
+) -> tuple[bool, bool]:
+    # Whether the letters right before, and right after, a passage have changed, far past the
+    # search's count of neighbouring letters with one change allowed.
     before, after = sides(first.text, marked, TELLING_SIDE)
     held_before, held_after = sides(second.text, place, TELLING_SIDE)
     return (
-        side_likeness(before, held_before, before=True) <= CHANGED_SIDE
-        and side_likeness(after, held_after, before=False) <= CHANGED_SIDE
+        side_kept(before, held_before) <= CHANGED_SIDE,
+        side_kept(after, held_after) <= CHANGED_SIDE,
+    )
+
+
+def kept_sides(
+    first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
+) -> tuple[bool, bool]:
+    # Whether the letters right before, and right after, a passage stand again but for one.
+    before, after = sides(first.text, marked, TELLING_SIDE)
+    held_before, held_after = sides(second.text, place, TELLING_SIDE)
+    return (
+        len(before) == TELLING_SIDE and edits(before, held_before) <= 1,
+        len(after) == TELLING_SIDE and edits(after, held_after) <= 1,
+    )
+
+
+def sides_changed(
+    first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
+) -> bool:
+    return all(changed_sides(first, marked, second, place))
+
+
+def block_prefix(letters: Letters, at: int) -> str:
+    # The letters of a block before a place in it.
+    block = letters.places[at][0] if at < len(letters.places) else len(letters.places)
+    return letters.text[bisect_left(letters.places, (block, 0)) : at]
+
+
+def block_suffix(letters: Letters, end: int) -> str:
+    # The letters of a block after a place in it.
+    block = letters.places[end - 1][0]
+    return letters.text[end : bisect_left(letters.places, (block + 1, 0))]
+
+
+def block_letters(letters: Letters, at: int) -> str:
+    # The letters of the block a letter stands in.
+    block = letters.places[at][0]
+    return letters.text[
+        bisect_left(letters.places, (block, 0)) : bisect_left(letters.places, (block + 1, 0))
+    ]
+
+
+def edges_bear(
+    first: Letters, marked: tuple[int, int], second: Letters, place: tuple[int, int]
+) -> tuple[bool, bool]:
+    # Whether the passage's start, and its end, are borne out by its block's edge (ruling 9):
+    # fewer than EDGE_LETTERS letters from the edge, the same letters between, at the place too.
+    head = block_prefix(first, marked[0])
+    tail = block_suffix(first, marked[1])
+    return (
+        len(head) < EDGE_LETTERS and block_prefix(second, place[0]) == head,
+        len(tail) < EDGE_LETTERS and block_suffix(second, place[1]) == tail,
     )
 
 
@@ -927,7 +991,7 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
     same_words = len(surviving) == len(words) and held_words == sought
     same = same_words and region is not None and second.text[region[0] : region[1]] == sought
     moved_to = (
-        (copies_second[0], copies_second[0] + len(sought)) if held_once and not same_words else None
+        (copies_second[0], copies_second[0] + len(sought)) if held_once and not same else None
     )
     whole = all(unit in second_unit for unit in units) and all(
         second_unit[later] == second_unit[earlier] + 1 for earlier, later in pairwise(units)
@@ -953,6 +1017,41 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         and copy + len(sought) <= envelope[1]
         and not sides_changed(first, marked, second, (copy, copy + len(sought)))
     ]
+    # Copies of the very words whose one side is borne out by its block's edge and whose other
+    # side keeps its letters but for one (ruling 9): either answer.
+    edge_copies = [
+        (copy, copy + len(sought))
+        for copy in copies_second
+        for place in [(copy, copy + len(sought))]
+        for edge_before, edge_after in [edges_bear(first, marked, second, place)]
+        for kept_before, kept_after in [kept_sides(first, marked, second, place)]
+        if (edge_before and kept_after) or (edge_after and kept_before)
+    ]
+    # Identical units next to each other, one of them removed, leave the same text whichever
+    # was removed (ruling 10): a passage of one of them may stand at any of them that stays.
+    run = [span.first_unit] if span.first_unit == span.last_unit else []
+    while (
+        run
+        and run[0] > 0
+        and revised.first_units[run[0] - 1].words == revised.first_units[run[0]].words
+    ):
+        run.insert(0, run[0] - 1)
+    while (
+        run
+        and run[-1] + 1 < len(revised.first_units)
+        and revised.first_units[run[-1] + 1].words == revised.first_units[run[-1]].words
+    ):
+        run.append(run[-1] + 1)
+    run_copies = [
+        (
+            second.span(head_place.block, head_place.start, head_place.end)[0],
+            second.span(tail_place.block, tail_place.start, tail_place.end)[1],
+        )
+        for unit in run
+        if unit != span.first_unit and unit in second_unit
+        for head_place in [revised.second.places[second_unit[unit]][span.first_word]]
+        for tail_place in [revised.second.places[second_unit[unit]][span.last_word]]
+    ]
     # A passage of a table's lines takes its neighbours from its own line (the lead's decision
     # on cells), so lines changed around it do not make it lost.
     in_table = any(revised.first_units[unit].kind in ROW_KINDS for unit in units)
@@ -960,12 +1059,37 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
     if moved_to is not None:
         outcome = moved_outcome(sought, first, marked, second, moved_to)
     elif region is None:
-        outcome = Outcome.EITHER if copies_in_place else Outcome.LOST
+        outcome = Outcome.EITHER if copies_in_place or edge_copies or run_copies else Outcome.LOST
     elif same:
-        intact = sides(second.text, region, SURROUNDINGS) == sides(first.text, marked, SURROUNDINGS)
         marked_wide = sides(first.text, marked, SURROUNDINGS)
+        held_wide = sides(second.text, region, SURROUNDINGS)
+        edge_before, edge_after = edges_bear(first, marked, second, region)
+        # A block's edge holds the passage to be found only where its block stands word for word
+        # (the lead's R6h).
+        # Nor where the other revision ends there, which the lead's R6h does not name.
+        edge_before = (
+            edge_before
+            and bool(held_wide[0])
+            and block_letters(first, marked[0]) == block_letters(second, region[0])
+        )
+        edge_after = (
+            edge_after
+            and bool(held_wide[1])
+            and block_letters(first, marked[1] - 1) == block_letters(second, region[1] - 1)
+        )
+        # Both sides borne out, at least one by its letters: here, by its SURROUNDINGS standing
+        # as they stood, at least TELLING_SIDE of them before a document's edge; the other by
+        # them too, by the document's edge, or by its block's edge (ruling 9).
+        borne = (held_wide[0] == marked_wide[0] or edge_before) and (
+            held_wide[1] == marked_wide[1] or edge_after
+        )
+        by_letters = any(
+            held_wide[side] == marked_wide[side] and len(marked_wide[side]) >= TELLING_SIDE
+            for side in (0, 1)
+        )
         if (held_once and weight(sought) >= DISTINCT_LETTERS) or (
-            intact
+            borne
+            and by_letters
             and told_clearly(first.text, sought, marked[0], marked_wide)
             and told_clearly(second.text, sought, region[0], marked_wide)
         ):
@@ -979,7 +1103,7 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
             outcome = Outcome.LOST
         else:
             outcome = Outcome.EITHER
-    elif same_words or copies_in_place:
+    elif same_words or copies_in_place or edge_copies:
         # Units put in between the passage's own blocks (ruling 3), or its very words at its
         # place with the same letters around them.
         outcome = Outcome.EITHER
@@ -1013,6 +1137,8 @@ def expectation(revised: Revised, span: WordSpan, first: Letters, second: Letter
         moved_to=moved_to,
         envelope=envelope,
         copies_in_place=copies_in_place,
+        edge_copies=edge_copies,
+        run_copies=run_copies,
         near=near,
         outcome=outcome,
         told_in_first=told_in_first,
@@ -1086,6 +1212,8 @@ def judge_standing(
             (expected.same_words and standing.passage.anchors == expected.expected_anchors)
             or whole_span == expected.moved_to
             or whole_span in expected.copies_in_place
+            or whole_span in expected.edge_copies
+            or whole_span in expected.run_copies
             or (
                 expected.region is not None
                 and expected.region[0] <= whole_span[0]
