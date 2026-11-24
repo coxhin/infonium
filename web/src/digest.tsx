@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ensureDigest, rewriteDigest, type Digest } from "./client";
 import { Citations, LostCitations, type Citing } from "./citing";
 import { useLoaded } from "./loading";
-import { NoteDown, statementTaking } from "./notedown";
+import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import "./digest.css";
 
 function DigestBody({
@@ -21,7 +21,7 @@ function DigestBody({
           <h2>{section.title}</h2>
           <ul>
             {section.statements.map((statement, statementIndex) => (
-              <li key={statementIndex}>
+              <li key={statementIndex} className={NOTE_GUTTER}>
                 {statement.text}
                 <Citations
                   anchors={statement.anchors}
@@ -33,6 +33,7 @@ function DigestBody({
                 <NoteDown
                   taking={statementTaking([statement], () => itemId)}
                   label="记到笔记：这句摘要"
+                  shape="mark"
                 />
               </li>
             ))}

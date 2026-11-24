@@ -445,11 +445,6 @@ export function Citations({
         title={asking ? `${titleOf(anchor)}\n（正在查找它现在的位置）` : titleOf(anchor)}
         aria-pressed={citing.isPressed(anchor)}
         aria-busy={asking}
-        // A press of the pointer leaves the keyboard where it was. A chip that took it would
-        // let go of it from the chip pressed before, whose statement then folds the control it
-        // opened for the keyboard, moving the chips under it between the button going down and
-        // coming up, so that the press would miss.
-        onMouseDown={(event) => event.preventDefault()}
         onClick={() => onPoint(anchor)}
       >
         {anchorIndex + 1}
