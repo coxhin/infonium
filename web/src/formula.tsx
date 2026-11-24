@@ -10,13 +10,14 @@ function table(entries: Record<string, string>): ReadonlyMap<string, string> {
   return new Map(Object.entries(entries));
 }
 
-const GREEK = table({
+// The letters a command names: the Greek ones, and the script l.
+const LETTERS = table({
   alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ϵ", varepsilon: "ε", zeta: "ζ",
   eta: "η", theta: "θ", vartheta: "ϑ", iota: "ι", kappa: "κ", lambda: "λ", mu: "μ", nu: "ν",
   xi: "ξ", pi: "π", varpi: "ϖ", rho: "ρ", varrho: "ϱ", sigma: "σ", varsigma: "ς", tau: "τ",
   upsilon: "υ", phi: "ϕ", varphi: "φ", chi: "χ", psi: "ψ", omega: "ω", Gamma: "Γ", Delta: "Δ",
   Theta: "Θ", Lambda: "Λ", Xi: "Ξ", Pi: "Π", Sigma: "Σ", Upsilon: "Υ", Phi: "Φ", Psi: "Ψ",
-  Omega: "Ω",
+  Omega: "Ω", ell: "ℓ",
 });
 const OPERATORS = table({
   cdot: "⋅", times: "×", div: "÷", pm: "±", mp: "∓", leq: "≤", le: "≤", geq: "≥", ge: "≥",
@@ -50,6 +51,9 @@ const SPACES = table({
   " ": "0.25em",
 });
 const SIZES = new Set(["big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr", "biggl", "biggr"]);
+// A switch of style says how what follows it is set, not what it is, so nothing is drawn for
+// it. The engine that reads PDFs begins many a formula with one.
+const STYLE_SWITCHES = new Set(["displaystyle", "textstyle", "scriptstyle", "scriptscriptstyle"]);
 const OPERATOR_CHARACTERS = new Set([..."+-=<>,;:!/|()[]*'.?"]);
 // Tables whose cells are read as a grid; the columns' alignment of an array is passed over.
 const TABLES = new Set([
@@ -251,7 +255,7 @@ class Reading {
         }
         text += next.character;
       } else {
-        text += OPERATORS.get(next.command) ?? GREEK.get(next.command) ?? next.command;
+        text += OPERATORS.get(next.command) ?? LETTERS.get(next.command) ?? next.command;
       }
     }
     throw new UnreadFormula("a group is not closed");
@@ -387,9 +391,9 @@ class Reading {
     if (name === "underline") {
       return math("munder", null, this.argument(), math("mo", null, "_"));
     }
-    const greek = GREEK.get(name);
-    if (greek !== undefined) {
-      return math("mi", null, greek);
+    const letter = LETTERS.get(name);
+    if (letter !== undefined) {
+      return math("mi", null, letter);
     }
     const symbol = OPERATORS.get(name);
     if (symbol !== undefined) {
@@ -404,6 +408,9 @@ class Reading {
     }
     if (SIZES.has(name)) {
       return this.argument();
+    }
+    if (STYLE_SWITCHES.has(name)) {
+      return null;
     }
     throw new UnreadFormula(`\\${name} is not read`);
   }
