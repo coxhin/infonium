@@ -47,7 +47,7 @@ A highlight is a passage you marked, with a comment if you wrote one. Select wor
 
 A highlight is drawn in every view of its source. Pressing one opens it in the notebook, and pressing its words in the notebook shows the passage in the source. With no source open, the notebook lists the highlights of every source.
 
-A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A note is kept by itself a moment after you stop typing.
+A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
 
 ### Reading a source again
 
@@ -240,7 +240,9 @@ The blocks of every document the library holds are indexed in the library's file
 - A highlight in the kept page keeps its light green on a dark page and in the dark theme.
 - Marking by touch was tried only in emulation, not on a phone or with a pen. On a PDF's pages, a finger held still for 450 ms marks the whole block it rests on and does not select words. In the kept page, touch was not tried.
 - A comment typed and not yet kept survives turning to another item, but is lost when the page is loaded again.
-- A page open in a second tab shows a highlight removed or changed in the first only once its item is opened again or its notebook comes on show again.
+- A page open in a second tab shows a highlight made, changed or removed in the first once that tab is turned to, not before.
+- In 对照 in the text, a highlight is drawn on the source's words, not on the translation beside them.
+- A passage that runs through a formula is quoted in the notebook and in a note with the formula's LaTeX.
 - 500 highlights on one item added 60 to 85 ms to opening it in Chrome, and about 0.5 seconds with the processor slowed four times.
 - The notebook was not tried with a screen reader.
 
