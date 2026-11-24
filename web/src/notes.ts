@@ -16,7 +16,7 @@ import {
   type Passage,
 } from "./client";
 import { itemTitle } from "./entry";
-import { reasonOf, type Loaded } from "./loading";
+import type { Loaded } from "./loading";
 import { appended, firstWords, quoteMarkdown, statementMarkdown } from "./notemarkdown";
 
 // What is put into a note from elsewhere in the app, the one way to put it there, and the one
@@ -78,6 +78,8 @@ const PASSAGE_ID_LENGTH = 8;
 // The browser sends a request that outlives the page only up to this size.
 const LEAVING_BYTES = 64 * 1024;
 const UNTITLED_SOURCE = "摘录";
+const UNREACHED = "连不上服务，写下的内容都还在这里";
+const NO_SERVICE = "连不上服务";
 export const GONE = "这篇笔记已经不在了。";
 
 const listeners = new Set<() => void>();
@@ -91,7 +93,7 @@ const readings = new Map<string, Promise<Session>>();
 // who waits for a draft to be kept.
 const handedIn = new Map<string, number>();
 const underway = new Map<string, number>();
-type Waiter = { draft: number; resolve: () => void; reject: (error: Error) => void };
+type Waiter = { draft: number; resolve: () => void; reject: (error: Unkept) => void };
 const waiters = new Map<string, Waiter[]>();
 // The first words of notes without a title, read for the list, by the note and when it was
 // changed.
@@ -100,6 +102,18 @@ let writer: { noteId: string; writer: Writer } | undefined;
 let lastNoted: string | undefined;
 let excerpts: Promise<unknown> = Promise.resolve();
 let watching = false;
+let left: string | undefined;
+let justMade: string | undefined;
+
+// Why a request about notes failed: the service's reason when it refused, and otherwise that it
+// could not be reached. The browser's reason for a request that reached nothing is a word of its
+// own, such as "Failed to fetch", which tells a reader nothing more.
+// A note's text was handed in and the service did not keep it; the message says why.
+class Unkept extends Error {}
+
+export function failureText(error: unknown, unreached = NO_SERVICE): string {
+  return error instanceof Refused ? error.message : unreached;
+}
 
 function tell(): void {
   listeners.forEach((notify) => notify());
@@ -216,7 +230,7 @@ function beginReading(noteId: string): Promise<Session> {
     },
     (error: unknown) => {
       const reason =
-        error instanceof Refused && error.status === NOT_FOUND ? GONE : reasonOf(error);
+        error instanceof Refused && error.status === NOT_FOUND ? GONE : failureText(error);
       sessions.set(noteId, {
         note: { state: "failed", reason },
         linked: new Map(),
@@ -244,7 +258,7 @@ export function readAgain(noteId: string): void {
   begin(noteId).catch(() => undefined);
 }
 
-function settle(noteId: string, draft: number, failure: Error | undefined): void {
+function settle(noteId: string, draft: number, failure: Unkept | undefined): void {
   const waiting = waiters.get(noteId) ?? [];
   const settled = waiting.filter((waiter) => waiter.draft <= draft);
   waiters.set(
@@ -311,11 +325,11 @@ function keep(noteId: string, leaving: boolean): void {
     },
     (error: unknown) => {
       underway.set(noteId, (underway.get(noteId) ?? 1) - 1);
-      const reason = reasonOf(error);
+      const reason = failureText(error, UNREACHED);
       update(noteId, (held) => ({ ...held, keeping: { state: "unkept", reason } }));
       // Nothing handed in is sent again until the reader asks or writes on, so whatever
       // waited for a later text is not kept either.
-      settle(noteId, Infinity, new Error(reason));
+      settle(noteId, Infinity, new Unkept(reason));
     },
   );
 }
@@ -421,8 +435,21 @@ export function attachWriter(noteId: string, attached: Writer): () => void {
 
 export function openNote(noteId: string | undefined): void {
   writer?.writer.flush(false);
+  left = opened ?? left;
   opened = noteId;
   tell();
+}
+
+// The note the reader last went back to the list from, which the list brings into focus.
+export function noteLeft(): string | undefined {
+  return left;
+}
+
+// Whether the note was made just now by the reader, to be written in: asked once.
+export function takeJustMade(noteId: string): boolean {
+  const made = justMade === noteId;
+  justMade = undefined;
+  return made;
 }
 
 export function useOpenedNote(): string | undefined {
@@ -446,7 +473,7 @@ export function rereadNotes(): void {
     (error: unknown) => {
       // A list on show stays when it cannot be read again.
       if (reading === listReadings && notes.state !== "ready") {
-        notes = { state: "failed", reason: reasonOf(error) };
+        notes = { state: "failed", reason: failureText(error) };
         tell();
       }
     },
@@ -493,7 +520,7 @@ export function useFirstWords(entry: NoteEntry): Loaded<string> {
       (error: unknown) => {
         firstWordsRead.set(entry.id, {
           changed: entry.changed,
-          words: { state: "failed", reason: reasonOf(error) },
+          words: { state: "failed", reason: failureText(error) },
         });
         tell();
       },
@@ -510,6 +537,7 @@ export async function makeNote(): Promise<void> {
   const note = await writeNote({ title: "", markdown: "", passages: [] });
   sessions.set(note.id, sessionFrom(note));
   listed(note);
+  justMade = note.id;
   openNote(note.id);
 }
 
@@ -651,7 +679,11 @@ async function putDown(excerpt: Excerpt): Promise<Noted> {
 // a note for it when none is being written; the result says where it went, once it is kept.
 // Excerpts are put down one after another, in the order they came.
 export function noteDown(excerpt: Excerpt): Promise<Noted> {
-  const noted = excerpts.then(() => putDown(excerpt));
+  const noted = excerpts
+    .then(() => putDown(excerpt))
+    .catch((error: unknown) => {
+      throw error instanceof Unkept ? error : new Error(failureText(error));
+    });
   excerpts = noted.catch(() => undefined);
   return noted;
 }

@@ -1,11 +1,13 @@
-import { Component, lazy, Suspense, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Opener } from "./chat";
 import type { Citing } from "./citing";
 import type { NoteEntry } from "./client";
 import { reasonOf } from "./loading";
 import {
   dropNote,
+  failureText,
   makeNote,
+  noteLeft,
   openNote,
   rereadNotes,
   useFirstWords,
@@ -66,12 +68,12 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
     setRemoving({ state: "underway" });
     dropNote(entry.id).catch((error: unknown) => {
       setConfirming(false);
-      setRemoving({ state: "failed", reason: reasonOf(error) });
+      setRemoving({ state: "failed", reason: failureText(error) });
     });
   }
 
   return (
-    <li data-here={here}>
+    <li data-here={here} data-note={entry.id}>
       <button className="open" onClick={() => openNote(entry.id)}>
         <NoteName entry={entry} />
         <small>
@@ -100,17 +102,29 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
 function NoteList({ seat }: { seat: Seat | undefined }) {
   const notes = useNotes();
   const [making, setMaking] = useState<Doing>(IDLE);
+  const list = useRef<HTMLDivElement>(null);
+  // Back from a note, the keyboard is given to that note's row, or else to the first control.
+  const ready = notes.state === "ready";
+  useEffect(() => {
+    const leftNote = noteLeft();
+    if (ready && leftNote !== undefined && document.activeElement === document.body) {
+      const row = list.current?.querySelector<HTMLButtonElement>(
+        `[data-note="${leftNote}"] .open`,
+      );
+      (row ?? list.current?.querySelector("button"))?.focus();
+    }
+  }, [ready]);
 
   function make() {
     setMaking({ state: "underway" });
     makeNote().then(
       () => setMaking(IDLE),
-      (error: unknown) => setMaking({ state: "failed", reason: reasonOf(error) }),
+      (error: unknown) => setMaking({ state: "failed", reason: failureText(error) }),
     );
   }
 
   return (
-    <div className="notes">
+    <div className="notes" ref={list}>
       <header>
         <button onClick={make} disabled={making.state === "underway"}>
           {making.state === "underway" ? "新建中…" : "新建笔记"}
