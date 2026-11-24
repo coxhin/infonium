@@ -153,13 +153,16 @@ function contentsOf(element: Element): Range {
   return range;
 }
 
-// The part of a selection that lies in an element.
+// A selection's part in an element it reaches into: the element's contents, from the selection's
+// start where that lies in it, to the selection's end where that lies in it. Built without
+// comparing places in the page, which in a browser counts the siblings of the elements compared,
+// thousands in a long page.
 function partIn(selection: Range, element: Element): Range {
   const part = contentsOf(element);
-  if (selection.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
+  if (element.contains(selection.startContainer)) {
     part.setStart(selection.startContainer, selection.startOffset);
   }
-  if (selection.compareBoundaryPoints(Range.END_TO_END, part) < 0) {
+  if (element.contains(selection.endContainer)) {
     part.setEnd(selection.endContainer, selection.endOffset);
   }
   return part;
@@ -167,6 +170,52 @@ function partIn(selection: Range, element: Element): Range {
 
 function holdsWords(range: Range): boolean {
   return range.toString().trim() !== "";
+}
+
+// The node a place in the page stands just before, at any depth; none at the page's end.
+function nodeAfter(container: Node, offset: number): Node | null {
+  if (container.nodeType === Node.TEXT_NODE) {
+    return offset < (container.textContent ?? "").length ? container : following(container);
+  }
+  return container.childNodes[offset] ?? following(container);
+}
+
+// The node a place in the page stands just after, the deepest of the nodes that end there;
+// none at the page's start.
+export function nodeBefore(container: Node, offset: number): Node | null {
+  if (container.nodeType === Node.TEXT_NODE) {
+    return offset > 0 ? container : preceding(container);
+  }
+  const before = container.childNodes[offset - 1];
+  return before === undefined ? preceding(container) : deepestLast(before);
+}
+
+function deepestLast(node: Node): Node {
+  let last = node;
+  while (last.lastChild !== null) {
+    last = last.lastChild;
+  }
+  return last;
+}
+
+// The node after a node and all it holds.
+function following(node: Node): Node | null {
+  for (let at: Node | null = node; at !== null; at = at.parentNode) {
+    if (at.nextSibling !== null) {
+      return at.nextSibling;
+    }
+  }
+  return null;
+}
+
+// The node before a node, the deepest of those that end there.
+export function preceding(node: Node): Node | null {
+  const sibling = node.previousSibling;
+  return sibling === null ? node.parentNode : deepestLast(sibling);
+}
+
+function elementOf(node: Node): Element | null {
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
 }
 
 function isLater(anchor: Anchor, than: Anchor): boolean {
@@ -183,20 +232,29 @@ function contains(rectangle: DOMRect, x: number, y: number): boolean {
 }
 
 // The elements that stand for blocks or cells that a selection reaches into, in the page's
-// order.
+// order: from the first that holds or follows its start to the last that holds or precedes its
+// end, each found by walking the page from that end of the selection to the nearest of them.
 function holdersIn(holders: Holders, selection: Range): Element[] {
-  const common = selection.commonAncestorContainer;
-  const root = common.nodeType === Node.ELEMENT_NODE ? (common as Element) : common.parentElement;
-  if (root === null) {
-    return [];
+  const start = nodeAfter(selection.startContainer, selection.startOffset);
+  let first = start === null ? null : (elementOf(start)?.closest(holders.selector) ?? null);
+  for (
+    let node = start;
+    first === null && node !== null;
+    node = node.firstChild ?? following(node)
+  ) {
+    first = holders.places.has(node as Element) ? (node as Element) : null;
   }
-  const around = root.closest(holders.selector);
-  if (around !== null) {
-    return [around];
+  let last: Element | null = null;
+  for (
+    let node = nodeBefore(selection.endContainer, selection.endOffset);
+    last === null && node !== null;
+    node = preceding(node)
+  ) {
+    last = elementOf(node)?.closest(holders.selector) ?? null;
   }
-  return [...root.querySelectorAll(holders.selector)].filter((element) =>
-    selection.intersectsNode(element),
-  );
+  const from = first === null ? undefined : holders.places.get(first)?.order;
+  const to = last === null ? undefined : holders.places.get(last)?.order;
+  return from === undefined || to === undefined ? [] : holders.ordered.slice(from, to + 1);
 }
 
 // The reader's highlights as drawn in one page, and what the reader selects in it.
@@ -368,10 +426,16 @@ export class PageMarks {
     return first === undefined ? undefined : [first, ...rest];
   }
 
-  // The stretch of an element's text that a selection covers words of. Where the element shows
-  // the text's translation in its place, or the selection covers words of the translation
-  // shown after the text and none of the text, it is the whole text.
+  // The stretch of an element's text that a selection covers words of. Where the selection
+  // holds the element whole, where the element shows the text's translation in its place, or
+  // where the selection covers words of the translation shown after the text and none of the
+  // text, it is the whole text.
   selectedIn(element: Element, text: string, selection: Range): Span | undefined {
+    const whole =
+      !element.contains(selection.startContainer) && !element.contains(selection.endContainer);
+    if (whole) {
+      return (element.textContent ?? "").trim() === "" ? undefined : trimmedSpan(text);
+    }
     const part = partIn(selection, element);
     if (!holdsWords(part)) {
       return undefined;

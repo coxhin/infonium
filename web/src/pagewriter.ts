@@ -397,21 +397,28 @@ function cellPlaceOf(
     : { number, row, cell };
 }
 
-// What an element of the page stands for: a block whole, or a cell of a table block.
-export type HolderPlace = { number: number; cell: { row: number; cell: number } | undefined };
+// What an element of the page stands for: a block whole, or a cell of a table block; and its
+// place among those elements, in the page's order.
+export type HolderPlace = {
+  number: number;
+  cell: { row: number; cell: number } | undefined;
+  order: number;
+};
 
 // The elements of the page that stand for blocks or for cells, found once, since the page never
-// changes which elements those are: what each stands for, and each block's elements in the
-// page's order.
+// changes which elements those are: all of them in the page's order, what each stands for, and
+// each block's elements.
 export type Holders = {
   pageBlocks: PageBlocks;
   selector: string;
+  ordered: Element[];
   places: Map<Element, HolderPlace>;
   ofBlock: Map<number, Element[]>;
 };
 
 export function holdersOf(page: Document, pageBlocks: PageBlocks): Holders {
   const selector = `[${pageBlocks.block_attribute}], [${pageBlocks.cell_attribute}]`;
+  const ordered: Element[] = [];
   const places = new Map<Element, HolderPlace>();
   const ofBlock = new Map<number, Element[]>();
   for (const element of page.querySelectorAll(selector)) {
@@ -425,10 +432,14 @@ export function holdersOf(page: Document, pageBlocks: PageBlocks): Holders {
     places.set(element, {
       number,
       cell: cell === null ? undefined : { row: cell.row, cell: cell.cell },
+      order: ordered.length,
     });
-    ofBlock.set(number, [...(ofBlock.get(number) ?? []), element]);
+    ordered.push(element);
+    const elements = ofBlock.get(number) ?? [];
+    elements.push(element);
+    ofBlock.set(number, elements);
   }
-  return { pageBlocks, selector, places, ofBlock };
+  return { pageBlocks, selector, ordered, places, ofBlock };
 }
 
 function blockElementOf(page: Document, pageBlocks: PageBlocks, number: number): Element | null {

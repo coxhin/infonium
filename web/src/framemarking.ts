@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { ItemDocument } from "./client";
 import { NO_MARKING, type Marking } from "./marking";
-import type { PageMarks } from "./pagemarks";
+import { nodeBefore, preceding, type PageMarks } from "./pagemarks";
 import type { Holders } from "./pagewriter";
 
 // How long a selection made otherwise than by dragging, with the keyboard or by the handles of
@@ -11,25 +11,25 @@ const SETTLING = 400;
 // character's: taller boxes are those of whole elements the selection holds.
 const LINE_HEIGHTS = 2;
 
-// The last character of a selection that is not white space, as a range of the page.
-function lastCharacter(selection: Range): Range | undefined {
+// The last character of a selection that is not white space, as a range of the page, and the
+// part of the selection in the text that holds it, up to it. The page is walked back from the
+// selection's end, never further than its start.
+function lastCharacter(selection: Range): { character: Range; line: Range } | undefined {
   const page = selection.startContainer.ownerDocument;
-  const common = selection.commonAncestorContainer;
+  const start = selection.startContainer;
   if (page === null) {
     return undefined;
   }
-  const walker = page.createTreeWalker(common, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) =>
-      selection.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
-  });
-  let node: Node | null =
-    common.nodeType === Node.TEXT_NODE ? common : walker.lastChild();
-  if (node !== null) {
-    walker.currentNode = node;
-  }
-  for (; node !== null; node = walker.previousNode()) {
+  for (
+    let node = nodeBefore(selection.endContainer, selection.endOffset);
+    node !== null;
+    node = node.contains(start) ? null : preceding(node)
+  ) {
+    if (node.nodeType !== Node.TEXT_NODE) {
+      continue;
+    }
     const text = node.textContent ?? "";
-    const from = node === selection.startContainer ? selection.startOffset : 0;
+    const from = node === start ? selection.startOffset : 0;
     let end = node === selection.endContainer ? selection.endOffset : text.length;
     while (end > from && (text[end - 1] ?? " ").trim() === "") {
       end -= 1;
@@ -39,7 +39,10 @@ function lastCharacter(selection: Range): Range | undefined {
       character.setStart(node, Math.max(from, end - 1));
       character.setEnd(node, end);
       if (character.getBoundingClientRect().height > 0) {
-        return character;
+        const line = page.createRange();
+        line.setStart(node, from);
+        line.setEnd(node, end);
+        return { character, line };
       }
     }
   }
@@ -47,13 +50,14 @@ function lastCharacter(selection: Range): Range | undefined {
 }
 
 // Where a selection ends, as the window sees it through the frame: the boxes of its last line,
-// up to and with its last character.
+// up to and with its last character, as far as the text that holds that character reaches.
 function endOf(selection: Range, frame: HTMLIFrameElement): DOMRect | undefined {
-  const last = lastCharacter(selection)?.getBoundingClientRect();
-  if (last === undefined) {
+  const found = lastCharacter(selection);
+  const last = found?.character.getBoundingClientRect();
+  if (found === undefined || last === undefined) {
     return undefined;
   }
-  const left = [...selection.getClientRects()]
+  const left = [...found.line.getClientRects()]
     .filter(
       (box) =>
         box.height > 0 &&
