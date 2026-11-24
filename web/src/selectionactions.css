@@ -2,11 +2,65 @@
   position: fixed;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
+  width: max-content;
   gap: 0.25rem;
   align-items: center;
+  max-width: calc(100vw - 1rem);
   padding: 0.25rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.selection-actions button {
+  padding: 0.25rem 0.6rem;
+}
+
+.selection-actions button:hover:not([aria-disabled="true"]) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.selection-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.selection-actions[aria-busy="true"] button {
+  cursor: progress;
+  color: var(--muted);
+}
+
+.selection-actions .status {
+  flex-basis: 100%;
+  max-width: 22rem;
+  margin: 0.2rem 0.3rem;
+  font-size: 0.85rem;
+}
+
+.selection-actions.noted span {
+  margin: 0 0.3rem;
+}
+
+.selection-actions .quiet {
+  border-color: transparent;
+  background: none;
+}
+
+/* A finger needs room: each action takes 40 px each way where nothing hovers. */
+@media (pointer: coarse) {
+  .selection-actions button {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+}
+
+@media print {
+  .selection-actions {
+    display: none;
+  }
 }

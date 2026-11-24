@@ -10,6 +10,7 @@ from infonium.library import (
     NotInLibrary,
     OwnerTransaction,
     document_table,
+    field_path,
     item_table,
     metadata,
 )
@@ -25,8 +26,13 @@ MARKDOWN_CHARACTERS = 500_000
 REPEATED_ID = "each passage of a note has an id of its own"
 # What the body of a note's passage is called where it is read beside the body of its note.
 PASSAGE_BODY = "passage_body"
-# Stored with every body, as the library's tables do.
-NOTE_FORMAT = 1
+# Stored with every body, as the library's tables do. Form 1 of a note's row had no edition,
+# and is read as the first edition; a note's passages have kept form 1.
+NOTE_FORMAT = 2
+EARLIER_NOTE_FORMAT = 1
+NOTE_PASSAGE_FORMAT = 1
+FIRST_EDITION = 1
+STALE_DRAFT = "note {note_id} holds a later writing (edition {kept}) than edition {edition}"
 
 # A note is kept in two tables: its title, its Markdown and its times in one row, and each of
 # its passages, as it was linked, in a row of its own under its place in the note. A passage's
@@ -83,9 +89,24 @@ class NotePassage(BaseModel):
     passage: Passage
 
 
+Edition = Annotated[
+    int,
+    Field(
+        ge=FIRST_EDITION,
+        description=(
+            "Which writing of a note a draft is, or the note holds. A writer reads a note at"
+            " one edition and sends its next drafts at the editions after it; a draft is taken"
+            " only of a later edition than the note holds."
+        ),
+    ),
+]
+
+
 class NoteDraft(BaseModel):
     # A note as it is written: what it is called, its text as Markdown, and the passages that
-    # the Markdown links to. The passages may lie in any documents of the library.
+    # the Markdown links to, at the edition of the note that it is. The passages may lie in
+    # any documents of the library.
+    edition: Edition
     title: Annotated[str, StringConstraints(max_length=TITLE_CHARACTERS)]
     markdown: Annotated[str, StringConstraints(max_length=MARKDOWN_CHARACTERS)]
     passages: list[NotePassage]
@@ -101,10 +122,46 @@ class NoteDraft(BaseModel):
 class NoteText(BaseModel):
     # What the row of a note keeps: all of the note but its passages.
     id: str
+    edition: Edition
     title: str
     markdown: str
     made: AwareDatetime
     changed: AwareDatetime
+
+
+class EarlierNoteText(BaseModel):
+    # The row of a note as form 1 kept it, before notes had editions.
+    id: str
+    title: str
+    markdown: str
+    made: AwareDatetime
+    changed: AwareDatetime
+
+
+def note_text(format_number: int, body: str) -> NoteText:
+    if format_number == EARLIER_NOTE_FORMAT:
+        earlier = EarlierNoteText.model_validate_json(body)
+        return NoteText(
+            id=earlier.id,
+            edition=FIRST_EDITION,
+            title=earlier.title,
+            markdown=earlier.markdown,
+            made=earlier.made,
+            changed=earlier.changed,
+        )
+    return NoteText.model_validate_json(body)
+
+
+EDITION_PATH = field_path((NoteText, "edition"))
+# The edition a note's row holds, read in a statement; a row of form 1 holds the first.
+kept_edition = sqlalchemy.func.coalesce(
+    sqlalchemy.func.json_extract(note_table.c.body, EDITION_PATH), FIRST_EDITION
+)
+
+
+class StaleDraft(Exception):
+    # A draft of a note that holds the same or a later edition already.
+    pass
 
 
 class KeptPassage(BaseModel):
@@ -118,11 +175,13 @@ class KeptNote(BaseModel):
     text: NoteText
     passages: list[KeptPassage]
 
-    def draft(self) -> NoteDraft:
-        return NoteDraft(
-            title=self.text.title,
-            markdown=self.text.markdown,
-            passages=[kept.note_passage for kept in self.passages],
+    def holds(self, draft: NoteDraft) -> bool:
+        # Whether the note holds the draft's writing, whatever their editions.
+        passages = [kept.note_passage for kept in self.passages]
+        return (self.text.title, self.text.markdown, passages) == (
+            draft.title,
+            draft.markdown,
+            draft.passages,
         )
 
 
@@ -198,7 +257,7 @@ class Notes:
                         note_passage_table.c.owner.name: self.owner,
                         note_passage_table.c.item_id.name: item_id,
                         note_passage_table.c.document_id.name: linked.passage.document_id,
-                        note_passage_table.c.format.name: NOTE_FORMAT,
+                        note_passage_table.c.format.name: NOTE_PASSAGE_FORMAT,
                         note_passage_table.c.body.name: linked.model_dump_json(),
                     }
                     for position, (linked, item_id) in enumerate(
@@ -225,16 +284,50 @@ class Notes:
     def write(self, draft: NoteDraft, made: datetime) -> ShownNote:
         items = self.linked_items(draft)
         text = NoteText(
-            id=uuid4().hex, title=draft.title, markdown=draft.markdown, made=made, changed=made
+            id=uuid4().hex,
+            edition=draft.edition,
+            title=draft.title,
+            markdown=draft.markdown,
+            made=made,
+            changed=made,
         )
         self.keep(text, draft, items)
         return self.shown(text.id)
 
-    def rewrite(self, note_id: str, draft: NoteDraft, changed: datetime) -> ShownNote:
-        # The time it was changed moves only when the draft differs from what was kept.
+    def stale(self, note_id: str, draft: NoteDraft) -> StaleDraft:
+        # Why a draft is refused, once the note is seen to hold its edition or a later one. A
+        # note that is not there is not found instead.
         kept = self.kept_note(note_id)
+        return StaleDraft(
+            STALE_DRAFT.format(note_id=note_id, kept=kept.text.edition, edition=draft.edition)
+        )
+
+    def rewrite(self, note_id: str, draft: NoteDraft, changed: datetime) -> ShownNote:
+        # A draft is taken only of a later edition than the note holds, and is refused as stale
+        # before its passages are looked at. The edition is claimed by one statement that
+        # changes the row only when the draft is later, since two statements of a transaction
+        # are not one snapshot of the library: of drafts of one edition that arrive at once,
+        # exactly one is taken. The time it was changed moves only when the draft's writing
+        # differs from what was kept.
+        if self.kept_note(note_id).text.edition >= draft.edition:
+            raise self.stale(note_id, draft)
         items = self.linked_items(draft)
-        if draft != kept.draft():
+        claimed = self.connection.execute(
+            sqlalchemy.update(note_table)
+            .where(
+                note_table.c.owner == self.owner,
+                note_table.c.id == note_id,
+                kept_edition < draft.edition,
+            )
+            .values(
+                format=NOTE_FORMAT,
+                body=sqlalchemy.func.json_set(note_table.c.body, EDITION_PATH, draft.edition),
+            )
+        )
+        if claimed.rowcount == 0:
+            raise self.stale(note_id, draft)
+        kept = self.kept_note(note_id)
+        if not kept.holds(draft):
             self.remove(note_id)
             self.keep(
                 kept.text.model_copy(
@@ -250,7 +343,11 @@ class Notes:
         passage_body = note_passage_table.c.body.label(PASSAGE_BODY)
         rows = self.connection.execute(
             sqlalchemy.select(
-                note_table.c.id, note_table.c.body, note_passage_table.c.item_id, passage_body
+                note_table.c.id,
+                note_table.c.format,
+                note_table.c.body,
+                note_passage_table.c.item_id,
+                passage_body,
             )
             .select_from(
                 note_table.outerjoin(
@@ -265,9 +362,9 @@ class Notes:
             .order_by(note_table.c.id, note_passage_table.c.position)
         )
         notes: dict[str, KeptNote] = {}
-        for note_id, note_body, item_id, body in rows:
+        for note_id, note_format, note_body, item_id, body in rows:
             if note_id not in notes:
-                notes[note_id] = KeptNote(text=NoteText.model_validate_json(note_body), passages=[])
+                notes[note_id] = KeptNote(text=note_text(note_format, note_body), passages=[])
             if body is not None:
                 notes[note_id].passages.append(
                     KeptPassage(item_id=item_id, note_passage=NotePassage.model_validate_json(body))
