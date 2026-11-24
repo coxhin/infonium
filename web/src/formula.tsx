@@ -64,36 +64,56 @@ const TEXT_COMMANDS = new Set([
 const SCRIPTS = new Set(["_", "^"]);
 const SPACE = /^\s$/u;
 
-// The formula with each group of text closed before the first script that stands in it, at its
-// own level, and what followed the script inside the group standing after it, outside: the
-// engine that reads PDFs writes \text{where \text{head} _{i} = …}, which neither LaTeX nor
-// KaTeX sets, for \text{where \text{head} }_{i} = …. Nothing where its braces do not match.
+// The formula with its scripts taken out of its text: the engine that reads PDFs writes
+// \text{where \text{head} _{i} = …}, which neither LaTeX nor KaTeX sets, for
+// \text{where \text{head}}_{i} = …. A script closes every group of text it stands in, a group
+// within a group as well, and what followed it inside them stands after them, outside. A space
+// before the script is the engine's, and would part the script from what it is set on. Nothing
+// where the braces do not match.
 export function withScriptsOutOfText(latex: string): string | undefined {
   const groups: { text: boolean; closed: boolean }[] = [];
+  const written: string[] = [];
   let opensText = false;
-  let written = "";
   for (const piece of piecesOf(latex)) {
-    const innermost = groups.at(-1);
     if (piece === "{") {
       groups.push({ text: opensText, closed: false });
     } else if (piece === "}") {
-      if (groups.pop() === undefined) {
+      const group = groups.pop();
+      if (group === undefined) {
         return undefined;
       }
-      if (innermost?.closed === true) {
+      if (group.closed) {
         opensText = false;
         continue;
       }
-    } else if (SCRIPTS.has(piece) && innermost?.text === true && !innermost.closed) {
-      written += "}";
-      innermost.closed = true;
+    } else if (SCRIPTS.has(piece)) {
+      const left = groups.slice(openTextFrom(groups));
+      if (left.length > 0) {
+        while (SPACE.test(written.at(-1) ?? "")) {
+          written.pop();
+        }
+      }
+      for (const group of left) {
+        written.push("}");
+        group.closed = true;
+      }
     }
     if (!SPACE.test(piece)) {
       opensText = TEXT_COMMANDS.has(piece);
     }
-    written += piece;
+    written.push(piece);
   }
-  return groups.length === 0 ? written : undefined;
+  return groups.length === 0 ? written.join("") : undefined;
+}
+
+// Where the open groups of text begin that the innermost place stands in, one within another:
+// after the last group that is no text, or is closed already.
+function openTextFrom(groups: { text: boolean; closed: boolean }[]): number {
+  let from = groups.length;
+  while (from > 0 && groups[from - 1]?.text === true && groups[from - 1]?.closed === false) {
+    from -= 1;
+  }
+  return from;
 }
 
 // The largest size, in ems, that a formula may give to anything it sizes itself: a rule, a
