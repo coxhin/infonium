@@ -240,7 +240,7 @@ export function SideColumn({
         hidden={tab !== "digest"}
       >
         {digestWanted ? (
-          <DigestPanel key={seat.itemId} itemId={seat.itemId} citing={citing} />
+          <DigestPanel key={seat.holding} itemId={seat.itemId} citing={citing} />
         ) : (
           <p className="status">原文打开后，这里显示它的摘要。</p>
         )}

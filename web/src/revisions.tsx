@@ -174,8 +174,9 @@ export function RevisionHead({
 
   const revisions = loaded.state === "ready" ? loaded.value : undefined;
   const shown = revisions?.revisions.find((revision) => revision.document === shownDocument);
+  // Told once the document the reading gave is on show, not while the one before it stays.
   const told =
-    rereading.state === "settled" && revisions !== undefined
+    rereading.state === "settled" && revisions !== undefined && shownDocument === rereading.after
       ? settledText(rereading, revisions)
       : undefined;
   return (

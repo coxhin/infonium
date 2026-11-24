@@ -305,10 +305,14 @@ export function useCiting(
 
   // A passage that waits for its item is shown once the item's reader is on show as the link it
   // waits for opens it, or said to be lost when the item cannot be shown; it is dropped when
-  // the reader turns to another item. What was pointed at in a reader that has gone is dropped.
+  // the reader turns to another item, or the window leaves the link it waits for before that
+  // link's reader is on show. What was pointed at in a reader that has gone is dropped.
   useEffect(() => {
     if (pointing.state === "awaiting") {
-      if (selected !== pointing.itemId && selected !== pointing.from) {
+      if (
+        (selected !== pointing.itemId && selected !== pointing.from) ||
+        (pointing.link !== undefined && linkNow() !== pointing.link)
+      ) {
         settle(NOWHERE);
       } else if (seat?.itemId === pointing.itemId && seat.link === (pointing.link ?? linkNow())) {
         if (pointing.standing === undefined) {

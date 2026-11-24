@@ -114,10 +114,14 @@ function shownDocument(shown: Shown): string {
 // the document the item held when it was opened.
 type Opened = { shown: Shown; itemDocument: ItemDocument; holding: string };
 
-// The reader of a read item. A document of another revision is loaded while the one on show
-// stays, so that the column beside it never sees the reader gone between two revisions of the
-// item. Once the item has come to hold another document, the reader on show goes at once: the
-// column's digest is of the item's document, and is asked for again when the reader returns.
+// The reader of a read item. A document of another revision, or the document the item comes
+// to hold after a new reading, is loaded while the reader on show stays, so that the column
+// beside it never sees the reader gone: the seat changes its document and the document the
+// item holds together, when the new one is on show. Meanwhile the head already lists the
+// revisions there are now, and names the document on show by its place among them. A reader
+// opened by one link and shown again by another link to the same document, such as the plain
+// link and that of the revision the item holds now, is seated again with the link the window
+// is at, for a passage awaited there.
 function DocumentPane({
   entry,
   wanted,
@@ -161,10 +165,12 @@ function DocumentPane({
   if (failure !== undefined) {
     return <Notice failed>{failure}</Notice>;
   }
-  if (opened === undefined || opened.holding !== entry.reading.document) {
+  if (opened === undefined) {
     return <Notice failed={false}>正在打开…</Notice>;
   }
-  const { shown, itemDocument } = opened;
+  const { shown, itemDocument, holding } = opened;
+  const link =
+    wanted !== undefined && shownKey(wanted) === shownKey(shown) ? wanted.link : shown.link;
   return (
     <ReadItem
       key={shownKey(shown)}
@@ -175,13 +181,13 @@ function DocumentPane({
           ? { kind: "holding" }
           : {
               kind: "earlier",
-              holding: entry.reading.document,
+              holding,
               line: (
                 <EarlierLine itemId={entry.id} earlier={shown.earlier} holding={shown.holding} />
               ),
             }
       }
-      link={shown.link}
+      link={link}
       head={head(shownDocument(shown))}
     />
   );
