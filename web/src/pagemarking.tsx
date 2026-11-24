@@ -33,11 +33,11 @@ export function pageMarksOf(
       (anchor) => `${anchor.block_number}:${anchor.start}-${anchor.end}`,
     );
     const key = `${each.id}|${state}|${ranges.join(",")}`;
+    // Every page of the blocks it runs through: where their lines break is read again as their
+    // pages are drawn, and a stretch at a break may then fall on the next page.
     const pages = new Set(
       each.anchors.flatMap((anchor) =>
-        (text.ofBlocks.get(anchor.block_number) ?? [])
-          .filter((line) => line.start < anchor.end && anchor.start < line.end)
-          .map((line) => line.place.page),
+        (text.ofBlocks.get(anchor.block_number) ?? []).map((line) => line.place.page),
       ),
     );
     const spans = each.anchors.map((anchor) => ({

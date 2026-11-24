@@ -1,10 +1,11 @@
 import { isDownward, type Box } from "./areas";
 import type { Block, PagePlace } from "./client";
+import { inkedWords, printedWords, readInk, type Ink } from "./pageink";
 import { pagePlaces } from "./places";
 
-// Where the text of a PDF's document lies on its pages: the lines of each page, where each
-// character of a line lies along it, the part of a line's box that holds a stretch of its
-// text, and the line and the word under a point.
+// Where the text of a PDF's document lies on its pages: the lines of each page and the stretch
+// of text each holds, where each character of a line lies along it, the part of a line's box
+// that holds a stretch of its text, and the line and the word under a point.
 
 // One place of a block on a page, as a rule a line, and the stretch of the block's text it
 // holds. A line taken whole stands for all its characters at once: a table's, a picture's, or
@@ -38,47 +39,24 @@ const BOXED_KINDS = new Set<Block["kind"]>(["table", "figure"]);
 const SEVERAL_LINES = 2.5;
 
 const SPACE = /\s/u;
+// A line may also be broken after a hyphen, inside a word.
+const HYPHENS = new Set(["-", "‐", "‑"]);
 // Characters of scripts written without spaces between words: each is a word of its own, and
 // the characters of a line of them are as wide as one another.
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 // What a word of a spaced script is made of; any other character stands alone.
 const WORDLIKE = /[\p{L}\p{N}\p{M}\p{Pc}'’-]/u;
 
-// A line of a spaced script is broken between words. The engine that reads a scan gives where
-// a line begins and ends in the text a few characters off at times, inside a word; such a break
-// is settled on a space this many characters away at most.
-const SETTLING_REACH = 10;
+// The engine that reads a scan gives where a line begins and ends in the text a few characters
+// off at times, inside a word or a word away, and splits some blocks into lines of even length.
+// A break is moved, to a place this many characters away at most, only where the print proves
+// it: both lines it bounds then hold as many words as their print shows.
+const BREAK_REACH = 15;
 
 // The width of a character as a serif face of the browser sets it, at this size: the print of
 // a page is not known, but its letters differ in width much as any face's do.
 const MEASURING_SIZE = 100;
 const MEASURING_FONT = `${MEASURING_SIZE}px serif`;
-// The size of the print, as a part of the depth of its line's box: a box holds the letters from
-// the tops of the tallest to the feet of the lowest, about the size the print is set at.
-const SIZE_PER_DEPTH = 1;
-
-// Reading the words of a line off the drawn page: a pixel is ink where it is this much darker
-// than the paper, the paper being as light as this share of the line's pixels are at most. The
-// soft edges of scanned letters fill the narrow spaces of a tight line, so where the spaces are
-// not found among the gaps of the ink, they are sought again among those of its darkest part.
-const PAPER_SHARE = 0.9;
-const INK_CONTRASTS = [110, 130];
-// The spaces between a line's words are found among its runs of pixels with no ink, each near
-// where the widths of the words put it: a gap is taken for a space at a cost of its distance
-// from there, in the line's mean characters, and of this much more the narrower it is than
-// this part of a mean character, as a gap between letters printed apart is. The gaps are
-// sought first among those as wide as a space is set, then, for a line set tight, among
-// narrower ones too, each then no further from where it is expected than a few characters.
-const NARROW_COST = 3;
-const SPACE_WIDTH = 0.5;
-// A gap in a line's ink is a space for counting its words where it is this part of the line's
-// depth wide at least: a space is about a quarter of the size of the print, the gap between two
-// letters much less.
-const LEAST_PRINTED_SPACE = 0.15;
-const SEARCHES = [
-  { least: 0.3, farthest: Infinity },
-  { least: 0.12, farthest: 1.5 },
-];
 
 function median(values: number[]): number | undefined {
   const sorted = [...values].sort((first, second) => first - second);
@@ -133,7 +111,8 @@ function spread(characters: string[], from: number, to: number): number[] {
   return edges;
 }
 
-// A word of a line: where its characters begin and end, as offsets into the line.
+// A word of a line: where its characters begin and end, as offsets into the line. A word
+// broken after a hyphen at a line's end is a word on each line.
 type Word = { start: number; end: number };
 
 function wordsOf(characters: string[]): Word[] {
@@ -152,287 +131,194 @@ function wordsOf(characters: string[]): Word[] {
   return words;
 }
 
-// How much ink each column across a line's box holds on its drawn page, for each darkness
-// that ink is taken at, the box's length along the line and its depth across it, in pixels.
-type Ink = { run: number; depth: number; profiles: Uint16Array[] };
-
-function inkOf(canvas: HTMLCanvasElement, place: PagePlace, downward: boolean): Ink | undefined {
-  const context = canvas.getContext("2d");
-  const left = Math.max(0, Math.floor(place.left * canvas.width));
-  const top = Math.max(0, Math.floor(place.top * canvas.height));
-  const width = Math.min(canvas.width - left, Math.ceil(place.width * canvas.width));
-  const height = Math.min(canvas.height - top, Math.ceil(place.height * canvas.height));
-  if (context === null || width <= 0 || height <= 0) {
-    return undefined;
-  }
-  const pixels = context.getImageData(left, top, width, height).data;
-  // How light each pixel is, from 0 to 255, and how many pixels are of each lightness.
-  const lightness = new Uint8Array(width * height);
-  const counts = new Uint32Array(256);
-  for (let at = 0; at < lightness.length; at += 1) {
-    const light = Math.round(
-      ((pixels[at * 4] ?? 0) + (pixels[at * 4 + 1] ?? 0) + (pixels[at * 4 + 2] ?? 0)) / 3,
-    );
-    lightness[at] = light;
-    counts[light] = (counts[light] ?? 0) + 1;
-  }
-  let darkest = 0;
-  while (darkest < 255 && counts[darkest] === 0) {
-    darkest += 1;
-  }
-  let paper = 0;
-  for (
-    let below = 0;
-    paper < 255 && below + (counts[paper] ?? 0) <= PAPER_SHARE * lightness.length;
-    paper += 1
-  ) {
-    below += counts[paper] ?? 0;
-  }
-  const run = downward ? height : width;
-  const profiles = INK_CONTRASTS.filter((contrast) => paper - darkest >= contrast).map(
-    (contrast) => {
-      const inkBelow = paper - contrast;
-      const profile = new Uint16Array(run);
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const along = downward ? y : x;
-          if ((lightness[y * width + x] ?? 255) < inkBelow) {
-            profile[along] = (profile[along] ?? 0) + 1;
-          }
-        }
-      }
-      return profile;
-    },
+// Where a line may begin: at the start of a word, or after a hyphen inside one.
+function mayBreakBefore(characters: string[], at: number): boolean {
+  const before = characters[at - 1];
+  const after = characters[at];
+  return (
+    before !== undefined &&
+    after !== undefined &&
+    !SPACE.test(after) &&
+    (SPACE.test(before) || HYPHENS.has(before))
   );
-  return profiles.length === 0 ? undefined : { run, depth: downward ? width : height, profiles };
 }
 
-// How many words a line's ink shows: one more than its gaps as wide as a space is at least,
-// counted where the ink is taken at its lightest.
-function printedWords(ink: Ink): number | undefined {
-  const profile = ink.profiles[0];
-  if (profile === undefined) {
-    return undefined;
-  }
-  const inked = [...profile.keys()].filter((at) => (profile[at] ?? 0) > 0);
-  const first = inked[0];
-  const last = inked.at(-1);
-  if (first === undefined || last === undefined) {
-    return undefined;
-  }
-  let words = 1;
-  for (let at = first; at <= last; at += 1) {
-    if (profile[at] === 0) {
-      let end = at;
-      while (end <= last && profile[end] === 0) {
-        end += 1;
-      }
-      if (end - at >= LEAST_PRINTED_SPACE * ink.depth) {
-        words += 1;
-      }
-      at = end;
-    }
-  }
-  return words;
-}
-
-// Where the words of a line stand on its drawn page, in pixels along the run from the start of
-// the line's box: between the spaces found among the gaps in its ink.
-function inkedWords(
-  ink: Ink,
-  widths: number[],
-  space: number,
-  characters: number,
-): [number, number][] | undefined {
-  if (widths.length === 0) {
-    return undefined;
-  }
-  for (const profile of ink.profiles) {
-    const words = wordsInProfile(profile, widths, space, ink.run / characters);
-    if (words !== undefined) {
-      return words;
-    }
-  }
-  return undefined;
-}
-
-// Where the words stand along a line, from how much ink each column across it holds.
-function wordsInProfile(
-  profile: Uint16Array,
-  widths: number[],
-  space: number,
-  mean: number,
-): [number, number][] | undefined {
-  const inked = [...profile.keys()].filter((at) => (profile[at] ?? 0) > 0);
-  const first = inked[0];
-  const last = inked.at(-1);
-  if (first === undefined || last === undefined) {
-    return undefined;
-  }
-  // Every run of columns without ink inside the line may be the space between two words.
-  const gaps: [number, number][] = [];
-  for (let at = first; at <= last; at += 1) {
-    if (profile[at] === 0) {
-      let end = at;
-      while (end <= last && profile[end] === 0) {
-        end += 1;
-      }
-      gaps.push([at, end]);
-      at = end;
-    }
-  }
-  const expected = expectedSpaces(widths, space, first, last);
-  let chosen: [number, number][] | undefined = widths.length === 1 ? [] : undefined;
-  for (const search of SEARCHES) {
-    chosen ??= spacesAmong(
-      gaps.filter((gap) => gap[1] - gap[0] >= search.least * mean),
-      expected,
-      mean,
-      search.farthest,
-    );
-  }
-  if (chosen === undefined) {
-    return undefined;
-  }
-  const bounds = [first, ...chosen.flat(), last + 1];
-  const words: [number, number][] = [];
-  for (let index = 0; index < widths.length; index += 1) {
-    words.push([bounds[2 * index] ?? first, bounds[2 * index + 1] ?? last + 1]);
-  }
-  return words;
-}
-
-// Where the middle of each space between the words of a line is expected, in pixels along the
-// run: the words at their widths and the spaces between them, stretched over the line's ink.
-function expectedSpaces(widths: number[], space: number, first: number, last: number): number[] {
-  const total = widths.reduce((sum, width) => sum + width, 0) + space * (widths.length - 1);
-  const scale = total > 0 ? (last + 1 - first) / total : 0;
-  const expected: number[] = [];
+// Each word fills the extent its ink takes, its characters in proportion to their widths; the
+// spaces between two words fill the gap between them.
+function inkedEdges(
+  characters: string[],
+  words: Word[],
+  extents: [number, number][],
+  run: number,
+): number[] {
+  const edges: number[] = new Array<number>(characters.length + 1).fill(0);
   let reached = 0;
-  widths.slice(0, -1).forEach((width) => {
-    reached += width;
-    expected.push(first + (reached + space / 2) * scale);
-    reached += space;
+  let at = 0;
+  words.forEach((word, index) => {
+    const [from, to] = extents[index] ?? [reached, reached];
+    spread(characters.slice(at, word.start), reached, from).forEach((edge, offset) => {
+      edges[at + offset] = edge / run;
+    });
+    spread(characters.slice(word.start, word.end), from, to).forEach((edge, offset) => {
+      edges[word.start + offset] = edge / run;
+    });
+    reached = to;
+    at = word.end;
   });
-  return expected;
+  spread(characters.slice(at), reached, run).forEach((edge, offset) => {
+    edges[at + offset] = edge / run;
+  });
+  return edges;
 }
 
-// The gaps that are the spaces between a line's words: one for each space, in order, each near
-// where its space is expected and as wide as a space is, as a gap between two letters printed
-// apart is narrower. Where too narrow a gap is all there is for a space, as where two words
-// touch, none.
-function spacesAmong(
-  gaps: [number, number][],
-  expected: number[],
-  mean: number,
-  farthest: number,
-): [number, number][] | undefined {
-  // A space is as wide as the narrowest of the widest gaps, one for each space, as a line set
-  // even spreads its room over its spaces alike; a gap narrower than that is less likely one.
-  const widest = gaps.map((gap) => gap[1] - gap[0]).sort((one, other) => other - one);
-  const spaceWidth = Math.max(SPACE_WIDTH * mean, widest[expected.length - 1] ?? 0);
-  const cost = (space: number, gap: [number, number]) =>
-    Math.abs((gap[0] + gap[1]) / 2 - (expected[space] ?? 0)) / mean +
-    NARROW_COST * Math.max(0, 1 - (gap[1] - gap[0]) / spaceWidth);
-  // For each space and each gap: the least cost of setting the spaces up to this one with this
-  // one on that gap, and the gap the space before it is then set on.
-  const steps: { cost: number; from: number }[][] = [];
-  expected.forEach((_, space) => {
-    const before = steps[space - 1];
-    let best = { cost: space === 0 ? 0 : Infinity, at: -1 };
-    steps.push(
-      gaps.map((gap, index) => {
-        const step = { cost: best.cost + cost(space, gap), from: best.at };
-        const here = before?.[index]?.cost ?? Infinity;
-        if (here < best.cost) {
-          best = { cost: here, at: index };
+// Where the breaks between a block's lines fall, each moved only on the proof of the print.
+// For every way of setting each break at a place it may fall within reach of where the engine
+// put it, the one that gives the most lines as many words as their print shows, and of those
+// the one whose words are the most like their print's in length, then the one that moves the
+// breaks least; then a break stays where the engine put it unless both lines it bounds hold as
+// many words as their print shows, until no more break goes back.
+function brokenByPrint(
+  lines: Line[],
+  characters: string[],
+  printed: (number[] | undefined)[],
+): number[] {
+  const engine = lines.slice(1).map((line) => line.place.start);
+  const start = lines[0]?.place.start ?? 0;
+  const end = lines.at(-1)?.place.end ?? characters.length;
+  const contiguous = lines
+    .slice(1)
+    .every((line, index) => lines[index]?.place.end === line.place.start);
+  const near = (at: number) =>
+    characters
+      .slice(Math.max(0, at - BREAK_REACH), at + BREAK_REACH)
+      .some((character) => UNSPACED.test(character));
+  const candidates = engine.map((at) => {
+    const found = [at];
+    if (contiguous && !near(at)) {
+      for (let offset = at - BREAK_REACH; offset <= at + BREAK_REACH; offset += 1) {
+        if (offset !== at && offset > start && offset < end && mayBreakBefore(characters, offset)) {
+          found.push(offset);
         }
-        return step;
+      }
+    }
+    return found;
+  });
+  // The lengths of the words of a stretch of the text, kept for each stretch asked about.
+  const kept = new Map<string, number[]>();
+  const wordsIn = (from: number, to: number) => {
+    const key = `${from}:${to}`;
+    let found = kept.get(key);
+    if (found === undefined) {
+      found = wordsOf(characters.slice(from, to)).map((word) =>
+        widthOfText(characters.slice(from + word.start, from + word.end)),
+      );
+      kept.set(key, found);
+    }
+    return found;
+  };
+  const fits = (line: number, from: number, to: number) =>
+    from < to && printed[line] !== undefined && printed[line]?.length === wordsIn(from, to).length;
+  // How far the lengths of a line's words in its print are from those of the words of its
+  // text, each as a part of all: of two settings that both give a line its count of words, the
+  // one whose words are the print's words is the nearer.
+  const misfit = (line: number, from: number, to: number) => {
+    const print = printed[line];
+    if (print === undefined || from >= to) {
+      return 0;
+    }
+    const text = wordsIn(from, to);
+    if (print.length !== text.length) {
+      return 0;
+    }
+    const printTotal = print.reduce((sum, width) => sum + width, 0) || 1;
+    const textTotal = text.reduce((sum, width) => sum + width, 0) || 1;
+    return print.reduce(
+      (sum, width, index) => sum + Math.abs(width / printTotal - (text[index] ?? 0) / textTotal),
+      0,
+    );
+  };
+  // The best setting of the breaks up to each one, ending at each of its places: how many lines
+  // fit, how far their words are from their print's, how far the breaks moved, and the place
+  // of the break before.
+  type Step = { fitting: number; misfit: number; moved: number; from: number };
+  const better = (one: Step, other: Step) =>
+    one.fitting > other.fitting ||
+    (one.fitting === other.fitting &&
+      (one.misfit < other.misfit || (one.misfit === other.misfit && one.moved < other.moved)));
+  const steps: Step[][] = [];
+  candidates.forEach((places, index) => {
+    const before = steps[index - 1];
+    const fromPlaces = index === 0 ? [start] : (candidates[index - 1] ?? []);
+    steps.push(
+      places.map((place) => {
+        let best: Step = { fitting: -1, misfit: Infinity, moved: Infinity, from: 0 };
+        fromPlaces.forEach((from, fromIndex) => {
+          const previous = before?.[fromIndex] ?? { fitting: 0, misfit: 0, moved: 0, from: 0 };
+          const step = {
+            fitting: previous.fitting + (fits(index, from, place) ? 1 : 0),
+            misfit: previous.misfit + misfit(index, from, place),
+            moved: previous.moved + Math.abs(place - (engine[index] ?? place)),
+            from: fromIndex,
+          };
+          if (better(step, best)) {
+            best = step;
+          }
+        });
+        return best;
       }),
     );
   });
+  const lastPlaces = candidates.at(-1) ?? [];
   const lastSteps = steps.at(-1) ?? [];
-  let at = lastSteps.reduce(
-    (found, step, index) => (step.cost < (lastSteps[found]?.cost ?? Infinity) ? index : found),
-    0,
-  );
-  if (!Number.isFinite(lastSteps[at]?.cost ?? Infinity)) {
-    return undefined;
-  }
-  const chosen: [number, number][] = [];
-  for (let space = expected.length - 1; space >= 0; space -= 1) {
-    const gap = gaps[at];
-    if (
-      gap === undefined ||
-      Math.abs((gap[0] + gap[1]) / 2 - (expected[space] ?? 0)) > farthest * mean
-    ) {
-      return undefined;
-    }
-    chosen.unshift(gap);
-    at = steps[space]?.[at]?.from ?? -1;
-  }
-  return chosen;
-}
-
-// Moves each break between two lines of a block that the engine put inside a word to a space
-// before or after it, within reach, where no character near is of a script written without
-// spaces: to the one that gives the line before it as many words as its print shows, and then
-// the line after it, where that is known, and otherwise to the nearer.
-function settleBreaks(
-  lines: Line[],
-  characters: string[],
-  printed: (line: Line) => number | undefined,
-): void {
-  lines.slice(1).forEach((line, index) => {
-    const before = lines[index];
-    const at = line.place.start;
-    if (before === undefined || before.place.end !== at) {
+  let at = 0;
+  let best: Step = { fitting: -1, misfit: Infinity, moved: Infinity, from: 0 };
+  lastPlaces.forEach((place, index) => {
+    const step = lastSteps[index];
+    if (step === undefined) {
       return;
     }
-    before.end = at;
-    line.start = at;
-    const near = characters.slice(Math.max(0, at - SETTLING_REACH), at + SETTLING_REACH);
-    if (
-      SPACE.test(characters[at] ?? " ") ||
-      SPACE.test(characters[at - 1] ?? " ") ||
-      near.some((character) => UNSPACED.test(character))
-    ) {
-      return;
-    }
-    const candidates: { settled: number; distance: number }[] = [];
-    for (let space = at; space < at + SETTLING_REACH; space += 1) {
-      if (SPACE.test(characters[space] ?? "")) {
-        candidates.push({ settled: space + 1, distance: space + 1 - at });
-        break;
-      }
-    }
-    for (let space = at - 1; space >= at - SETTLING_REACH; space -= 1) {
-      if (SPACE.test(characters[space] ?? "")) {
-        candidates.push({ settled: space + 1, distance: at - space - 1 });
-        break;
-      }
-    }
-    const fitting = candidates.filter(
-      ({ settled }) => settled > before.start && settled < line.place.end,
-    );
-    const printedBefore = fitting.length > 1 ? printed(before) : undefined;
-    const printedAfter = fitting.length > 1 ? printed(line) : undefined;
-    const score = (settled: number) =>
-      (wordsOf(characters.slice(before.start, settled)).length === printedBefore ? 2 : 0) +
-      (wordsOf(characters.slice(settled, line.place.end)).length === printedAfter ? 1 : 0);
-    const chosen = fitting.sort(
-      (one, other) => score(other.settled) - score(one.settled) || one.distance - other.distance,
-    )[0];
-    if (chosen !== undefined) {
-      before.end = chosen.settled;
-      line.start = chosen.settled;
+    const whole = {
+      ...step,
+      fitting: step.fitting + (fits(engine.length, place, end) ? 1 : 0),
+      misfit: step.misfit + misfit(engine.length, place, end),
+    };
+    if (better(whole, best)) {
+      best = whole;
+      at = index;
     }
   });
+  const breaks: number[] = new Array<number>(engine.length).fill(0);
+  for (let index = engine.length - 1; index >= 0; index -= 1) {
+    breaks[index] = candidates[index]?.[at] ?? engine[index] ?? 0;
+    at = steps[index]?.[at]?.from ?? 0;
+  }
+  // A break the print does not prove for both its lines goes back to the engine's place.
+  const bounds = () => [start, ...breaks, end];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const edges = bounds();
+    breaks.forEach((place, index) => {
+      const engineAt = engine[index] ?? place;
+      if (
+        place !== engineAt &&
+        !(
+          fits(index, edges[index] ?? start, place) &&
+          fits(index + 1, place, edges[index + 2] ?? end)
+        )
+      ) {
+        breaks[index] = engineAt;
+        changed = true;
+      }
+    });
+  }
+  return breaks;
 }
 
 // The text of a PDF's document as it lies on its pages, and where on a line each character
 // lies: read off the drawn page where its words can be told apart there, and otherwise by the
-// widths of the characters, a justified line's spare room spread over its spaces.
+// widths of the characters. A page's lines are read and cut when its drawing arrives; those
+// who draw a page are told when the lines on it are cut anew.
 export class PageText {
   readonly onPages = new Map<number, Line[]>();
   readonly ofBlocks = new Map<number, Line[]>();
@@ -440,12 +326,15 @@ export class PageText {
   readonly characters: string[][];
   // The formulas of each block, which a selection takes whole or not at all.
   private readonly formulas: Map<number, { start: number; end: number }[]>;
+  private readonly cuts = new WeakMap<Line, Cut>();
+  // The ink of the lines of the pages drawn now.
+  private readonly inks = new Map<Line, Ink>();
+  // The drawings of the pages drawn now, and those of them that were read.
   private readonly drawings = new Map<number, HTMLCanvasElement>();
-  private readonly edgesKept = new WeakMap<Line, Cut>();
-  // The ink of the lines of the pages drawn, read when first needed.
-  private readonly inks = new Map<Line, Ink | undefined>();
-  // The blocks whose lines are set by their print as their pages are drawn now.
-  private readonly aligned = new Set<number>();
+  private readonly readDrawings = new Set<number>();
+  // How many times the lines on each page were cut anew, and who is told.
+  private readonly versions = new Map<number, number>();
+  private readonly listeners = new Set<() => void>();
 
   constructor(blocks: Block[]) {
     this.characters = blocks.map((block) => [...block.text]);
@@ -469,7 +358,6 @@ export class PageText {
           downward,
           whole,
         }));
-      settleBreaks(lines, this.characters[blockNumber] ?? [], () => undefined);
       this.ofBlocks.set(blockNumber, lines);
       for (const line of lines) {
         this.onPages.set(line.place.page, [...(this.onPages.get(line.place.page) ?? []), line]);
@@ -493,8 +381,22 @@ export class PageText {
     return this.characters[blockNumber] ?? [];
   }
 
-  // Tells where a page is drawn, or that its drawing is gone, so that its lines are read off
-  // the drawing anew: where they break, and where their words stand.
+  readonly subscribe = (notify: () => void): (() => void) => {
+    this.listeners.add(notify);
+    return () => {
+      this.listeners.delete(notify);
+    };
+  };
+
+  // How many times the lines on a page were cut anew: a drawing of its highlights is drawn
+  // again when this changes.
+  versionOf(page: number): number {
+    return this.versions.get(page) ?? 0;
+  }
+
+  // Tells where a page is drawn, or that its drawing is gone. A drawing is read when it is
+  // needed: its lines read off it, the breaks of the blocks on it set again by their print,
+  // and the lines of those blocks cut anew, on this page and on the others they run over.
   drawnOn(page: number, canvas: HTMLCanvasElement | undefined): void {
     if (canvas === undefined) {
       this.drawings.delete(page);
@@ -502,179 +404,137 @@ export class PageText {
       this.drawings.set(page, canvas);
     }
     const lines = this.onPages.get(page) ?? [];
-    for (const line of lines) {
-      this.inks.delete(line);
-    }
-    for (const blockNumber of new Set(lines.map((line) => line.blockNumber))) {
-      this.aligned.delete(blockNumber);
-      for (const line of this.ofBlocks.get(blockNumber) ?? []) {
-        this.edgesKept.delete(line);
+    // A drawing given up takes its reading with it.
+    if (lines.some((line) => this.inks.has(line))) {
+      for (const line of lines) {
+        this.inks.delete(line);
       }
+      this.cutAnew(lines);
     }
+    this.readDrawings.delete(page);
   }
 
-  // Sets where the lines of a block begin and end in its text by their print, once its pages
-  // are drawn, when a line of it is first cut: where the words the print shows on each line
-  // add up to the block's words, each line holds as many as it shows; otherwise each break the
-  // engine put inside a word is settled on a space.
-  private align(blockNumber: number): void {
-    if (this.aligned.has(blockNumber)) {
+  // Reads a page's drawing, where it has one not yet read: as it arrives on a page that holds
+  // highlights, and on the first press on any other.
+  read(page: number): void {
+    const canvas = this.drawings.get(page);
+    if (canvas === undefined || this.readDrawings.has(page)) {
       return;
     }
-    this.aligned.add(blockNumber);
-    const own = this.ofBlocks.get(blockNumber) ?? [];
-    const characters = this.textOf(blockNumber);
-    const printed = (line: Line) => {
-      const ink = this.inkOfLine(line);
-      return ink === undefined ? undefined : printedWords(ink);
-    };
-    const first = own[0];
-    const last = own.at(-1);
-    const spaced = !characters.some((character) => UNSPACED.test(character));
-    const counts =
-      own.length > 1 && spaced && !own.some((line) => line.whole) ? own.map(printed) : [];
-    const words = wordsOf(characters);
-    const total = counts.reduce<number | undefined>(
-      (sum, count) => (sum === undefined || count === undefined ? undefined : sum + count),
-      0,
+    this.readDrawings.add(page);
+    const lines = (this.onPages.get(page) ?? []).filter((line) => !line.whole);
+    const inks = readInk(
+      canvas,
+      lines.map((line) => ({ box: line.place, downward: line.downward })),
     );
-    if (first !== undefined && last !== undefined && counts.length > 0 && total === words.length) {
-      let taken = 0;
-      own.forEach((line, index) => {
-        line.start = index === 0 ? first.place.start : (words[taken]?.start ?? line.start);
-        taken += counts[index] ?? 0;
-        line.end = line === last ? last.place.end : (words[taken]?.start ?? line.end);
-      });
-    } else {
-      for (const line of own) {
-        line.start = line.place.start;
-        line.end = line.place.end;
+    lines.forEach((line, index) => {
+      const ink = inks[index];
+      if (ink === undefined) {
+        this.inks.delete(line);
+      } else {
+        this.inks.set(line, ink);
       }
-      settleBreaks(own, characters, printed);
-    }
-    for (const line of own) {
-      this.edgesKept.delete(line);
-    }
+    });
+    this.cutAnew(this.onPages.get(page) ?? []);
   }
 
-  private inkOfLine(line: Line): Ink | undefined {
-    if (!this.inks.has(line)) {
-      const canvas = this.drawings.get(line.place.page);
-      this.inks.set(
-        line,
-        canvas === undefined || canvas.width === 0
-          ? undefined
-          : inkOf(canvas, line.place, line.downward),
-      );
+  private cutAnew(lines: Line[]): void {
+    const touched = new Set<number>();
+    for (const blockNumber of new Set(lines.map((line) => line.blockNumber))) {
+      const own = this.ofBlocks.get(blockNumber) ?? [];
+      this.breakByPrint(own, this.textOf(blockNumber));
+      for (const line of own) {
+        this.cuts.set(line, this.workedCut(line));
+        touched.add(line.place.page);
+      }
     }
-    return this.inks.get(line);
+    for (const touchedPage of touched) {
+      this.versions.set(touchedPage, this.versionOf(touchedPage) + 1);
+    }
+    this.listeners.forEach((notify) => notify());
+  }
+
+  private breakByPrint(own: Line[], characters: string[]): void {
+    if (own.length < 2 || own.some((line) => line.whole)) {
+      return;
+    }
+    const printed = own.map((line) => {
+      const ink = this.inks.get(line);
+      return ink === undefined ? undefined : printedWords(ink, line.place.end - line.place.start);
+    });
+    const breaks = brokenByPrint(own, characters, printed);
+    own.forEach((line, index) => {
+      line.start = index === 0 ? line.place.start : (breaks[index - 1] ?? line.place.start);
+      line.end = index === own.length - 1 ? line.place.end : (breaks[index] ?? line.place.end);
+    });
   }
 
   // How a line is cut: where each character begins along its run, as a part of the run, and
   // where the last ends, and what that was read from.
   cutOf(line: Line): Cut {
-    this.align(line.blockNumber);
-    let cut = this.edgesKept.get(line);
+    let cut = this.cuts.get(line);
     if (cut === undefined) {
       cut = this.workedCut(line);
-      this.edgesKept.set(line, cut);
+      this.cuts.set(line, cut);
     }
     return cut;
   }
 
-  private edgesOf(line: Line): number[] {
-    return this.cutOf(line).edges;
-  }
-
   private workedCut(line: Line): Cut {
-    const { place, downward } = line;
     const characters = this.textOf(line.blockNumber).slice(line.start, line.end);
     if (characters.some((character) => UNSPACED.test(character))) {
       const edges = characters.map((_, index) => index / characters.length).concat(1);
       return { edges, by: "evenly" };
     }
-    const canvas = this.drawings.get(place.page);
-    if (canvas === undefined || canvas.width === 0) {
+    const ink = this.inks.get(line);
+    const words = wordsOf(characters);
+    if (ink === undefined) {
       return { edges: spread(characters, 0, 1), by: "widths" };
     }
-    const words = wordsOf(characters);
-    const ink = this.inkOfLine(line);
-    const inked =
-      ink === undefined
-        ? undefined
-        : inkedWords(
-            ink,
-            words.map((word) => widthOfText(characters.slice(word.start, word.end))),
-            widthOf(" "),
-            characters.length,
-          );
-    if (ink !== undefined && inked !== undefined) {
-      return { edges: this.inkedEdges(characters, words, inked, ink.run), by: "ink" };
+    // A piece of a word the engine left at the edge of a line whose print shows one word less
+    // is printed on the next line or the one before: it takes no room on this one.
+    const text = this.textOf(line.blockNumber);
+    const printed = printedWords(ink, characters.length)?.length;
+    const leading =
+      isWordlike(text[line.start - 1]) && isWordlike(text[line.start]) && words[0]?.start === 0;
+    const trailing =
+      isWordlike(text[line.end - 1]) &&
+      isWordlike(text[line.end]) &&
+      words.at(-1)?.end === characters.length;
+    let left = 0;
+    let right = words.length;
+    if (printed !== undefined && words.length > printed) {
+      if (leading && right - left > printed) {
+        left += 1;
+      }
+      if (trailing && right - left > printed) {
+        right -= 1;
+      }
     }
-    return { edges: this.justifiedEdges(characters, canvas, place, downward), by: "widths" };
-  }
-
-  // Each word fills the extent its ink takes, its characters in proportion to their widths;
-  // the spaces between two words fill the gap between them.
-  private inkedEdges(
-    characters: string[],
-    words: Word[],
-    extents: [number, number][],
-    run: number,
-  ): number[] {
-    const edges: number[] = new Array<number>(characters.length + 1).fill(0);
-    let reached = 0;
-    let at = 0;
-    words.forEach((word, index) => {
-      const [from, to] = extents[index] ?? [reached, reached];
-      spread(characters.slice(at, word.start), reached, from).forEach((edge, offset) => {
-        edges[at + offset] = edge / run;
-      });
-      spread(characters.slice(word.start, word.end), from, to).forEach((edge, offset) => {
-        edges[word.start + offset] = edge / run;
-      });
-      reached = to;
-      at = word.end;
-    });
-    spread(characters.slice(at), reached, run).forEach((edge, offset) => {
-      edges[at + offset] = edge / run;
-    });
-    return edges;
-  }
-
-  // The characters at their widths for the size of the print, and what room the line has over
-  // them spread over its spaces, as a justified line spreads it; a line that holds less room
-  // than its characters take is set closer, all of them alike.
-  private justifiedEdges(
-    characters: string[],
-    canvas: HTMLCanvasElement,
-    place: PagePlace,
-    downward: boolean,
-  ): number[] {
-    const run = downward ? place.height * canvas.height : place.width * canvas.width;
-    const depth = downward ? place.width * canvas.width : place.height * canvas.height;
-    const scale = (depth * SIZE_PER_DEPTH) / MEASURING_SIZE;
-    const natural = characters.map((character) => widthOf(character) * scale);
-    const taken = natural.reduce((sum, width) => sum + width, 0);
-    const spaces = characters.filter((character) => SPACE.test(character)).length;
-    if (taken >= run || spaces === 0 || run <= 0) {
-      return spread(characters, 0, 1);
+    const printedText = words.slice(left, right);
+    const inked = inkedWords(
+      ink,
+      printedText.map((word) => widthOfText(characters.slice(word.start, word.end))),
+      widthOf(" "),
+      characters.length,
+    );
+    if (inked === undefined) {
+      return { edges: spread(characters, 0, 1), by: "widths" };
     }
-    const added = (run - taken) / spaces;
-    const edges = [0];
-    let reached = 0;
-    characters.forEach((character, index) => {
-      reached += (natural[index] ?? 0) + (SPACE.test(character) ? added : 0);
-      edges.push(reached / run);
-    });
-    return edges;
+    const first = inked[0]?.[0] ?? 0;
+    const last = inked.at(-1)?.[1] ?? ink.run;
+    const extents: [number, number][] = [
+      ...words.slice(0, left).map((): [number, number] => [first, first]),
+      ...inked,
+      ...words.slice(right).map((): [number, number] => [last, last]),
+    ];
+    return { edges: inkedEdges(characters, words, extents, ink.run), by: "ink" };
   }
 
   // The part of a line's box that holds the characters from start to end of its block's text,
   // cut across the run, down the line where the text runs downwards. A line taken whole is
   // covered whole by any part of it.
   coveredBox(line: Line, start: number, end: number): Box | undefined {
-    this.align(line.blockNumber);
     const { place } = line;
     const from = Math.max(start, line.start);
     const to = Math.min(end, line.end);
@@ -684,7 +544,7 @@ export class PageText {
     if (line.whole || line.end === line.start) {
       return { left: place.left, top: place.top, width: place.width, height: place.height };
     }
-    const edges = this.edgesOf(line);
+    const { edges } = this.cutOf(line);
     const head = edges[from - line.start] ?? 0;
     const tail = edges[to - line.start] ?? 1;
     return line.downward
@@ -735,7 +595,6 @@ export class PageText {
   // The character of a line under a point, settled on the word around it; a line taken whole
   // stands for all of it.
   spanAt(line: Line, point: Point): Span {
-    this.align(line.blockNumber);
     const { place } = line;
     const count = line.end - line.start;
     if (line.whole || count === 0) {
@@ -744,7 +603,7 @@ export class PageText {
     const along = line.downward
       ? (point.y - place.top) / place.height
       : (point.x - place.left) / place.width;
-    const edges = this.edgesOf(line);
+    const { edges } = this.cutOf(line);
     let at = 0;
     while (at < count - 1 && (edges[at + 1] ?? 1) <= along) {
       at += 1;

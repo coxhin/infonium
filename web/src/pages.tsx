@@ -7,7 +7,7 @@ import {
   type RenderTask,
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { percent, type AreaText } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
@@ -39,6 +39,9 @@ const LEAST_SHARPNESS = 2;
 const MOST_FLOOR_PIXELS = 4_000_000;
 const BOX_CLASS = "page-box";
 const UNDER_CLASS = "under";
+// The longest a page's lines wait to be read off its drawing for the browser to be idle, in
+// milliseconds.
+const READING_WAIT = 500;
 const POINTED_AREA = "area.pointed";
 
 function overlaps(one: DOMRect, other: DOMRect): boolean {
@@ -257,13 +260,22 @@ function Page({
     }
   }, [paired, drawn]);
 
-  // The lines of the page are read off its drawing, where their words can be told apart there;
-  // the highlights are drawn again once the text knows of the drawing.
-  const [drawings, setDrawings] = useState(0);
+  // The lines of the page are read off its drawing when it arrives; the highlights are drawn
+  // again whenever the lines on this page are cut anew, as when the drawing of another page a
+  // block of this one runs over arrives.
+  // A page that holds highlights is read as its drawing arrives; any other on the first press
+  // on it. Reading takes some milliseconds a page, so it waits for a moment the browser is
+  // idle, as while the pages scroll every frame counts.
+  const holdsMarks = marks.length > 0;
   useEffect(() => {
     text.drawnOn(number, drawn?.canvas);
-    setDrawings(drawn?.count ?? 0);
-  }, [text, number, drawn]);
+    if (!holdsMarks) {
+      return;
+    }
+    const reading = requestIdleCallback(() => text.read(number), { timeout: READING_WAIT });
+    return () => cancelIdleCallback(reading);
+  }, [text, number, drawn, holdsMarks]);
+  const drawings = useSyncExternalStore(text.subscribe, () => text.versionOf(number));
 
   // One shape of tree whether or not the source stands beside the page, so that the page's
   // canvas, and its drawing, stay when the pairing changes. Highlights and a selection are

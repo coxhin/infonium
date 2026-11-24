@@ -136,6 +136,23 @@ function pointOn(page: HTMLElement, x: number, y: number): Point {
   return { x: (x - rect.left) / rect.width, y: (y - rect.top) / rect.height };
 }
 
+// Whether a range holds any of an element's text: a range that only touches it at its edge, as
+// one a triple click makes ends at the start of the next paragraph, holds none of it.
+function holdsTextOf(range: Range, element: Element): boolean {
+  if (!range.intersectsNode(element)) {
+    return false;
+  }
+  const inside = document.createRange();
+  inside.selectNodeContents(element);
+  if (range.compareBoundaryPoints(Range.START_TO_START, inside) > 0) {
+    inside.setStart(range.startContainer, range.startOffset);
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, inside) < 0) {
+    inside.setEnd(range.endContainer, range.endOffset);
+  }
+  return inside.toString().trim() !== "";
+}
+
 // An area lets the source through, and so stands for nothing, where it was pressed to show it.
 function standing(area: Element): boolean {
   return !(area.closest(".revealing") !== null && area.hasAttribute("data-open"));
@@ -297,6 +314,8 @@ export function usePageSelecting(
         const blockNumber = Number(area.dataset.blockTranslated);
         return { span: text.wholeBlock(blockNumber), page: found, area };
       }
+      // A page is read off its drawing, if it was not yet, when a pointer first comes to it.
+      text.read(Number(found.dataset.page));
       const point = pointOn(found, x, y);
       const rect = found.getBoundingClientRect();
       const near = nearestLine(
@@ -388,7 +407,7 @@ export function usePageSelecting(
         range === undefined
           ? []
           : [...(root?.querySelectorAll<HTMLElement>(TRANSLATED_AREAS) ?? [])].filter(
-              (area) => standing(area) && range.intersectsNode(area),
+              (area) => standing(area) && holdsTextOf(range, area),
             );
       if (marking === undefined || areas.length === 0) {
         if (handed?.native === true) {
