@@ -418,17 +418,23 @@ class Intake:
                 case Upload(name=name):
                     source = uploaded(self.store.upload(item_id), name)
                     readout = readout_of(source, Path(directory), self.engines)
-            document = document_of(
-                item_id=item.id,
-                extractor=readout.extractor,
-                snapshot=self.store.keep_snapshot(readout.file),
-                media_type=readout.media_type,
-                blocks=readout.extracted.blocks,
-            )
+            staged = self.store.staged_snapshot(readout.file)
+        document = document_of(
+            item_id=item.id,
+            extractor=readout.extractor,
+            snapshot=staged.name,
+            media_type=readout.media_type,
+            blocks=readout.extracted.blocks,
+        )
+        # A reading that gives a document the library keeps already leaves that document and
+        # its file as they are, and keeps no other file beside it.
         with self.turn:
             with self.store.library(owner) as library:
                 settled = reading_settled(item.reading, readout.extracted.title, document.id)
-                library.keep_document(document, datetime.now(UTC))
+                if library.keep_document(document, datetime.now(UTC)):
+                    self.store.keep_snapshot(staged)
+                else:
+                    staged.file.unlink()
                 library.keep_item(item_with(item, settled))
             self.drop_upload(item)
 

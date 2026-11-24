@@ -258,6 +258,12 @@ class KeptSource(BaseModel):
     media_type: MediaType
 
 
+class StagedSnapshot(BaseModel):
+    # A source's file, staged in the work directory to be kept under its name.
+    name: str
+    file: Path
+
+
 class UnderwayItem(BaseModel):
     owner: str
     item_id: str
@@ -424,12 +430,13 @@ class Library:
             )
         )
 
-    def keep_document(self, document: Document, read: datetime) -> None:
+    def keep_document(self, document: Document, read: datetime) -> bool:
         # A document read from an item's source is a revision of the item: a new one, numbered
         # one above the item's highest, unless the item was read into this document before.
         # Then the document stays as it was first kept, with the file kept beside it then, and
-        # so does its revision: a document never changes under its id.
-        self.connection.execute(
+        # so does its revision: a document never changes under its id. Whether the document
+        # is new to the library.
+        kept = self.connection.execute(
             sqlite.insert(document_table)
             .values(
                 {
@@ -469,6 +476,7 @@ class Library:
             )
             .on_conflict_do_nothing()
         )
+        return bool(kept.rowcount)
 
     def keep_digest(self, digest: Digest) -> None:
         self.connection.execute(
@@ -615,15 +623,16 @@ class LibraryStore:
     def snapshot(self, name: str) -> Path:
         return self.snapshots / name[:2] / name
 
-    def keep_snapshot(self, file: Path) -> str:
+    def staged_snapshot(self, file: Path) -> StagedSnapshot:
         with file.open("rb") as content:
             name = file_digest(content, CONTENT_HASH).hexdigest()
             content.seek(0)
-            arrived = self.staged(content)
-        kept = self.snapshot(name)
+            return StagedSnapshot(name=name, file=self.staged(content))
+
+    def keep_snapshot(self, staged: StagedSnapshot) -> None:
+        kept = self.snapshot(staged.name)
         kept.parent.mkdir(parents=True, exist_ok=True)
-        arrived.replace(kept)
-        return name
+        staged.file.replace(kept)
 
     def upload(self, item_id: str) -> Path:
         # Where an upload waits, under the id of its item, while its reading is under way.
