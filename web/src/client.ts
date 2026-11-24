@@ -360,10 +360,15 @@ export function readNote(noteId: string): Promise<Note> {
   return settled(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
 }
 
-// Puts the draft in place of what the note held.
-export function rewriteNote(noteId: string, draft: NoteDraft): Promise<Note> {
+// Puts the draft in place of what the note held. A draft sent as the page is left is sent so
+// that the request outlives the page; the browser refuses such a request above 64 KiB.
+export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): Promise<Note> {
   return settled(
-    api.PUT("/api/notes/{note_id}", { params: { path: { note_id: noteId } }, body: draft }),
+    api.PUT("/api/notes/{note_id}", {
+      params: { path: { note_id: noteId } },
+      body: draft,
+      keepalive: leaving,
+    }),
   );
 }
 
