@@ -64,6 +64,17 @@ class Comparable(BaseModel):
     origins: list[int]
 
 
+def is_invisible(character: str) -> bool:
+    return unicodedata.category(character) == FORMAT_CHARACTER
+
+
+def plain_character(character: str) -> str:
+    # A character that is neither white space nor invisible, as it is compared: decomposed,
+    # with plain quotation marks and dashes, and with its case folded.
+    decomposed = unicodedata.normalize(COMPARISON_FORM, character)
+    return decomposed.translate(PLAIN_PUNCTUATION).casefold()
+
+
 def comparable(text: str, ignored: set[int]) -> Comparable:
     # A quote counts as found only when the source holds the same words. What may differ is
     # how they are typeset: letter case, spacing, the shape of quotation marks and dashes,
@@ -73,13 +84,12 @@ def comparable(text: str, ignored: set[int]) -> Comparable:
     kept: list[str] = []
     origins: list[int] = []
     for offset, character in enumerate(text):
-        if offset in ignored or unicodedata.category(character) == FORMAT_CHARACTER:
+        if offset in ignored or is_invisible(character):
             continue
         if character.isspace():
             plain = "" if kept[-1:] in ([], [" "]) else " "
         else:
-            decomposed = unicodedata.normalize(COMPARISON_FORM, character)
-            plain = decomposed.translate(PLAIN_PUNCTUATION).casefold()
+            plain = plain_character(character)
         kept.extend(plain)
         origins.extend([offset] * len(plain))
     return Comparable(text="".join(kept), origins=origins)
