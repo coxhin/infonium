@@ -94,19 +94,9 @@
   margin-top: 0.3rem;
 }
 
-/* The foot of an answer: what it cost, and the control that notes the whole of it down, which
-   comes on show with the answer under the pointer. */
-.answer .whole {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.2rem 0.6rem;
-}
-
-.answer:hover > .whole .notedown-press,
-.answer:focus-within > .whole .notedown-press {
-  opacity: 1;
+/* The control that notes the whole answer down stands under what it cost. */
+.answer > .notedown {
+  margin-left: 0;
 }
 
 .draft .searched {

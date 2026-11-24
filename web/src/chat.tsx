@@ -119,13 +119,8 @@ function Answer({
           ))}
         </p>
       )}
-      <div className="whole">
-        <Spent answer={answer} />
-        <NoteDown
-          taking={statementTaking(answer.statements, itemOf)}
-          label="记到笔记：整个回答"
-        />
-      </div>
+      <Spent answer={answer} />
+      <NoteDown taking={statementTaking(answer.statements, itemOf)} label="记到笔记：整个回答" />
     </div>
   );
 }

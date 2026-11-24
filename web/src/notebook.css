@@ -214,23 +214,28 @@
 }
 
 /* The removal and the note control stay quiet until the entry is under the pointer or holds
-   the keyboard. */
+   the keyboard. The foot has room for them, so the note control keeps its place here rather
+   than taking none, as it does after a statement. */
 .highlight .entry-actions > button,
-.highlight .entry-actions .notedown-press {
+.highlight .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0 0.45rem;
+  border: 1px solid var(--line);
+  overflow: visible;
+  clip-path: none;
   opacity: 0;
 }
 
-.highlight:hover .entry-actions > button,
-.highlight:focus-within .entry-actions > button,
-.highlight:hover .entry-actions .notedown-press,
-.highlight:focus-within .entry-actions .notedown-press,
-.highlight .entry-actions .notedown:not([data-state="idle"]) .notedown-press {
+.highlight:is(:hover, :focus-within) .entry-actions > button,
+.highlight:is(:hover, :focus-within) .notedown[data-state="idle"] .notedown-press {
   opacity: 1;
 }
 
 @media (hover: none) {
   .highlight .entry-actions > button,
-  .highlight .entry-actions .notedown-press {
+  .highlight .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
     opacity: 1;
   }
 }
