@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { Anchor, Anchors } from "./client";
-import type { Marked, Selected } from "./marking";
+import { lastBegun, type Marked, type Selected } from "./marking";
 import type { PageMark, SelectionDrawing } from "./pagemarking";
 import { nearestLine, type PageText, type Point, type Span } from "./pagelines";
 import { scrollerOf, viewOf } from "./scrolling";
@@ -115,20 +115,6 @@ function anchorsOf(text: PageText, spans: Span[], documentId: string): Anchors |
   }));
   const [first, ...rest] = anchors;
   return first === undefined ? undefined : [first, ...rest];
-}
-
-// Of the highlights given, the one that begins last in the document.
-function beginningLast(marked: Marked[]): Marked | undefined {
-  return marked.reduce<Marked | undefined>((last, each) => {
-    if (last === undefined) {
-      return each;
-    }
-    const [one, other] = [each.anchors[0], last.anchors[0]];
-    const later =
-      one.block_number > other.block_number ||
-      (one.block_number === other.block_number && one.start >= other.start);
-    return later ? each : last;
-  }, undefined);
 }
 
 function pointOn(page: HTMLElement, x: number, y: number): Point {
@@ -527,7 +513,7 @@ export function usePageSelecting(
         );
         under = marking.marked.filter((each) => ids.has(each.id));
       }
-      const chosen = beginningLast(under);
+      const chosen = lastBegun(under);
       if (chosen !== undefined) {
         marking.onPress(chosen.id);
       }

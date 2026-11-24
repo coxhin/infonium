@@ -1,6 +1,6 @@
 import type { Anchor, Block } from "./client";
 import { heldTextOf } from "./framewords";
-import type { Marked } from "./marking";
+import { beginsAfter, type Marked } from "./marking";
 import { linkOf, outranking, selectorOf, type FramedPage, type Holders } from "./pagewriter";
 
 // The reader's highlights as drawn in the framed page a web article was read from, and which
@@ -74,13 +74,6 @@ function contentsOf(element: Element): Range {
   const range = element.ownerDocument.createRange();
   range.selectNodeContents(element);
   return range;
-}
-
-function isLater(anchor: Anchor, than: Anchor): boolean {
-  return (
-    anchor.block_number > than.block_number ||
-    (anchor.block_number === than.block_number && anchor.start > than.start)
-  );
 }
 
 function contains(rectangle: DOMRect, x: number, y: number): boolean {
@@ -194,7 +187,7 @@ export class FrameHighlights {
     for (const drawn of this.drawn) {
       if (
         drawn.holder === holder &&
-        (found === undefined || isLater(drawn.begins, found.begins)) &&
+        (found === undefined || !beginsAfter(found.begins, drawn.begins)) &&
         [...drawn.range.getClientRects()].some((rectangle) =>
           contains(rectangle, event.clientX, event.clientY),
         )

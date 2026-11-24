@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, type MouseEvent, type RefObject } f
 import { BLOCK_ATTRIBUTE } from "./blocks";
 import { unitOffset, unitOffsets } from "./blocktext";
 import type { Anchor } from "./client";
-import { NO_MARKING, type Marked, type Marking } from "./marking";
+import { lastBegun, NO_MARKING, type Marked, type Marking } from "./marking";
 import { characterAt, offsetAt, piecesOf, rangeIn, textOf } from "./textpieces";
 import {
   LINE_SELECTOR,
@@ -134,13 +134,6 @@ function pressedRange(
     }
   }
   return undefined;
-}
-
-function beginsAfter(first: Marked, second: Marked): boolean {
-  const [one, other] = [first.anchors[0], second.anchors[0]];
-  return one.block_number !== other.block_number
-    ? one.block_number > other.block_number
-    : one.start > other.start;
 }
 
 // Whether an anchor's quote is the text of its block at its range: the highlights come from
@@ -332,19 +325,16 @@ function pressedHighlight(
   if (pressed === undefined) {
     return undefined;
   }
-  return marked
-    .filter((highlight) =>
+  return lastBegun(
+    marked.filter((highlight) =>
       highlight.anchors.some(
         (anchor) =>
           anchor.block_number === pressed.number &&
           fits(anchor, show) &&
           overlaps(anchor, pressed.source),
       ),
-    )
-    .reduce<Marked | undefined>(
-      (last, highlight) => (last === undefined || beginsAfter(highlight, last) ? highlight : last),
-      undefined,
-    )?.id;
+    ),
+  )?.id;
 }
 
 

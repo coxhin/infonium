@@ -1,4 +1,4 @@
-import type { Anchors } from "./client";
+import type { Anchor, Anchors } from "./client";
 
 // The seam between the reader's views and the reader's highlights: what a view is told to draw,
 // and how it hands over a passage the reader selects in it.
@@ -31,3 +31,22 @@ export const NO_MARKING: Marking = {
   onSelect: () => undefined,
   onPress: () => undefined,
 };
+
+// Whether a passage that begins at one anchor begins after one that begins at another, in the
+// order of the document.
+export function beginsAfter(one: Anchor, other: Anchor): boolean {
+  return one.block_number !== other.block_number
+    ? one.block_number > other.block_number
+    : one.start > other.start;
+}
+
+// Of the highlights that lie under one press, the one the press means: the one that begins
+// last in the document, and of those that begin alike, the one given last. Every view that
+// takes a press on a highlight tells it so.
+export function lastBegun(marked: Marked[]): Marked | undefined {
+  return marked.reduce<Marked | undefined>(
+    (last, each) =>
+      last === undefined || !beginsAfter(last.anchors[0], each.anchors[0]) ? each : last,
+    undefined,
+  );
+}

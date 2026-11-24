@@ -97,8 +97,26 @@ function usePlaced(at: DOMRect | undefined): {
   };
 }
 
+// Whether a press fell on a scroll bar: of the window, or of the element it was pressed in,
+// beyond what that element shows of its content. Such a press scrolls, and is no press
+// elsewhere in the page.
+function onScrollBar(event: PointerEvent): boolean {
+  const target = event.target;
+  if (target === document.documentElement) {
+    return (
+      event.clientX >= document.documentElement.clientWidth ||
+      event.clientY >= document.documentElement.clientHeight
+    );
+  }
+  return (
+    target instanceof HTMLElement &&
+    (event.offsetX >= target.clientWidth || event.offsetY >= target.clientHeight)
+  );
+}
+
 // Puts the element away on Escape and on a press outside it, and moves the focus into it
-// on Tab from outside it, so that a reader who selected with keys reaches it next.
+// on Tab from outside it, so that a reader who selected with keys reaches it next. A press on
+// a scroll bar leaves it: the view hands the passage over again where it then stands.
 function useAway(own: RefObject<HTMLDivElement | null>, on: boolean, away: () => void) {
   useEffect(() => {
     if (!on) {
@@ -125,7 +143,7 @@ function useAway(own: RefObject<HTMLDivElement | null>, on: boolean, away: () =>
       }
     };
     const pressed = (event: PointerEvent) => {
-      if (outside(event.target)) {
+      if (outside(event.target) && !onScrollBar(event)) {
         away();
       }
     };
