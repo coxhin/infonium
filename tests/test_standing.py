@@ -10,7 +10,8 @@ from hypothesis import strategies as st
 from infonium.anchor import Anchor
 from infonium.document import HTML_MEDIA_TYPE, Document, Paragraph, document_of
 from infonium.library import LOCAL_OWNER
-from infonium.passage import Found, Lost, Passage, Standing, standing_in
+from infonium.passage import Found, Lost, Passage, Standing
+from infonium.refinding import standing_in
 from tests.notebook import (
     LOST,
     NOWHERE_DOCUMENT,

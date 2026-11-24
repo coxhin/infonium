@@ -8,7 +8,7 @@ import httpx2
 import pytest
 from hypothesis import strategies as st
 
-from infonium import passage as passage_module
+from infonium import refinding as passage_module
 from infonium.anchor import Anchor
 from infonium.document import Document
 from infonium.passage import Found, Passage, Standing
