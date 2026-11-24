@@ -76,6 +76,20 @@ MANY_REQUESTS_PARAGRAPHS = 150
 # as Finnish inflects a name.
 TERMS_USED = [("Quillmoor", "Quillmoor"), ("Phobos", "Phoboksen")]
 TERM_TRANSLATION = "奎尔穆尔港"
+# A term that stays in English is listed as itself, and a term is listed with the forms the
+# document writes it in, parted by " / ": how each is listed, the one rendering it is given,
+# and the form the passages use, here a plural that does not begin as its singular does. A
+# request lists a term as "what is listed = its rendering".
+TERMS_LISTED = [
+    ("lumenhash", "lumenhash", "lumenhash"),
+    ("skerrymouse / skerrymice", "skerrymouse", "skerrymice"),
+]
+TERM_LINE = "{listed} = {rendering}"
+# How many of a long document's first paragraphs use the term, so that its later requests do not.
+PARAGRAPHS_USING_THE_TERM = 2
+# A heading made of terms of its field alone, which a translation leaves as it is written.
+HEADING_OF_TERMS = "Scaled Dot-Product Attention"
+PARAGRAPHS_AFTER_THE_HEADING = 3
 # What the model that writes digests puts before a block it translates again.
 AGAIN = "再"
 # How long the run before a POST is given to go on, were it not ended.
@@ -344,6 +358,50 @@ def test_a_request_carries_the_terms_its_passages_use_in_any_form(
             f"a request whose passages use {term} as {used} does not carry the translation the "
             "survey gave the term"
         )
+
+
+@pytest.mark.parametrize(("listed", "rendering", "used"), TERMS_LISTED)
+def test_a_term_listed_as_itself_or_in_several_forms_goes_with_the_passages_that_use_it(
+    app: App, listed: str, rendering: str, used: str
+) -> None:
+    def mentioning(number: int) -> str:
+        return f"{used} " if number < PARAGRAPHS_USING_THE_TERM else ""
+
+    app.model.reset(translating(survey=survey_reply(terms={listed: rendering})))
+    document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS, mentioning))
+    translated_whole(app, document.item_id)
+    line = TERM_LINE.format(listed=listed, rendering=rendering)
+    carrying = [line in asked.text() for asked in passage_requests(app)]
+    using = [
+        any(used in plain(passage.text).split() for passage in passages_asked(asked))
+        for asked in passage_requests(app)
+    ]
+    assert any(using), f"no request carried a passage that uses {used}"
+    assert not all(using), f"every request carried a passage that uses {used}"
+    assert carrying == using, (
+        f"the term listed as {listed!r} with the rendering {rendering!r} goes with the requests "
+        f"{carrying}, and those whose passages use {used} are {using}"
+    )
+
+
+def test_a_heading_answered_with_its_own_words_is_kept_and_not_asked_again(app: App) -> None:
+    def wording(passage: Passage) -> str:
+        return passage.text if plain(passage.text) == HEADING_OF_TERMS else marked(passage)
+
+    app.model.reset(translating(wording))
+    blocks: list[Block] = [
+        Heading(level=2, text=HEADING_OF_TERMS, marks=[]),
+        *long_paragraphs(PARAGRAPHS_AFTER_THE_HEADING),
+    ]
+    document = kept(app, blocks)
+    view = translated_whole(app, document.item_id)
+    [segment] = by_number(view)[0]["segments"]
+    assert segment["text"] == HEADING_OF_TERMS, (
+        f"a heading the model left as it is written is kept as {segment['text']!r}"
+    )
+    assert len(view["blocks"]) == len(blocks), "a block beside the unchanged heading is not kept"
+    sent = passages_sent(app)
+    assert set(sent.values()) == {1}, f"passages were asked for again: {sent}"
 
 
 def recording(texts: list[str]) -> Paragraph:
