@@ -18,7 +18,7 @@ import {
   useOpenedHighlight,
   type Opened,
 } from "./highlights";
-import { itemLink, revisionLink } from "./links";
+import { itemLink } from "./links";
 import type { Loaded } from "./loading";
 import type { Seat } from "./seat";
 
@@ -58,8 +58,7 @@ function useEntryActions(
         openHighlight(
           choseInList({ itemId: highlight.item, highlightId: highlight.id, commenting: false }),
         );
-        citing.awaitOpening(anchorsOf(highlight.passage), highlight.item);
-        location.hash = revisionLink(highlight.item, highlight.revision);
+        citing.openInRevision(anchorsOf(highlight.passage), highlight.item, highlight.revision);
       },
       removed() {
         list.current?.focus();
@@ -157,8 +156,10 @@ export function ItemHighlights({
   citing: Citing;
   shown: boolean;
 }) {
-  // Until the reader shows the item, the document its highlights stand in is not known.
-  const documentId = seat?.itemId === itemId ? seat.documentId : undefined;
+  // Until the reader shows the item, the document its highlights stand in is not known. They
+  // stand in what the item holds now, also while an earlier revision is on show, so turning to
+  // one does not read them again.
+  const documentId = seat?.itemId === itemId ? seat.holding : undefined;
   const highlights = useHighlights(itemId, documentId);
   // Another tab may have changed the item's highlights since they were read.
   useEffect(() => {
