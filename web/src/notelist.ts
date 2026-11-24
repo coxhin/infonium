@@ -1,5 +1,13 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { listNotes, readNote, removeNote, writeNote, type Note, type NoteEntry } from "./client";
+import {
+  listNotes,
+  readNote,
+  Refused,
+  removeNote,
+  writeNote,
+  type Note,
+  type NoteEntry,
+} from "./client";
 import type { Loaded } from "./loading";
 import { firstWords } from "./notemarkdown";
 import {
@@ -16,6 +24,7 @@ import {
 // The notes of the library as the notebook lists them, and which of them is open.
 
 const LOADING: Loaded<never> = { state: "loading" };
+const NOT_FOUND = 404;
 
 const listeners = new Set<() => void>();
 let notes: Loaded<NoteEntry[]> = LOADING;
@@ -179,8 +188,15 @@ export async function makeNote(): Promise<void> {
   openNote(note.id);
 }
 
+// Removes a note. One that was removed elsewhere already is gone as asked.
 export async function dropNote(noteId: string): Promise<void> {
-  await removeNote(noteId);
+  try {
+    await removeNote(noteId);
+  } catch (error) {
+    if (!(error instanceof Refused && error.status === NOT_FOUND)) {
+      throw error;
+    }
+  }
   forget(noteId);
   firstWordsRead.delete(noteId);
   if (notes.state === "ready") {

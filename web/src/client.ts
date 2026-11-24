@@ -27,12 +27,8 @@ export type ItemRevisions = Schemas["ItemRevisions"];
 export type Highlight = Schemas["HighlightView"];
 export type ItemHighlights = Schemas["ItemHighlights"];
 export type NoteEntry = Schemas["NoteEntry"];
-// A note's edition, a whole number from 1: the service keeps a draft only of a later edition
-// than the note's. The service's side of it is being built; until the protocol names it, it is
-// added to the protocol's own types here.
-type Edition = { edition: number };
-export type Note = Schemas["NoteView"] & Edition;
-export type NoteDraft = Schemas["NoteDraft"] & Edition;
+export type Note = Schemas["NoteView"];
+export type NoteDraft = Schemas["NoteDraft"];
 export type LinkedPassage = Schemas["LinkedPassage"];
 // The anchors of a passage: one at least, of one document, in the order of its blocks.
 export type Anchors = [Anchor, ...Anchor[]];
@@ -373,13 +369,13 @@ export function listNotes(): Promise<NoteEntry[]> {
 }
 
 export function writeNote(draft: NoteDraft): Promise<Note> {
-  return settled(reached(api.POST("/api/notes", { body: draft }))) as Promise<Note>;
+  return settled(reached(api.POST("/api/notes", { body: draft })));
 }
 
 export function readNote(noteId: string): Promise<Note> {
   return settled(
     reached(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
-  ) as Promise<Note>;
+  );
 }
 
 // Puts the draft in place of what the note held, unless the note holds an edition as late as
@@ -394,7 +390,7 @@ export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): 
         keepalive: leaving,
       }),
     ),
-  ) as Promise<Note>;
+  );
 }
 
 export function removeNote(noteId: string): Promise<void> {

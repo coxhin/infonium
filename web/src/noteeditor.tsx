@@ -18,6 +18,7 @@ import {
   putInPlace,
   REMOVED,
   textOf,
+  TITLE_CHARACTERS,
   useOpening,
   useSession,
   type Keeping,
@@ -49,8 +50,6 @@ type Shown = { noteId: string; seat: Seat | undefined; citing: Citing; onOpen: O
 
 // How long after the last key a change is kept.
 const MOMENT_MS = 800;
-// The service keeps a title of up to this many characters (TITLE_CHARACTERS in note.py).
-const TITLE_CHARACTERS = 200;
 const NO_WEB_ADDRESS = "链接只能指向其他网站的 http 或 https 网址。";
 const EDITOR_PROPS = {
   attributes: {
@@ -242,18 +241,20 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
 
   // What was typed is handed in, unless a word is still being composed by an input method,
   // which is handed in once it is written; as the page is left it is handed in as it stands.
-  function handInTyped(leaving: boolean): void {
+  // Answers whether what was typed is still not handed in.
+  function handInTyped(leaving: boolean): boolean {
     clearTimeout(timer.current);
     if (!written.current.dirty) {
-      return;
+      return false;
     }
     if (editor.view.composing && !leaving) {
       timer.current = setTimeout(() => writing.current?.flush(false), MOMENT_MS);
-      return;
+      return true;
     }
     written.current.dirty = false;
     setTyping(false);
     handIn(noteId, text(), leaving);
+    return false;
   }
 
   function changed() {
@@ -328,8 +329,19 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
   writing.current = {
     text,
     append(markdown) {
-      const end = editor.state.doc.content.size;
-      editor.commands.insertContentAt(editor.isEmpty ? { from: 0, to: end } : end, markdown, {
+      // The excerpt takes the place of the empty paragraphs at the end, which the editor keeps
+      // there for the cursor and which are not the note's.
+      const { doc } = editor.state;
+      const end = doc.content.size;
+      let from = end;
+      for (let index = doc.childCount - 1; index >= 0; index -= 1) {
+        const block = doc.child(index);
+        if (block.type.name !== "paragraph" || block.content.size > 0) {
+          break;
+        }
+        from -= block.nodeSize;
+      }
+      editor.commands.insertContentAt(from === end ? end : { from, to: end }, markdown, {
         contentType: "markdown",
         updateSelection: false,
       });
@@ -343,12 +355,12 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
       attachWriter(noteId, {
         text: () => writing.current?.text() ?? start,
         append: (markdown) => writing.current?.append(markdown),
-        flush: (leaving) => writing.current?.flush(leaving),
+        flush: (leaving) => writing.current?.flush(leaving) ?? false,
       }),
     [],
   );
   // What was typed is handed in when the note is left, and when another item comes on show.
-  useEffect(() => () => writing.current?.flush(false), [seat?.itemId]);
+  useEffect(() => () => void writing.current?.flush(false), [seat?.itemId]);
   useEffect(() => {
     if (linking !== undefined) {
       addressField.current?.focus();
