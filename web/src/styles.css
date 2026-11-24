@@ -21,9 +21,10 @@
   --marked-line: light-dark(#2f7d32, #8fd694);
   /* Marks on the pages of a PDF, which are light whatever the theme: one colour for both,
      multiplied into the paper, so that on white they come to the light colours of --marked,
-     --opened and --marked-line. */
+     --opened, --marked-twice and --marked-line. */
   --page-mark: rgb(155 217 151 / 0.5);
   --page-mark-opened: rgb(104 195 96 / 0.8);
+  --page-mark-twice: rgb(107 195 100 / 0.6);
   --page-mark-edge: rgb(47 125 50);
   --page-area-mark: rgb(155 217 151 / 0.25);
   --page-selection: rgb(80 140 255 / 0.36);
@@ -333,6 +334,10 @@ main > .status {
   max-width: 62rem;
   background: #ffffff;
   box-shadow: 0 0 0 1px var(--line);
+  /* What is drawn on a page is layered within the page alone: its highlights, a selection and
+     a citation's outline stay under the reader's head, a drawer, a menu and the actions on a
+     selection, which lie over the page as it scrolls. */
+  isolation: isolate;
 }
 
 .page canvas {

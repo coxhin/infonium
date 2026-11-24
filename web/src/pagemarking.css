@@ -32,6 +32,12 @@
   box-shadow: inset 0 -2px 0 var(--page-mark-edge);
 }
 
+/* A stretch more than one highlight holds is drawn once, a shade deeper, however many hold it,
+   so that the print under it stays as readable as under one. */
+.page-mark[data-twice] {
+  background: var(--page-mark-twice);
+}
+
 .page-mark[data-state="opened"] {
   background: var(--page-mark-opened);
   outline: 2px solid var(--page-mark-edge);
