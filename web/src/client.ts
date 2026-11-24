@@ -103,6 +103,20 @@ async function settled<Data>(
   return data;
 }
 
+// The statuses a gateway answers with when the service behind it does not answer. The service
+// itself answers 502 only where a model call failed, which a request that calls no model never
+// meets.
+const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+const UNANSWERED = "连不上服务";
+
+// Why a request that calls no model failed, as the reader is told it: a service that did not
+// answer is said as such rather than by the gateway's bare refusal.
+export function requestReason(error: unknown): string {
+  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
+    ? UNANSWERED
+    : reasonOf(error);
+}
+
 // A request that answers with nothing when it succeeds.
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;

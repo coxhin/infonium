@@ -2,9 +2,18 @@ import { useState } from "react";
 import { ensureDigest, rewriteDigest, type Digest } from "./client";
 import { Citations, LostCitations, type Citing } from "./citing";
 import { useLoaded } from "./loading";
+import { NoteDown, statementTaking } from "./notedown";
 import "./digest.css";
 
-function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
+function DigestBody({
+  itemId,
+  digest,
+  citing,
+}: {
+  itemId: string;
+  digest: Digest;
+  citing: Citing;
+}) {
   return (
     <>
       {digest.sections.map((section, sectionIndex) => (
@@ -21,6 +30,10 @@ function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
                   onPoint={(anchor) => citing.point([anchor])}
                 />
                 <LostCitations statement={statement} citesAll />
+                <NoteDown
+                  taking={statementTaking([statement], () => itemId)}
+                  label="记到笔记：这句摘要"
+                />
               </li>
             ))}
           </ul>
@@ -59,7 +72,7 @@ export function DigestPanel({ itemId, citing }: { itemId: string; citing: Citing
       </header>
       {digest.state === "loading" && <p className="status">正在生成摘要…</p>}
       {digest.state === "failed" && <p className="status failed">生成失败：{digest.reason}</p>}
-      {digest.state === "ready" && <DigestBody digest={digest.value} citing={citing} />}
+      {digest.state === "ready" && <DigestBody itemId={itemId} digest={digest.value} citing={citing} />}
     </div>
   );
 }
