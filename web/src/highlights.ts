@@ -16,17 +16,38 @@ import type { Marked } from "./marking";
 // The highlights of the items the app has shown, kept apart from any one view: the reader
 // draws them, the notebook lists them, and either changes them. An item's highlights say where
 // they stand in the document the item holds now, so they are read again when that document is
-// another. A change is shown at once, and taken back when the service refuses it.
+// another, and again whenever the item is opened or the notebook shows them, since another tab
+// may have changed them. A change is shown at once, and taken back when the service refuses it.
 type Shelf = { documentId: string; loaded: Loaded<Highlight[]> };
 
 // The highlight the reader has opened: pressed in the source or chosen in the notebook, which
 // shows it; commenting says that the reader means to note something on it.
 export type Opened = { itemId: string; highlightId: string; commenting: boolean };
 
+// How the reads and the changes of one list stand, so that an answer that says less than what
+// is on show is dropped. Every read and every change is numbered in the order it began. A read
+// is kept only if no change was under way when it began, no change began after it, and no read
+// that began after it has been kept: a read that began before a change, or while one was
+// awaited, may hold the list as it was before that change.
+type Pace = {
+  // Changes shown at once that the service has not answered yet.
+  awaited: number;
+  // The number of the latest change shown.
+  changed: number;
+  // The number of the latest read kept.
+  kept: number;
+  // The number of the latest read on its way that began with no change awaited, if one is.
+  underWay: number | undefined;
+};
+
 const LOADING: Loaded<Highlight[]> = { state: "loading" };
 const LIBRARY_LOADING: Loaded<ItemHighlights[]> = { state: "loading" };
+// The pace of every item's list; an item's id is hexadecimal, so it is never this key.
+const LIBRARY = "library";
 const shelves = new Map<string, Shelf>();
+const paces = new Map<string, Pace>();
 const listeners = new Set<() => void>();
+let counted = 0;
 let opened: Opened | undefined;
 // Every item's highlights, as the notebook lists them with no item open.
 let library: Loaded<ItemHighlights[]> = LIBRARY_LOADING;
@@ -42,24 +63,94 @@ function onChange(notify: () => void): () => void {
   };
 }
 
-// Reads an item's highlights, and keeps them unless the item has come to show another
-// document since. What is on show stays until the reading is in.
-async function read(itemId: string, documentId: string): Promise<void> {
-  let loaded: Loaded<Highlight[]>;
+function paceOf(key: string): Pace {
+  const held = paces.get(key);
+  if (held !== undefined) {
+    return held;
+  }
+  const pace: Pace = { awaited: 0, changed: 0, kept: 0, underWay: undefined };
+  paces.set(key, pace);
+  return pace;
+}
+
+// Reads a list, and hands what was read on unless an answer is due that says more. A read
+// that fails while a list is on show leaves the list there.
+async function readList<Value>(
+  key: string,
+  request: () => Promise<Value>,
+  keep: (loaded: Loaded<Value>) => void,
+): Promise<void> {
+  const pace = paceOf(key);
+  counted += 1;
+  const begun = counted;
+  const clean = pace.awaited === 0;
+  if (clean) {
+    pace.underWay = begun;
+  }
+  let loaded: Loaded<Value>;
   try {
-    loaded = { state: "ready", value: await readHighlights(itemId) };
+    loaded = { state: "ready", value: await request() };
   } catch (error) {
     loaded = { state: "failed", reason: reasonOf(error) };
   }
-  if (shelves.get(itemId)?.documentId === documentId) {
-    shelves.set(itemId, { documentId, loaded });
-    tell();
+  if (pace.underWay === begun) {
+    pace.underWay = undefined;
   }
+  if (clean && begun > pace.changed && begun > pace.kept) {
+    pace.kept = begun;
+    keep(loaded);
+  }
+}
+
+// Whether a read on its way will say all that is on show, so that another is not needed.
+function readingAfresh(key: string): boolean {
+  const pace = paceOf(key);
+  return pace.underWay !== undefined && pace.underWay > pace.changed && pace.awaited === 0;
+}
+
+// Reads an item's highlights, and keeps them unless the item has come to show another
+// document since. What is on show stays until the reading is in.
+function read(itemId: string, documentId: string): Promise<void> {
+  return readList(
+    itemId,
+    () => readHighlights(itemId),
+    (loaded) => {
+      const shelf = shelves.get(itemId);
+      if (shelf?.documentId !== documentId) {
+        return;
+      }
+      const kept = loaded.state === "failed" && shelf.loaded.state === "ready";
+      shelves.set(itemId, { documentId, loaded: kept ? shelf.loaded : loaded });
+      tell();
+    },
+  );
 }
 
 function reread(itemId: string): Promise<void> {
   const shelf = shelves.get(itemId);
-  return shelf === undefined ? Promise.resolve() : read(itemId, shelf.documentId);
+  return shelf === undefined || readingAfresh(itemId)
+    ? Promise.resolve()
+    : read(itemId, shelf.documentId);
+}
+
+function readLibrary(): Promise<void> {
+  return readList(LIBRARY, readLibraryHighlights, (loaded) => {
+    library = loaded.state === "failed" && library.state === "ready" ? library : loaded;
+    tell();
+  });
+}
+
+// The list of every item's highlights is read again after a change only once it has been read.
+function rereadLibrary(): Promise<void> {
+  return library.state === "loading" || readingAfresh(LIBRARY)
+    ? Promise.resolve()
+    : readLibrary();
+}
+
+// Reads an item's highlights again, as when the notebook comes to show them, unless a read
+// that will say all that is on show is on its way.
+export function readHighlightsAgain(itemId: string): void {
+  void reread(itemId);
 }
 
 // Where a change is shown: in the item's list, and in the list of every item's highlights.
@@ -92,25 +183,42 @@ function apply(itemId: string, change: Change): void {
   tell();
 }
 
+// Marks a change as begun in both lists, so that a read that began before it is dropped.
+function begin(itemId: string): void {
+  counted += 1;
+  for (const key of [itemId, LIBRARY]) {
+    paceOf(key).changed = counted;
+  }
+}
+
 // Shows a change before the service has answered it, and takes it back if the service
-// refuses it; the refusal goes on to the caller, which says why.
+// refuses it; the refusal goes on to the caller, which says why. Either way both lists are
+// read again once the service has answered, since a refusal may mean that the list on show
+// was already wrong, as when another tab removed the highlight.
 async function shownAtOnce(
   itemId: string,
   change: Change,
   restore: Change,
   request: () => Promise<unknown>,
 ): Promise<void> {
+  const keys = [itemId, LIBRARY];
+  begin(itemId);
+  keys.forEach((key) => (paceOf(key).awaited += 1));
   apply(itemId, change);
   try {
     await request();
   } catch (error) {
     apply(itemId, restore);
     throw error;
+  } finally {
+    keys.forEach((key) => (paceOf(key).awaited -= 1));
+    void rereadLibrary();
+    void reread(itemId);
   }
 }
 
 // The highlights of an item as they stand in the document it shows; loading until both are
-// known and the highlights are read.
+// known and the highlights are read. They are read again each time a view of them is made.
 export function useHighlights(
   itemId: string | undefined,
   documentId: string | undefined,
@@ -119,15 +227,16 @@ export function useHighlights(
     itemId === undefined ? LOADING : (shelves.get(itemId)?.loaded ?? LOADING),
   );
   useEffect(() => {
-    if (
-      itemId !== undefined &&
-      documentId !== undefined &&
-      shelves.get(itemId)?.documentId !== documentId
-    ) {
-      shelves.set(itemId, { documentId, loaded: LOADING });
-      tell();
-      void read(itemId, documentId);
+    if (itemId === undefined || documentId === undefined) {
+      return;
     }
+    if (shelves.get(itemId)?.documentId === documentId) {
+      void reread(itemId);
+      return;
+    }
+    shelves.set(itemId, { documentId, loaded: LOADING });
+    tell();
+    void read(itemId, documentId);
   }, [itemId, documentId]);
   return loaded;
 }
@@ -138,27 +247,9 @@ export function useHighlights(
 export function useLibraryHighlights(shown: boolean): Loaded<ItemHighlights[]> {
   const loaded = useSyncExternalStore(onChange, () => library);
   useEffect(() => {
-    if (!shown) {
-      return undefined;
+    if (shown) {
+      void readLibrary();
     }
-    let current = true;
-    readLibraryHighlights().then(
-      (value) => {
-        if (current) {
-          library = { state: "ready", value };
-          tell();
-        }
-      },
-      (error: unknown) => {
-        if (current) {
-          library = { state: "failed", reason: reasonOf(error) };
-          tell();
-        }
-      },
-    );
-    return () => {
-      current = false;
-    };
   }, [shown]);
   return loaded;
 }
@@ -187,7 +278,9 @@ export async function markPassage(
 ): Promise<Highlight> {
   const made = await makeHighlight(itemId, passage, comment);
   const added = (highlights: Highlight[]) => [...highlights, made];
+  begin(itemId);
   apply(itemId, { item: added, library: inItem(itemId, added) });
+  void rereadLibrary();
   await reread(itemId);
   return made;
 }
@@ -215,7 +308,6 @@ export async function noteOnHighlight(
     { item: restoring, library: inItem(itemId, restoring) },
     () => commentHighlight(itemId, highlightId, text),
   );
-  await reread(itemId);
 }
 
 // Where a highlight stood in a list, so that a refusal to remove it puts it back there.
@@ -269,7 +361,6 @@ export async function unmark(itemId: string, highlightId: string): Promise<void>
   if (opened?.itemId === itemId && opened.highlightId === highlightId) {
     opened = undefined;
   }
-  await reread(itemId);
 }
 
 export function openHighlight(next: Opened | undefined): void {
