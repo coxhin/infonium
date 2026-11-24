@@ -1,5 +1,5 @@
 from bisect import bisect_left, bisect_right
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from enum import StrEnum
 from functools import cache
 from itertools import accumulate, pairwise
@@ -58,12 +58,14 @@ NEAR_MARGIN = 2
 # holds as they are: up to this many pieces of this many letters, each of which tells nothing
 # when it stands in more places than this. The places that the most pieces agree on are
 # compared whole, this many of them. Few letters are cut into shorter pieces, at least this
-# many of them, and no shorter than this.
+# many of them, and no shorter than this. Pieces stop being looked for once this many agree on
+# a place.
 SEED_LETTERS = 12
 SEEDS_IN_SHORT_NEEDLE = 4
 SHORTEST_SEED = 4
 SEEDS = 24
 SEED_PLACES = 64
+AGREEING_SEEDS = 4
 PLACES_COMPARED = 4
 # The places of the very letters that are weighed against each other, at most.
 OCCURRENCES_WEIGHED = 2000
@@ -481,12 +483,18 @@ def near_stretches(letters: str, needle: str) -> list[Stretch]:
     seed_letters = max(SHORTEST_SEED, min(SEED_LETTERS, len(needle) // SEEDS_IN_SHORT_NEEDLE))
     count = min(SEEDS, len(needle) // seed_letters)
     step = (len(needle) - seed_letters) / max(1, count - 1)
+    slack = int(len(needle) * (1 - NEAR_LIKENESS)) + 1
+    # Pieces are looked for until enough of them agree on a place, since each search reads
+    # all the letters.
     diagonals: list[tuple[int, int]] = []
+    agreeing: Counter[int] = Counter()
     for offset in sorted({round(seed * step) for seed in range(count)}):
         found = occurrences(letters, needle[offset : offset + seed_letters], SEED_PLACES + 1)
         if len(found) <= SEED_PLACES:
             diagonals.extend((at - offset, offset) for at in found)
-    slack = int(len(needle) * (1 - NEAR_LIKENESS)) + 1
+            agreeing.update({(at - offset) // (slack + seed_letters) for at in found})
+        if max(agreeing.values(), default=0) >= AGREEING_SEEDS:
+            break
     groups: list[list[tuple[int, int]]] = []
     for diagonal in sorted(diagonals):
         if groups and diagonal[0] - groups[-1][-1][0] <= slack + seed_letters:
