@@ -1,3 +1,4 @@
+import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 import type { Opener } from "./chat";
@@ -546,7 +547,9 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
           // Enter ends the title, as Tab does, unless it ends a word an input method composes.
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            editor.commands.focus("start");
+            // Focused at once, so that the keys that follow go into the text, not the title.
+            editor.view.focus();
+            editor.commands.setTextSelection(Selection.atStart(editor.state.doc).from);
           }
         }}
         onBlur={() => handInTyped(false)}
