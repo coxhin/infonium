@@ -289,10 +289,15 @@ export function adopt(note: Note): void {
   tell();
 }
 
+// An id for a note started here, which no id of the service's, hexadecimal, can be.
+function newNoteId(): string {
+  return `${UNBORN}${crypto.randomUUID()}`;
+}
+
 // Starts a note that the service does not hold until something is written in it, under an id
 // of this visit's own, which the note's own id takes the place of once it is kept.
 export function startNote(): string {
-  const noteId = `${UNBORN}${newPassageId(() => false)}`;
+  const noteId = newNoteId();
   const now = new Date().toISOString();
   readCount += 1;
   sessions.set(noteId, {
@@ -326,7 +331,8 @@ export function onBorn(notify: (unborn: string, noteId: string) => void): void {
   bornListeners.add(notify);
 }
 
-export function forget(noteId: string): void {
+export function forget(given: string): void {
+  const noteId = currentId(given);
   clearTimeout(readyOf(noteId)?.retry.timer);
   sessions.delete(noteId);
   tell();
