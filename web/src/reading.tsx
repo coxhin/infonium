@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { sourceLink, type ItemDocument, type ItemEntry, type TimePlace } from "./client";
 import type { Pointer } from "./citing";
 import { markedOf, openHighlight, useHighlights, useOpenedHighlight } from "./highlights";
 import { SelectionActions } from "./selectionactions";
-import type { Marking, Selected } from "./marking";
+import { NO_MARKING, type Marking, type Selected } from "./marking";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
 import { checkAnchor, hideAnchor } from "./reader";
@@ -16,16 +16,31 @@ import "./reading.css";
 
 export type ReadEntry = ItemEntry & { reading: { kind: "read" } };
 
-// What the latest attempt to read an item again has come to, above the document that is kept.
-function RereadingNote({ entry }: { entry: ReadEntry }) {
+// Which of the item's documents the reader shows: the one the item holds now, or an earlier
+// revision's, which is shown as its text alone, in the words it was written in, under a line
+// that says which reading it is. The pages, the web page, the recording and the translation
+// the service keeps are those of the document the item holds now, so they are not offered for
+// an earlier one, and nothing can be marked in it.
+export type ShownRevision =
+  | { kind: "holding" }
+  | { kind: "earlier"; holding: string; line: ReactNode };
+
+// What the latest attempt to read an item again has come to, above the document that is kept,
+// or above an earlier revision, which is not what the last reading gave.
+function RereadingNote({ entry, earlier }: { entry: ReadEntry; earlier: boolean }) {
   const attempt = entry.reading.attempt;
   switch (attempt.kind) {
     case "underway":
-      return <p className="rereading">正在重新读取，下面是上一次读到的内容。</p>;
+      return (
+        <p className="rereading">
+          {earlier ? "正在重新读取这一篇。" : "正在重新读取，下面是上一次读到的内容。"}
+        </p>
+      );
     case "failed":
       return (
         <p className="rereading failed">
-          重新读取失败，下面是上一次读到的内容。原因：{attempt.reason}
+          {earlier ? "重新读取失败。" : "重新读取失败，下面是上一次读到的内容。"}原因：
+          {attempt.reason}
         </p>
       );
     case "settled":
@@ -35,17 +50,26 @@ function RereadingNote({ entry }: { entry: ReadEntry }) {
 
 // An item that has been read: its source in the reader, and beside it what infonium wrote
 // about it. A passage is shown through the pointer the reader hands the column, which says
-// itself when the passage cannot be found. The reader offers the views its source has, draws each, and shows one; the translation is asked for
-// only while a view that shows it is on show with a translation set.
+// itself when the passage cannot be found. The reader offers the views its source has, draws
+// each, and shows one; the translation is asked for only while a view that shows it is on show
+// with a translation set. The head holds what is said of the item's revisions; the link is the
+// one the reader was opened by.
 export function ReadItem({
   entry,
   itemDocument,
+  revision,
+  link,
+  head,
 }: {
   entry: ReadEntry;
   itemDocument: ItemDocument;
+  revision: ShownRevision;
+  link: string;
+  head: ReactNode;
 }) {
-  const surface = surfaceOf(itemDocument.blocks);
-  const views = viewsOf(itemDocument);
+  const earlier = revision.kind === "earlier";
+  const surface = earlier ? "flow" : surfaceOf(itemDocument.blocks);
+  const views = viewsOf(itemDocument).filter((view) => !earlier || view.name === "text");
   const [viewName, setViewName] = useState(views[0]?.name);
   const shown = views.find((view) => view.name === viewName) ?? views[0];
   // A view is made the first time it is on show, and kept from then on, so that what it
@@ -57,7 +81,8 @@ export function ReadItem({
     setViewName(name);
     setMade((before) => (before.has(name) ? before : new Set(before).add(name)));
   }
-  const setting = useSetting();
+  const chosenSetting = useSetting();
+  const setting = earlier ? "source" : chosenSetting;
   const translation = useTranslation(
     entry.id,
     shown !== undefined && shown.showsTranslation && setting !== "source",
@@ -70,17 +95,21 @@ export function ReadItem({
 
   // The reader's highlights that stand in this document, for every view to draw, and the
   // passage last selected in a view, on which the actions are offered.
-  const highlights = useHighlights(entry.id, itemDocument.id);
+  const highlights = useHighlights(entry.id, earlier ? undefined : itemDocument.id);
   const opened = useOpenedHighlight();
   const [selected, setSelected] = useState<Selected>();
   const marking = useMemo<Marking>(
-    () => ({
-      marked: highlights.state === "ready" ? markedOf(highlights.value) : [],
-      opened: opened?.itemId === entry.id ? opened.highlightId : undefined,
-      onSelect: setSelected,
-      onPress: (highlightId) => openHighlight({ itemId: entry.id, highlightId, commenting: false }),
-    }),
-    [highlights, opened, entry.id],
+    () =>
+      earlier
+        ? NO_MARKING
+        : {
+            marked: highlights.state === "ready" ? markedOf(highlights.value) : [],
+            opened: opened?.itemId === entry.id ? opened.highlightId : undefined,
+            onSelect: setSelected,
+            onPress: (highlightId) =>
+              openHighlight({ itemId: entry.id, highlightId, commenting: false }),
+          },
+    [earlier, highlights, opened, entry.id],
   );
 
   const pointer: Pointer = {
@@ -111,7 +140,7 @@ export function ReadItem({
   return (
     <>
       <main>
-        <RereadingNote entry={entry} />
+        <RereadingNote entry={entry} earlier={earlier} />
         <div className="reading-head">
           <div className="reading-bar">
             {views.length > 1 && (
@@ -128,13 +157,15 @@ export function ReadItem({
                 ))}
               </div>
             )}
-            <SettingSwitch setting={setting} />
+            {!earlier && <SettingSwitch setting={setting} />}
             {setting !== "source" && <TranslationNote translation={translation} />}
+            {head}
           </div>
           {surface === "time" && (
             <Player source={sourceLink(entry.id)} pointed={played} clock={clock} />
           )}
         </div>
+        {revision.kind === "earlier" && revision.line}
         {views
           .filter((view) => made.has(view.name))
           .map((view) => (
@@ -142,9 +173,15 @@ export function ReadItem({
               <view.Draw {...context} onShow={view === shown} />
             </div>
           ))}
-        <SelectionActions itemId={entry.id} selected={selected} />
+        {!earlier && <SelectionActions itemId={entry.id} selected={selected} />}
       </main>
-      <SidePanel itemId={entry.id} documentId={itemDocument.id} pointer={pointer} />
+      <SidePanel
+        itemId={entry.id}
+        documentId={itemDocument.id}
+        holding={revision.kind === "earlier" ? revision.holding : itemDocument.id}
+        link={link}
+        pointer={pointer}
+      />
     </>
   );
 }
