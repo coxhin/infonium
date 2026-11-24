@@ -150,8 +150,10 @@ export function WebpageView({
   const frame = useRef<HTMLIFrameElement>(null);
   const [framed, setFramed] = useState<FramedPage>();
   const [highlights, setHighlights] = useState<FrameHighlights>();
-  // Counts the times the page's stylesheets and pictures have all arrived, which may change
-  // what the reader sees of its words, so that its words are found and drawn again.
+  // Counts the times something changed what the reader may see of the page's words after it was
+  // parsed: its stylesheets and pictures all arriving, a details element opened or closed, the
+  // page's window made narrower or wider, as its own media rules may tell; so that its words
+  // are found and drawn again.
   const [laidOut, setLaidOut] = useState(0);
   const [failure, setFailure] = useState<string>();
   const height = useFrameHeight(frame, onShow && pageBlocks.state === "ready");
@@ -210,16 +212,21 @@ export function WebpageView({
             const shown = new FramedPage(page, view);
             setFramed(shown);
             setHighlights(new FrameHighlights(shown));
-            if (page.readyState !== LOADED) {
-              view.addEventListener(
-                "load",
-                () => {
+            let relaying = 0;
+            function relaid() {
+              if (relaying === 0) {
+                relaying = requestAnimationFrame(() => {
+                  relaying = 0;
                   shown.forgetWords();
                   setLaidOut((times) => times + 1);
-                },
-                { once: true },
-              );
+                });
+              }
             }
+            if (page.readyState !== LOADED) {
+              view.addEventListener("load", relaid, { once: true });
+            }
+            page.addEventListener("toggle", relaid, true);
+            view.addEventListener("resize", relaid);
           };
           if (page.readyState === PARSING) {
             page.addEventListener("DOMContentLoaded", parsed, { once: true });

@@ -51,7 +51,7 @@ const POINTED_OUTLINE =
 // scroll is left to infonium, which keeps the place as it changes the page. A link is not
 // dragged, and its words may be selected, which a browser does not let a press in a link begin
 // otherwise, so that a drag from or over one selects its words.
-const FRAME_STYLE = `
+const frameStyle = (pointed: string) => `
 ${TRANSLATION_ELEMENT} {
   display: block;
   margin: 0.35em 0 0;
@@ -61,9 +61,9 @@ ${TRANSLATION_ELEMENT} {
   opacity: 0.72;
   font-size: 0.92em;
 }
-::highlight(${POINTED_HIGHLIGHT}) {
-  background-color: #ffe08a;
-  color: #1f2328;
+::highlight(${pointed}) {
+  background-color: #ffe08a !important;
+  color: #1f2328 !important;
 }
 html, body {
   overflow-anchor: none !important;
@@ -73,6 +73,24 @@ a, a * {
   user-select: text !important;
 }
 `;
+
+// What infonium draws in the page is named with letters drawn anew for each page, which no rule
+// of the page's own stylesheet can name; and a rule of infonium's that marks elements weighs as
+// much as two identifiers more than the selector it is given, so that it outranks the page's
+// own rules for those elements, important as they may be.
+const NAME_RADIX = 36;
+const NAME_LETTERS = 10;
+const OWN_NAME_PREFIX = "infonium-";
+
+function drawnName(): string {
+  return `${OWN_NAME_PREFIX}${Math.random()
+    .toString(NAME_RADIX)
+    .slice(2, 2 + NAME_LETTERS)}`;
+}
+
+export function outranking(selector: string, name: string): string {
+  return `${selector}:not(#${name}):not(#${name})`;
+}
 
 // Where a passage stands in the page: the element that stands for its block, what to mark of
 // it, and the attribute and value that name the element alone.
@@ -93,6 +111,9 @@ export class FramedPage {
   readonly served = new Map<Element, Node[]>();
   readonly written = new Map<Element, { setting: Setting; translated: TranslatedBlock }>();
   readonly words = new Map<Element, FrameWords>();
+  // The letters that end the names of what infonium draws in this page.
+  readonly name = drawnName();
+  readonly pointedHighlight = `${POINTED_HIGHLIGHT}-${this.name}`;
   marked = false;
 
   constructor(document: Document, view: Window & typeof globalThis) {
@@ -101,7 +122,7 @@ export class FramedPage {
     // Stylesheets of the frame's own realm, adopted rather than put in the page, so that the
     // page's nodes stay those it was served with.
     const own = new view.CSSStyleSheet();
-    own.replaceSync(FRAME_STYLE);
+    own.replaceSync(frameStyle(this.pointedHighlight));
     this.pointedRule = new view.CSSStyleSheet();
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, own, this.pointedRule];
   }
@@ -178,12 +199,14 @@ export class FramedPage {
     this.pointedRule.replaceSync(
       outlined.length === 0
         ? ""
-        : `${outlined.map(({ selector }) => selector).join(", ")} { ${POINTED_OUTLINE} }`,
+        : `${outlined
+            .map(({ selector }) => outranking(selector, this.name))
+            .join(", ")} { ${POINTED_OUTLINE} }`,
     );
     if (words) {
       const highlight = new this.view.Highlight(...places.map(({ passage }) => passage));
       highlight.priority = POINTED_PRIORITY;
-      this.view.CSS.highlights.set(POINTED_HIGHLIGHT, highlight);
+      this.view.CSS.highlights.set(this.pointedHighlight, highlight);
     }
     this.marked = true;
   }
@@ -194,7 +217,7 @@ export class FramedPage {
     }
     this.pointedRule.replaceSync("");
     if (this.marksWords()) {
-      this.view.CSS.highlights.delete(POINTED_HIGHLIGHT);
+      this.view.CSS.highlights.delete(this.pointedHighlight);
     }
     this.marked = false;
   }

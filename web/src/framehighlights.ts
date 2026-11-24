@@ -1,7 +1,7 @@
 import type { Anchor, Block } from "./client";
 import { heldTextOf } from "./framewords";
 import type { Marked } from "./marking";
-import { linkOf, selectorOf, type FramedPage, type Holders } from "./pagewriter";
+import { linkOf, outranking, selectorOf, type FramedPage, type Holders } from "./pagewriter";
 
 // The reader's highlights as drawn in the framed page a web article was read from, and which
 // of them a press falls on.
@@ -36,10 +36,6 @@ const OPENED_WHOLE_BACKGROUND = "rgb(134 207 128 / 0.5)";
 const WHOLE_UNDERLINE = "#5fa85b";
 const UNDERLINE_THICKNESS = "2px";
 const IMPORTANT = " !important";
-// The names of the looks end in letters drawn anew for each page, so that no rule the page's
-// own stylesheet holds can name them and change how they look.
-const NAME_RADIX = 36;
-const NAME_LETTERS = 10;
 
 function nameOf({ extent, opened, commented }: Look, suffix: string): string {
   const open = opened ? "opened" : "kept";
@@ -99,15 +95,15 @@ type Drawn = { id: string; holder: Element; range: Range; begins: Anchor };
 
 export class FrameHighlights {
   readonly framed: FramedPage;
-  readonly suffix = Math.random()
-    .toString(NAME_RADIX)
-    .slice(2, 2 + NAME_LETTERS);
+  // The names of the looks end in the page's own letters, which no rule of the page can name.
+  readonly suffix: string;
   // The rules that tint elements whole where the page's browser has no highlight registry.
   readonly wholeRules: CSSStyleSheet;
   drawn: Drawn[] = [];
 
   constructor(framed: FramedPage) {
     this.framed = framed;
+    this.suffix = framed.name;
     const view = framed.view;
     const style = new view.CSSStyleSheet();
     style.replaceSync(
@@ -161,7 +157,7 @@ export class FrameHighlights {
             ranges.set(name, [...(ranges.get(name) ?? []), range]);
           } else {
             const known = tinted.get(name) ?? { look, selectors: [] };
-            known.selectors.push(selectorOf(holders.pageBlocks, element));
+            known.selectors.push(outranking(selectorOf(holders.pageBlocks, element), framed.name));
             tinted.set(name, known);
           }
           drawn.push({ id: highlight.id, holder: element, range, begins: highlight.anchors[0] });

@@ -336,6 +336,32 @@ export function useFrameSelection(
       }
       handed = { anchors, at, clear };
       marking.onSelect(handed);
+      watchFrame();
+    }
+
+    // The app's own layout can move the frame without anything scrolling, as when a line
+    // appears above it; while a selection is handed over, the frame's place is looked at each
+    // time the browser draws, and the selection's end is told again when it has moved.
+    let watching = 0;
+    let frameAt: DOMRect | undefined;
+    function watchFrame() {
+      if (watching !== 0) {
+        return;
+      }
+      frameAt = frame.current?.getBoundingClientRect();
+      const look = () => {
+        const now = frame.current?.getBoundingClientRect();
+        if (handed === undefined || now === undefined) {
+          watching = 0;
+          return;
+        }
+        if (frameAt === undefined || !samePlace(now, frameAt)) {
+          frameAt = now;
+          moved();
+        }
+        watching = requestAnimationFrame(look);
+      };
+      watching = requestAnimationFrame(look);
     }
 
     function pressed() {
@@ -406,6 +432,7 @@ export function useFrameSelection(
     return () => {
       clearTimeout(settling);
       cancelAnimationFrame(moving);
+      cancelAnimationFrame(watching);
       page.removeEventListener("pointerdown", pressed);
       page.removeEventListener("pointerup", released);
       page.removeEventListener("pointercancel", released);

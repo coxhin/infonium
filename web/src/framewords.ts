@@ -73,9 +73,22 @@ function comparableForm(character: string): string {
   return form;
 }
 
-// Whether an element draws what it holds where the reader sees it: not hidden, see-through or
-// clipped to nothing, itself or by any element around it up to the one that stands for the
-// block. Each element is judged once.
+// Whether a box, in the coordinates of a page's window, lies wholly before the page's start
+// to the left or above, where no scroll can bring it.
+function outsidePage(box: DOMRect, view: Window): boolean {
+  return box.right + view.scrollX <= 0 || box.bottom + view.scrollY <= 0;
+}
+
+// Whether the text an element holds itself is set at a size: an element around it may be set
+// at none and the element at a size again, so this is judged of the text's own element alone.
+function hasSize(element: Element): boolean {
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  return style === undefined || parseFloat(style.fontSize) !== 0;
+}
+
+// Whether an element draws what it holds where the reader sees it: not hidden, see-through,
+// clipped to nothing or placed off the page, itself or by any element around it up to the one
+// that stands for the block. Each element is judged once.
 function drawsWithin(element: Element, holder: Element, known: Map<Element, boolean>): boolean {
   const judged = known.get(element);
   if (judged !== undefined) {
@@ -91,6 +104,7 @@ function drawsWithin(element: Element, holder: Element, known: Map<Element, bool
   const draws =
     element.checkVisibility({ visibilityProperty: true, opacityProperty: true }) &&
     !clipped &&
+    (view === null || !outsidePage(box, view)) &&
     (element === holder ||
       element.parentElement === null ||
       drawsWithin(element.parentElement, holder, known));
@@ -122,7 +136,7 @@ function shownText(element: Element): ShownText {
   function walk(parent: Element) {
     for (const child of parent.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const drawn = drawsWithin(parent, element, known);
+        const drawn = drawsWithin(parent, element, known) && hasSize(parent);
         let offset = 0;
         for (const character of child.textContent ?? "") {
           add(character, child, offset, character.length, drawn);
@@ -355,7 +369,11 @@ export class FrameWords {
     const range = this.element.ownerDocument.createRange();
     range.setStart(this.nodeAt(begins), this.offsetAt(begins));
     range.setEnd(this.nodeAt(ends), this.offsetAt(ends) + (this.shown.lengths[ends] ?? 0));
-    return range;
+    const view = this.element.ownerDocument.defaultView;
+    const onShow = [...range.getClientRects()].some(
+      (box) => box.width > 0 && box.height > 0 && (view === null || !outsidePage(box, view)),
+    );
+    return onShow ? range : null;
   }
 
   // The stretch of the text that the characters of the element a selection covers are: from
