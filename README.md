@@ -47,7 +47,7 @@ A highlight is a passage you marked, with a comment if you wrote one. Select wor
 
 A highlight is drawn in every view of its source. Pressing one opens it in the notebook, and pressing its words in the notebook shows the passage in the source. With no source open, the notebook lists the highlights of every source.
 
-A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
+A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A highlight goes in with its comment, written as plain text after the quotation and its link; a comment still being typed is kept first. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
 
 ### Reading a source again
 
@@ -113,7 +113,7 @@ The reader resolves an anchor to that range and highlights it. In a PDF it also 
 
 infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF file, or the sound of a recording. The reader shows the snapshot, so a citation still leads to its passage after the source has changed or gone.
 
-Highlights and notes are kept in the library's file. Each holds passages, and a passage is an anchor for each block it runs through, all in one document. A highlight is one passage with a comment of up to 10,000 characters; marking the same passage again gives the same highlight. A note is a title of up to 200 characters and up to 500,000 characters of Markdown. A link in the Markdown whose address is `passage:` and an id names one of the passages kept beside the note, each with the source it lies in. A note belongs to the library, not to one source, and its links may lead into any source.
+Highlights and notes are kept in the library's file. Each holds passages, and a passage is an anchor for each block it runs through, all in one document. A highlight is one passage with a comment of up to 10,000 characters; marking the same passage again gives the same highlight. A note is a title of up to 200 characters and up to 500,000 characters of Markdown. A link in the Markdown whose address is `passage:` and an id names one of the passages kept beside the note, each with the source it lies in. A note belongs to the library, not to one source, and its links may lead into any source. A highlight put into a note leaves its comment there as a copy in the note's Markdown: changing the comment afterwards leaves the note as it is, and editing the note leaves the comment.
 
 A document's identity follows from its item, the program that read it, and its blocks with their places. A reading that gives the same blocks gives the same document and adds no revision; one that gives a document the item held before returns the item to that revision, under its number. Any other reading is kept as the next revision, numbered from 1 in the order the revisions were first read. Every revision is kept with its document and its snapshot. A highlight and a note's passage stay anchored in the revision they were marked in.
 
@@ -258,6 +258,7 @@ The blocks of every document the library holds are indexed in the library's file
 - The editor is fetched when a note is first opened: 481.54 kB of script, 153.01 kB gzipped.
 - A note of 50 passages in 20 items of 2,000 blocks each opened in 157.5 ms the first time and in 8.0 ms once those documents were read. infonium keeps the 64 documents read last.
 - A screen keyboard was tried only as a window of 390 by 420 pixels, and the editor was not tried with a screen reader.
+- A comment written from right to left stands aligned to the left in a note, as every paragraph of a note does, though on its highlight it stands to the right.
 
 ### Reading a source again
 
