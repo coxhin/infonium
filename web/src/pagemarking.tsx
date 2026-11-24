@@ -175,51 +175,74 @@ export function SelectionLayer({
   );
 }
 
-const MarkBoxes = memo(
-  function MarkBoxes({
-    mark,
-    text,
-    page,
-  }: {
-    mark: PageMark;
-    text: PageText;
-    page: number;
-    // How many drawings of the page have ended, so that its lines are cut anew from the next.
-    drawings: number;
-  }) {
-    return mark.spans
-      .flatMap((span) => text.coveredBoxes(span))
-      .filter((covered) => covered.page === page)
-      .map(({ box }, index) => (
-        <div
-          key={index}
-          className="page-mark"
-          data-state={mark.state}
-          data-highlight={mark.id}
-          style={boxStyle(box)}
-        />
-      ));
-  },
-  (before, after) =>
-    before.mark.key === after.mark.key &&
-    before.text === after.text &&
-    before.page === after.page &&
-    before.drawings === after.drawings,
-);
+// A stretch of a line that the same highlights hold: how it is drawn, and how many hold it.
+type Stretch = { box: Box; state: MarkState; count: number };
 
-// The reader's highlights on one page, each drawn again only when it changes or the page is
-// drawn anew.
+// The stretches of a page's lines the highlights hold, each drawn once however many hold it:
+// a line is cut at every end of a highlight on it, and each piece between two cuts takes the
+// state of the strongest highlight that holds it, an underline if any holds a comment.
+function stretchesOn(text: PageText, page: number, marks: PageMark[]): Stretch[] {
+  const stretches: Stretch[] = [];
+  for (const line of text.onPages.get(page) ?? []) {
+    const held = marks.flatMap((mark) =>
+      mark.spans
+        .filter(
+          (span) =>
+            span.blockNumber === line.blockNumber && span.start < line.end && line.start < span.end,
+        )
+        .map((span) => ({
+          mark,
+          start: Math.max(span.start, line.start),
+          end: Math.min(span.end, line.end),
+        })),
+    );
+    const cuts = [...new Set(held.flatMap((each) => [each.start, each.end]))].sort(
+      (one, other) => one - other,
+    );
+    cuts.slice(0, -1).forEach((from, index) => {
+      const to = cuts[index + 1] ?? from;
+      const holding = held.filter((each) => each.start <= from && to <= each.end);
+      const box = holding.length === 0 ? undefined : text.coveredBox(line, from, to);
+      if (box === undefined) {
+        return;
+      }
+      const ids = new Set(holding.map((each) => each.mark.id));
+      const state = holding.reduce<MarkState>(
+        (strongest, each) =>
+          STATE_WEIGHT[each.mark.state] > STATE_WEIGHT[strongest] ? each.mark.state : strongest,
+        "plain",
+      );
+      // Pieces next to each other with the same look are drawn as one.
+      const last = stretches.at(-1);
+      if (
+        last !== undefined &&
+        last.state === state &&
+        last.count === Math.min(ids.size, 2) &&
+        Math.abs(last.box.top - box.top) < 1e-9 &&
+        Math.abs(last.box.left + last.box.width - box.left) < 1e-9
+      ) {
+        last.box = { ...last.box, width: box.left + box.width - last.box.left };
+        return;
+      }
+      stretches.push({ box, state, count: Math.min(ids.size, 2) });
+    });
+  }
+  return stretches;
+}
+
+// The reader's highlights on one page, drawn again when they change or the page's lines are
+// cut anew.
 export const MarksLayer = memo(
   function MarksLayer({
     marks,
     text,
     page,
-    drawings,
     under,
   }: {
     marks: PageMark[];
     text: PageText;
     page: number;
+    // How many times the lines on the page were cut anew.
     drawings: number;
     under: boolean;
   }) {
@@ -228,8 +251,14 @@ export const MarksLayer = memo(
     }
     return (
       <div className={under ? "page-marks under" : "page-marks"}>
-        {marks.map((mark) => (
-          <MarkBoxes key={mark.key} mark={mark} text={text} page={page} drawings={drawings} />
+        {stretchesOn(text, page, marks).map(({ box, state, count }, index) => (
+          <div
+            key={index}
+            className="page-mark"
+            data-state={state}
+            data-twice={count > 1 ? "" : undefined}
+            style={boxStyle(box)}
+          />
         ))}
       </div>
     );
