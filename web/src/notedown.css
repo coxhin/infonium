@@ -1,0 +1,73 @@
+/* The control that puts an excerpt into a note. Until what it belongs to is under the pointer
+   or holds the keyboard it takes no room, so that it moves no words of a statement, and stays
+   reachable from the keyboard; where there is no pointer to hover it is always on show. Once
+   it has something to say, it stays. */
+.notedown {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
+  margin-left: 0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.4rem;
+  color: var(--muted);
+}
+
+.notedown button {
+  font-size: 0.75rem;
+  line-height: 1.3rem;
+  padding: 0 0.45rem;
+  border-radius: 0.7rem;
+}
+
+.notedown-press {
+  color: var(--muted);
+  background: none;
+}
+
+.notedown-press:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:is(:hover, :focus-within) > .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0 0.45rem;
+  border: 1px solid var(--line);
+  overflow: visible;
+  clip-path: none;
+}
+
+@media (hover: none) {
+  .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0 0.45rem;
+    border: 1px solid var(--line);
+    overflow: visible;
+    clip-path: none;
+  }
+}
+
+.notedown-said.failed {
+  color: var(--failure);
+}
+
+.notedown-show {
+  margin-left: 0.3rem;
+  color: var(--accent);
+}
