@@ -1,6 +1,6 @@
 # infonium
 
-infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links.
+infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links. You mark passages and write notes that link back to them, and both outlive a second reading of their source.
 
 ## What it reads
 
@@ -15,7 +15,7 @@ A PDF opens as its pages, with the text read from them one tab away. A web artic
 
 ## What it does with a source
 
-A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记), which stays empty until notes are built.
+A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记).
 
 ### Translation
 
@@ -32,6 +32,28 @@ Every source can also be read as text, each block in translation or followed by 
 ### The chat
 
 The chat answers a question about the open source, or about the whole library (整个库). An answer appears as it is written. Each of its statements carries citations that open the quoted passage, in whichever source it lies.
+
+### The notebook
+
+The notebook holds your highlights (高亮) and your notes (笔记). It can be opened with a source on show or with none.
+
+A highlight is a passage you marked, with a comment if you wrote one. Select words in a source and choose 高亮, 批注 (mark and comment) or 记到笔记 (put the passage into a note). A passage may run over several paragraphs. You can select in every view:
+
+| View | How a passage is selected |
+| --- | --- |
+| The text of any source, and a recording's lines | By selecting its words. With only a translation on show, the selection marks the whole sentences or paragraphs it touches. |
+| A PDF's pages | By dragging over the lines. Over a translation set on the page, by selecting its text, which marks the whole blocks it touches. |
+| A web article's own page | By selecting its words in the page. |
+
+A highlight is drawn in every view of its source. Pressing one opens it in the notebook, and pressing its words in the notebook shows the passage in the source. With no source open, the notebook lists the highlights of every source.
+
+A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A note is kept by itself a moment after you stop typing.
+
+### Reading a source again
+
+The reader's head offers to read a source again (重新读取): a link is fetched again, and an upload is read again from the file infonium keeps. A reading that gives other text than the readings before it is kept as a new revision, and every earlier revision stays. The head lists the revisions, and an earlier one opens as its text.
+
+Your highlights, the passages your notes link to and the citations of earlier answers are looked for in the new reading. A passage that is found is shown where it stands now; where its words differ a little, the notebook says so. A passage the new reading no longer holds is said to be lost, with the revision it was marked in, and opens in that revision.
 
 ## Run it
 
