@@ -4,11 +4,12 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
-import { anchorsOf, type Highlight, type Passage } from "./client";
+import { anchorsOf, Refused, type Highlight, type Passage } from "./client";
 import { say } from "./heard";
 import { noteOnHighlight, unmark, type Opened } from "./highlights";
 import { reasonOf } from "./loading";
@@ -55,6 +56,17 @@ function watchSize(element: Element, changed: () => void): () => void {
     sizes.unobserve(element);
     sizeWatchers.delete(element);
   };
+}
+
+// The statuses a gateway answers with when the service behind it does not; the service itself
+// answers none of them to a change of a highlight, which calls no model.
+const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+// Why a change of a highlight did not happen, as the reader is told it.
+function changeReason(error: unknown): string {
+  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
+    ? "连不上服务"
+    : reasonOf(error);
 }
 
 const WORDS_JOIN = "\n";
@@ -205,7 +217,7 @@ function CommentField({
       close();
     } catch (error) {
       settled.current = false;
-      setKeeping({ state: "failed", reason: reasonOf(error) });
+      setKeeping({ state: "failed", reason: changeReason(error) });
     }
   }
 
@@ -274,12 +286,34 @@ function CommentField({
   );
 }
 
-type Removing = "idle" | "confirming" | "underway";
+// Why the service refused to remove a highlight, by highlight. The entry leaves the list as
+// soon as its removal is asked for, and is drawn anew when the refusal puts it back, so the
+// reason is kept apart from it.
+const refusals = new Map<string, string>();
+const refusalListeners = new Set<() => void>();
+
+function refuse(highlightId: string, reason: string | undefined): void {
+  if (reason === undefined) {
+    refusals.delete(highlightId);
+  } else {
+    refusals.set(highlightId, reason);
+  }
+  refusalListeners.forEach((notify) => notify());
+}
+
+function onRefusal(notify: () => void): () => void {
+  refusalListeners.add(notify);
+  return () => {
+    refusalListeners.delete(notify);
+  };
+}
+
+type Removing = "idle" | "confirming";
 
 // Removing a highlight takes its comment with it, so it is asked for twice.
 function RemoveControl({ highlight, actions }: { highlight: Highlight; actions: EntryActions }) {
   const [removing, setRemoving] = useState<Removing>("idle");
-  const [problem, setProblem] = useState<string>();
+  const problem = useSyncExternalStore(onRefusal, () => refusals.get(highlight.id));
   const removeButton = useRef<HTMLButtonElement>(null);
   const cancelled = useRef(false);
 
@@ -296,14 +330,12 @@ function RemoveControl({ highlight, actions }: { highlight: Highlight; actions: 
   }
 
   async function confirm() {
-    setRemoving("underway");
-    setProblem(undefined);
+    refuse(highlight.id, undefined);
     actions.removed();
     try {
       await unmark(highlight.item, highlight.id);
     } catch (error) {
-      setRemoving("idle");
-      setProblem(`没有移除：${reasonOf(error)}`);
+      refuse(highlight.id, `没有移除：${changeReason(error)}`);
     }
   }
 
@@ -314,7 +346,10 @@ function RemoveControl({ highlight, actions }: { highlight: Highlight; actions: 
           ref={removeButton}
           className="quiet"
           aria-label="移除这条高亮"
-          onClick={() => setRemoving("confirming")}
+          onClick={() => {
+            refuse(highlight.id, undefined);
+            setRemoving("confirming");
+          }}
         >
           移除
         </button>
@@ -335,7 +370,6 @@ function RemoveControl({ highlight, actions }: { highlight: Highlight; actions: 
           </button>
         </span>
       )}
-      {removing === "underway" && <span className="confirm">正在移除…</span>}
       {problem !== undefined && (
         <span className="status failed" role="alert">
           {problem}
