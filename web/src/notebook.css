@@ -53,10 +53,12 @@
   padding: 0;
 }
 
-/* An entry: the marked words as a quotation, then what stands under them. The opened one is
-   told apart by a rule of the accent at its edge. An entry far down the list is laid out only
-   when it comes near the view; that also clips what it paints to its box, so the box leaves
-   room for a focus ring at its right edge. */
+/* An entry: the marked words as a quotation, then what stands under them. Its colours are the
+   source's: the words carry the colour a highlight is marked in, the opened entry the colour
+   the source draws the opened highlight in, and a comment the line the source underlines a
+   commented highlight with; the passage on show is the colour of what is pointed at. An entry
+   far down the list is laid out only when it comes near the view; that also clips what it
+   paints to its box, so the box leaves room for a focus ring at its right edge. */
 .highlight {
   position: relative;
   padding: 0.7rem 0.25rem 0.7rem 0.8rem;
@@ -68,7 +70,7 @@
 }
 
 .highlight[data-opened="true"] {
-  border-left-color: var(--accent);
+  border-left-color: var(--opened);
 }
 
 .highlight .words {
@@ -76,48 +78,43 @@
   width: 100%;
   margin: 0;
   padding: 0.1rem 0.5rem;
-  text-align: left;
+  text-align: start;
   border: 0;
-  border-left: 2px solid var(--found);
+  border-left: 3px solid var(--marked);
   border-radius: 0;
-  background: none;
+  background: var(--marked);
   line-height: 1.6;
 }
 
+.highlight[data-opened="true"] .words {
+  border-left-color: var(--opened);
+  background: var(--opened);
+}
+
 .highlight button.words:hover {
-  background: var(--paper);
+  border-left-color: var(--marked-twice);
+  background: var(--marked-twice);
 }
 
 .highlight button.words[aria-pressed="true"] {
+  border-left-color: var(--found);
   background: var(--found);
 }
 
 .highlight .words-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  overflow: hidden;
   white-space: pre-line;
 }
 
-.highlight .words-text[data-whole="true"] {
-  display: block;
-  -webkit-line-clamp: none;
-}
-
-/* Words the document on show has lost are shown as they were marked, faded. */
+/* Words the document on show has lost are shown as they were marked, faded: the source does
+   not draw them. */
 .highlight[data-standing="lost"] .words {
   color: var(--muted);
   border-left-color: var(--line);
+  background: none;
 }
 
-.highlight .more {
+.highlight .cut-toggle {
   margin: 0.15rem 0 0 0.5rem;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 0.75rem;
-  color: var(--accent);
 }
 
 .highlight .moved,
@@ -143,8 +140,22 @@
 }
 
 .highlight .comment-text {
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--marked-line);
   font-size: 0.92rem;
+}
+
+.highlight .comment-words {
   white-space: pre-wrap;
+}
+
+.highlight .comment-text .cut-toggle {
+  margin-left: 0;
+}
+
+.highlight .at-bound {
+  display: block;
+  color: var(--failure);
 }
 
 .highlight .comment-field textarea {

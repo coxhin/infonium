@@ -1,18 +1,10 @@
-import {
-  memo,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type KeyboardEvent,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import { anchorsOf, Refused, type Highlight, type Passage } from "./client";
-import { say } from "./heard";
-import { noteOnHighlight, unmark, type Opened } from "./highlights";
-import { reasonOf } from "./loading";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
+import { anchorsOf, type Highlight, type Passage } from "./client";
+import { announce } from "./announce";
+import { CutText, useCut } from "./cuttext";
+import { CommentField, typingUnkept } from "./highlightcomment";
+import { RemoveControl } from "./highlightremoval";
+import type { Opened } from "./highlights";
 import { NoteDown, type Taking } from "./notedown";
 
 // What an entry asks of the list it is in. The list keeps these the same from render to
@@ -38,44 +30,33 @@ export function choseInList(opened: Opened): Opened {
   return opened;
 }
 
-// What was typed into a comment and not kept, by highlight: the field comes back with it when
-// the entry is drawn anew, as when its item is opened again.
-const unkept = new Map<string, string>();
-
-// One observer for every entry, which says when the box of the marked words changes size, as
-// it does when the notebook comes on show.
-const sizeWatchers = new Map<Element, () => void>();
-const sizes = new ResizeObserver((changes) =>
-  changes.forEach((changed) => sizeWatchers.get(changed.target)?.()),
-);
-
-function watchSize(element: Element, changed: () => void): () => void {
-  sizeWatchers.set(element, changed);
-  sizes.observe(element);
-  return () => {
-    sizes.unobserve(element);
-    sizeWatchers.delete(element);
-  };
-}
-
-// The statuses a gateway answers with when the service behind it does not; the service itself
-// answers none of them to a change of a highlight, which calls no model.
-const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
-
-// Why a change of a highlight did not happen, as the reader is told it.
-function changeReason(error: unknown): string {
-  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
-    ? "连不上服务"
-    : reasonOf(error);
-}
-
 const WORDS_JOIN = "\n";
-const SAID_WORDS = 40;
+// The marked words on show are cut after this many lines.
+const WORDS_LINES = 4;
+// How many characters of the marked words name an entry's press, and are said when the entry
+// is opened from the source; a passage may run through many blocks.
+const NAMED_CHARACTERS = 40;
+// How far back from the cut, in characters, a space is looked for to end on a whole word.
+const WORD_REACH = 15;
+const CUT_MARK = "…";
 // How far from the edge of the list, in pixels, an entry brought into view stands.
 const VIEW_MARGIN = 16;
 
 function wordsOf(passage: Passage): string {
   return passage.anchors.map((anchor) => anchor.quote).join(WORDS_JOIN);
+}
+
+// The start of a text, for a name or a saying: whole characters, ending on a whole word where
+// the text has spaces near the cut.
+function startOf(text: string): string {
+  const characters = Array.from(text.replace(/\s+/g, " ").trim());
+  if (characters.length <= NAMED_CHARACTERS) {
+    return characters.join("");
+  }
+  const head = characters.slice(0, NAMED_CHARACTERS);
+  const space = head.lastIndexOf(" ");
+  const kept = space >= NAMED_CHARACTERS - WORD_REACH ? head.slice(0, space) : head;
+  return `${kept.join("")}${CUT_MARK}`;
 }
 
 // Where a highlight stands now, as the passage to show and quote: where the document on show
@@ -84,47 +65,43 @@ function passageNow(highlight: Highlight): Passage {
   return highlight.standing.kind === "found" ? highlight.standing.passage : highlight.passage;
 }
 
-// The marked words, cut after a few lines; the rest is in reach of a press.
+// The marked words, cut after a few lines; the rest is in reach of a press. Pressed is whether
+// the passage is the one on show, where the list can show it; a list that opens the item does
+// not, and its press is no toggle.
 function Words({
   highlight,
   pressed,
   actions,
 }: {
   highlight: Highlight;
-  pressed: boolean;
+  pressed: boolean | undefined;
   actions: EntryActions;
 }) {
   const words = wordsOf(passageNow(highlight));
-  const box = useRef<HTMLSpanElement>(null);
-  const [whole, setWhole] = useState(false);
-  const [cut, setCut] = useState(false);
-  useLayoutEffect(() => {
-    const element = box.current;
-    if (element === null || whole) {
-      return undefined;
-    }
-    return watchSize(element, () => setCut(element.scrollHeight > element.clientHeight + 1));
-  }, [words, whole]);
-
+  const cut = useCut(words);
   const text = (
-    <span ref={box} className="words-text" data-whole={whole}>
+    <CutText cut={cut} lines={WORDS_LINES} className="words-text">
       {words}
-    </span>
+    </CutText>
   );
   return (
     <>
       {highlight.standing.kind === "found" ? (
-        <button className="words" aria-pressed={pressed} onClick={() => actions.press(highlight)}>
+        <button
+          className="words"
+          dir="auto"
+          aria-label={startOf(words)}
+          aria-pressed={pressed}
+          onClick={() => actions.press(highlight)}
+        >
           {text}
         </button>
       ) : (
-        <blockquote className="words">{text}</blockquote>
+        <blockquote className="words" dir="auto">
+          {text}
+        </blockquote>
       )}
-      {(cut || whole) && (
-        <button className="more" aria-expanded={whole} onClick={() => setWhole(!whole)}>
-          {whole ? "收起" : "展开全部"}
-        </button>
-      )}
+      {cut.toggle}
     </>
   );
 }
@@ -146,242 +123,6 @@ function StandingNote({ highlight, actions }: { highlight: Highlight; actions: E
         打开第 {highlight.revision} 版
       </button>
     </p>
-  );
-}
-
-type Keeping = { state: "idle" } | { state: "keeping" } | { state: "failed"; reason: string };
-
-// What the reader noted on the highlight, written and changed in place. It is kept when the
-// field is left or on Ctrl or ⌘ with Enter; Escape gives the change up. The field stays open
-// until what was typed is kept, and holds it when it could not be. The entry's other actions
-// stand at the foot, beside the control that opens the field.
-function CommentField({
-  highlight,
-  editing,
-  setEditing,
-  children,
-}: {
-  highlight: Highlight;
-  editing: boolean;
-  setEditing: (editing: boolean) => void;
-  children: ReactNode;
-}) {
-  const [draft, setDraft] = useState(() => unkept.get(highlight.id) ?? highlight.comment);
-  const [keeping, setKeeping] = useState<Keeping>({ state: "idle" });
-  const field = useRef<HTMLTextAreaElement>(null);
-  const editButton = useRef<HTMLButtonElement>(null);
-  // A field left by a key, or being kept, is not left again by the blur that follows.
-  const settled = useRef(false);
-  const returnFocus = useRef(false);
-
-  useEffect(() => {
-    if (editing && draft !== highlight.comment) {
-      unkept.set(highlight.id, draft);
-    } else {
-      unkept.delete(highlight.id);
-    }
-  }, [editing, draft, highlight.comment]);
-
-  // The field takes the keyboard when it opens, without scrolling the page: in the one-column
-  // layout the drawer stands over the reader, and the reader's place would be lost.
-  useLayoutEffect(() => {
-    const opened = field.current;
-    if (editing && opened !== null) {
-      // What was noted before is gone on with, so the caret stands after it.
-      opened.focus({ preventScroll: true });
-      opened.setSelectionRange(opened.value.length, opened.value.length);
-    } else if (returnFocus.current) {
-      returnFocus.current = false;
-      editButton.current?.focus({ preventScroll: true });
-    }
-  }, [editing]);
-
-  function start() {
-    settled.current = false;
-    setDraft(highlight.comment);
-    setKeeping({ state: "idle" });
-    setEditing(true);
-  }
-
-  function close() {
-    // The keyboard goes back to the control that opened the field, unless the reader has
-    // taken it elsewhere.
-    returnFocus.current = field.current === document.activeElement;
-    setEditing(false);
-  }
-
-  async function keep() {
-    settled.current = true;
-    if (draft === highlight.comment) {
-      setKeeping({ state: "idle" });
-      close();
-      return;
-    }
-    setKeeping({ state: "keeping" });
-    try {
-      await noteOnHighlight(highlight.item, highlight.id, draft);
-      setKeeping({ state: "idle" });
-      close();
-    } catch (error) {
-      settled.current = false;
-      setKeeping({ state: "failed", reason: changeReason(error) });
-    }
-  }
-
-  function giveUp() {
-    settled.current = true;
-    setDraft(highlight.comment);
-    setKeeping({ state: "idle" });
-    close();
-  }
-
-  function keyed(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (keeping.state === "keeping") {
-      return;
-    }
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void keep();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      giveUp();
-    }
-  }
-
-  // The foot stands in the same place whether the field is open or not, so that what the
-  // entry's actions hold stays while the comment is written.
-  return (
-    <>
-      {editing ? (
-        <div className="comment-field">
-          <textarea
-            ref={field}
-            aria-label="对这条高亮的评论"
-            aria-describedby={`comment-keys-${highlight.id}`}
-            placeholder="写下你的评论…"
-            rows={3}
-            value={draft}
-            readOnly={keeping.state === "keeping"}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={keyed}
-            onBlur={() => settled.current || void keep()}
-          />
-          {keeping.state === "keeping" && <p className="keeping">正在保存…</p>}
-          {keeping.state === "failed" && (
-            <p className="status failed" role="alert">
-              评论没有保存：{keeping.reason}。写下的内容还在，离开输入框或按 Ctrl+Enter 再试。
-            </p>
-          )}
-          <small id={`comment-keys-${highlight.id}`}>
-            离开输入框或 Ctrl+Enter 保存 · Esc 放弃修改
-          </small>
-        </div>
-      ) : (
-        highlight.comment !== "" && <p className="comment-text">{highlight.comment}</p>
-      )}
-      <div className="entry-foot">
-        {!editing && (
-          <button ref={editButton} className="edit-comment" onClick={start}>
-            {highlight.comment === "" ? "写评论" : "改评论"}
-          </button>
-        )}
-        <span className="entry-actions">{children}</span>
-      </div>
-    </>
-  );
-}
-
-// Why the service refused to remove a highlight, by highlight. The entry leaves the list as
-// soon as its removal is asked for, and is drawn anew when the refusal puts it back, so the
-// reason is kept apart from it.
-const refusals = new Map<string, string>();
-const refusalListeners = new Set<() => void>();
-
-function refuse(highlightId: string, reason: string | undefined): void {
-  if (reason === undefined) {
-    refusals.delete(highlightId);
-  } else {
-    refusals.set(highlightId, reason);
-  }
-  refusalListeners.forEach((notify) => notify());
-}
-
-function onRefusal(notify: () => void): () => void {
-  refusalListeners.add(notify);
-  return () => {
-    refusalListeners.delete(notify);
-  };
-}
-
-type Removing = "idle" | "confirming";
-
-// Removing a highlight takes its comment with it, so it is asked for twice.
-function RemoveControl({ highlight, actions }: { highlight: Highlight; actions: EntryActions }) {
-  const [removing, setRemoving] = useState<Removing>("idle");
-  const problem = useSyncExternalStore(onRefusal, () => refusals.get(highlight.id));
-  const removeButton = useRef<HTMLButtonElement>(null);
-  const cancelled = useRef(false);
-
-  useLayoutEffect(() => {
-    if (cancelled.current && removing === "idle") {
-      cancelled.current = false;
-      removeButton.current?.focus();
-    }
-  }, [removing]);
-
-  function cancel() {
-    cancelled.current = true;
-    setRemoving("idle");
-  }
-
-  async function confirm() {
-    refuse(highlight.id, undefined);
-    actions.removed();
-    try {
-      await unmark(highlight.item, highlight.id);
-    } catch (error) {
-      refuse(highlight.id, `没有移除：${changeReason(error)}`);
-    }
-  }
-
-  return (
-    <>
-      {removing === "idle" && (
-        <button
-          ref={removeButton}
-          className="quiet"
-          aria-label="移除这条高亮"
-          onClick={() => {
-            refuse(highlight.id, undefined);
-            setRemoving("confirming");
-          }}
-        >
-          移除
-        </button>
-      )}
-      {removing === "confirming" && (
-        <span
-          className="confirm"
-          role="group"
-          aria-label="确认移除高亮"
-          onKeyDown={(event) => event.key === "Escape" && cancel()}
-        >
-          移除这条高亮{highlight.comment === "" ? "" : "和它的评论"}？
-          <button className="danger" onClick={() => void confirm()}>
-            移除
-          </button>
-          <button autoFocus onClick={cancel}>
-            取消
-          </button>
-        </span>
-      )}
-      {problem !== undefined && (
-        <span className="status failed" role="alert">
-          {problem}
-        </span>
-      )}
-    </>
   );
 }
 
@@ -444,14 +185,15 @@ function useOpening(
       }
     });
     if (!chosenInList.has(opening)) {
-      const words = wordsOf(passageNow(highlight)).slice(0, SAID_WORDS).trim();
-      say(`笔记本里打开了高亮：${words}${opening.commenting ? "。可以写评论了" : ""}`);
+      const words = startOf(wordsOf(passageNow(highlight)));
+      announce(`笔记本里打开了高亮：${words}${opening.commenting ? "。可以写评论了" : ""}`);
     }
   }, [opening]);
 }
 
-// One highlight in a list: its words, where it stands, its comment, and what can be done
-// with it. Opening is the opened highlight while it is this one and the notebook is on show.
+// One highlight in a list: its words, where it stands, its comment, and at its foot the
+// control that opens the comment's field and what else can be done with it. Opening is the
+// opened highlight while it is this one and the notebook is on show.
 export const HighlightEntry = memo(function HighlightEntry({
   highlight,
   pressed,
@@ -460,13 +202,14 @@ export const HighlightEntry = memo(function HighlightEntry({
   actions,
 }: {
   highlight: Highlight;
-  pressed: boolean;
+  pressed: boolean | undefined;
   opened: boolean;
   opening: Opened | undefined;
   actions: EntryActions;
 }) {
   const entry = useRef<HTMLLIElement>(null);
-  const [editing, setEditing] = useState(() => unkept.has(highlight.id));
+  const editButton = useRef<HTMLButtonElement>(null);
+  const [editing, setEditing] = useState(() => typingUnkept(highlight.id));
   useOpening(opening, highlight, entry, setEditing);
 
   return (
@@ -475,13 +218,27 @@ export const HighlightEntry = memo(function HighlightEntry({
       className="highlight"
       data-opened={opened}
       data-standing={highlight.standing.kind}
+      data-commented={highlight.comment !== ""}
     >
       <Words highlight={highlight} pressed={pressed} actions={actions} />
       <StandingNote highlight={highlight} actions={actions} />
-      <CommentField highlight={highlight} editing={editing} setEditing={setEditing}>
-        <NoteDown taking={quoteTaking(highlight)} label="记到笔记：这条高亮" />
-        <RemoveControl highlight={highlight} actions={actions} />
-      </CommentField>
+      <CommentField
+        highlight={highlight}
+        editing={editing}
+        setEditing={setEditing}
+        editButton={editButton}
+      />
+      <div className="entry-foot">
+        {!editing && (
+          <button ref={editButton} className="edit-comment" onClick={() => setEditing(true)}>
+            {highlight.comment === "" ? "写评论" : "改评论"}
+          </button>
+        )}
+        <span className="entry-actions">
+          <NoteDown taking={quoteTaking(highlight)} label="记到笔记：这条高亮" />
+          <RemoveControl highlight={highlight} onRemoved={actions.removed} />
+        </span>
+      </div>
     </li>
   );
 });

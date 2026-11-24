@@ -61,17 +61,6 @@
   padding: 0 1.2rem;
 }
 
-/* What the column tells a screen reader without being asked: heard, not seen. */
-.side .heard-aloud {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  margin: 0;
-}
-
 /* Folding is for the one-column layout only. */
 .side .fold {
   display: none;
@@ -98,7 +87,7 @@
     scroll-padding-bottom: 50vh;
   }
 
-  .side[data-folded="true"] > :not(.tabs, .fold, .heard-aloud) {
+  .side[data-folded="true"] > :not(.tabs, .fold, .announced) {
     display: none;
   }
 

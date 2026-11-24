@@ -13,7 +13,7 @@ import type { Anchors } from "./client";
 import { ChatPanel, type ScopeKind } from "./chat";
 import { useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
-import { Heard } from "./heard";
+import { Announcer } from "./announce";
 import { NotebookPanel, useNotebookAsked } from "./notebook";
 import type { Seat, Unshown } from "./seat";
 import "./side.css";
@@ -178,16 +178,21 @@ export function SideColumn({
     seating.lose.current = citing.fail;
   });
 
+  // Opens an item at a passage, which is shown once the item's reader is on show.
+  function openAt(itemId: string, anchors: Anchors) {
+    citing.awaitOpening(anchors, itemId);
+    onOpen(itemId);
+  }
+
   // A citation that opens another item leaves the reader in the conversation it was pressed
   // in: only the library's can cite another item. A citation into the selected item, whose
   // reader is not on show yet, changes nothing of what is on show.
-  function openAt(itemId: string, anchors: Anchors) {
+  function openFromChat(itemId: string, anchors: Anchors) {
     if (itemId !== selected) {
       setChosen("chat");
       setChosenScope("library");
     }
-    citing.awaitOpening(anchors, itemId);
-    onOpen(itemId);
+    openAt(itemId, anchors);
   }
 
   // Where the app is one column, the column is a drawer at the foot of the window, which folds
@@ -204,14 +209,6 @@ export function SideColumn({
     setChosen("notes");
     setFolded(false);
   });
-
-  // A passage opened from the notebook leaves the reader in the notebook, and the chat as it
-  // was.
-  function openFromNotebook(itemId: string, anchors: Anchors) {
-    openAt(itemId, anchors);
-    setChosen("notes");
-    setChosenScope(chosenScope);
-  }
 
   // A digest may take a model call to write, so it is asked for only once its tab is shown,
   // and then kept while the item stays open.
@@ -275,7 +272,7 @@ export function SideColumn({
           onScope={setChosenScope}
           shown={tab === "chat"}
           citing={citing}
-          onOpen={openAt}
+          onOpen={openFromChat}
         />
       </div>
       <div
@@ -290,10 +287,10 @@ export function SideColumn({
           seat={seat}
           shown={tab === "notes"}
           citing={citing}
-          onOpen={openFromNotebook}
+          onOpen={openAt}
         />
       </div>
-      <Heard />
+      <Announcer />
     </aside>
   );
 }

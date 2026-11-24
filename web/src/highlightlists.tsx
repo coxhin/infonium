@@ -1,10 +1,18 @@
-import { useMemo, useRef, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { anchorsOf, type Highlight, type ItemHighlights as HeldHighlights } from "./client";
 import type { Opener } from "./chat";
 import type { Citing } from "./citing";
 import { choseInList, HighlightEntry, type EntryActions } from "./highlightentry";
 import {
   openHighlight,
+  readHighlightsAgain,
   useHighlights,
   useLibraryHighlights,
   useOpenedHighlight,
@@ -25,7 +33,9 @@ function useEntryActions(
   list: RefObject<HTMLElement | null>,
 ): EntryActions {
   const latest = useRef(current);
-  latest.current = current;
+  useLayoutEffect(() => {
+    latest.current = current;
+  });
   return useMemo<EntryActions>(
     () => ({
       press(highlight) {
@@ -83,7 +93,7 @@ function Entries({
       <HighlightEntry
         key={highlight.id}
         highlight={highlight}
-        pressed={pressable && first !== undefined && citing.isPressed(first)}
+        pressed={pressable ? first !== undefined && citing.isPressed(first) : undefined}
         opened={isOpened}
         opening={isOpened && shown ? opened : undefined}
         actions={actions}
@@ -150,6 +160,12 @@ export function ItemHighlights({
   // Until the reader shows the item, the document its highlights stand in is not known.
   const documentId = seat?.itemId === itemId ? seat.documentId : undefined;
   const highlights = useHighlights(itemId, documentId);
+  // Another tab may have changed the item's highlights since they were read.
+  useEffect(() => {
+    if (shown && documentId !== undefined) {
+      readHighlightsAgain(itemId);
+    }
+  }, [shown]);
   const opened = useOpenedHighlight();
   const list = useRef<HTMLDivElement>(null);
   const actions = useEntryActions(() => ({ citing, onOpen: undefined }), list);

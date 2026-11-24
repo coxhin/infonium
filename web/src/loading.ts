@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Refused } from "./client";
 
 const WATCH_INTERVAL_MS = 1500;
 
@@ -9,6 +10,20 @@ export type Loaded<Value> =
 
 export function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// The statuses a gateway answers with when the service behind it does not answer. The service
+// itself answers 502 only where a model call failed, which a request that calls no model never
+// meets.
+const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+const UNANSWERED = "连不上服务";
+
+// Why a request that calls no model failed, as the reader is told it: a service that did not
+// answer is said as such rather than by the gateway's bare refusal.
+export function requestReason(error: unknown): string {
+  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
+    ? UNANSWERED
+    : reasonOf(error);
 }
 
 // Loads again whenever the key changes; a result that arrives for an earlier key is dropped.

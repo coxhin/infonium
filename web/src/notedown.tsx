@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Anchor, Statement } from "./client";
-import { say } from "./heard";
+import { announce } from "./announce";
 import { reasonOf } from "./loading";
 import { noteDown, showNote, type Cited, type Excerpt, type Noted } from "./notes";
 import "./notedown.css";
@@ -9,11 +9,13 @@ import "./notedown.css";
 // because the item they lie in could not be told.
 export type Taking = { excerpts: Excerpt[]; leftOut: number };
 
+// A failure says how many of the excerpts, counted from the first, the note took before it,
+// and which note that was, so that a press after it puts in only the rest.
 type Noting =
   | { state: "idle" }
   | { state: "writing" }
   | { state: "noted"; noted: Noted; leftOut: number }
-  | { state: "failed"; reason: string };
+  | { state: "failed"; reason: string; taken: number; noted: Noted | undefined };
 
 // A statement infonium wrote, with one cited passage for each of its citations whose item can
 // be told.
@@ -44,17 +46,55 @@ function leftOutNote(leftOut: number): string {
   return leftOut === 0 ? "" : `；${leftOut} 处引文说不出出自哪一篇，没有带上`;
 }
 
-// The excerpts go into the note one after another, each awaited, so that they arrive in the
-// note in their order; the note that took the last is the one said.
-async function noteAll(excerpts: Excerpt[]): Promise<Noted> {
-  let noted: Noted | undefined;
-  for (const excerpt of excerpts) {
-    noted = await noteDown(excerpt);
+// Why the note took no more of the excerpts, and how far it had come.
+class StoppedPartWay extends Error {
+  constructor(
+    message: string,
+    readonly taken: number,
+    readonly noted: Noted | undefined,
+  ) {
+    super(message);
   }
-  if (noted === undefined) {
-    throw new Error("没有可以记下的内容");
+}
+
+// The excerpts from the given one on go into the note one after another, each awaited, so that
+// they arrive in the note in their order; the note that took the last is the one said.
+async function noteFrom(
+  excerpts: Excerpt[],
+  taken: number,
+  noted: Noted | undefined,
+): Promise<Noted> {
+  let last = noted;
+  for (const [at, excerpt] of excerpts.entries()) {
+    if (at >= taken) {
+      try {
+        last = await noteDown(excerpt);
+      } catch (error) {
+        throw new StoppedPartWay(reasonOf(error), at, last);
+      }
+    }
   }
-  return noted;
+  if (last === undefined) {
+    throw new StoppedPartWay("没有可以记下的内容", 0, undefined);
+  }
+  return last;
+}
+
+// What a failure says: of an excerpt in several, how many the note took and that the rest were
+// not taken.
+function failureNote(noting: Extract<Noting, { state: "failed" }>, count: number): string {
+  if (noting.taken === 0 || noting.noted === undefined) {
+    return `没有记下：${noting.reason}`;
+  }
+  const rest = count - noting.taken;
+  return `《${noting.noted.title}》记下了前 ${noting.taken} 句，其余 ${rest} 句没有记下：${noting.reason}`;
+}
+
+function pressText(noting: Noting, rest: number): string {
+  if (noting.state === "writing") {
+    return "正在记…";
+  }
+  return noting.state === "failed" && noting.taken > 0 ? `记下其余 ${rest} 句` : "记到笔记";
 }
 
 // The control that puts what infonium wrote, or a highlight, into the note being written.
@@ -63,17 +103,29 @@ async function noteAll(excerpts: Excerpt[]): Promise<Noted> {
 export function NoteDown({ taking, label }: { taking: Taking; label: string }) {
   const [noting, setNoting] = useState<Noting>({ state: "idle" });
 
+  const { excerpts, leftOut } = taking;
+  // After a failure part way, a press puts in only what the note has not taken.
+  const taken = noting.state === "failed" ? noting.taken : 0;
+  const rest = excerpts.length - taken;
+
   async function press() {
-    const { excerpts, leftOut } = taking;
     setNoting({ state: "writing" });
     try {
-      const noted = await noteAll(excerpts);
+      const noted = await noteFrom(
+        excerpts,
+        taken,
+        noting.state === "failed" ? noting.noted : undefined,
+      );
       setNoting({ state: "noted", noted, leftOut });
-      say(`已记到笔记《${noted.title}》${leftOutNote(leftOut)}`);
+      announce(`已记到笔记《${noted.title}》${leftOutNote(leftOut)}`);
     } catch (error) {
-      const reason = reasonOf(error);
-      setNoting({ state: "failed", reason });
-      say(`没有记到笔记：${reason}`);
+      const failed =
+        error instanceof StoppedPartWay
+          ? { reason: error.message, taken: error.taken, noted: error.noted }
+          : { reason: reasonOf(error), taken, noted: undefined };
+      const next = { state: "failed" as const, ...failed };
+      setNoting(next);
+      announce(failureNote(next, excerpts.length));
     }
   }
 
@@ -81,12 +133,12 @@ export function NoteDown({ taking, label }: { taking: Taking; label: string }) {
     <span className="notedown" data-state={noting.state}>
       <button
         className="notedown-press"
-        aria-label={label}
-        title={taking.leftOut === 0 ? undefined : leftOutTitle(taking.leftOut)}
+        aria-label={taken === 0 ? label : undefined}
+        title={leftOut === 0 ? undefined : leftOutTitle(leftOut)}
         disabled={noting.state === "writing"}
         onClick={() => void press()}
       >
-        {noting.state === "writing" ? "正在记…" : "记到笔记"}
+        {pressText(noting, rest)}
       </button>
       {noting.state === "noted" && (
         <span className="notedown-said">
@@ -97,7 +149,7 @@ export function NoteDown({ taking, label }: { taking: Taking; label: string }) {
         </span>
       )}
       {noting.state === "failed" && (
-        <span className="notedown-said failed">没有记下：{noting.reason}</span>
+        <span className="notedown-said failed">{failureNote(noting, excerpts.length)}</span>
       )}
     </span>
   );
