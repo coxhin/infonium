@@ -887,13 +887,18 @@ def to_word_edges(
     # whose first letter was read as two may, widened by WORD_SLACK letters at most to the
     # word's edges, where the passage began or ended at a word's edge.
     def edge_offset(at: int) -> tuple[str, int]:
-        block = bisect_right(held.starts, at) - 1
+        # A place may reach the end of the document's letters, which is the last block's end.
+        block = min(bisect_right(held.starts, at), len(document.blocks)) - 1
         layout = block_letters(document.blocks[block])
         letter = at - held.starts[block]
         text = document.blocks[block].text
         return text, layout.origins[letter] if letter < len(layout.origins) else len(text)
 
     start, end = place.start, place.end
+    if end <= start:
+        # An empty place, as the near search gives where nothing of the passage is left,
+        # has no edges to widen.
+        return place
     for _ in range(WORD_SLACK):
         text, offset = edge_offset(start)
         if not passage.whole_start or is_word_edge(text, offset) or start == 0:
