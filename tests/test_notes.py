@@ -702,6 +702,9 @@ def test_of_drafts_sent_at_once_the_note_ends_at_the_greatest_edition_taking_one
         f"of drafts of one edition sent at once more than one was taken: {editions} {statuses}"
     )
     assert all(edition > 1 for edition in taken), "a draft not later than the note was taken"
+    for draft, response in zip(drafts, responses, strict=True):
+        if response.status_code == 200:
+            assert_shows(response.json(), draft, [source])
     for edition, response in zip(editions, responses, strict=True):
         if response.status_code == 412:
             assert_failure(response, 412, "a stale draft sent at once")
