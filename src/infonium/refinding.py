@@ -573,19 +573,58 @@ def keeps_its_ends(passage: MarkedLetters, letters: str) -> bool:
 
 
 def has_a_side(passage: MarkedLetters, marked: Spelling, held: Spelling, stretch: Stretch) -> bool:
-    # Whether one side of the passage at least is borne out at a place: by its letters, by
-    # its block's edge, or by its document's edge, which the place keeps too.
+    # Whether one side of the passage at least is borne out at a place: by its letters, or by
+    # its document's edge, which the place keeps too. A block's edge alone bears out nothing
+    # here: a new paragraph of the same form has one as the passage's own has.
     by_letters = sides_found(passage, marked, held, stretch, ([], []))
-    by_edge = edge_sides(passage, marked, held, stretch)
     at_edges = (
         passage.begin == 0 and stretch.start == 0,
         passage.finish == len(marked.letters) and stretch.end == len(held.letters),
     )
     has = (passage.begin > 0, passage.finish < len(marked.letters))
     return any(
-        (side and (letters or edge)) or kept
-        for side, letters, edge, kept in zip(has, by_letters, by_edge, at_edges, strict=True)
+        (side and letters) or kept
+        for side, letters, kept in zip(has, by_letters, at_edges, strict=True)
     )
+
+
+def own_place(passage: MarkedLetters, marked: Spelling, held: Spelling) -> tuple[int, int] | None:
+    # Where the passage's own blocks still stand in the other revision, as letters: between
+    # the blocks right before and right after them, where both stand there, their very
+    # letters, each said once in both revisions, with letters between them (a document's
+    # edge stands for a neighbour the passage's blocks do not have). None where they do not,
+    # or stand next to each other: the passage's own blocks are gone from there.
+    def blocks_of(spelling: Spelling) -> list[str]:
+        return [spelling.letters[begin:end] for begin, end in pairwise(spelling.starts)]
+
+    marked_blocks = blocks_of(marked)
+    first = bisect_right(marked.starts, passage.begin) - 1
+    last = bisect_right(marked.starts, passage.finish - 1) - 1
+    before = next((n for n in range(first - 1, -1, -1) if marked_blocks[n]), None)
+    after = next((n for n in range(last + 1, len(marked_blocks)) if marked_blocks[n]), None)
+    # Each neighbour's letters, said once in each revision, stand where they stand in the
+    # other, as a block of their own or as part of one that took other words in; where the
+    # passage's blocks begin or end the document, its edge stands for that neighbour.
+    if before is None and after is None:
+        return None
+
+    def placed(number: int | None) -> int | None:
+        if number is None:
+            return None
+        letters = marked_blocks[number]
+        if len(occurrences(marked.letters, letters, 2)) != 1:
+            return None
+        found = occurrences(held.letters, letters, 2)
+        return found[0] if len(found) == 1 else None
+
+    at_before, at_after = placed(before), placed(after)
+    if (before is not None and at_before is None) or (after is not None and at_after is None):
+        return None
+    start = 0 if before is None or at_before is None else at_before + len(marked_blocks[before])
+    end = len(held.letters) if at_after is None else at_after
+    if end <= start:
+        return None
+    return start, end
 
 
 def row_bounds(spelling: Spelling, start: int, end: int) -> tuple[int, int]:
@@ -1339,8 +1378,11 @@ def found_places(
         # unlike itself at one place only, saying the same and standing nowhere else in its
         # revision, is found there by its letters, as it is where the other holds its very
         # letters once: what stood around it may have changed with its words, on one side at
-        # most, but its own first and last words stand there (keeps_its_ends). Not where it
-        # stands block by block with new blocks between (parts_apart), found exact there.
+        # most, but its own first and last words stand there (keeps_its_ends), and one side is
+        # borne out by letters or its document's edge. Not where it stands block by block with
+        # new blocks between (parts_apart), found exact there. Where its own place still
+        # stands (own_place), only a place there: a place elsewhere is another sentence's.
+        region = own_place(passage, marked, held)
         alone = one_place(
             passage,
             marked,
@@ -1352,6 +1394,7 @@ def found_places(
                 and not stood_elsewhere(passage, marked, held, place)
                 and has_a_side(passage, marked, held, place)
                 and keeps_its_ends(passage, held.letters[place.start : place.end])
+                and (region is None or (region[0] <= place.start and place.end <= region[1]))
             ],
         )
         if alone and len(candidates) == 1:
