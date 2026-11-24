@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
 import { percent, type AreaText, type Box } from "./areas";
 import { MarkedText } from "./blocks";
 import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagemarking";
@@ -7,6 +15,8 @@ import "./pagetranslation.css";
 // Text is made smaller to fit its area, but never below this part of the source's size.
 export const FLOOR = 0.6;
 const FITTING_STEPS = 7;
+// How long a press waits, in milliseconds, to be told from the first of a double press.
+const DOUBLE_PRESS = 250;
 // Colours are read from a grid of this many points across an area of the drawn page, each
 // channel to this many levels; a colour this far from the paper's is ink.
 const SAMPLES = 24;
@@ -211,6 +221,28 @@ function TranslatedArea({
   }, [pointed, onMarked]);
   const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
   const [open, setOpen] = useState(false);
+  // A press turns the area once it is plain that it selected nothing: a drag that selects its
+  // text ends in a click too, and a double click begins with one.
+  const turning = useRef<number>(undefined);
+  useEffect(() => () => window.clearTimeout(turning.current), []);
+  const pressed = (event: MouseEvent) => {
+    window.clearTimeout(turning.current);
+    if (event.detail > 1) {
+      return;
+    }
+    turning.current = window.setTimeout(() => {
+      const selection = getSelection();
+      const selects =
+        selection !== null &&
+        !selection.isCollapsed &&
+        element.current !== null &&
+        selection.containsNode(element.current, true) &&
+        selection.toString().trim() !== "";
+      if (!selects) {
+        setOpen((before) => !before);
+      }
+    }, DOUBLE_PRESS);
+  };
   const { area, piece } = text;
   // The size of the text as a part of the page's width.
   const size = area.vertical ? area.typeset.size : area.typeset.size * shape;
@@ -296,7 +328,7 @@ function TranslatedArea({
       role={pressable ? "button" : undefined}
       aria-pressed={pressable ? open : undefined}
       aria-label={revealing ? "按下看这一段的原文" : undefined}
-      onClick={pressable ? () => setOpen(!open) : undefined}
+      onClick={pressable ? pressed : undefined}
       onKeyDown={
         pressable
           ? (event) => {
