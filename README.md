@@ -236,7 +236,7 @@ The blocks of every document the library holds are indexed in the library's file
 - On a PDF's pages, select-all (Ctrl+A) hands over every block of the document, and 高亮 then marks all of it.
 - In the kept page (原件), a highlight in a block that has no element of its own there is not drawn, and the line above the page says how many such highlights there are. Where an element shows a translation, or the highlight's words are not found in it, the element is tinted whole.
 - In the kept page, words the page holds but does not show, such as text for screen readers, are never part of a highlight, and words it shows struck out inside a highlight are marked with it.
-- A link in the kept page opens only on a press that moved 4 pixels or less, or by Enter. A drag that starts on a link selects its words, no link can be dragged out of the page, and links the page made unselectable can be selected.
+- A link in the kept page opens only on a press that moved 4 pixels or less, or by Enter. A drag that starts on a link selects its words, unless it starts on the left half of the link's first character, where the browser begins no selection. No link can be dragged out of the page, and links the page made unselectable can be selected.
 - A highlight in the kept page keeps its light green on a dark page and in the dark theme.
 - Marking by touch was tried only in emulation, not on a phone or with a pen. On a PDF's pages, a finger held still for 450 ms marks the whole block it rests on and does not select words. In the kept page, touch was not tried.
 - A comment typed and not yet kept survives turning to another item, but is lost when the page is loaded again.
