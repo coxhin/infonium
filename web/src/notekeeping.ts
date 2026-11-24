@@ -37,7 +37,8 @@ export type Text = Omit<NoteDraft, "edition">;
 export type Keeping =
   | { state: "kept" }
   | { state: "keeping" }
-  | { state: "unkept"; reason: string }
+  // A text the service did not answer for is sent again by itself; one it refused is not.
+  | { state: "unkept"; reason: string; away: boolean }
   | { state: "overtaken" }
   | { state: "removed" };
 
@@ -68,7 +69,12 @@ export type Ready = {
   onItsWay: OnItsWay[];
   waiters: Waiter[];
   rereading: Promise<Ready | undefined> | undefined;
+  retry: Retry;
 };
+
+// How often a text the service did not answer for was sent again since one was last kept, and
+// when it goes next.
+type Retry = { attempt: number; timer: ReturnType<typeof setTimeout> | undefined };
 
 export type Session =
   | { state: "loading"; reading: number; read: Promise<Ready | undefined> }
@@ -98,6 +104,10 @@ const PASSAGE_ID_LENGTH = 8;
 // The browser sends a request that outlives the page only up to this size.
 const LEAVING_BYTES = 64 * 1024;
 const QUOTED_WORDS = 16;
+// When a text the service did not answer for goes again: after the first wait, doubled each
+// time, up to the last.
+const RETRY_FIRST_MS = 2000;
+const RETRY_LAST_MS = 30_000;
 export const GONE = "这篇笔记已经不在了。";
 export const UNREACHED = "连不上服务";
 export const OVERTAKEN = "这篇笔记在别处改过，这里写的没有保存。";
@@ -124,13 +134,18 @@ let watching = false;
 let readCount = 0;
 let stranded: ReadonlyArray<{ noteId: string; text: Text }> | undefined;
 
+// Whether a request reached no service, or only a gateway the service behind did not answer.
+function unreached(error: unknown): boolean {
+  return (
+    error instanceof UnreachedService ||
+    (error instanceof Refused && GATEWAY_STATUSES.has(error.status))
+  );
+}
+
 // Why a request about a note failed, as a reader is told it: that the service was not reached,
 // or what it refused. Any other failure is a fault of the app, told as it is.
 export function failureText(error: unknown): string {
-  if (
-    error instanceof UnreachedService ||
-    (error instanceof Refused && GATEWAY_STATUSES.has(error.status))
-  ) {
+  if (unreached(error)) {
     return UNREACHED;
   }
   if (error instanceof Refused) {
@@ -254,6 +269,7 @@ function readyFrom(note: Note, reading: number): Ready {
     onItsWay: [],
     waiters: [],
     rereading: undefined,
+    retry: { attempt: 0, timer: undefined },
   };
 }
 
@@ -265,6 +281,7 @@ export function adopt(note: Note): void {
 }
 
 export function forget(noteId: string): void {
+  clearTimeout(readyOf(noteId)?.retry.timer);
   sessions.delete(noteId);
   tell();
 }
@@ -365,6 +382,7 @@ function landed(held: Ready, sent: OnItsWay): OnItsWay[] {
 }
 
 function sentAndKept(noteId: string, sent: OnItsWay, note: Note): void {
+  clearTimeout(readyOf(noteId)?.retry.timer);
   update(noteId, (held) => {
     const onItsWay = landed(held, sent);
     return {
@@ -376,6 +394,7 @@ function sentAndKept(noteId: string, sent: OnItsWay, note: Note): void {
       linked: linkedOf(note, held.linked),
       excerpt: held.excerpt === sent.number ? undefined : held.excerpt,
       keeping: held.latest === sent.text && onItsWay.length === 0 ? KEPT : held.keeping,
+      retry: { attempt: 0, timer: undefined },
     };
   });
   keptListeners.forEach((notify) => notify(note));
@@ -463,6 +482,7 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
   const overtaken = kind === "overtaken";
   const removed = kind === "removed";
   const reason = failureText(error);
+  const away = unreached(error);
   update(noteId, (ready) => ({
     ...ready,
     onItsWay: landed(ready, sent),
@@ -470,8 +490,11 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
       ? { state: "overtaken" }
       : removed
         ? { state: "removed" }
-        : { state: "unkept", reason },
+        : { state: "unkept", reason, away },
   }));
+  if (away) {
+    keepLater(noteId);
+  }
   const failure = overtaken
     ? new NotSent(OVERTAKEN)
     : removed
@@ -484,6 +507,42 @@ async function refused(noteId: string, sent: OnItsWay, error: unknown): Promise<
   if (!overtaken && !removed && ready?.latest !== undefined && ready.latest !== sent.text) {
     update(noteId, (now) => ({ ...now, keeping: { state: "keeping" } }));
     keep(noteId, false);
+  }
+}
+
+// A text that could not be sent because the service did not answer is sent again by itself:
+// soon the first time, then at growing intervals up to half a minute; at once when the browser
+// is online again or the page comes back on show (keepAway). It goes as any text does,
+// numbered as it is sent, so that a note written elsewhere meanwhile is still told.
+function keepLater(noteId: string): void {
+  const ready = readyOf(noteId);
+  if (ready === undefined) {
+    return;
+  }
+  clearTimeout(ready.retry.timer);
+  const attempt = ready.retry.attempt;
+  const timer = setTimeout(
+    () => keepAway(noteId),
+    Math.min(RETRY_FIRST_MS * 2 ** attempt, RETRY_LAST_MS),
+  );
+  update(noteId, (held) => ({ ...held, retry: { attempt: attempt + 1, timer } }));
+}
+
+function keepAway(noteId: string): void {
+  const ready = readyOf(noteId);
+  if (
+    ready?.keeping.state === "unkept" &&
+    ready.keeping.away &&
+    ready.onItsWay.length === 0
+  ) {
+    keepAgain(noteId);
+  }
+}
+
+// Every text the service did not answer for is sent again at once.
+function keepAllAway(): void {
+  for (const noteId of sessions.keys()) {
+    keepAway(noteId);
   }
 }
 
@@ -522,10 +581,12 @@ function keep(noteId: string, leaving: boolean): void {
   };
   const draft: NoteDraft = { ...latest, edition };
   const { reading } = ready;
+  clearTimeout(ready.retry.timer);
   update(noteId, (held) => ({
     ...held,
     onItsWay: [...held.onItsWay, sent],
     keeping: { state: "keeping" },
+    retry: { ...held.retry, timer: undefined },
   }));
   // A draft too large to outlive the page goes as any other, which the browser asks about.
   rewriteNote(noteId, draft, leaving && outlives(draft)).then(
@@ -743,9 +804,13 @@ function warnBeforeLeaving(event: BeforeUnloadEvent): void {
   }
 }
 
-function onHidden(): void {
+// Hidden, the page hands in what was typed; back on show, it sends again what the service did
+// not answer for.
+function onShownOrHidden(): void {
   if (document.visibilityState === "hidden") {
     leaving();
+  } else {
+    keepAllAway();
   }
 }
 
@@ -755,7 +820,8 @@ function watchLeaving(): void {
     watching = true;
     addEventListener("beforeunload", warnBeforeLeaving);
     addEventListener("pagehide", leaving);
-    document.addEventListener("visibilitychange", onHidden);
+    document.addEventListener("visibilitychange", onShownOrHidden);
+    addEventListener("online", keepAllAway);
   }
 }
 

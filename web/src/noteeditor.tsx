@@ -141,6 +141,7 @@ function KeepingNote({
       return (
         <p className="keeping failed" role="alert">
           没有保存：{keeping.reason}
+          {keeping.away && "，服务回来后会自动保存"}
           <button onClick={() => keepAgain(noteId)}>重试</button>
         </p>
       );
