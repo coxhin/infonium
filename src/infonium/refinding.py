@@ -597,7 +597,7 @@ def own_place(passage: MarkedLetters, marked: Spelling, held: Spelling) -> tuple
     def blocks_of(spelling: Spelling) -> list[str]:
         return [spelling.letters[begin:end] for begin, end in pairwise(spelling.starts)]
 
-    marked_blocks, held_blocks = blocks_of(marked), blocks_of(held)
+    marked_blocks = blocks_of(marked)
     first = bisect_right(marked.starts, passage.begin) - 1
     last = bisect_right(marked.starts, passage.finish - 1) - 1
     before = next((n for n in range(first - 1, -1, -1) if marked_blocks[n]), None)
