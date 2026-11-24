@@ -322,3 +322,10 @@
 .highlight-list .behind:empty {
   margin: 0;
 }
+
+/* Said on an entry the reader marked again from the source. */
+.highlight .marked-again {
+  margin: 0.25rem 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--marked-line);
+}

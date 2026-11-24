@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 import type { Anchors } from "./client";
-import { markPassage, openHighlight } from "./highlights";
+import { markPassage, openHighlight, openMarkedAgain } from "./highlights";
 import { reasonOf } from "./loading";
 import type { Selected } from "./marking";
 import { noteDown, showNote, type Noted } from "./notes";
@@ -233,14 +233,19 @@ export function SelectionActions({
   }
 
   const passage = { anchors: chosen };
+  // A passage marked already opens the highlight it is, which the notebook says.
   const mark = () =>
     act(async () => {
-      await markPassage(itemId, passage, "");
+      const { highlight, already } = await markPassage(itemId, passage, "");
+      if (already) {
+        openMarkedAgain({ itemId, highlightId: highlight.id, commenting: false });
+      }
     }, "没有标上");
   const comment = () =>
     act(async () => {
-      const made = await markPassage(itemId, passage, "");
-      openHighlight({ itemId, highlightId: made.id, commenting: true });
+      const { highlight, already } = await markPassage(itemId, passage, "");
+      const opened = { itemId, highlightId: highlight.id, commenting: true };
+      (already ? openMarkedAgain : openHighlight)(opened);
     }, "没有标上");
   const note = () =>
     act(async () => {

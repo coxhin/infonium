@@ -305,18 +305,43 @@ export function markedOf(highlights: Highlight[]): Marked[] {
 
 // The new highlight is shown at the end of the list until the list, read again, puts it in
 // its place.
+// What marking a passage came to: the highlight the service holds for it, and whether it held
+// it already, as when the very passage was marked before. A highlight held already is not
+// added to a list again.
+export type PassageMarked = { highlight: Highlight; already: boolean };
+
+function holds(highlights: Highlight[], highlightId: string): boolean {
+  return highlights.some((highlight) => highlight.id === highlightId);
+}
+
 export async function markPassage(
   itemId: string,
   passage: Passage,
   comment: string,
-): Promise<Highlight> {
+): Promise<PassageMarked> {
   const made = await makeHighlight(itemId, passage, comment);
-  const added = (highlights: Highlight[]) => [...highlights, made];
+  const shelf = shelves.get(itemId)?.loaded;
+  const already = shelf?.state === "ready" && holds(shelf.value, made.id);
+  const added = (highlights: Highlight[]) =>
+    holds(highlights, made.id) ? highlights : [...highlights, made];
   begin(itemId);
   apply(itemId, { item: added, library: inItem(itemId, added) });
   void rereadLibrary();
   await reread(itemId);
-  return made;
+  return { highlight: made, already };
+}
+
+// Openings of a highlight that the reader marked again, which the notebook says was marked
+// already.
+const markedAgain = new WeakSet<Opened>();
+
+export function openMarkedAgain(next: Opened): void {
+  markedAgain.add(next);
+  openHighlight(next);
+}
+
+export function wasMarkedAgain(opening: Opened): boolean {
+  return markedAgain.has(opening);
 }
 
 export async function noteOnHighlight(
