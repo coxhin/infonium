@@ -171,7 +171,7 @@ export function usePageSelecting(
       // Lines that an area covers are selected as the area is: whole.
       const covering = translated ? areaOf(found, line.blockNumber) : undefined;
       return covering === undefined
-        ? { span: spanAt(line, point, characters), page: found, area: undefined }
+        ? { span: spanAt(line, point), page: found, area: undefined }
         : { span: wholeBlock(line.blockNumber, characters), page: found, area: covering };
     }
 

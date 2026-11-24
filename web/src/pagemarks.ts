@@ -7,20 +7,23 @@ import { pagePlaces } from "./places";
 // of a line's box that holds a stretch of its characters, the word under a point, and the
 // anchors of a stretch of the document.
 
-// One place of a block on a page, as a rule a line. A line is cut across its run in
-// proportion to its characters, unless it is taken whole: a table's, a picture's, or one place
-// that holds several lines of text.
+// One place of a block on a page, as a rule a line, with its block's text as code points. A
+// line is cut across its run in proportion to the widths of its characters, unless it is taken
+// whole: a table's, a picture's, or one place that holds several lines of text.
 export type Line = {
   blockNumber: number;
   place: PagePlace;
+  characters: string[];
   downward: boolean;
   whole: boolean;
 };
 
-// The lines of a document: by page, in the order of the document, and by block.
+// The lines of a document: by page, in the order of the document, and by block; and the text
+// of each block as code points, as offsets count them.
 export type Lines = {
   onPages: Map<number, Line[]>;
   ofBlocks: Map<number, Line[]>;
+  characters: string[][];
 };
 
 // Blocks whose one place is not a line of text but the block's whole box.
@@ -41,12 +44,15 @@ function depthOf(place: PagePlace, downward: boolean): number {
 export function linesOf(blocks: Block[]): Lines {
   const onPages = new Map<number, Line[]>();
   const ofBlocks = new Map<number, Line[]>();
+  const characters = blocks.map((block) => [...block.text]);
   blocks.forEach((block, blockNumber) => {
     const places = pagePlaces(block.places);
     const downward = isDownward(places);
+    const whole = BOXED_KINDS.has(block.kind);
+    const text = characters[blockNumber] ?? [];
     const lines = [...places]
       .sort((first, second) => first.start - second.start)
-      .map((place) => ({ blockNumber, place, downward, whole: BOXED_KINDS.has(block.kind) }));
+      .map((place) => ({ blockNumber, place, characters: text, downward, whole }));
     ofBlocks.set(blockNumber, lines);
     for (const line of lines) {
       onPages.set(line.place.page, [...(onPages.get(line.place.page) ?? []), line]);
@@ -63,12 +69,58 @@ export function linesOf(blocks: Block[]): Lines {
       }
     }
   });
-  return { onPages, ofBlocks };
+  return { onPages, ofBlocks, characters };
+}
+
+// The width of a character as a serif face of the browser sets it: the print of a page is not
+// known, but its letters differ in width much as any face's do, an "i" a third of an "m".
+const MEASURING_FONT = "100px serif";
+const widths = new Map<string, number>();
+let measurer: CanvasRenderingContext2D | null | undefined;
+
+function widthOf(character: string): number {
+  let width = widths.get(character);
+  if (width === undefined) {
+    if (measurer === undefined) {
+      measurer = document.createElement("canvas").getContext("2d");
+      if (measurer !== null) {
+        measurer.font = MEASURING_FONT;
+      }
+    }
+    width = measurer?.measureText(character).width ?? 1;
+    widths.set(character, width);
+  }
+  return width;
+}
+
+// Where each character of a line begins along its run, as a part of the run, and where the
+// last ends: worked out once a line, when it is first needed.
+const edgesKept = new WeakMap<Line, number[]>();
+
+function edgesOf(line: Line): number[] {
+  let edges = edgesKept.get(line);
+  if (edges === undefined) {
+    const { start, end } = line.place;
+    const count = end - start;
+    const runs = line.characters.slice(start, end).map(widthOf);
+    const total = runs.reduce((sum, width) => sum + width, 0);
+    edges = [0];
+    let reached = 0;
+    for (const width of runs) {
+      reached += width;
+      edges.push(total > 0 ? reached / total : edges.length / count);
+    }
+    while (edges.length <= count) {
+      edges.push(1);
+    }
+    edgesKept.set(line, edges);
+  }
+  return edges;
 }
 
 // The part of a line's box that holds the characters from start to end of its block's text:
-// cut across the run in proportion to the characters, down the line where the text runs
-// downwards. A line taken whole is covered whole by any part of it.
+// cut across the run in proportion to the characters' widths, down the line where the text
+// runs downwards. A line taken whole is covered whole by any part of it.
 export function coveredBox(line: Line, start: number, end: number): Box | undefined {
   const { place } = line;
   const from = Math.max(start, place.start);
@@ -80,8 +132,9 @@ export function coveredBox(line: Line, start: number, end: number): Box | undefi
   if (line.whole || count === 0) {
     return { left: place.left, top: place.top, width: place.width, height: place.height };
   }
-  const head = (from - place.start) / count;
-  const tail = (to - place.start) / count;
+  const edges = edgesOf(line);
+  const head = edges[from - place.start] ?? 0;
+  const tail = edges[to - place.start] ?? 1;
   return line.downward
     ? {
         left: place.left,
@@ -274,9 +327,9 @@ export function wordAround(characters: string[], at: number): { start: number; e
   return { start, end };
 }
 
-// The character of a line under a point, in proportion across the line's box and settled on
-// the word around it; a line taken whole stands for all of it.
-export function spanAt(line: Line, point: Point, characters: string[]): Span {
+// The character of a line under a point, in proportion to the characters' widths across the
+// line's box, and settled on the word around it; a line taken whole stands for all of it.
+export function spanAt(line: Line, point: Point): Span {
   const { place } = line;
   const count = place.end - place.start;
   if (line.whole || count === 0) {
@@ -285,8 +338,12 @@ export function spanAt(line: Line, point: Point, characters: string[]): Span {
   const along = line.downward
     ? (point.y - place.top) / place.height
     : (point.x - place.left) / place.width;
-  const offset = place.start + Math.min(count - 1, Math.max(0, Math.floor(along * count)));
-  return { blockNumber: line.blockNumber, ...wordAround(characters, offset) };
+  const edges = edgesOf(line);
+  let at = 0;
+  while (at < count - 1 && (edges[at + 1] ?? 1) <= along) {
+    at += 1;
+  }
+  return { blockNumber: line.blockNumber, ...wordAround(line.characters, place.start + at) };
 }
 
 export function wholeBlock(blockNumber: number, characters: string[]): Span {

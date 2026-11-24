@@ -46,11 +46,6 @@ export function PagesView({
   );
   const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
   const lines = useMemo(() => linesOf(itemDocument.blocks), [itemDocument]);
-  // The text of each block as code points, as offsets count them.
-  const characters = useMemo(
-    () => itemDocument.blocks.map((block) => [...block.text]),
-    [itemDocument],
-  );
   // A page whose highlights are drawn as they were keeps them, so that marking one passage
   // more draws again only the pages it lies on.
   const kept = useRef(new Map<number, PageMark[]>());
@@ -71,7 +66,7 @@ export function PagesView({
           ? undefined
           : {
               lines,
-              charactersOf: (blockNumber) => characters[blockNumber] ?? NO_CHARACTERS,
+              charactersOf: (blockNumber) => lines.characters[blockNumber] ?? NO_CHARACTERS,
               documentId: itemDocument.id,
               marked: marking.marked,
               pageMarks: onPages,
@@ -79,7 +74,7 @@ export function PagesView({
               onPress: marking.onPress,
             },
     };
-  }, [lines, characters, marking, itemDocument.id]);
+  }, [lines, marking, itemDocument.id]);
   const shown = setting !== "source";
   const overlays = useMemo(() => {
     if (!shown) {
