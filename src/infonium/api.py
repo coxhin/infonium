@@ -12,7 +12,7 @@ from urllib.parse import urldefrag, urlsplit
 import openai
 from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AwareDatetime, BaseModel, Field, HttpUrl
 
 from infonium.asking import UnusableTranslation
 from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE, PAGE_ATTRIBUTE
@@ -40,6 +40,7 @@ from infonium.digest import (
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
+from infonium.highlight import Comment, HighlightDraft
 from infonium.intake import Engines, Intake
 from infonium.item_conversation import (
     ITEM_BUSY,
@@ -76,7 +77,10 @@ from infonium.library_conversation import (
     library_turns,
 )
 from infonium.model_connection import Ending
+from infonium.note import NoteDraft
+from infonium.passage import Passage, PassageNotHeld, Standing
 from infonium.reasons import failure_reason
+from infonium.revision import Revision, RevisionNumber
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
@@ -314,6 +318,65 @@ class PageBlocks(BaseModel):
     )
 
 
+class ItemRevisions(BaseModel):
+    # The revisions of an item's source, oldest first, and the number of the one that holds
+    # the document the item shows now, which is the latest reading and may be a document read
+    # before.
+    current: RevisionNumber
+    revisions: list[Revision]
+
+
+class HighlightView(BaseModel):
+    # A passage a reader marked in an item's source, with what the reader noted on it. The
+    # passage is as it was marked, in the revision of that number; the standing says where it
+    # lies in the document the item holds now, or that this document does not hold it.
+    id: str
+    item: str
+    revision: RevisionNumber
+    passage: Passage
+    standing: Standing
+    comment: str
+    made: AwareDatetime
+
+
+class ItemHighlights(BaseModel):
+    # The highlights of one item, with what the item is called.
+    item: str
+    title: str
+    highlights: list[HighlightView]
+
+
+class NoteEntry(BaseModel):
+    # A note as a list of notes shows it: what it is called, when it was first written and
+    # last changed, and the items its passages lie in.
+    id: str
+    title: str
+    made: AwareDatetime
+    changed: AwareDatetime
+    items: list[str]
+
+
+class LinkedPassage(BaseModel):
+    # A passage a note links to, under the id the note's Markdown names it by: the item it
+    # lies in and what that item is called now, the passage as it was linked, in the revision
+    # of that number, and where it stands in the document the item holds now.
+    id: str
+    item: str
+    title: str
+    revision: RevisionNumber
+    passage: Passage
+    standing: Standing
+
+
+class NoteView(BaseModel):
+    id: str
+    title: str
+    markdown: str
+    passages: list[LinkedPassage]
+    made: AwareDatetime
+    changed: AwareDatetime
+
+
 def refusal(status: HTTPStatus, detail: str) -> Response:
     return Response(
         content=Failure(detail=detail).model_dump_json(), status_code=status, media_type=JSON
@@ -335,6 +398,7 @@ app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY)
 app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(PassageNotHeld, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -344,6 +408,9 @@ SERVED_PAGE: dict[int | str, dict[str, Any]] = {
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# A passage that its own document does not hold as it was given: a block it names is not
+# there, or the words at a range are not its quote.
+NOT_HELD: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 
 
@@ -490,6 +557,34 @@ def item_document(item_id: str, owner: Owner) -> DocumentView:
     with library_store().library(owner) as library:
         document = library.holding(item_id).document
     return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
+
+
+@app.post("/api/items/{item_id}/reading", responses=NOT_IN_LIBRARY)
+def read_again(item_id: str, owner: Owner) -> ItemEntry:
+    # Starts a new reading of the item's source: a link is fetched again, and an upload is
+    # read again from the file the library keeps of it. Where a reading of the item is under
+    # way already, that one goes on and no other starts. The document the item holds stays
+    # until the new reading has given another.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/items/{item_id}/revisions", responses=NOT_IN_LIBRARY)
+def item_revisions(item_id: str, owner: Owner) -> ItemRevisions:
+    # An item without a document has no revisions.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/items/{item_id}/revisions/{number}/document", responses=NOT_IN_LIBRARY)
+def revision_document(item_id: str, number: RevisionNumber, owner: Owner) -> DocumentView:
+    # The document of one revision of the item, the one it holds now or an earlier one.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/items/{item_id}/standing", responses=NOT_IN_LIBRARY | NOT_HELD)
+def passage_standing(item_id: str, passage: Passage, owner: Owner) -> Standing:
+    # Where a passage of any revision of the item stands in the document the item holds now.
+    # A passage of a document that is no revision of the item is not in the library.
+    raise NotImplementedError(UNBUILT)
 
 
 @app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)
@@ -693,3 +788,70 @@ def forget_library_conversation(owner: Owner) -> None:
         library_store().transaction(owner) as transaction,
     ):
         library_turns(transaction).forget()
+
+
+@app.get("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY)
+def item_highlights(item_id: str, owner: Owner) -> list[HighlightView]:
+    # The highlights of an item: first those that stand in the document it holds now, in the
+    # order of that document, then those it has lost, in the order they were made.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY | NOT_HELD)
+def make_highlight(item_id: str, draft: HighlightDraft, owner: Owner) -> HighlightView:
+    # Marks a passage of a revision of the item. The passage is refused unless its document
+    # is a revision of the item and holds it as given.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.put("/api/items/{item_id}/highlights/{highlight_id}/comment", responses=NOT_IN_LIBRARY)
+def comment_highlight(
+    item_id: str, highlight_id: str, comment: Comment, owner: Owner
+) -> HighlightView:
+    # Puts what the reader notes on a highlight in place of what was noted before.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.delete(
+    "/api/items/{item_id}/highlights/{highlight_id}",
+    responses=NOT_IN_LIBRARY,
+    status_code=HTTPStatus.NO_CONTENT,
+)
+def remove_highlight(item_id: str, highlight_id: str, owner: Owner) -> None:
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/highlights")
+def library_highlights(owner: Owner) -> list[ItemHighlights]:
+    # Every item of the library that has highlights, with them, the item marked last first;
+    # an item's highlights are in the order its own list gives them.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/notes")
+def list_notes(owner: Owner) -> list[NoteEntry]:
+    # The notes of the library, the one changed last first.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.post("/api/notes", responses=NOT_IN_LIBRARY | NOT_HELD)
+def write_note(draft: NoteDraft, owner: Owner) -> NoteView:
+    # Keeps a new note. A passage is refused unless its document is in the library and holds
+    # it as given.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.get("/api/notes/{note_id}", responses=NOT_IN_LIBRARY)
+def read_note(note_id: str, owner: Owner) -> NoteView:
+    raise NotImplementedError(UNBUILT)
+
+
+@app.put("/api/notes/{note_id}", responses=NOT_IN_LIBRARY | NOT_HELD)
+def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
+    # Puts the draft in place of what the note held: its title, its Markdown and its passages.
+    raise NotImplementedError(UNBUILT)
+
+
+@app.delete("/api/notes/{note_id}", responses=NOT_IN_LIBRARY, status_code=HTTPStatus.NO_CONTENT)
+def remove_note(note_id: str, owner: Owner) -> None:
+    raise NotImplementedError(UNBUILT)

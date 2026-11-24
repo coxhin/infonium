@@ -184,6 +184,20 @@
         "title": "Code",
         "type": "object"
       },
+      "Comment": {
+        "properties": {
+          "text": {
+            "maxLength": 10000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "Comment",
+        "type": "object"
+      },
       "Conversation": {
         "properties": {
           "turns": {
@@ -425,6 +439,30 @@
         "title": "FormulaMark",
         "type": "object"
       },
+      "Found": {
+        "properties": {
+          "exact": {
+            "title": "Exact",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "found",
+            "default": "found",
+            "title": "Kind",
+            "type": "string"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/Passage"
+          }
+        },
+        "required": [
+          "kind",
+          "passage",
+          "exact"
+        ],
+        "title": "Found",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -514,6 +552,83 @@
         "title": "Heading",
         "type": "object"
       },
+      "HighlightDraft": {
+        "properties": {
+          "comment": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/Passage"
+          }
+        },
+        "required": [
+          "passage"
+        ],
+        "title": "HighlightDraft",
+        "type": "object"
+      },
+      "HighlightView": {
+        "properties": {
+          "comment": {
+            "title": "Comment",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "made": {
+            "format": "date-time",
+            "title": "Made",
+            "type": "string"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/Passage"
+          },
+          "revision": {
+            "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "standing": {
+            "discriminator": {
+              "mapping": {
+                "found": "#/components/schemas/Found",
+                "lost": "#/components/schemas/Lost"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Found"
+              },
+              {
+                "$ref": "#/components/schemas/Lost"
+              }
+            ],
+            "title": "Standing"
+          }
+        },
+        "required": [
+          "id",
+          "item",
+          "revision",
+          "passage",
+          "standing",
+          "comment",
+          "made"
+        ],
+        "title": "HighlightView",
+        "type": "object"
+      },
       "ItemEntry": {
         "properties": {
           "id": {
@@ -563,6 +678,55 @@
           "reading"
         ],
         "title": "ItemEntry",
+        "type": "object"
+      },
+      "ItemHighlights": {
+        "properties": {
+          "highlights": {
+            "items": {
+              "$ref": "#/components/schemas/HighlightView"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "title",
+          "highlights"
+        ],
+        "title": "ItemHighlights",
+        "type": "object"
+      },
+      "ItemRevisions": {
+        "properties": {
+          "current": {
+            "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+            "minimum": 1.0,
+            "title": "Current",
+            "type": "integer"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/Revision"
+            },
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "revisions"
+        ],
+        "title": "ItemRevisions",
         "type": "object"
       },
       "Link": {
@@ -633,6 +797,59 @@
           "end"
         ],
         "title": "LinkMark",
+        "type": "object"
+      },
+      "LinkedPassage": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/Passage"
+          },
+          "revision": {
+            "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "standing": {
+            "discriminator": {
+              "mapping": {
+                "found": "#/components/schemas/Found",
+                "lost": "#/components/schemas/Lost"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Found"
+              },
+              {
+                "$ref": "#/components/schemas/Lost"
+              }
+            ],
+            "title": "Standing"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item",
+          "title",
+          "revision",
+          "passage",
+          "standing"
+        ],
+        "title": "LinkedPassage",
         "type": "object"
       },
       "ListItem": {
@@ -725,6 +942,149 @@
           "places"
         ],
         "title": "ListItem",
+        "type": "object"
+      },
+      "Lost": {
+        "properties": {
+          "kind": {
+            "const": "lost",
+            "default": "lost",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Lost",
+        "type": "object"
+      },
+      "NoteDraft": {
+        "properties": {
+          "markdown": {
+            "maxLength": 500000,
+            "title": "Markdown",
+            "type": "string"
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/NotePassage"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "markdown",
+          "passages"
+        ],
+        "title": "NoteDraft",
+        "type": "object"
+      },
+      "NoteEntry": {
+        "properties": {
+          "changed": {
+            "format": "date-time",
+            "title": "Changed",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "made": {
+            "format": "date-time",
+            "title": "Made",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "made",
+          "changed",
+          "items"
+        ],
+        "title": "NoteEntry",
+        "type": "object"
+      },
+      "NotePassage": {
+        "properties": {
+          "id": {
+            "description": "What a note's Markdown calls one of the note's passages by: a link whose target is 'passage:' followed by this id leads to the passage. The writer of the note chooses it.",
+            "pattern": "^[0-9a-z]{1,32}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/Passage"
+          }
+        },
+        "required": [
+          "id",
+          "passage"
+        ],
+        "title": "NotePassage",
+        "type": "object"
+      },
+      "NoteView": {
+        "properties": {
+          "changed": {
+            "format": "date-time",
+            "title": "Changed",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "made": {
+            "format": "date-time",
+            "title": "Made",
+            "type": "string"
+          },
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedPassage"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "markdown",
+          "passages",
+          "made",
+          "changed"
+        ],
+        "title": "NoteView",
         "type": "object"
       },
       "PageBlocks": {
@@ -901,6 +1261,23 @@
         "title": "Paragraph",
         "type": "object"
       },
+      "Passage": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/Anchor"
+            },
+            "minItems": 1,
+            "title": "Anchors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "Passage",
+        "type": "object"
+      },
       "Question": {
         "properties": {
           "text": {
@@ -1030,6 +1407,32 @@
           "attempt"
         ],
         "title": "Read",
+        "type": "object"
+      },
+      "Revision": {
+        "properties": {
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "number": {
+            "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "read": {
+            "format": "date-time",
+            "title": "Read",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "document",
+          "read"
+        ],
+        "title": "Revision",
         "type": "object"
       },
       "Searched": {
@@ -1789,6 +2192,28 @@
         "summary": "Ask About Library"
       }
     },
+    "/api/highlights": {
+      "get": {
+        "operationId": "library_highlights_api_highlights_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ItemHighlights"
+                  },
+                  "title": "Response Library Highlights Api Highlights Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Library Highlights"
+      }
+    },
     "/api/items": {
       "get": {
         "operationId": "list_items_api_items_get",
@@ -2298,6 +2723,245 @@
         "summary": "Item Document"
       }
     },
+    "/api/items/{item_id}/highlights": {
+      "get": {
+        "operationId": "item_highlights_api_items__item_id__highlights_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HighlightView"
+                  },
+                  "title": "Response Item Highlights Api Items  Item Id  Highlights Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Highlights"
+      },
+      "post": {
+        "operationId": "make_highlight_api_items__item_id__highlights_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HighlightDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HighlightView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Make Highlight"
+      }
+    },
+    "/api/items/{item_id}/highlights/{highlight_id}": {
+      "delete": {
+        "operationId": "remove_highlight_api_items__item_id__highlights__highlight_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "highlight_id",
+            "required": true,
+            "schema": {
+              "title": "Highlight Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Highlight"
+      }
+    },
+    "/api/items/{item_id}/highlights/{highlight_id}/comment": {
+      "put": {
+        "operationId": "comment_highlight_api_items__item_id__highlights__highlight_id__comment_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "highlight_id",
+            "required": true,
+            "schema": {
+              "title": "Highlight Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Comment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HighlightView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Comment Highlight"
+      }
+    },
     "/api/items/{item_id}/page": {
       "get": {
         "operationId": "item_page_api_items__item_id__page_get",
@@ -2396,6 +3060,165 @@
         "summary": "Item Page Blocks"
       }
     },
+    "/api/items/{item_id}/reading": {
+      "post": {
+        "operationId": "read_again_api_items__item_id__reading_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Again"
+      }
+    },
+    "/api/items/{item_id}/revisions": {
+      "get": {
+        "operationId": "item_revisions_api_items__item_id__revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemRevisions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Item Revisions"
+      }
+    },
+    "/api/items/{item_id}/revisions/{number}/document": {
+      "get": {
+        "operationId": "revision_document_api_items__item_id__revisions__number__document_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+            "in": "path",
+            "name": "number",
+            "required": true,
+            "schema": {
+              "description": "The place of a revision among the revisions of its item, counted from 1 in the order they were first read.",
+              "minimum": 1,
+              "title": "Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revision Document"
+      }
+    },
     "/api/items/{item_id}/source": {
       "get": {
         "operationId": "item_source_api_items__item_id__source_get",
@@ -2436,6 +3259,90 @@
           }
         },
         "summary": "Item Source"
+      }
+    },
+    "/api/items/{item_id}/standing": {
+      "post": {
+        "operationId": "passage_standing_api_items__item_id__standing_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Passage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "found": "#/components/schemas/Found",
+                      "lost": "#/components/schemas/Lost"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Found"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Lost"
+                    }
+                  ],
+                  "title": "Response Passage Standing Api Items  Item Id  Standing Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Passage Standing"
       }
     },
     "/api/items/{item_id}/translation": {
@@ -2660,6 +3567,240 @@
           }
         },
         "summary": "Retranslate Block"
+      }
+    },
+    "/api/notes": {
+      "get": {
+        "operationId": "list_notes_api_notes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NoteEntry"
+                  },
+                  "title": "Response List Notes Api Notes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Notes"
+      },
+      "post": {
+        "operationId": "write_note_api_notes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Note"
+      }
+    },
+    "/api/notes/{note_id}": {
+      "delete": {
+        "operationId": "remove_note_api_notes__note_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Note"
+      },
+      "get": {
+        "operationId": "read_note_api_notes__note_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Note"
+      },
+      "put": {
+        "operationId": "rewrite_note_api_notes__note_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewrite Note"
       }
     }
   }

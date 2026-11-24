@@ -20,6 +20,18 @@ export type Segment = Schemas["Segment"];
 export type PageBlocks = Schemas["PageBlocks"];
 export type Conversation = Schemas["Conversation"];
 export type Turn = Schemas["Turn"];
+export type Passage = Schemas["Passage"];
+export type Standing = Schemas["Found"] | Schemas["Lost"];
+export type Revision = Schemas["Revision"];
+export type ItemRevisions = Schemas["ItemRevisions"];
+export type Highlight = Schemas["HighlightView"];
+export type ItemHighlights = Schemas["ItemHighlights"];
+export type NoteEntry = Schemas["NoteEntry"];
+export type Note = Schemas["NoteView"];
+export type NoteDraft = Schemas["NoteDraft"];
+export type LinkedPassage = Schemas["LinkedPassage"];
+// The anchors of a passage: one at least, of one document, in the order of its blocks.
+export type Anchors = [Anchor, ...Anchor[]];
 // What happens while a question is answered. The protocol lists these as the items of a
 // stream, which the generated types leave out, so the kinds are named here.
 export type ChatEvent =
@@ -43,6 +55,19 @@ export function sourceLink(itemId: string): string {
 // Where the web page an item was read from is served, inert, for a frame to show.
 export function pageLink(itemId: string): string {
   return PAGE_PATH.replace(ITEM_PLACE, itemId);
+}
+
+// How the target of a link in a note's Markdown begins when it leads to one of the note's
+// passages; the passage's id follows.
+export const PASSAGE_LINK = "passage:";
+
+// The anchors of a passage the service gave, which holds one at least.
+export function anchorsOf(passage: Passage): Anchors {
+  const [first, ...rest] = passage.anchors;
+  if (first === undefined) {
+    throw new Error("这段文字没有位置");
+  }
+  return [first, ...rest];
 }
 
 function refusalText(refusal: Refusal | undefined): string {
@@ -244,4 +269,104 @@ export function askAboutLibrary(text: string): AsyncGenerator<ChatEvent> {
 
 export function forgetLibraryConversation(): Promise<void> {
   return done(api.DELETE("/api/conversation"));
+}
+
+// Starts a new reading of the item's source; the document it holds stays until that has given
+// another.
+export function readAgain(itemId: string): Promise<ItemEntry> {
+  return settled(
+    api.POST("/api/items/{item_id}/reading", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function readRevisions(itemId: string): Promise<ItemRevisions> {
+  return settled(
+    api.GET("/api/items/{item_id}/revisions", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function readRevisionDocument(itemId: string, revision: number): Promise<ItemDocument> {
+  return settled(
+    api.GET("/api/items/{item_id}/revisions/{number}/document", {
+      params: { path: { item_id: itemId, number: revision } },
+    }),
+  );
+}
+
+// Where a passage of any revision of the item stands in the document the item holds now.
+export function readStanding(itemId: string, passage: Passage): Promise<Standing> {
+  return settled(
+    api.POST("/api/items/{item_id}/standing", {
+      params: { path: { item_id: itemId } },
+      body: passage,
+    }),
+  );
+}
+
+export function readHighlights(itemId: string): Promise<Highlight[]> {
+  return settled(
+    api.GET("/api/items/{item_id}/highlights", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function makeHighlight(
+  itemId: string,
+  passage: Passage,
+  comment: string,
+): Promise<Highlight> {
+  return settled(
+    api.POST("/api/items/{item_id}/highlights", {
+      params: { path: { item_id: itemId } },
+      body: { passage, comment },
+    }),
+  );
+}
+
+export function commentHighlight(
+  itemId: string,
+  highlightId: string,
+  text: string,
+): Promise<Highlight> {
+  return settled(
+    api.PUT("/api/items/{item_id}/highlights/{highlight_id}/comment", {
+      params: { path: { item_id: itemId, highlight_id: highlightId } },
+      body: { text },
+    }),
+  );
+}
+
+export function removeHighlight(itemId: string, highlightId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/items/{item_id}/highlights/{highlight_id}", {
+      params: { path: { item_id: itemId, highlight_id: highlightId } },
+    }),
+  );
+}
+
+// Every item that has highlights, with them.
+export function readLibraryHighlights(): Promise<ItemHighlights[]> {
+  return settled(api.GET("/api/highlights"));
+}
+
+export function listNotes(): Promise<NoteEntry[]> {
+  return settled(api.GET("/api/notes"));
+}
+
+export function writeNote(draft: NoteDraft): Promise<Note> {
+  return settled(api.POST("/api/notes", { body: draft }));
+}
+
+export function readNote(noteId: string): Promise<Note> {
+  return settled(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
+}
+
+// Puts the draft in place of what the note held.
+export function rewriteNote(noteId: string, draft: NoteDraft): Promise<Note> {
+  return settled(
+    api.PUT("/api/notes/{note_id}", { params: { path: { note_id: noteId } }, body: draft }),
+  );
+}
+
+export function removeNote(noteId: string): Promise<void> {
+  return done(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } }));
 }
