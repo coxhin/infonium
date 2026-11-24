@@ -6,16 +6,20 @@ from pydantic import BaseModel
 
 from infonium.asking import with_attempts
 from infonium.document import Document
-from infonium.glossary import Term
+from infonium.glossary import TERMS_KEPT_IN_ENGLISH, Term
 from infonium.language_model import LanguageModel, StructuredCompletion
 from infonium.translation import translated_numbers
 
 # The survey of a document before it is translated: which language it is in, and the names
 # and terms that recur in it, each with the one translation to use. The sample it is asked
 # about: the blocks that are translated, as many as this many characters hold, spread over
-# the document; and the most terms that are found.
-SAMPLE_CHARACTERS = 12000
-SURVEY_TERMS = 60
+# the document; and the most terms that are found. The terms it lists are rendered one way
+# throughout, and a term it leaves out is judged anew by each request, so it is shown a paper
+# whole: a sample of 12,000 of the 38,897 characters of "Attention Is All You Need" held 3 of
+# its 11 mentions of queries and none of positional encoding or embedding, and the whole
+# paper, 10,400 input tokens, had gpt-6-luna list 60 to 85 terms.
+SAMPLE_CHARACTERS = 40000
+SURVEY_TERMS = 100
 SAMPLE_BETWEEN = "\n\n"
 SURVEY_INSTRUCTIONS = """\
 You are given passages taken from across a document, which is to be translated into \
@@ -27,10 +31,18 @@ language, or in another script of the same language, such as Traditional Chinese
 Simplified Chinese is asked for, is not.
 
 If it is, list no terms: leave the list empty. Otherwise list the names and terms that \
-recur in the passages and that pieces translated apart could render differently: people, \
-places, organisations, works, products, and the terms of the field. Give each the one \
-translation into {language} to use for it throughout the document; where {language} keeps a \
-name as it is written, give it unchanged. List at most {terms}, those that recur most.
+recur in the passages and that pieces translated apart could render differently, in this \
+order. First every term of art that recurs and stays in English by the rule below, as \
+itself, in the singular and without a capital that only begins a sentence. Then every \
+technical word that recurs and is translated by the rule, as its settled word in \
+{language}. Then the names of people, places, organisations, works and products, as \
+{language} writes them, unchanged where {language} keeps them as they are written. List a \
+term once, in the language and letters the passages write it in, with the forms of it that \
+they write, such as its singular and its plural, separated by " / ", and give it the one \
+rendering to use for it throughout the document, alone, with nothing after it in brackets. \
+List at most {terms}.
+
+{terms_kept_in_english}
 """
 
 logger = logging.getLogger(__name__)
@@ -61,7 +73,11 @@ def surveyed(
     completion = with_attempts(
         partial(
             model.structured,
-            instructions=SURVEY_INSTRUCTIONS.format(language=language, terms=SURVEY_TERMS),
+            instructions=SURVEY_INSTRUCTIONS.format(
+                language=language,
+                terms=SURVEY_TERMS,
+                terms_kept_in_english=TERMS_KEPT_IN_ENGLISH.format(language=language),
+            ),
             prompt=document_sample(document),
             output=DocumentSurvey,
         )

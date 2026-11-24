@@ -16,7 +16,7 @@ from infonium.document import (
     Style,
     StyleMark,
 )
-from infonium.glossary import Term, occurring_terms
+from infonium.glossary import TERMS_KEPT_IN_ENGLISH, Term, occurring_terms
 from infonium.language_model import LanguageModel
 
 # A passage is written into a request with its marks as tags around the words they mark, each
@@ -110,6 +110,8 @@ it.
 same in every passage. Where the request lists terms, translate a listed term as it is \
 listed wherever a passage uses it in that sense; words that only look like a listed term \
 are translated for what they say.
+- {terms_kept_in_english} Do not follow a term kept in English with its translation in \
+brackets, nor a translated term with its English, unless the passage itself gives both.
 - Keep the value of every number, and write numbers and units the way {language} writes \
 them.
 - Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \
@@ -476,7 +478,12 @@ def renditions(model: LanguageModel, language: str, passages: Passages) -> Rendi
     # with exactly its passages' answers, or that is answered unusably or out of proportion,
     # is left out of what comes back, with why.
     completion = model.structured(
-        instructions=INSTRUCTIONS.format(language=language), prompt=prompt(passages), output=Reply
+        instructions=INSTRUCTIONS.format(
+            language=language,
+            terms_kept_in_english=TERMS_KEPT_IN_ENGLISH.format(language=language),
+        ),
+        prompt=prompt(passages),
+        output=Reply,
     )
     wordings = wordings_of(passages)
     answers, unusable = block_answers(passages, completion.output)
