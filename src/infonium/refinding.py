@@ -87,11 +87,12 @@ MARK = "M"
 class Spelling(BaseModel):
     # A document's letters, block after block, the letter each block begins at, the last
     # number being the count of letters, and the letters at which a table's cell or row begins,
-    # a table's block counting as a row.
+    # a table's block counting as a row; and the numbers of the blocks that are tables.
     letters: str
     starts: list[int]
     cell_edges: list[int]
     row_edges: list[int]
+    tables: list[int]
 
 
 class BlockLetters(BaseModel):
@@ -122,6 +123,7 @@ class MarkedLetters(BaseModel):
     begin: int
     finish: int
     parts: int
+    rows: int
     before: str
     after: str
     place: float
@@ -148,9 +150,11 @@ def spelling_of(document: Document) -> Spelling:
     starts = list(accumulate(map(len, blocks), initial=0))
     cells: set[int] = set()
     rows: set[int] = set()
+    tables: list[int] = []
     for number, block in enumerate(document.blocks):
         if not isinstance(block, Table):
             continue
+        tables.append(number)
         base, origins = starts[number], block_letters(block).origins
         rows.update({base, starts[number + 1]})
         for offset, character in enumerate(block.text):
@@ -164,6 +168,7 @@ def spelling_of(document: Document) -> Spelling:
         starts=starts,
         cell_edges=sorted(cells | rows),
         row_edges=sorted(rows),
+        tables=tables,
     )
 
 
@@ -284,6 +289,7 @@ def marked_letters(passage: Passage, document: Document, spelling: Spelling) -> 
         begin=begin,
         finish=finish,
         parts=len(seams),
+        rows=len(edges_within(spelling.row_edges, begin, finish)),
         before=spelling.letters[max(0, begin - WIDE_SURROUNDINGS) : begin],
         after=spelling.letters[finish : finish + WIDE_SURROUNDINGS],
         place=begin / max(1, len(spelling.letters)),
@@ -365,14 +371,21 @@ def is_spaced_alike(passage: MarkedLetters, document: Document, pieces: list[Pie
     )
 
 
+def digits_of(letters: str) -> list[str]:
+    return [letter for letter in letters if letter.isdigit()]
+
+
 def is_side_found(marked: str, held: str) -> bool:
     # Whether the letters next to a place on one side are those next to the passage, read away
-    # from it, with one letter changed at most; but none where they hold a digit, since a
-    # changed number next to the place, as the next entry of a numbered list has, makes it
-    # another place. Where the passage has no letters on a side, nothing is asked of it; where
-    # it has some and the place has none, the side is not found.
-    changes = 0 if any(letter.isdigit() for letter in marked) else NEIGHBOUR_CHANGES
-    return not marked or (bool(held) and min(prefix_distances(marked, held)) <= changes)
+    # from it, with one letter changed at most, but no digit: a changed number next to the
+    # place, as the next entry of a numbered list has, makes it another place, while a comma
+    # put in before a date does not. Where the passage has no letters on a side, nothing is
+    # asked of it; where it has some and the place has none, the side is not found.
+    return not marked or any(
+        distance <= NEIGHBOUR_CHANGES and digits_of(held[:length]) == digits_of(marked)
+        for length, distance in enumerate(prefix_distances(marked, held))
+        if length
+    )
 
 
 def side_before(spelling: Spelling, at: int, reach: int, rows: list[int]) -> str:
@@ -391,15 +404,16 @@ def side_after(spelling: Spelling, at: int, reach: int, rows: list[int]) -> str:
 def without_new_blocks(held: Spelling, low: int, high: int, kept_letters: str) -> str:
     # The letters from low to high, but those of short blocks that the passage's surroundings
     # do not hold, such as a heading's link to edit it that a later reading puts after every
-    # heading.
+    # heading. A table, however short, is no such block: its rows are the passage's
+    # surroundings or another table's.
     low, high = max(0, low), min(len(held.letters), high)
     first = bisect_right(held.starts, low) - 1
     kept: list[str] = []
-    for begin, finish in pairwise(held.starts[first:]):
+    for number, (begin, finish) in enumerate(pairwise(held.starts[first:]), start=first):
         if begin >= high:
             break
         letters = held.letters[begin:finish]
-        if finish - begin > INSERTED_LETTERS or letters in kept_letters:
+        if finish - begin > INSERTED_LETTERS or letters in kept_letters or number in held.tables:
             kept.append(held.letters[max(begin, low) : min(finish, high)])
     return "".join(kept)
 
@@ -445,6 +459,16 @@ def sides_found(
     )
 
 
+def is_told_by_row(passage: MarkedLetters, marked: Spelling) -> bool:
+    # Whether the passage is a table's cell whose row holds ROW_LETTERS beside it at least.
+    in_row = side_before(marked, passage.begin, NEIGHBOURS, marked.row_edges) + side_after(
+        marked, passage.finish, NEIGHBOURS, marked.row_edges
+    )
+    return len(in_row) >= ROW_LETTERS and in_row != side_before(
+        marked, passage.begin, NEIGHBOURS, []
+    ) + side_after(marked, passage.finish, NEIGHBOURS, [])
+
+
 def has_neighbours(
     passage: MarkedLetters, marked: Spelling, held: Spelling, stretch: Stretch
 ) -> bool:
@@ -455,16 +479,19 @@ def has_neighbours(
     # it its place and a row moved elsewhere does not take it along; a cell of a shorter row
     # is told by the rows around it.
     across: tuple[list[int], list[int]] = ([], [])
-    in_row = side_before(marked, passage.begin, NEIGHBOURS, marked.row_edges) + side_after(
-        marked, passage.finish, NEIGHBOURS, marked.row_edges
-    )
-    if len(in_row) < ROW_LETTERS or in_row == side_before(
-        marked, passage.begin, NEIGHBOURS, []
-    ) + side_after(marked, passage.finish, NEIGHBOURS, []):
+    if not is_told_by_row(passage, marked):
         return all(sides_found(passage, marked, held, stretch, across))
+    # The rows on one side confirm the place only on a side the passage has: at a document's
+    # edge, the edge confirms nothing.
+    sides = (passage.begin > 0, passage.finish < len(marked.letters))
     return all(
         sides_found(passage, marked, held, stretch, (marked.row_edges, held.row_edges))
-    ) and any(sides_found(passage, marked, held, stretch, across))
+    ) and any(
+        found and has
+        for found, has in zip(
+            sides_found(passage, marked, held, stretch, across), sides, strict=True
+        )
+    )
 
 
 def side_changes(
@@ -500,26 +527,62 @@ def is_copy_s_place(
     # Whether what stands around a place is liker what stood around the marked copy than what
     # stood around any other copy of the passage in its revision: in all by RIVAL_MARGIN
     # changes, and on neither side liker another copy's, by as many, where that copy's side
-    # stands there nearly as it was (no more than a quarter of RIVAL_SIDE changed). A place
-    # that could as well be another copy's is doubtful.
+    # stands there nearly as it was (no more than a quarter of RIVAL_SIDE changed); nor, over
+    # the wide surroundings, liker on a side by WIDE_MARGIN, as where copies stand within a
+    # sentence said again and the rest of what stood around another copy stands beside the
+    # place. A place that could as well be another copy's is doubtful.
     size = passage.finish - passage.begin
     own = side_changes(passage, marked, (passage.begin, passage.finish), held, place)
     held_before = held.letters[max(0, place.start - QUICK_SIDE) : place.start]
     held_after = held.letters[place.end : place.end + QUICK_SIDE]
+    held_wide = wide_sides(held.letters, place.start, place.end)
+    own_wide = [
+        side_likeness(side, held_side)
+        for side, held_side in zip(
+            wide_sides(marked.letters, passage.begin, passage.finish), held_wide, strict=True
+        )
+    ]
     return all(
         not any(
             other_side + RIVAL_MARGIN <= own_side and other_side <= RIVAL_SIDE // 4
             for other_side, own_side in zip(other, own, strict=True)
         )
         and sum(other) >= sum(own) + RIVAL_MARGIN
+        and not any(
+            side_likeness(side, held_side) >= own_side + WIDE_MARGIN
+            for side, held_side, own_side in zip(
+                wide_sides(marked.letters, copy, copy + size), held_wide, own_wide, strict=True
+            )
+        )
         for copy in occurrences(marked.letters, passage.letters, OCCURRENCES_WEIGHED)
         if copy != passage.begin
         and (
             marked.letters[max(0, copy - QUICK_SIDE) : copy] == held_before
             or marked.letters[copy + size : copy + size + QUICK_SIDE] == held_after
         )
+        and is_row_rival(passage, marked, held, place, copy)
         for other in [side_changes(passage, marked, (copy, copy + size), held, place)]
     )
+
+
+def is_row_rival(
+    passage: MarkedLetters, marked: Spelling, held: Spelling, place: Stretch, copy: int
+) -> bool:
+    # Whether another copy of a table's cell could be the one at a place by its own row: a
+    # copy whose row's letters beside it do not stand beside the place on each side, as a
+    # cell of another row numbered otherwise, is no rival of a cell told by its row.
+    if not is_told_by_row(passage, marked):
+        return True
+    size = passage.finish - passage.begin
+    other = passage.model_copy(
+        update={
+            "begin": copy,
+            "finish": copy + size,
+            "before": marked.letters[max(0, copy - WIDE_SURROUNDINGS) : copy],
+            "after": marked.letters[copy + size : copy + size + WIDE_SURROUNDINGS],
+        }
+    )
+    return all(sides_found(other, marked, held, place, (marked.row_edges, held.row_edges)))
 
 
 def positional_likeness(marked: str, held: str) -> float:
@@ -538,7 +601,8 @@ def is_told_apart(
     # Whether no other copy of the passage's very letters in the other revision has the
     # passage's neighbours too, and surroundings that stand as those of the passage stood,
     # letter for letter, more than TOLD_APART of them over both sides of RIVAL_SIDE letters:
-    # such a copy leaves the place in doubt.
+    # such a copy leaves the place in doubt, unless it is the place of another copy in the
+    # passage's revision.
     marked_sides = (passage.before[-RIVAL_SIDE:][::-1], passage.after[:RIVAL_SIDE])
     return not any(
         positional_likeness(
@@ -546,15 +610,36 @@ def is_told_apart(
         )
         + positional_likeness(marked_sides[1], held.letters[copy.end : copy.end + RIVAL_SIDE])
         > TOLD_APART
+        and not is_another_copy_s(passage, marked, held, copy)
         for copy in copies
         if copy.start != place.start and has_neighbours(passage, marked, held, copy)
     )
 
 
+def is_another_copy_s(
+    passage: MarkedLetters, marked: Spelling, held: Spelling, place: Stretch
+) -> bool:
+    # Whether what stands around a place is liker what stood around another copy of the
+    # passage in its revision than what stood around the passage, by RIVAL_MARGIN changes.
+    size = passage.finish - passage.begin
+    own = sum(side_changes(passage, marked, (passage.begin, passage.finish), held, place))
+    return any(
+        sum(side_changes(passage, marked, (copy, copy + size), held, place)) + RIVAL_MARGIN <= own
+        for copy in occurrences(marked.letters, passage.letters, OCCURRENCES_WEIGHED)
+        if copy != passage.begin
+    )
+
+
 def crosses_no_more_cells(passage: MarkedLetters, held: Spelling, place: Stretch) -> bool:
-    # Whether a place runs across no more of a table's cells than the passage was marked
-    # across, the ends of the blocks it ran through counted as cells.
-    return len(edges_within(held.cell_edges, place.start, place.end)) <= passage.parts
+    # Whether a place runs across no more of a table's cells, and no more of its rows' ends,
+    # than the passage was marked across, the ends of the blocks it ran through counted as
+    # cells, and those of the place not counted as rows' ends: a table read again in two
+    # blocks parts no row.
+    starts = set(held.starts)
+    return len(edges_within(held.cell_edges, place.start, place.end)) <= passage.parts and (
+        sum(edge not in starts for edge in edges_within(held.row_edges, place.start, place.end))
+        <= passage.rows
+    )
 
 
 def is_placed(passage: MarkedLetters, marked: Spelling, held: Spelling, place: Stretch) -> bool:
@@ -573,21 +658,24 @@ def is_placed(passage: MarkedLetters, marked: Spelling, held: Spelling, place: S
     )
 
 
-def wide_likeness(passage: MarkedLetters, letters: str, stretch: Stretch) -> float:
-    # How like the wide surroundings of a passage are those of a place, side by side: one less
-    # the changes that make one side the other, as a share of the side's letters. A side the
-    # passage lacks, at its revision's edge, tells nothing, and counts as alike.
-    sides = [
-        (
-            passage.before[::-1],
-            letters[max(0, stretch.start - WIDE_SURROUNDINGS) : stretch.start][::-1],
-        ),
-        (passage.after, letters[stretch.end : stretch.end + WIDE_SURROUNDINGS]),
-    ]
-    return sum(
-        1 - min(prefix_distances(marked, held)) / len(marked) if marked else 1.0
-        for marked, held in sides
+def wide_sides(letters: str, start: int, end: int) -> tuple[str, str]:
+    # The WIDE_SURROUNDINGS letters on each side of a stretch, read away from it.
+    return (
+        letters[max(0, start - WIDE_SURROUNDINGS) : start][::-1],
+        letters[end : end + WIDE_SURROUNDINGS],
     )
+
+
+def side_likeness(marked: str, held: str) -> float:
+    # One less the changes that make one side the other, as a share of the side's letters. A
+    # side the passage lacks, at its revision's edge, tells nothing, and counts as alike.
+    return 1 - min(prefix_distances(marked, held)) / len(marked) if marked else 1.0
+
+
+def wide_likeness(passage: MarkedLetters, letters: str, stretch: Stretch) -> float:
+    # How like the wide surroundings of a passage are those of a place, side by side.
+    held = wide_sides(letters, stretch.start, stretch.end)
+    return side_likeness(passage.before[::-1], held[0]) + side_likeness(passage.after, held[1])
 
 
 def is_whole(passage: MarkedLetters, document: Document, held: Spelling, stretch: Stretch) -> bool:
@@ -737,14 +825,6 @@ def found_places(
     ]
     if is_distinct(passage.letters) and passage.copies == 1 and len(exact) == 1:
         return [place for place in exact if is_shaped(place)]
-    # A passage that each revision holds once, which no other copy can be taken for, is found
-    # where the letters on one side of it stand as they stood, the other side having changed.
-    if passage.copies == 1 and len(exact) == 1:
-        return [
-            place
-            for place in exact
-            if is_shaped(place) and any(sides_found(passage, marked, held, place, ([], [])))
-        ]
     neighboured = [
         place
         for place in exact
@@ -754,18 +834,50 @@ def found_places(
     ]
     if neighboured and len(exact) >= passage.copies:
         return one_place(passage, marked, held, neighboured)
-    near = [
+    placed = [
         place
         for place in (
             to_word_edges(passage, document, held, place) for place in near_places(passage, held)
         )
         if place.end > place.start
         and is_near(place, passage.letters)
-        and says_the_same(passage, held.letters[place.start : place.end])
         and is_shaped(place)
         and is_placed(passage, marked, held, place)
+        and is_told_apart(passage, marked, held, place, exact)
+        and not (place.distance and stood_elsewhere(passage, marked, held, place))
     ]
+    near = [
+        place for place in placed if says_the_same(passage, held.letters[place.start : place.end])
+    ]
+    # Where the nearest of the places so placed differs in a number, the passage was changed
+    # in a number there, and a place further from its words is another passage's.
+    nearest = min((place.distance for place in placed), default=0)
+    if any(place.distance == nearest for place in placed if place not in near) and not any(
+        place.distance == nearest for place in near
+    ):
+        return one_place(passage, marked, held, neighboured)
     return one_place(passage, marked, held, neighboured + near)
+
+
+def stood_elsewhere(
+    passage: MarkedLetters, marked: Spelling, held: Spelling, place: Stretch
+) -> bool:
+    # Whether the letters of a place a little unlike a passage's stood elsewhere in its
+    # revision, the very same or liker than the passage's, as the entry before a removed one
+    # that differs from it in an author's initial does, or a reference said again at the end
+    # of a book in longer words: they are that passage's, not this one's.
+    letters = held.letters[place.start : place.end]
+
+    def is_elsewhere(start: int, end: int) -> bool:
+        return end <= passage.begin or start >= passage.finish
+
+    return any(
+        is_elsewhere(at, at + len(letters))
+        for at in occurrences(marked.letters, letters, OCCURRENCES_WEIGHED)
+    ) or any(
+        is_elsewhere(stretch.start, stretch.end) and stretch.distance < place.distance
+        for stretch in near_stretches(marked.letters, letters)
+    )
 
 
 def to_word_edges(
