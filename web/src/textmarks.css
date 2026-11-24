@@ -1,0 +1,44 @@
+/* The reader's highlights in the text, as textmarks.ts lays them in the registry: a quiet
+   colour of their own under the passage pointed at, darker where two lie over each other, a
+   dotted line under one that has a comment, and the opened one darker still and underlined.
+   The words keep their own colour, so that they read in light and in dark alike. */
+
+::highlight(text-marked) {
+  background-color: var(--marked);
+  color: inherit;
+}
+
+/* A translated segment or line is marked as a whole, though the highlight may hold only part
+   of it, so it is drawn more quietly than words marked exactly. */
+::highlight(text-marked-quietly) {
+  background-color: var(--marked-quietly);
+  color: inherit;
+}
+
+::highlight(text-marked-twice) {
+  background-color: var(--marked-twice);
+  color: inherit;
+}
+
+::highlight(text-commented) {
+  text-decoration: underline dotted 2px var(--marked-line);
+  text-underline-offset: 0.2em;
+}
+
+::highlight(text-opened) {
+  background-color: var(--opened);
+  color: inherit;
+  text-decoration: underline solid 2px var(--marked-line);
+  text-underline-offset: 0.2em;
+}
+
+@media print {
+  ::highlight(text-marked),
+  ::highlight(text-marked-quietly),
+  ::highlight(text-marked-twice),
+  ::highlight(text-commented),
+  ::highlight(text-opened) {
+    background-color: transparent;
+    text-decoration: none;
+  }
+}
