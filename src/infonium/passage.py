@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 from infonium.anchor import Anchor, is_invisible, plain_character
-from infonium.document import Document, Tagged, is_unspaced
+from infonium.document import Document, Tagged, TextRange, is_unspaced
 
 SEVERAL_DOCUMENTS = "the anchors of a passage lie in one document"
 OUT_OF_ORDER = "the anchors of a passage lie in different blocks, in the order of the document"
@@ -173,13 +173,16 @@ class Stretch(BaseModel):
 
 
 class MarkedLetters(BaseModel):
-    # A passage as letters: its letters, which of them stand after white space and which begin
-    # an anchor, the letters around it in the revision it was marked in, near and wide, where
-    # it begins there as a share of that revision's letters, and how many times that revision
-    # holds its letters, up to as many as are weighed.
+    # A passage as letters: the letters from its first anchor's beginning to its last one's
+    # end, those between its anchors included, which of them stand after white space and which
+    # begin a block, the stretches of them that its anchors hold, the letters around it in the
+    # revision it was marked in, near and wide, where it begins there as a share of that
+    # revision's letters, and how many times that revision holds its letters, up to as many as
+    # are weighed.
     letters: str
     spaced: list[bool]
     breaks: list[bool]
+    anchored: list[TextRange]
     before: str
     after: str
     wide_before: str
@@ -264,31 +267,39 @@ def is_distinct(letters: str) -> bool:
 
 
 def marked_letters(passage: Passage, document: Document, spelling: Spelling) -> MarkedLetters:
-    letters: list[str] = []
-    spaced: list[bool] = []
-    breaks: list[bool] = []
+    # The letters between the anchors, as the end of a block that an anchor leaves out, are
+    # looked for with the passage, so that its letters stand together as they do in the
+    # document.
     ends: list[int] = []
     for anchor in passage.anchors:
-        layout = block_letters(document.blocks[anchor.block_number].text)
-        first = bisect_left(layout.origins, anchor.start)
-        last = bisect_left(layout.origins, anchor.end)
+        origins = block_letters(document.blocks[anchor.block_number].text).origins
         base = spelling.starts[anchor.block_number]
-        letters.append(spelling.letters[base + first : base + last])
-        spaced.extend(layout.spaced[first:last])
-        breaks.extend([True] + [False] * (last - first - 1) if last > first else [])
-        ends.extend([base + first, base + last])
-    joined = "".join(letters)
+        ends.extend(
+            [base + bisect_left(origins, anchor.start), base + bisect_left(origins, anchor.end)]
+        )
     begin, finish = ends[0], ends[-1]
+    spaced: list[bool] = []
+    breaks: list[bool] = []
+    for piece in pieces_of(spelling, begin, finish):
+        layout = block_letters(document.blocks[piece.block_number].text)
+        spaced.extend(layout.spaced[piece.start : piece.end])
+        breaks.extend([True] + [False] * (piece.end - piece.start - 1))
+    letters = spelling.letters[begin:finish]
     return MarkedLetters(
-        letters=joined,
+        letters=letters,
         spaced=spaced,
         breaks=breaks,
+        anchored=[
+            TextRange(start=start - begin, end=end - begin)
+            for start, end in zip(ends[::2], ends[1::2], strict=True)
+            if end > start
+        ],
         before=spelling.letters[max(0, begin - SURROUNDINGS) : begin],
         after=spelling.letters[finish : finish + SURROUNDINGS],
         wide_before=spelling.letters[max(0, begin - WIDE_SURROUNDINGS) : begin],
         wide_after=spelling.letters[finish : finish + WIDE_SURROUNDINGS],
         place=begin / max(1, len(spelling.letters)),
-        copies=len(occurrences(spelling.letters, joined, OCCURRENCES_WEIGHED)) if joined else 0,
+        copies=len(occurrences(spelling.letters, letters, OCCURRENCES_WEIGHED)) if letters else 0,
     )
 
 
@@ -693,8 +704,27 @@ def standing_in(passage: Passage, marked_in: Document, document: Document) -> St
         chosen = indistinct_stretches(letters, held)
     if not chosen:
         return Lost()
-    pieces = pieces_of(held, chosen[0].start, chosen[0].end)
+    stretch = chosen[0]
+    pieces = pieces_of(held, stretch.start, stretch.end)
+    # Where the very letters are found, each anchor's letters stand where they stood among
+    # them, and the letters between the anchors are left out again, but where two anchors'
+    # letters come to lie in one block, which holds one anchor of a passage.
+    parts = (
+        [
+            piece
+            for anchor in letters.anchored
+            for piece in pieces_of(held, stretch.start + anchor.start, stretch.start + anchor.end)
+        ]
+        if not stretch.distance
+        else pieces
+    )
+    anchored: list[Piece] = []
+    for part in parts:
+        if anchored and anchored[-1].block_number == part.block_number:
+            anchored[-1] = anchored[-1].model_copy(update={"end": part.end})
+        else:
+            anchored.append(part)
     return Found(
-        passage=Passage(anchors=anchors_at(document, pieces)),
-        exact=not chosen[0].distance and is_spaced_alike(letters, document, pieces),
+        passage=Passage(anchors=anchors_at(document, anchored)),
+        exact=not stretch.distance and is_spaced_alike(letters, document, pieces),
     )
