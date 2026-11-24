@@ -30,7 +30,8 @@ const NOT_FOUND = 404;
 const listeners = new Set<() => void>();
 let notes: Loaded<NoteEntry[]> = LOADING;
 let listReadings = 0;
-let opened: string | undefined;
+const OPEN_NOTE_KEY = "infonium.openNote";
+let opened: string | undefined = sessionStorage.getItem(OPEN_NOTE_KEY) ?? undefined;
 let openings = 0;
 let left: string | undefined;
 let justMade: string | undefined;
@@ -78,7 +79,17 @@ function listed(note: Note): void {
 
 onKept(listed);
 
-// A note started here and left with nothing written in it is not kept anywhere.
+// The note open in this tab is kept with the tab, so that it is open again after a reload. A
+// note started here and left with nothing written in it is not kept anywhere.
+function remember(): void {
+  const session = opened === undefined ? undefined : sessionOf(opened);
+  if (opened === undefined || (session?.state === "ready" && session.unborn)) {
+    sessionStorage.removeItem(OPEN_NOTE_KEY);
+  } else {
+    sessionStorage.setItem(OPEN_NOTE_KEY, opened);
+  }
+}
+
 export function openNote(noteId: string | undefined): void {
   flushWriter();
   if (opened !== undefined && opened !== noteId && blankAndUnborn(opened)) {
@@ -87,6 +98,7 @@ export function openNote(noteId: string | undefined): void {
   left = opened ?? left;
   opened = noteId;
   openings += 1;
+  remember();
   tell();
 }
 
@@ -95,6 +107,7 @@ onBorn((unborn, noteId) => {
   opened = opened === unborn ? noteId : opened;
   left = left === unborn ? noteId : left;
   justMade = justMade === unborn ? noteId : justMade;
+  remember();
   tell();
 });
 
