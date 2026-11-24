@@ -59,6 +59,10 @@
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.notes .stranded small {
+  color: var(--failure);
+}
+
 .notes .here {
   color: var(--accent);
 }

@@ -1,13 +1,23 @@
-import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { Opener } from "./chat";
 import type { Citing } from "./citing";
 import type { NoteEntry } from "./client";
 import { reasonOf } from "./loading";
-import { failureText } from "./notekeeping";
+import { failureText, onSessions, strandedNotes } from "./notekeeping";
 import {
   dropNote,
   makeNote,
   noteLeft,
+  noteName,
   openNote,
   rereadNotes,
   useFirstWords,
@@ -101,6 +111,7 @@ function NoteRow({ entry, here }: { entry: NoteEntry; here: boolean }) {
 
 function NoteList({ seat }: { seat: Seat | undefined }) {
   const notes = useNotes();
+  const stranded = useSyncExternalStore(onSessions, strandedNotes);
   const [making, setMaking] = useState<Doing>(IDLE);
   const list = useRef<HTMLDivElement>(null);
   // Back from a note, the keyboard is given to that note's row, or else to the first control.
@@ -144,6 +155,18 @@ function NoteList({ seat }: { seat: Seat | undefined }) {
       )}
       {notes.state === "ready" && notes.value.length === 0 && (
         <p className="status">还没有笔记。新建一篇，或把摘要、对话和高亮里的内容记到笔记。</p>
+      )}
+      {stranded.length > 0 && (
+        <ul aria-label="在别处删除、这里还有未保存内容的笔记" className="stranded">
+          {stranded.map(({ noteId, text }) => (
+            <li key={noteId} data-note={noteId}>
+              <button className="open" onClick={() => openNote(noteId)}>
+                <span className="name">{noteName(text.title, text.markdown)}</span>
+                <small>在别处删除了，这里写的还没有保存</small>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {notes.state === "ready" && notes.value.length > 0 && (
         <ul aria-label="笔记">

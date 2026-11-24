@@ -86,6 +86,9 @@ export const GONE = "这篇笔记已经不在了。";
 export const UNREACHED = "连不上服务";
 export const OVERTAKEN = "这篇笔记在别处改过，这里写的没有保存。";
 export const REMOVED = "这篇笔记在别处删除了，这里写的没有保存。";
+// What a gateway answers when the service behind it does not; the requests about notes call no
+// model, so the service itself never answers them so (as requestReason in client.ts says).
+const GATEWAY_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
 // What the reader is told of the refusals a reader can act on, by the service's status.
 const REFUSALS: Record<number, string | undefined> = {
   404: "引文所在的原文已经不在库里了",
@@ -104,11 +107,15 @@ const readings = new Map<string, Promise<Ready | undefined>>();
 let writer: { noteId: string; writer: Writer } | undefined;
 let watching = false;
 let readCount = 0;
+let stranded: ReadonlyArray<{ noteId: string; text: Text }> | undefined;
 
 // Why a request about a note failed, as a reader is told it: that the service was not reached,
 // or what it refused. Any other failure is a fault of the app, told as it is.
 export function failureText(error: unknown): string {
-  if (error instanceof UnreachedService) {
+  if (
+    error instanceof UnreachedService ||
+    (error instanceof Refused && GATEWAY_STATUSES.has(error.status))
+  ) {
     return UNREACHED;
   }
   if (error instanceof Refused) {
@@ -118,7 +125,19 @@ export function failureText(error: unknown): string {
 }
 
 function tell(): void {
+  stranded = undefined;
   listeners.forEach((notify) => notify());
+}
+
+// The notes removed elsewhere whose text this visit still holds unkept, which the list offers
+// to open, since the service no longer lists them.
+export function strandedNotes(): ReadonlyArray<{ noteId: string; text: Text }> {
+  stranded ??= [...sessions].flatMap(([noteId, session]) =>
+    session.state === "ready" && session.keeping.state === "removed"
+      ? [{ noteId, text: textOf(session) }]
+      : [],
+  );
+  return stranded;
 }
 
 export function onSessions(notify: () => void): () => void {

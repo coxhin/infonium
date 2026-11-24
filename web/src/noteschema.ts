@@ -23,6 +23,7 @@ import { inlineText, paragraphLine, passageLink } from "./notemarkdown";
 export const PASSAGE_NODE = "passageLink";
 const CARRIED_ATTRIBUTE = "data-carried";
 const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
+const FOOTNOTE_DEFINITION = /^ {0,3}\[\^[^\]]+\]:/m;
 const THIS_MACHINE = [/^localhost$/i, /\.localhost$/i, /^127\./, /^0\.0\.0\.0$/, /^\[::1?\]$/];
 // What a link opens in, and what it tells the site it opens, whatever the HTML it came in said.
 const LINK_TARGET = "_blank";
@@ -333,6 +334,11 @@ export function unheld(editor: Editor, markdown: string): string[] {
     }
   };
   visit((editor.markdown?.instance.lexer(markdown) ?? []) as MarkdownToken[]);
+  // Markdown's reader here knows no footnotes; their definitions are read as plain text that
+  // the editor drops.
+  if (FOOTNOTE_DEFINITION.test(markdown)) {
+    kinds.add("脚注");
+  }
   return [...kinds];
 }
 
