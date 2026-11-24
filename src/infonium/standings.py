@@ -5,8 +5,7 @@ from pydantic import BaseModel
 
 from infonium.document import Document
 from infonium.library import Holding, Library, NotInLibrary, OwnerTransaction, Read, Unread
-from infonium.passage import Passage, Standing
-from infonium.refinding import standing_in
+from infonium.passage import Passage, Standing, standing_in
 from infonium.revision import RevisionNumber, Revisions
 
 # How many parsed documents are kept for working out standings, those used last. A document
@@ -16,10 +15,11 @@ DOCUMENTS_KEPT = 64
 
 class ParsedDocuments:
     # Documents as parsed from the library, kept by owner and document id, the one used least
-    # recently leaving first. A kept document cannot go stale: nothing of it changes under its
-    # id, its snapshot name included, since the library keeps a document as it was first kept.
-    # refinding.standing_in keeps a cache of its own, also by document id: what its search
-    # prepares of a document's blocks, not the document.
+    # recently leaving first. A kept document cannot go stale for a standing: a document's
+    # blocks never change under its id, which is a hash of them, and a standing reads nothing
+    # of a document but its blocks. Its snapshot name may change under the same id, so the
+    # library itself keeps nothing of this kind. passage.standing_in keeps a cache of its own,
+    # also by document id: what its search prepares of a document's blocks, not the document.
     def __init__(self, room: int) -> None:
         self.room = room
         self.documents: OrderedDict[tuple[str, str], Document] = OrderedDict()
