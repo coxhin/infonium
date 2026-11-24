@@ -453,17 +453,22 @@ def among_surroundings(passage: MarkedLetters, text: str) -> Stretch:
     )
 
 
-def nearest_stretch(needle: str, text: str, expected_end: int) -> Stretch:
-    # The stretch of the text that the fewest changes make the needle; of several, the one
-    # that ends nearest where it is expected to.
+def nearest_stretches(needle: str, text: str) -> list[Stretch]:
+    # The stretches of the text that the fewest changes make the needle: one for each place
+    # they end at, ends within the slack of surroundings of each other being one place, as they are
+    # where a letter could go with the stretch or beside it. A text that repeats itself, as
+    # some recognitions write, holds the needle at several places.
     ends = end_distances(needle, text, ANYWHERE)
     distance = min(ends)
-    end = min(
-        (at + 1 for at, held in enumerate(ends) if held == distance),
-        key=lambda at: abs(at - expected_end),
-    )
-    starts = end_distances(needle[::-1], text[:end][::-1], AT_THE_BEGINNING)
-    return Stretch(start=end - 1 - starts.index(min(starts)), end=end, distance=distance)
+    places: list[int] = []
+    for at, held in enumerate(ends):
+        if held == distance and (not places or at - places[-1] > SURROUNDINGS_SLACK):
+            places.append(at)
+    return [
+        Stretch(start=at - starts.index(min(starts)), end=at + 1, distance=distance)
+        for at in places
+        for starts in [end_distances(needle[::-1], text[: at + 1][::-1], AT_THE_BEGINNING)]
+    ]
 
 
 def is_near(stretch: Stretch, needle: str) -> bool:
@@ -492,15 +497,13 @@ def near_stretches(letters: str, needle: str) -> list[Stretch]:
     stretches: list[Stretch] = []
     for group in likeliest[:PLACES_COMPARED]:
         low = max(0, group[0][0] - slack)
-        nearest = nearest_stretch(
-            needle,
-            letters[low : group[-1][0] + len(needle) + slack],
-            group[0][0] - low + len(needle),
-        )
-        if is_near(nearest, needle):
-            stretches.append(
-                Stretch(start=low + nearest.start, end=low + nearest.end, distance=nearest.distance)
+        stretches.extend(
+            Stretch(start=low + nearest.start, end=low + nearest.end, distance=nearest.distance)
+            for nearest in nearest_stretches(
+                needle, letters[low : group[-1][0] + len(needle) + slack]
             )
+            if is_near(nearest, needle)
+        )
     return stretches
 
 
