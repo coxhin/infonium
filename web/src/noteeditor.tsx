@@ -542,6 +542,13 @@ function Writing({ noteId, seat, citing, onOpen, ready }: Shown & { ready: Ready
         maxLength={TITLE_CHARACTERS}
         value={title}
         onChange={(event) => retitle(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter ends the title, as Tab does, unless it ends a word an input method composes.
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            editor.commands.focus("start");
+          }
+        }}
         onBlur={() => handInTyped(false)}
       />
       <EditorContent editor={editor} className="note-body" />
