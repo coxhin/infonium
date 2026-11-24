@@ -78,9 +78,9 @@ from infonium.library_conversation import (
 )
 from infonium.model_connection import Ending
 from infonium.note import NoteDraft
-from infonium.passage import Passage, PassageNotHeld, Standing
+from infonium.passage import Passage, PassageNotHeld, Standing, held_passage, standing_in
 from infonium.reasons import failure_reason
-from infonium.revision import Revision, RevisionNumber
+from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
@@ -565,26 +565,40 @@ def read_again(item_id: str, owner: Owner) -> ItemEntry:
     # read again from the file the library keeps of it. Where a reading of the item is under
     # way already, that one goes on and no other starts. The document the item holds stays
     # until the new reading has given another.
-    raise NotImplementedError(UNBUILT)
+    return entry_of(intake().begin_again(owner, item_id))
 
 
 @app.get("/api/items/{item_id}/revisions", responses=NOT_IN_LIBRARY)
 def item_revisions(item_id: str, owner: Owner) -> ItemRevisions:
     # An item without a document has no revisions.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        document = Library(transaction).holding(item_id).document
+        revisions = Revisions(transaction)
+        return ItemRevisions(
+            current=revisions.of_document(document.id).number,
+            revisions=revisions.of_item(item_id),
+        )
 
 
 @app.get("/api/items/{item_id}/revisions/{number}/document", responses=NOT_IN_LIBRARY)
 def revision_document(item_id: str, number: RevisionNumber, owner: Owner) -> DocumentView:
     # The document of one revision of the item, the one it holds now or an earlier one.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        revision = Revisions(transaction).numbered(item_id, number)
+        document = Library(transaction).owned_document(revision.document)
+    return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
 
 
 @app.post("/api/items/{item_id}/standing", responses=NOT_IN_LIBRARY | NOT_HELD)
 def passage_standing(item_id: str, passage: Passage, owner: Owner) -> Standing:
     # Where a passage of any revision of the item stands in the document the item holds now.
     # A passage of a document that is no revision of the item is not in the library.
-    raise NotImplementedError(UNBUILT)
+    with library_store().library(owner) as library:
+        holding = library.holding(item_id)
+        marked_in = library.owned_document(passage.document_id)
+    if marked_in.item_id != item_id:
+        raise NotInLibrary(f"document {marked_in.id} is no revision of item {item_id}")
+    return standing_in(held_passage(passage, marked_in), marked_in, holding.document)
 
 
 @app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)

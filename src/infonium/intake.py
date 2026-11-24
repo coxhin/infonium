@@ -38,7 +38,9 @@ from infonium.library import (
     Item,
     LibraryStore,
     Link,
+    NotInLibrary,
     Origin,
+    Read,
     Reading,
     Upload,
     is_underway,
@@ -71,6 +73,11 @@ PAGE_OPENINGS = (b"<!doctype html", b"<html")
 # The kinds of file that hold a recording: sound alone, or sound with a picture.
 RECORDING_MEDIA_TYPES = ("audio/", "video/")
 OPENING_BYTES = 1024
+# What a reader is told who asks to read again an upload that no reading has read.
+NOTHING_KEPT = (
+    "infonium keeps nothing of {name} to read again, since no reading of it succeeded;"
+    " upload the file again"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,16 +336,40 @@ class Intake:
         return item
 
     def begin_upload(self, owner: str, name: str, arrived: Path) -> Item:
-        item_id = self.store.upload_identity(owner, arrived)
+        return self.begin_waiting(
+            owner, self.store.upload_identity(owner, arrived), Upload(name=name), arrived
+        )
+
+    def begin_again(self, owner: str, item_id: str) -> Item:
+        # A link is fetched again. An upload is read again from the file kept beside the
+        # document the item holds, under its name: for a recording, the sound that was kept.
+        with self.store.library(owner) as library:
+            item = library.item(item_id)
+            kept = [library.kept_source(item_id)] if isinstance(item.reading, Read) else []
+        if is_underway(item.reading):
+            return item
+        match item.origin:
+            case Link(url=url):
+                return self.begin_link(owner, url)
+            case Upload(name=name) if not kept:
+                # The file of an upload is kept only beside a document read from it.
+                raise NotInLibrary(NOTHING_KEPT.format(name=name))
+            case Upload():
+                with self.store.snapshot(kept[0].snapshot).open("rb") as content:
+                    arrived = self.store.staged(content)
+                return self.begin_waiting(owner, item_id, item.origin, arrived)
+
+    def begin_waiting(self, owner: str, item_id: str, origin: Upload, arrived: Path) -> Item:
+        # A reading of a file that has arrived; where one of the item is under way already, that
+        # one goes on, and the file is not wanted.
         with self.turn:
             underway = self.underway(owner, item_id)
             if underway:
-                # The same bytes are waiting already for the reading that is under way.
                 arrived.unlink()
                 item = underway[0]
             else:
                 arrived.replace(self.store.upload(item_id))
-                item = self.started(owner, item_id, Upload(name=name))
+                item = self.started(owner, item_id, origin)
         if not underway:
             self.read_in_background(owner, item_id)
         return item
