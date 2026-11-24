@@ -5,7 +5,13 @@ import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./clien
 import type { Clock } from "./player";
 import { inView, scrollerOf } from "./scrolling";
 import type { Setting } from "./setting";
-import { AgainControl, overlaps, POINTED_CLASS, type TextRange } from "./translated";
+import {
+  AgainControl,
+  MARK_ATTRIBUTE,
+  overlaps,
+  POINTED_CLASS,
+  type TextRange,
+} from "./translated";
 import type { Again } from "./translation";
 import "./transcript.css";
 
@@ -187,9 +193,9 @@ const BlockLines = memo(function BlockLines({
               disabled={line.place === undefined}
               aria-label={line.place && `从 ${clockTime(line.place.moment)} 播放`}
               onClick={() => line.place && onPlay(line.place)}
-            >
-              {line.place ? clockTime(line.place.moment) : ""}
-            </button>
+              // The time is drawn by the stylesheet, so that a selection copies none of it.
+              {...{ [MARK_ATTRIBUTE]: line.place ? clockTime(line.place.moment) : "" }}
+            />
             <div className="words" onClick={() => play(line.place)}>
               {showsWords && <p className={SAID_CLASS}>{line.words}</p>}
               {line.translation !== undefined && (
