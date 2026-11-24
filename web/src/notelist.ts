@@ -4,20 +4,21 @@ import {
   readNote,
   Refused,
   removeNote,
-  writeNote,
   type Note,
   type NoteEntry,
 } from "./client";
 import type { Loaded } from "./loading";
 import { firstWords } from "./notemarkdown";
 import {
-  adopt,
+  blankAndUnborn,
   failureText,
   flushWriter,
   forget,
+  onBorn,
   onKept,
   onSessions,
   sessionOf,
+  startNote,
   textOf,
 } from "./notekeeping";
 
@@ -30,6 +31,7 @@ const listeners = new Set<() => void>();
 let notes: Loaded<NoteEntry[]> = LOADING;
 let listReadings = 0;
 let opened: string | undefined;
+let openings = 0;
 let left: string | undefined;
 let justMade: string | undefined;
 // The first words of notes without a title, read for the list, by the note and when it was
@@ -76,11 +78,30 @@ function listed(note: Note): void {
 
 onKept(listed);
 
+// A note started here and left with nothing written in it is not kept anywhere.
 export function openNote(noteId: string | undefined): void {
   flushWriter();
+  if (opened !== undefined && opened !== noteId && blankAndUnborn(opened)) {
+    forget(opened);
+  }
   left = opened ?? left;
   opened = noteId;
+  openings += 1;
   tell();
+}
+
+// A note started here goes by its own id once it is kept, and stays open as it was.
+onBorn((unborn, noteId) => {
+  opened = opened === unborn ? noteId : opened;
+  left = left === unborn ? noteId : left;
+  justMade = justMade === unborn ? noteId : justMade;
+  tell();
+});
+
+// How many times a note was opened: an editor is made for each opening, and not again when the
+// open note comes to go by its own id.
+export function useOpenings(): number {
+  return useSyncExternalStore(onChange, () => openings);
 }
 
 export function openedNote(): string | undefined {
@@ -180,12 +201,12 @@ export function useFirstWords(entry: NoteEntry): Loaded<string> {
 }
 
 // Makes an empty note, at the first edition, and opens it.
-export async function makeNote(): Promise<void> {
-  const note = await writeNote({ title: "", markdown: "", passages: [], edition: 1 });
-  adopt(note);
-  listed(note);
-  justMade = note.id;
-  openNote(note.id);
+// Opens a new note, to be written in; it comes to be in the library when it first holds a title
+// or text.
+export function makeNote(): void {
+  const noteId = startNote();
+  justMade = noteId;
+  openNote(noteId);
 }
 
 // Removes a note. One that was removed elsewhere already is gone as asked.

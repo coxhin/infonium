@@ -4,6 +4,7 @@ import { itemTitle } from "./entry";
 import { appended, quoteMarkdown, statementMarkdown } from "./notemarkdown";
 import {
   addLinked,
+  currentId,
   adopt,
   failureText,
   freshen,
@@ -197,7 +198,7 @@ async function intoNote(
       throw error;
     }
     editor?.append(markdown);
-    return { noteId, title: noteName(before.title, appended(before.markdown, markdown)) };
+    return { noteId: currentId(noteId), title: noteName(before.title, appended(before.markdown, markdown)) };
   }
   throw new NotSent(OVERTAKEN);
 }
