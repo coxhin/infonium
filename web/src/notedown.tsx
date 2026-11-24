@@ -97,10 +97,39 @@ function pressText(noting: Noting, rest: number): string {
   return noting.state === "failed" && noting.taken > 0 ? `记下其余 ${rest} 句` : "记到笔记";
 }
 
+// How the control is drawn: as its words, on a line or in a foot of its own, or as a mark in the
+// gutter beside a statement, which always keeps its room, so that showing it moves no line.
+export type NoteDownShape = "words" | "mark";
+
+// The class of a statement that keeps a gutter for its control's mark.
+export const NOTE_GUTTER = "note-gutter";
+
+// The mark that stands for the control beside a statement; the control's name is its label.
+const MARK = "✎";
+const MARK_WRITING = "…";
+
+// What the pointer is told of the control: a mark is named in words, and either says how many
+// citations it leaves out.
+function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
+  const named = shape === "mark" ? "记到笔记" : undefined;
+  if (leftOut === 0) {
+    return named;
+  }
+  return named === undefined ? leftOutTitle(leftOut) : `${named}（${leftOutTitle(leftOut)}）`;
+}
+
 // The control that puts what infonium wrote, or a highlight, into the note being written.
-// It is quiet until the pointer is over what it belongs to or the keyboard is in it; once it
-// has something to say, it stays on show.
-export function NoteDown({ taking, label }: { taking: Taking; label: string }) {
+// It is quiet until the pointer is over what it belongs to or the keyboard is in it, and
+// keeps its room meanwhile; once it has something to say, it stays on show.
+export function NoteDown({
+  taking,
+  label,
+  shape = "words",
+}: {
+  taking: Taking;
+  label: string;
+  shape?: NoteDownShape;
+}) {
   const [noting, setNoting] = useState<Noting>({ state: "idle" });
 
   const { excerpts, leftOut } = taking;
@@ -130,15 +159,19 @@ export function NoteDown({ taking, label }: { taking: Taking; label: string }) {
   }
 
   return (
-    <span className="notedown" data-state={noting.state}>
+    <span className="notedown" data-state={noting.state} data-shape={shape}>
       <button
         className="notedown-press"
         aria-label={taken === 0 ? label : undefined}
-        title={leftOut === 0 ? undefined : leftOutTitle(leftOut)}
+        title={pressTitle(shape, leftOut)}
         disabled={noting.state === "writing"}
         onClick={() => void press()}
       >
-        {pressText(noting, rest)}
+        {shape === "mark" ? (
+          <span aria-hidden="true">{noting.state === "writing" ? MARK_WRITING : MARK}</span>
+        ) : (
+          pressText(noting, rest)
+        )}
       </button>
       {noting.state === "noted" && (
         <span className="notedown-said">

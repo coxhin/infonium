@@ -4,7 +4,7 @@ import { announce } from "./announce";
 import { CutText, useCut } from "./cuttext";
 import { CommentField, typingUnkept } from "./highlightcomment";
 import { RemoveControl } from "./highlightremoval";
-import type { Opened } from "./highlights";
+import { wasMarkedAgain, type Opened } from "./highlights";
 import { NoteDown, type Taking } from "./notedown";
 
 // What an entry asks of the list it is in. The list keeps these the same from render to
@@ -155,19 +155,28 @@ function bringIntoView(element: HTMLElement): void {
   }
 }
 
+const MARKED_ALREADY = "这段已经标过了，就是这一条。";
+
 // An opened highlight is brought into view once its entry is on show; one opened from the
-// source is said, and one opened for a comment gets the comment's field.
+// source is said, and one opened for a comment gets the comment's field. One the reader marked
+// again says that it was marked already, on the entry until another highlight is opened.
 function useOpening(
   opening: Opened | undefined,
   highlight: Highlight,
   entry: RefObject<HTMLLIElement | null>,
   setEditing: (editing: boolean) => void,
-): void {
+): boolean {
+  const [again, setAgain] = useState(false);
   useEffect(() => {
-    if (opening === undefined || actedOn.has(opening)) {
+    if (opening === undefined) {
+      setAgain(false);
+      return;
+    }
+    if (actedOn.has(opening)) {
       return;
     }
     actedOn.add(opening);
+    setAgain(wasMarkedAgain(opening));
     if (opening.commenting) {
       setEditing(true);
     }
@@ -186,9 +195,11 @@ function useOpening(
     });
     if (!chosenInList.has(opening)) {
       const words = startOf(wordsOf(passageNow(highlight)));
-      announce(`笔记本里打开了高亮：${words}${opening.commenting ? "。可以写评论了" : ""}`);
+      const opened = wasMarkedAgain(opening) ? MARKED_ALREADY : "笔记本里打开了高亮：";
+      announce(`${opened}${words}${opening.commenting ? "。可以写评论了" : ""}`);
     }
   }, [opening]);
+  return again;
 }
 
 // One highlight in a list: its words, where it stands, its comment, and at its foot the
@@ -210,7 +221,7 @@ export const HighlightEntry = memo(function HighlightEntry({
   const entry = useRef<HTMLLIElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(() => typingUnkept(highlight.id));
-  useOpening(opening, highlight, entry, setEditing);
+  const markedAgain = useOpening(opening, highlight, entry, setEditing);
 
   return (
     <li
@@ -221,6 +232,7 @@ export const HighlightEntry = memo(function HighlightEntry({
       data-commented={highlight.comment !== ""}
     >
       <Words highlight={highlight} pressed={pressed} actions={actions} />
+      {markedAgain && <p className="marked-again">{MARKED_ALREADY}</p>}
       <StandingNote highlight={highlight} actions={actions} />
       <CommentField
         highlight={highlight}
