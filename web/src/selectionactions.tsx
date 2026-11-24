@@ -249,7 +249,11 @@ export function SelectionActions({
     }, "没有标上");
   const note = () =>
     act(async () => {
-      const done = await noteDown({ kind: "quote", cited: { anchors: chosen, itemId } });
+      const done = await noteDown({
+        kind: "quote",
+        cited: { anchors: chosen, itemId },
+        comment: "",
+      });
       setNoted({ noted: done, at });
     }, "没有记到笔记");
 

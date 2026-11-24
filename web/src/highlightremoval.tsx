@@ -84,7 +84,7 @@ export function RemoveControl({
           aria-label="确认移除高亮"
           onKeyDown={(event) => event.key === "Escape" && cancel()}
         >
-          移除这条高亮{highlight.comment === "" ? "" : "和它的评论"}？
+          移除这条高亮{highlight.comment === "" ? "" : "和它的批注"}？
           <button className="danger" onClick={() => void confirm()}>
             移除
           </button>

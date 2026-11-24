@@ -32,10 +32,10 @@ import { noteName, openedNote, openNote } from "./notelist";
 export type Cited = { anchors: Anchors; itemId: string };
 
 // A statement infonium wrote, of a digest or an answer, with the passages it cites; or a
-// passage quoted from a source.
+// passage quoted from a source, with what the reader noted on it, empty where nothing was.
 export type Excerpt =
   | { kind: "statement"; text: string; cited: Cited[] }
-  | { kind: "quote"; cited: Cited };
+  | { kind: "quote"; cited: Cited; comment: string };
 
 // Where an excerpt went: the note, and what it is called.
 export type Noted = { noteId: string; title: string };
@@ -99,6 +99,7 @@ function written(
           excerpt.cited.anchors.map((anchor) => anchor.quote),
           titles.get(excerpt.cited.itemId) ?? UNNAMED_SOURCE,
           passageId,
+          excerpt.comment,
         )
       : statementMarkdown(excerpt.text, [...linked.keys()]);
   return { markdown, linked };

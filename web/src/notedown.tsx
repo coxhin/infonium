@@ -103,6 +103,8 @@ export type NoteDownShape = "words" | "mark";
 
 // The class of a statement that keeps a gutter for its control's mark.
 export const NOTE_GUTTER = "note-gutter";
+// The class of the control's press.
+export const NOTE_DOWN_PRESS = "notedown-press";
 
 // The mark that stands for the control beside a statement; the control's name is its label.
 const MARK = "✎";
@@ -120,13 +122,17 @@ function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
 
 // The control that puts what infonium wrote, or a highlight, into the note being written.
 // It is quiet until the pointer is over what it belongs to or the keyboard is in it, and
-// keeps its room meanwhile; once it has something to say, it stays on show.
+// keeps its room meanwhile; once it has something to say, it stays on show. Settled gives what
+// a press takes where some of it may still be being written, as a highlight's comment; it holds
+// as many excerpts as taking, with which the control is drawn.
 export function NoteDown({
   taking,
+  settled,
   label,
   shape = "words",
 }: {
   taking: Taking;
+  settled?: () => Promise<Taking>;
   label: string;
   shape?: NoteDownShape;
 }) {
@@ -140,8 +146,9 @@ export function NoteDown({
   async function press() {
     setNoting({ state: "writing" });
     try {
+      const pressed = settled === undefined ? excerpts : (await settled()).excerpts;
       const noted = await noteFrom(
-        excerpts,
+        pressed,
         taken,
         noting.state === "failed" ? noting.noted : undefined,
       );
@@ -161,7 +168,7 @@ export function NoteDown({
   return (
     <span className="notedown" data-state={noting.state} data-shape={shape}>
       <button
-        className="notedown-press"
+        className={NOTE_DOWN_PRESS}
         aria-label={taken === 0 ? label : undefined}
         title={pressTitle(shape, leftOut)}
         disabled={noting.state === "writing"}

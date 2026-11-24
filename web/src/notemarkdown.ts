@@ -35,6 +35,11 @@ const THIS_MACHINE = [
 ];
 const ADDRESS_END = /[.,;:!?'"]+$/;
 const LEADING_SPACE = /^[ \t]+/;
+const TRAILING_SPACE = /[ \t]+$/;
+// A line of nothing but spaces ends a paragraph, as an empty one does.
+const BLANK_LINES = /\n(?:[ \t]*\n)+/;
+// A line break inside a paragraph, as the editor writes one.
+const HARD_BREAK = "  \n";
 const SPACE_REFERENCES: Record<string, string> = { " ": "&#32;", "\t": "&#9;" };
 const FIRST_WORDS = 24;
 const LINK = /!?\[([^\]]*)\]\([^)]*\)/g;
@@ -120,18 +125,43 @@ export function statementMarkdown(text: string, passageIds: string[]): string {
   return [paragraph(linkedAddresses(text)), ...links].join(" ");
 }
 
+// What the reader noted on a passage, as text of their own: a paragraph for each run of lines
+// between blank ones, a line break kept as one, and a web address as a link. The spaces Markdown
+// drops at the end of a line are dropped here, so that the editor writes the same back.
+function commentMarkdown(comment: string): string {
+  return comment
+    .trim()
+    .split(BLANK_LINES)
+    .filter((written) => written !== "")
+    .map((written) =>
+      written
+        .split("\n")
+        .map((line) => paragraphLine(linkedAddresses(line.replace(TRAILING_SPACE, ""))))
+        .join(HARD_BREAK),
+    )
+    .join("\n\n");
+}
+
 // The words of a passage, a paragraph for each block it runs through, as a quotation; then a
-// link to it, called after its source. A line break within a block is kept as one.
-export function quoteMarkdown(quotes: string[], source: string, passageId: string): string {
+// link to it, called after its source; then what the reader noted on it, if anything. A line
+// break within a block is kept as one.
+export function quoteMarkdown(
+  quotes: string[],
+  source: string,
+  passageId: string,
+  comment: string,
+): string {
   const quoted = quotes
     .map((quote) =>
       quote
         .split("\n")
         .map((line) => `> ${paragraphLine(inlineText(line))}`)
-        .join("  \n"),
+        .join(HARD_BREAK),
     )
     .join("\n>\n");
-  return `${quoted}\n\n${passageLink(inlineText(source), passageId)}`;
+  const linked = `${quoted}\n\n${passageLink(inlineText(source), passageId)}`;
+  const noted = commentMarkdown(comment);
+  return noted === "" ? linked : `${linked}\n\n${noted}`;
 }
 
 // A note's Markdown with more put at its end, as a block of its own.

@@ -1,11 +1,11 @@
-import { memo, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
 import { anchorsOf, type Highlight, type Passage } from "./client";
 import { announce } from "./announce";
 import { CutText, useCut } from "./cuttext";
-import { CommentField, typingUnkept } from "./highlightcomment";
+import { CommentField, typingUnkept, type SettleComment } from "./highlightcomment";
 import { RemoveControl } from "./highlightremoval";
 import { wasMarkedAgain, type Opened } from "./highlights";
-import { NoteDown, type Taking } from "./notedown";
+import { NOTE_DOWN_PRESS, NoteDown, type Taking } from "./notedown";
 
 // What an entry asks of the list it is in. The list keeps these the same from render to
 // render, so that an entry is drawn again only when its own highlight changes.
@@ -126,16 +126,23 @@ function StandingNote({ highlight, actions }: { highlight: Highlight; actions: E
   );
 }
 
-function quoteTaking(highlight: Highlight): Taking {
+function quoteTaking(highlight: Highlight, comment: string): Taking {
   return {
     excerpts: [
       {
         kind: "quote",
         cited: { anchors: anchorsOf(passageNow(highlight)), itemId: highlight.item },
+        comment,
       },
     ],
     leftOut: 0,
   };
+}
+
+function keepFieldFocused(event: MouseEvent): void {
+  if (event.target instanceof Element && event.target.closest(`.${NOTE_DOWN_PRESS}`) !== null) {
+    event.preventDefault();
+  }
 }
 
 // Scrolls the list the entry is in, and only that, so that the whole entry is in view, or its
@@ -196,7 +203,7 @@ function useOpening(
     if (!chosenInList.has(opening)) {
       const words = startOf(wordsOf(passageNow(highlight)));
       const opened = wasMarkedAgain(opening) ? MARKED_ALREADY : "笔记本里打开了高亮：";
-      announce(`${opened}${words}${opening.commenting ? "。可以写评论了" : ""}`);
+      announce(`${opened}${words}${opening.commenting ? "。可以写批注了" : ""}`);
     }
   }, [opening]);
   return again;
@@ -220,6 +227,7 @@ export const HighlightEntry = memo(function HighlightEntry({
 }) {
   const entry = useRef<HTMLLIElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
+  const settler = useRef<SettleComment>(null);
   const [editing, setEditing] = useState(() => typingUnkept(highlight.id));
   const markedAgain = useOpening(opening, highlight, entry, setEditing);
 
@@ -239,15 +247,25 @@ export const HighlightEntry = memo(function HighlightEntry({
         editing={editing}
         setEditing={setEditing}
         editButton={editButton}
+        settler={settler}
       />
       <div className="entry-foot">
         {!editing && (
           <button ref={editButton} className="edit-comment" onClick={() => setEditing(true)}>
-            {highlight.comment === "" ? "写评论" : "改评论"}
+            {highlight.comment === "" ? "写批注" : "改批注"}
           </button>
         )}
-        <span className="entry-actions">
-          <NoteDown taking={quoteTaking(highlight)} label="记到笔记：这条高亮" />
+        {/* Pressing 记到笔记 leaves the keyboard in an open comment's field: leaving it would
+            keep the comment and close the field, which moves the control from under the
+            pointer before the press ends. The press keeps the comment itself. */}
+        <span className="entry-actions" onMouseDown={keepFieldFocused}>
+          <NoteDown
+            taking={quoteTaking(highlight, highlight.comment)}
+            settled={async () =>
+              quoteTaking(highlight, (await settler.current?.()) ?? highlight.comment)
+            }
+            label="记到笔记：这条高亮"
+          />
           <RemoveControl highlight={highlight} onRemoved={actions.removed} />
         </span>
       </div>
