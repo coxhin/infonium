@@ -582,9 +582,11 @@ def surrounded_places(
     passage: MarkedLetters, held: Spelling, arounds: list[Stretch]
 ) -> list[Stretch]:
     # A passage that is not distinct, among the letters likest it with its surroundings, where
-    # its surroundings are found beside it.
+    # its surroundings are found beside it. Its surroundings may be likest it at several ends
+    # where one side of them has changed, which hold the passage at one place: places within
+    # the slack of each other are one.
     likest = min((around.distance for around in arounds), default=0)
-    return [
+    placed = [
         stretch
         for around in arounds
         if around.distance - likest < NEAR_MARGIN
@@ -599,6 +601,11 @@ def surrounded_places(
         ]
         if is_surrounded(passage, held, stretch)
     ]
+    places: list[Stretch] = []
+    for stretch in sorted(placed, key=lambda stretch: (stretch.distance, stretch.start)):
+        if all(abs(stretch.start - place.start) > SURROUNDINGS_SLACK for place in places):
+            places.append(stretch)
+    return places
 
 
 def distinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
