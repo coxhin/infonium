@@ -8,7 +8,14 @@ import sqlalchemy
 from pydantic import AwareDatetime, BaseModel, StringConstraints
 from sqlalchemy.dialects import sqlite
 
-from infonium.library import NotInLibrary, OwnerTransaction, document_table, item_table, metadata
+from infonium.library import (
+    Library,
+    NotInLibrary,
+    OwnerTransaction,
+    document_table,
+    item_table,
+    metadata,
+)
 from infonium.passage import Found, Lost, Passage, held_passage
 from infonium.standings import MarkedStanding, StandingReader
 
@@ -108,6 +115,7 @@ class Highlights:
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.connection = transaction.connection
         self.owner = transaction.owner
+        self.library = Library(transaction)
         self.standing_reader = StandingReader(transaction)
 
     def of_highlight(self, item_id: str, highlight_id: str) -> list[sqlalchemy.ColumnElement[bool]]:
@@ -122,7 +130,9 @@ class Highlights:
         # passage the item has a highlight of already is that highlight, unchanged.
         passage = draft.passage
         self.standing_reader.revision_number(item_id, passage.document_id)
-        held_passage(passage, self.standing_reader.document(passage.document_id))
+        # A draft is checked against the library itself, not the documents kept for standings,
+        # which do not ask whether the owner holds a document.
+        held_passage(passage, self.library.owned_document(passage.document_id))
         key = passage_key(passage)
         highlight = Highlight(
             id=uuid4().hex, item_id=item_id, passage=passage, comment=draft.comment, made=made

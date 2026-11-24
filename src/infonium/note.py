@@ -5,7 +5,14 @@ from uuid import uuid4
 import sqlalchemy
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
 
-from infonium.library import NotInLibrary, OwnerTransaction, document_table, item_table, metadata
+from infonium.library import (
+    Library,
+    NotInLibrary,
+    OwnerTransaction,
+    document_table,
+    item_table,
+    metadata,
+)
 from infonium.passage import Passage, held_passage
 from infonium.standings import MarkedStanding, StandingReader
 
@@ -149,14 +156,23 @@ class Notes:
     def __init__(self, transaction: OwnerTransaction) -> None:
         self.connection = transaction.connection
         self.owner = transaction.owner
+        self.library = Library(transaction)
         self.standing_reader = StandingReader(transaction)
 
     def linked_items(self, draft: NoteDraft) -> list[str]:
         # The item each passage of the draft lies in. A passage is refused unless its document
-        # is one of the owner's and holds it as it is given.
+        # is one of the owner's and holds it as it is given. A draft is checked against the
+        # library itself, not the documents kept for standings, which do not ask whether the
+        # owner holds a document; each document of the draft is read once.
+        documents = {
+            document_id: self.library.owned_document(document_id)
+            for document_id in dict.fromkeys(
+                linked.passage.document_id for linked in draft.passages
+            )
+        }
         items = []
         for linked in draft.passages:
-            document = self.standing_reader.document(linked.passage.document_id)
+            document = documents[linked.passage.document_id]
             held_passage(linked.passage, document)
             items.append(document.item_id)
         return items
