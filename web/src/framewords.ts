@@ -1,7 +1,12 @@
-// The text of an element of the page that stands for a block, or for a cell of a table block,
-// and its correspondence with that text: which character of the block's text each character of
-// the element is. The two hold the same words, but not character for character: white space
-// differs as the page's source had it, and the page may hold words the extractor left out.
+import type { Block } from "./client";
+import type { HolderPlace } from "./pagewriter";
+
+// The words of an element of the framed page that stands for a block, or for a cell of a table
+// block, and their correspondence with the text it stands for: which character of the text
+// each character of the element is, and back. The two hold the same words, but not character
+// for character: white space differs as the page's source had it, and the page may hold words
+// the extractor left out. A passage pointed at, a highlight drawn and a selection handed over
+// all go through this one correspondence, so that the same range lands on the same words.
 
 // What the extractor leaves out of a block's text that the page holds: words struck out, code
 // for the browser, what the page's own markup hides, and the translation infonium writes after
@@ -43,6 +48,10 @@ const REJOINING_REACH = 4000;
 const UNCOMPARED = -2;
 // A character of either text that the other does not hold.
 const UNMATCHED = -1;
+// An element that clips what it holds to this many pixels or fewer across shows none of it, as
+// the text a page writes for screen readers alone.
+const CLIPPED_SIZE = 1;
+const SHOWN_OVERFLOW = "visible";
 
 const forms = new Map<string, string>();
 
@@ -64,25 +73,59 @@ function comparableForm(character: string): string {
   return form;
 }
 
+// Whether an element draws what it holds where the reader sees it: not hidden, see-through or
+// clipped to nothing, itself or by any element around it up to the one that stands for the
+// block. Each element is judged once.
+function drawsWithin(element: Element, holder: Element, known: Map<Element, boolean>): boolean {
+  const judged = known.get(element);
+  if (judged !== undefined) {
+    return judged;
+  }
+  const view = element.ownerDocument.defaultView;
+  const style = view?.getComputedStyle(element);
+  const box = element.getBoundingClientRect();
+  const clipped =
+    style !== undefined &&
+    (style.overflowX !== SHOWN_OVERFLOW || style.overflowY !== SHOWN_OVERFLOW) &&
+    (box.width <= CLIPPED_SIZE || box.height <= CLIPPED_SIZE);
+  const draws =
+    element.checkVisibility({ visibilityProperty: true, opacityProperty: true }) &&
+    !clipped &&
+    (element === holder ||
+      element.parentElement === null ||
+      drawsWithin(element.parentElement, holder, known));
+  known.set(element, draws);
+  return draws;
+}
+
 // The characters of an element as the extractor reads them, in the page's order: each a place
-// in the page where it begins and its length there. A quotation mark of an inline quotation
-// has none, and stands at the edge of its element.
-type ShownText = { characters: string[]; nodes: Node[]; offsets: number[]; lengths: number[] };
+// in the page where it begins, its length there, and whether the reader sees it. A quotation
+// mark of an inline quotation has no length, and stands at the edge of its element.
+type ShownText = {
+  characters: string[];
+  nodes: Node[];
+  offsets: number[];
+  lengths: number[];
+  drawn: boolean[];
+};
 
 function shownText(element: Element): ShownText {
-  const shown: ShownText = { characters: [], nodes: [], offsets: [], lengths: [] };
-  function add(character: string, node: Node, offset: number, length: number) {
+  const shown: ShownText = { characters: [], nodes: [], offsets: [], lengths: [], drawn: [] };
+  const known = new Map<Element, boolean>();
+  function add(character: string, node: Node, offset: number, length: number, drawn: boolean) {
     shown.characters.push(character);
     shown.nodes.push(node);
     shown.offsets.push(offset);
     shown.lengths.push(length);
+    shown.drawn.push(drawn);
   }
-  function walk(parent: Node) {
+  function walk(parent: Element) {
     for (const child of parent.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
+        const drawn = drawsWithin(parent, element, known);
         let offset = 0;
         for (const character of child.textContent ?? "") {
-          add(character, child, offset, character.length);
+          add(character, child, offset, character.length, drawn);
           offset += character.length;
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -94,12 +137,13 @@ function shownText(element: Element): ShownText {
           continue;
         }
         const quotation = inner.localName === INLINE_QUOTATION;
+        const drawn = quotation && drawsWithin(inner, element, known);
         if (quotation) {
-          add(OPENING_QUOTATION_MARK, inner, 0, 0);
+          add(OPENING_QUOTATION_MARK, inner, 0, 0, drawn);
         }
         walk(inner);
         if (quotation) {
-          add(CLOSING_QUOTATION_MARK, inner, inner.childNodes.length, 0);
+          add(CLOSING_QUOTATION_MARK, inner, inner.childNodes.length, 0, drawn);
         }
       }
     }
@@ -108,17 +152,17 @@ function shownText(element: Element): ShownText {
   return shown;
 }
 
-// Characters in their compared form, written one after another, and for each unit of that
-// form the character it comes from.
-function compared(characters: string[]): { text: string; origins: number[] } {
+// Some of a list of characters in their compared form, written one after another, and for each
+// unit of that form the place in the list of the character it comes from.
+function compared(characters: string[], chosen: number[]): { text: string; origins: number[] } {
   const units: string[] = [];
   const origins: number[] = [];
-  characters.forEach((character, index) => {
-    for (const unit of comparableForm(character)) {
+  for (const index of chosen) {
+    for (const unit of comparableForm(characters[index] ?? "")) {
       units.push(unit);
       origins.push(index);
     }
-  });
+  }
   return { text: units.join(""), origins };
 }
 
@@ -160,13 +204,101 @@ function pairedUnits(page: string, block: string): number[] {
   return pairs;
 }
 
-// A stretch of the block's text, from a character's offset to the offset after the last, in
-// code points.
+// For each character of the page, the code point of the text it is, pairing the text with some
+// of the page's characters; and how many units of the text found a character.
+function pairing(
+  shown: ShownText,
+  chosen: number[],
+  block: { text: string; origins: number[] },
+): { inText: number[]; matched: number } {
+  const page = compared(shown.characters, chosen);
+  const pairs = pairedUnits(page.text, block.text);
+  const inText = new Array<number>(shown.characters.length).fill(UNMATCHED);
+  let matched = 0;
+  pairs.forEach((unit, pageUnit) => {
+    const character = page.origins[pageUnit];
+    const codePoint = block.origins[unit];
+    if (unit === UNMATCHED || character === undefined || codePoint === undefined) {
+      return;
+    }
+    matched += 1;
+    if (inText[character] === UNMATCHED) {
+      inText[character] = codePoint;
+    }
+  });
+  return { inText, matched };
+}
+
+// A stretch of a text, from a character's offset to the offset after the last, in code points.
 export type Span = { start: number; end: number };
 
-// The correspondence between an element of the page and the text it stands for: for each
-// character of each, the character of the other that it is, where the other holds it.
-export class PageText {
+function isWords(character: string): boolean {
+  return character.trim() !== "";
+}
+
+// The stretch of a text but for white space at either end; none where it is all white space.
+export function trimmedSpan(text: string): Span | undefined {
+  const characters = [...text];
+  const start = characters.findIndex(isWords);
+  if (start === -1) {
+    return undefined;
+  }
+  let end = characters.length;
+  while (end > start && !isWords(characters[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return { start, end };
+}
+
+// The text an element stands for, and where that text begins in its block's text, counted in
+// code points: a block's whole text, or a cell's.
+export type HeldText = { text: string; offset: number; length: number };
+
+const CELL_KEY_SEPARATOR = "/";
+const cellTextsOf = new WeakMap<Block, Map<string, HeldText>>();
+
+function codePointLength(text: string): number {
+  return [...text].length;
+}
+
+// A table's cells, each with its place in the table's text, as the cell attribute names it.
+function cellsOfTable(block: Block & { kind: "table" }): Map<string, HeldText> {
+  const known = cellTextsOf.get(block);
+  if (known !== undefined) {
+    return known;
+  }
+  const cells = new Map<string, HeldText>();
+  const cellSeparator = codePointLength(block.cell_separator);
+  const rowSeparator = codePointLength(block.row_separator);
+  let offset = 0;
+  block.text.split(block.row_separator).forEach((row, rowNumber) => {
+    row.split(block.cell_separator).forEach((text, cellNumber) => {
+      const length = codePointLength(text);
+      cells.set(`${rowNumber}${CELL_KEY_SEPARATOR}${cellNumber}`, { text, offset, length });
+      offset += length + cellSeparator;
+    });
+    offset += rowSeparator - cellSeparator;
+  });
+  cellTextsOf.set(block, cells);
+  return cells;
+}
+
+export function heldTextOf(block: Block, place: HolderPlace): HeldText | undefined {
+  if (place.cell === undefined) {
+    return block.kind === "table"
+      ? undefined
+      : { text: block.text, offset: 0, length: codePointLength(block.text) };
+  }
+  return block.kind === "table"
+    ? cellsOfTable(block).get(`${place.cell.row}${CELL_KEY_SEPARATOR}${place.cell.cell}`)
+    : undefined;
+}
+
+// The correspondence between an element of the page and the text it stands for. Where the page
+// holds a stretch the text lacks, the characters the reader does not see are passed over before
+// those the reader sees: the text is paired with the seen characters alone, unless pairing it
+// with all of them finds more of it, as where the extractor read words the page hides.
+export class FrameWords {
   readonly element: Element;
   readonly text: string;
   readonly shown: ShownText;
@@ -180,31 +312,29 @@ export class PageText {
     this.text = text;
     this.shown = shownText(element);
     const codePoints = [...text];
-    const page = compared(this.shown.characters);
-    const block = compared(codePoints);
-    const pairs = pairedUnits(page.text, block.text);
-    this.inText = new Array<number>(this.shown.characters.length).fill(UNMATCHED);
+    const block = compared(
+      codePoints,
+      codePoints.map((_, index) => index),
+    );
+    const every = this.shown.characters.map((_, index) => index);
+    const seen = every.filter((index) => this.shown.drawn[index] === true);
+    const whole = pairing(this.shown, every, block);
+    const chosen =
+      seen.length === every.length ? whole : pairing(this.shown, seen, block);
+    this.inText = (chosen.matched >= whole.matched ? chosen : whole).inText;
     this.inPage = codePoints.map((character) =>
       comparableForm(character) === "" ? UNCOMPARED : UNMATCHED,
     );
-    pairs.forEach((unit, pageUnit) => {
-      const character = page.origins[pageUnit];
-      const codePoint = block.origins[unit];
-      if (unit === UNMATCHED || character === undefined || codePoint === undefined) {
-        return;
-      }
-      if (this.inText[character] === UNMATCHED) {
-        this.inText[character] = codePoint;
-      }
-      if (this.inPage[codePoint] === UNMATCHED) {
+    this.inText.forEach((codePoint, character) => {
+      if (codePoint >= 0 && this.inPage[codePoint] === UNMATCHED) {
         this.inPage[codePoint] = character;
       }
     });
   }
 
   // The words of a stretch of the text in the element: from where its first character that is
-  // not white space begins to where its last ends. None where the element does not hold
-  // either of the two.
+  // not white space begins to where its last ends. None where the element does not hold either
+  // of the two, or where the reader sees none of the words between them.
   wordsOf(span: Span): Range | null {
     let first = span.start;
     while (first < span.end && this.inPage[first] === UNCOMPARED) {
@@ -217,6 +347,9 @@ export class PageText {
     const begins = this.inPage[first] ?? UNMATCHED;
     const ends = this.inPage[last] ?? UNMATCHED;
     if (last < first || begins < 0 || ends < begins) {
+      return null;
+    }
+    if (!this.shown.drawn.slice(begins, ends + 1).some((drawn) => drawn)) {
       return null;
     }
     const range = this.element.ownerDocument.createRange();

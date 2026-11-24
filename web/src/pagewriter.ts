@@ -1,6 +1,6 @@
 import { cellTexts, cutAtMarks, STYLE_ELEMENTS } from "./blocktext";
 import type { Block, Mark, PageBlocks, TranslatedBlock } from "./client";
-import { PageText } from "./pagetext";
+import { FrameWords } from "./framewords";
 import type { Setting } from "./setting";
 
 // What infonium adds to the page goes in an element of a name of its own: the service takes
@@ -27,6 +27,8 @@ const NEW_TAB_FEATURES = "noopener,noreferrer";
 const MIDDLE_BUTTON = 1;
 // A pointer moved further than this, in pixels, between its press and its release dragged.
 const DRAG_DISTANCE = 4;
+// The count of presses a click reports when a key, not a pointer, activated what it is on.
+const KEY_ACTIVATION = 0;
 // A fragment that names no element of the page leads to its top, as in a browser.
 const TOP_FRAGMENT = "top";
 const PERCENT_ESCAPE = /^%([0-9a-f]{2})$/i;
@@ -90,7 +92,7 @@ export class FramedPage {
   readonly pointedRule: CSSStyleSheet;
   readonly served = new Map<Element, Node[]>();
   readonly written = new Map<Element, { setting: Setting; translated: TranslatedBlock }>();
-  readonly texts = new Map<Element, PageText>();
+  readonly words = new Map<Element, FrameWords>();
   marked = false;
 
   constructor(document: Document, view: Window & typeof globalThis) {
@@ -114,36 +116,42 @@ export class FramedPage {
   }
 
   // The correspondence between the source an element shows and the text it stands for.
-  textOf(element: Element, text: string): PageText {
-    const known = this.texts.get(element);
+  wordsOf(element: Element, text: string): FrameWords {
+    const known = this.words.get(element);
     if (known?.text === text) {
       return known;
     }
-    const compared = new PageText(element, text);
-    this.texts.set(element, compared);
+    const compared = new FrameWords(element, text);
+    this.words.set(element, compared);
     return compared;
   }
 
+  // Forgets every correspondence, which tells what the reader sees of the page, once the page's
+  // stylesheets have changed what that is.
+  forgetWords(): void {
+    this.words.clear();
+  }
+
   // Puts in an element the content the setting asks for: the nodes it was served with, these
-  // nodes in their place, or these nodes after them.
+  // nodes in their place, or these nodes after them; and says whether its content changed.
   write(
     element: Element,
     setting: Setting,
     translated: TranslatedBlock | undefined,
     nodes: () => Node[],
-  ): void {
+  ): boolean {
     const before = this.written.get(element);
     const wanted = setting === "source" ? undefined : translated;
     if (before?.translated === wanted && (wanted === undefined || before?.setting === setting)) {
-      return;
+      return false;
     }
     const served = this.served.get(element) ?? [...element.childNodes];
     this.served.set(element, served);
-    this.texts.delete(element);
+    this.words.delete(element);
     if (wanted === undefined) {
       element.replaceChildren(...served);
       this.written.delete(element);
-      return;
+      return true;
     }
     if (setting === "translation") {
       element.replaceChildren(...nodes());
@@ -153,6 +161,7 @@ export class FramedPage {
       element.replaceChildren(...served, beside);
     }
     this.written.set(element, { setting, translated: wanted });
+    return true;
   }
 
   marksWords(): boolean {
@@ -274,19 +283,25 @@ function scrollToFragment(page: Document, fragment: string): void {
 
 // Nothing in the page is let to load in the frame: a click on a link, by any button, is taken
 // from the page. A link to a place in the page itself scrolls the frame there; one to the web
-// opens in a tab of its own, unless it leads to infonium itself; any other does nothing. A
-// click that ends a drag which selected words opens nothing. A form is never sent.
+// opens in a tab of its own, unless it leads to infonium itself; any other does nothing. A link
+// is followed only for a press that stayed where it began, or for a key that activates it: a
+// browser also fires a click at the end of a drag that began on a link, whether or not the drag
+// selected anything. A form is never sent.
 export function guardLinks(page: Document): void {
-  let pressedAt = { x: 0, y: 0 };
+  let pressedAt: { x: number; y: number } | undefined;
   function follow(event: MouseEvent) {
     const raw = linkOf(event);
     if (raw === null) {
       return;
     }
     event.preventDefault();
-    const dragged =
-      Math.hypot(event.clientX - pressedAt.x, event.clientY - pressedAt.y) > DRAG_DISTANCE;
-    if (dragged && page.getSelection()?.isCollapsed === false) {
+    const pressed = pressedAt;
+    pressedAt = undefined;
+    const byKey = event.detail === KEY_ACTIVATION;
+    const stayed =
+      pressed !== undefined &&
+      Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) <= DRAG_DISTANCE;
+    if (!byKey && !stayed) {
       return;
     }
     const address = webAddress(raw.trim(), page.baseURI);
@@ -469,15 +484,17 @@ export function selectorOf(pageBlocks: PageBlocks, holder: Element): string {
   return `[${attribute}="${holder.getAttribute(attribute) ?? ""}"]`;
 }
 
-// Writes into every placed element what the setting asks for of its block.
+// Writes into every placed element what the setting asks for of its block, and returns the
+// elements whose content changed.
 export function writeBlocks(
   framed: FramedPage,
   pageBlocks: PageBlocks,
   blocks: Block[],
   setting: Setting,
   translations: ReadonlyMap<number, TranslatedBlock>,
-): void {
+): Element[] {
   const page = framed.document;
+  const changed: Element[] = [];
   for (const number of pageBlocks.placed) {
     const block = blocks[number];
     const translated = translations.get(number);
@@ -486,10 +503,13 @@ export function writeBlocks(
     }
     if (block.kind !== "table") {
       const element = blockElementOf(page, pageBlocks, number);
-      if (element !== null) {
+      const wrote =
+        element !== null &&
         framed.write(element, setting, translated, () =>
           translated === undefined ? [] : translatedNodes(page, translated),
         );
+      if (wrote) {
+        changed.push(element);
       }
       continue;
     }
@@ -502,9 +522,14 @@ export function writeBlocks(
       const unchanged =
         text === undefined ||
         (setting === "both" && text.trim() === sources[row]?.[cell]?.trim());
-      framed.write(element, setting, unchanged ? undefined : translated, () =>
-        linesOf(page, text ?? ""),
-      );
+      if (
+        framed.write(element, setting, unchanged ? undefined : translated, () =>
+          linesOf(page, text ?? ""),
+        )
+      ) {
+        changed.push(element);
+      }
     }
   }
+  return changed;
 }

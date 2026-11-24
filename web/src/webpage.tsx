@@ -8,10 +8,10 @@ import {
   useFrameHeight,
   usePassageFollowed,
 } from "./frameroom";
-import { usePageMarking } from "./framemarking";
+import { FrameHighlights } from "./framehighlights";
+import { useFrameSelection } from "./frameselection";
 import { useLoaded } from "./loading";
 import type { Marked } from "./marking";
-import { PageMarks } from "./pagemarks";
 import {
   FramedPage,
   guardLinks,
@@ -21,7 +21,6 @@ import {
   writeBlocks,
   type PointedPlace,
 } from "./pagewriter";
-import { quotedWords } from "./quotedwords";
 import type { Setting } from "./setting";
 import type { Pointed, ViewContext } from "./views";
 import "./webpage.css";
@@ -34,13 +33,15 @@ const REPLACED = "原件的页面被别的内容换掉了";
 const ABOUT_BLANK = "about:blank";
 // The state of a document whose HTML is still being parsed.
 const PARSING = "loading";
+// The state of a document whose stylesheets, pictures and frames have all arrived.
+const LOADED = "complete";
 // How much of what the frame holds in place of the page is quoted in the reason.
 const QUOTED_LENGTH = 80;
 
 type Lookup = { found: true; place: PointedPlace } | { found: false; reason: string };
 
 // Where a passage stands in the page: the element that stands for its block, whole, or the
-// quoted words where the element holds the block's text and they are found in it.
+// anchor's words where the element holds the block's text and they are found in it.
 function pointedPlaceOf(
   framed: FramedPage,
   pageBlocks: PageBlocks,
@@ -55,7 +56,7 @@ function pointedPlaceOf(
   }
   const words =
     block.kind !== "table" && framed.holdsSource(holder)
-      ? quotedWords(page, holder, anchor, block.text)
+      ? framed.wordsOf(holder, block.text).wordsOf({ start: anchor.start, end: anchor.end })
       : null;
   const whole = page.createRange();
   whole.selectNodeContents(holder);
@@ -148,7 +149,10 @@ export function WebpageView({
   const pageBlocks = useLoaded(() => readPageBlocks(entry.id), entry.id);
   const frame = useRef<HTMLIFrameElement>(null);
   const [framed, setFramed] = useState<FramedPage>();
-  const [marks, setMarks] = useState<PageMarks>();
+  const [highlights, setHighlights] = useState<FrameHighlights>();
+  // Counts the times the page's stylesheets and pictures have all arrived, which may change
+  // what the reader sees of its words, so that its words are found and drawn again.
+  const [laidOut, setLaidOut] = useState(0);
   const [failure, setFailure] = useState<string>();
   const height = useFrameHeight(frame, onShow && pageBlocks.state === "ready");
   const following = usePassageFollowed(frame, framed?.view, onShow);
@@ -164,7 +168,15 @@ export function WebpageView({
       framed === undefined || ready === undefined ? undefined : holdersOf(framed.document, ready),
     [framed, ready],
   );
-  usePageMarking(frame, marks, holders, itemDocument, marking, onShow);
+  const selection = useFrameSelection(
+    frame,
+    framed,
+    highlights,
+    holders,
+    itemDocument,
+    marking,
+    onShow,
+  );
 
   // Takes what the frame holds once it holds something: the page is guarded from the moment
   // its document can be reached, before anything in it can be clicked; it is shown, written
@@ -191,7 +203,17 @@ export function WebpageView({
           const parsed = () => {
             const shown = new FramedPage(page, view);
             setFramed(shown);
-            setMarks(new PageMarks(shown));
+            setHighlights(new FrameHighlights(shown));
+            if (page.readyState !== LOADED) {
+              view.addEventListener(
+                "load",
+                () => {
+                  shown.forgetWords();
+                  setLaidOut((times) => times + 1);
+                },
+                { once: true },
+              );
+            }
           };
           if (page.readyState === PARSING) {
             page.addEventListener("DOMContentLoaded", parsed, { once: true });
@@ -236,9 +258,15 @@ export function WebpageView({
           ? null
           : holderOf(framed.document, ready, blocks, pointed.anchors[0].block_number);
       const holders = `[${ready.block_attribute}], [${ready.cell_attribute}]`;
-      keepingPlace(placeToKeep(framed.document, holders, holder), framed.view, () =>
-        writeBlocks(framed, ready, blocks, setting, translation.blocks),
-      );
+      // A selection in an element that is written anew no longer holds the words it was made
+      // of, so it is let go.
+      const selected = new Set(selection.selectedHolders());
+      keepingPlace(placeToKeep(framed.document, holders, holder), framed.view, () => {
+        const changed = writeBlocks(framed, ready, blocks, setting, translation.blocks);
+        if (changed.some((element) => selected.has(element))) {
+          selection.letGo();
+        }
+      });
     }
   }, [framed, ready, blocks, setting, translation.blocks, onShow, pointed]);
 
@@ -281,14 +309,24 @@ export function WebpageView({
       }
     }
     shownPointing.current = pointed;
-  }, [framed, ready, failed, blocks, pointed, onShow, setting, translation.blocks]);
+  }, [framed, ready, failed, blocks, pointed, onShow, setting, translation.blocks, laidOut]);
 
   // Drawn after the blocks are written, since writing a block replaces the words drawn in it.
   useLayoutEffect(() => {
-    if (marks !== undefined && holders !== undefined && onShow) {
-      marks.draw(holders, blocks, marking.marked, marking.opened);
+    if (highlights !== undefined && holders !== undefined && onShow) {
+      highlights.draw(holders, blocks, marking.marked, marking.opened);
     }
-  }, [marks, holders, blocks, setting, translation.blocks, onShow, marking.marked, marking.opened]);
+  }, [
+    highlights,
+    holders,
+    blocks,
+    setting,
+    translation.blocks,
+    onShow,
+    marking.marked,
+    marking.opened,
+    laidOut,
+  ]);
 
   if (failed !== undefined) {
     return (
