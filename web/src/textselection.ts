@@ -205,17 +205,29 @@ function passageOf(article: Element, range: Range, show: TextOnShow): Anchor[] {
   }
   // A passage that begins in a translation runs on from its segment to the end of the block,
   // after which the selection goes on; one that stops in a translation ends with its segment.
+  // Where the two ends, each taken by itself, would cross in one block, as when the selection
+  // begins in a later sentence of the block's words and stops in an earlier segment of its
+  // translation, the block's passage is the span of both.
+  const ended = (number: number, start: number, end: number, segment: TextRange) => {
+    const before = taken.get(number);
+    taken.set(
+      number,
+      start < end
+        ? { start, end }
+        : {
+            start: Math.min(before?.start ?? segment.start, segment.start),
+            end: Math.max(before?.end ?? segment.end, segment.end),
+          },
+    );
+  };
   if (begins !== undefined) {
     const length = Array.from(show.blocks[begins.number]?.text ?? "").length;
-    const before = taken.get(begins.number);
-    taken.set(begins.number, { start: begins.segment.start, end: before?.end ?? length });
+    const end = taken.get(begins.number)?.end ?? length;
+    ended(begins.number, begins.segment.start, end, begins.segment);
   }
   if (stops !== undefined) {
-    const before = taken.get(stops.number);
-    taken.set(stops.number, {
-      start: before?.start ?? stops.segment.start,
-      end: stops.segment.end,
-    });
+    const start = taken.get(stops.number)?.start ?? stops.segment.start;
+    ended(stops.number, start, stops.segment.end, stops.segment);
   }
   return [...taken.entries()]
     .sort(([first], [second]) => first - second)
