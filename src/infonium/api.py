@@ -40,7 +40,7 @@ from infonium.digest import (
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
-from infonium.highlight import Comment, HighlightDraft
+from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
 from infonium.intake import Engines, Intake
 from infonium.item_conversation import (
     ITEM_BUSY,
@@ -77,7 +77,7 @@ from infonium.library_conversation import (
     library_turns,
 )
 from infonium.model_connection import Ending
-from infonium.note import NoteDraft
+from infonium.note import NoteDraft, Notes, ShownNote
 from infonium.passage import Passage, PassageNotHeld, Standing
 from infonium.reasons import failure_reason
 from infonium.revision import Revision, RevisionNumber
@@ -790,18 +790,55 @@ def forget_library_conversation(owner: Owner) -> None:
         library_turns(transaction).forget()
 
 
+def highlight_view(shown: ShownHighlight) -> HighlightView:
+    highlight = shown.highlight
+    return HighlightView(
+        id=highlight.id,
+        item=highlight.item_id,
+        revision=shown.now.revision,
+        passage=highlight.passage,
+        standing=shown.now.standing,
+        comment=highlight.comment,
+        made=highlight.made,
+    )
+
+
+def note_view(shown: ShownNote) -> NoteView:
+    return NoteView(
+        id=shown.text.id,
+        title=shown.text.title,
+        markdown=shown.text.markdown,
+        passages=[
+            LinkedPassage(
+                id=passage.linked.id,
+                item=passage.item_id,
+                title=passage.title,
+                revision=passage.now.revision,
+                passage=passage.linked.passage,
+                standing=passage.now.standing,
+            )
+            for passage in shown.passages
+        ],
+        made=shown.text.made,
+        changed=shown.text.changed,
+    )
+
+
 @app.get("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY)
 def item_highlights(item_id: str, owner: Owner) -> list[HighlightView]:
     # The highlights of an item: first those that stand in the document it holds now, in the
     # order of that document, then those it has lost, in the order they were made.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        return [highlight_view(shown) for shown in Highlights(transaction).of_item(item_id)]
 
 
 @app.post("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY | NOT_HELD)
 def make_highlight(item_id: str, draft: HighlightDraft, owner: Owner) -> HighlightView:
     # Marks a passage of a revision of the item. The passage is refused unless its document
     # is a revision of the item and holds it as given.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        shown = Highlights(transaction).mark(item_id, draft, datetime.now(UTC))
+    return highlight_view(shown)
 
 
 @app.put("/api/items/{item_id}/highlights/{highlight_id}/comment", responses=NOT_IN_LIBRARY)
@@ -809,7 +846,9 @@ def comment_highlight(
     item_id: str, highlight_id: str, comment: Comment, owner: Owner
 ) -> HighlightView:
     # Puts what the reader notes on a highlight in place of what was noted before.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        shown = Highlights(transaction).keep_comment(item_id, highlight_id, comment)
+    return highlight_view(shown)
 
 
 @app.delete(
@@ -818,40 +857,68 @@ def comment_highlight(
     status_code=HTTPStatus.NO_CONTENT,
 )
 def remove_highlight(item_id: str, highlight_id: str, owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        Highlights(transaction).remove(item_id, highlight_id)
 
 
 @app.get("/api/highlights")
 def library_highlights(owner: Owner) -> list[ItemHighlights]:
     # Every item of the library that has highlights, with them, the item marked last first;
     # an item's highlights are in the order its own list gives them.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        marked = Highlights(transaction).of_library()
+    return [
+        ItemHighlights(
+            item=item.item_id,
+            title=item.title,
+            highlights=[highlight_view(shown) for shown in item.highlights],
+        )
+        for item in marked
+    ]
 
 
 @app.get("/api/notes")
 def list_notes(owner: Owner) -> list[NoteEntry]:
     # The notes of the library, the one changed last first.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        listed = Notes(transaction).listed()
+    return [
+        NoteEntry(
+            id=note.text.id,
+            title=note.text.title,
+            made=note.text.made,
+            changed=note.text.changed,
+            items=note.items,
+        )
+        for note in listed
+    ]
 
 
 @app.post("/api/notes", responses=NOT_IN_LIBRARY | NOT_HELD)
 def write_note(draft: NoteDraft, owner: Owner) -> NoteView:
     # Keeps a new note. A passage is refused unless its document is in the library and holds
     # it as given.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).write(draft, datetime.now(UTC))
+    return note_view(shown)
 
 
 @app.get("/api/notes/{note_id}", responses=NOT_IN_LIBRARY)
 def read_note(note_id: str, owner: Owner) -> NoteView:
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).shown(note_id)
+    return note_view(shown)
 
 
 @app.put("/api/notes/{note_id}", responses=NOT_IN_LIBRARY | NOT_HELD)
 def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
     # Puts the draft in place of what the note held: its title, its Markdown and its passages.
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).rewrite(note_id, draft, datetime.now(UTC))
+    return note_view(shown)
 
 
 @app.delete("/api/notes/{note_id}", responses=NOT_IN_LIBRARY, status_code=HTTPStatus.NO_CONTENT)
 def remove_note(note_id: str, owner: Owner) -> None:
-    raise NotImplementedError(UNBUILT)
+    with library_store().transaction(owner) as transaction:
+        Notes(transaction).remove(note_id)
