@@ -21,11 +21,21 @@ NOT_HELD = "block {block} of the document does not hold these words at {start} t
 #
 # The letters on each side of a passage that tell one place of its words from another, and
 # the pieces they are compared by: a side is found beside a place when this share of its
-# pieces stands within as many letters, and a few more, on that side of the place.
+# pieces stands as far from the place on that side, a piece that stands a letter or a few
+# nearer or farther, up to the slack, counting for less.
 SURROUNDINGS = 32
 SURROUNDINGS_SLACK = 4
 GRAM = 3
 SURROUNDINGS_FOUND = 0.5
+# Places whose surroundings are less like the passage's than the likest by this much, as the
+# sum of the shares of both sides, are not its rivals.
+SURROUNDINGS_MARGIN = 0.5
+# The wider surroundings that tell apart places with surroundings as like, how much more like,
+# as the sum of both sides, the place they tell must be, and the most places they are compared
+# at.
+WIDE_SURROUNDINGS = 256
+WIDE_MARGIN = 0.5
+WIDE_RIVALS = 8
 # A passage of fewer letters than this could stand in many places for what it says, and is
 # found only where its surroundings are found with it, or where both revisions hold it once. A
 # character of a script written without spaces says as much as several letters.
@@ -34,11 +44,17 @@ UNSPACED_LETTERS = 3
 # Words that differ a little: the share of a passage's letters that the fewest changes of a
 # letter (one put in, left out, or read otherwise) must leave as they are.
 NEAR_LIKENESS = 0.8
+# How many fewer changes than at any other place the surroundings of a passage that is not
+# distinct must take at the place it is found at by them.
+NEAR_MARGIN = 2
 # Where words that differ a little may lie is told by pieces of them that the other revision
 # holds as they are: up to this many pieces of this many letters, each of which tells nothing
 # when it stands in more places than this. The places that the most pieces agree on are
-# compared whole, this many of them.
+# compared whole, this many of them. Few letters are cut into shorter pieces, at least this
+# many of them, and no shorter than this.
 SEED_LETTERS = 12
+SEEDS_IN_SHORT_NEEDLE = 4
+SHORTEST_SEED = 4
 SEEDS = 24
 SEED_PLACES = 64
 PLACES_COMPARED = 4
@@ -149,15 +165,18 @@ class Stretch(BaseModel):
 
 class MarkedLetters(BaseModel):
     # A passage as letters: its letters, which of them stand after white space and which begin
-    # an anchor, the letters around it in the revision it was marked in, where it begins there
-    # as a share of that revision's letters, and whether that revision holds it once.
+    # an anchor, the letters around it in the revision it was marked in, near and wide, where
+    # it begins there as a share of that revision's letters, and how many times that revision
+    # holds its letters, up to as many as are weighed.
     letters: str
     spaced: list[bool]
     breaks: list[bool]
     before: str
     after: str
+    wide_before: str
+    wide_after: str
     place: float
-    once: bool
+    copies: int
 
 
 @cache
@@ -255,8 +274,10 @@ def marked_letters(passage: Passage, document: Document, spelling: Spelling) -> 
         breaks=breaks,
         before=spelling.letters[max(0, begin - SURROUNDINGS) : begin],
         after=spelling.letters[finish : finish + SURROUNDINGS],
+        wide_before=spelling.letters[max(0, begin - WIDE_SURROUNDINGS) : begin],
+        wide_after=spelling.letters[finish : finish + WIDE_SURROUNDINGS],
         place=begin / max(1, len(spelling.letters)),
-        once=bool(joined) and len(occurrences(spelling.letters, joined, 2)) == 1,
+        copies=len(occurrences(spelling.letters, joined, OCCURRENCES_WEIGHED)) if joined else 0,
     )
 
 
@@ -308,25 +329,57 @@ def is_spaced_alike(passage: MarkedLetters, document: Document, pieces: list[Pie
     )
 
 
-def grams(letters: str) -> set[str]:
-    # The pieces a side is compared by; a side shorter than a piece is one piece.
-    return {letters[at : at + GRAM] for at in range(len(letters) - GRAM + 1)} or {letters}
+def grams(letters: str) -> dict[str, list[int]]:
+    # The pieces a side is compared by, each with where it stands; a side shorter than a piece
+    # is one piece.
+    places: dict[str, list[int]] = {}
+    for at in range(max(1, len(letters) - GRAM + 1)):
+        places.setdefault(letters[at : at + GRAM], []).append(at)
+    return places
 
 
 def side_likeness(marked_side: str, held_side: str) -> float:
-    # The share of the letters on one side of a passage that stand on that side of a place. A
-    # passage at an end of its revision is found at that end of another.
+    # The share of the pieces of the letters on one side of a passage that stand as far from
+    # a place on that side of it: a piece that stands nearer or farther by a letter or a few
+    # counts for less, by the slack, so that surroundings that only repeat what stands around
+    # them, as in a list, tell the place they stand beside. Both sides are read away from the
+    # passage. A passage at an end of its revision is found at that end of another.
     if not marked_side:
         return float(not held_side)
     expected = grams(marked_side)
-    return len(expected & grams(held_side)) / len(expected)
+    held = grams(held_side)
+    found = sum(
+        max(
+            [
+                max(0.0, 1 - abs(other - at) / (SURROUNDINGS_SLACK + 1))
+                for other in held.get(gram, [])
+            ],
+            default=0.0,
+        )
+        for gram, places in expected.items()
+        for at in places
+    )
+    return found / sum(map(len, expected.values()))
 
 
 def surroundings(passage: MarkedLetters, letters: str, start: int, end: int) -> tuple[float, float]:
     reach = SURROUNDINGS + SURROUNDINGS_SLACK
     return (
-        side_likeness(passage.before, letters[max(0, start - reach) : start]),
+        side_likeness(passage.before[::-1], letters[max(0, start - reach) : start][::-1]),
         side_likeness(passage.after, letters[end : end + reach]),
+    )
+
+
+def wide_likeness(passage: MarkedLetters, letters: str, start: int, end: int) -> float:
+    # How like the wide surroundings of a passage are those of a place, side by side: one less
+    # the changes that make one side the other, as a share of the side's letters.
+    sides = [
+        (passage.wide_before[::-1], letters[max(0, start - WIDE_SURROUNDINGS) : start][::-1]),
+        (passage.wide_after, letters[end : end + WIDE_SURROUNDINGS]),
+    ]
+    return sum(
+        1 - prefix_distances(marked, held)[-1] / len(marked) if marked else float(not held)
+        for marked, held in sides
     )
 
 
@@ -359,11 +412,49 @@ def end_distances(needle: str, text: str, entry: int) -> list[int]:
     return distances
 
 
-def nearest_stretch(needle: str, text: str) -> Stretch:
-    # The stretch of the text that the fewest changes make the needle.
+def prefix_distances(needle: str, text: str) -> list[int]:
+    # For each beginning of the text, from none of it to all of it, the fewest changes that
+    # make the needle that beginning.
+    if not needle:
+        return list(range(len(text) + 1))
+    return [len(needle), *end_distances(needle, text, AT_THE_BEGINNING)]
+
+
+def partings(head: str, tail: str, text: str) -> list[int]:
+    # The places the text may part at into what is made the head and what is made the tail by
+    # the fewest changes.
+    costs = [
+        to_head + to_tail
+        for to_head, to_tail in zip(
+            prefix_distances(head, text),
+            prefix_distances(tail[::-1], text[::-1])[::-1],
+            strict=True,
+        )
+    ]
+    return [at for at, cost in enumerate(costs) if cost == min(costs)]
+
+
+def among_surroundings(passage: MarkedLetters, text: str) -> Stretch:
+    # The passage within a text that is likest it with its surroundings: what stands between
+    # the likest of the letters before it and the likest of those after it. Where a letter
+    # could go with the passage or with what stands beside it, as a comma that one reading
+    # puts in may, it goes with what stands beside it.
+    start = partings(passage.before, passage.letters + passage.after, text)[-1]
+    end = max(start, partings(passage.before + passage.letters, passage.after, text)[0])
+    return Stretch(
+        start=start, end=end, distance=prefix_distances(passage.letters, text[start:end])[-1]
+    )
+
+
+def nearest_stretch(needle: str, text: str, expected_end: int) -> Stretch:
+    # The stretch of the text that the fewest changes make the needle; of several, the one
+    # that ends nearest where it is expected to.
     ends = end_distances(needle, text, ANYWHERE)
     distance = min(ends)
-    end = ends.index(distance) + 1
+    end = min(
+        (at + 1 for at, held in enumerate(ends) if held == distance),
+        key=lambda at: abs(at - expected_end),
+    )
     starts = end_distances(needle[::-1], text[:end][::-1], AT_THE_BEGINNING)
     return Stretch(start=end - 1 - starts.index(min(starts)), end=end, distance=distance)
 
@@ -375,17 +466,18 @@ def is_near(stretch: Stretch, needle: str) -> bool:
 def near_stretches(letters: str, needle: str) -> list[Stretch]:
     # The stretches of the letters that are like the needle, looked for where the most of its
     # pieces stand as they are.
-    count = min(SEEDS, len(needle) // SEED_LETTERS)
-    step = (len(needle) - SEED_LETTERS) / max(1, count - 1)
+    seed_letters = max(SHORTEST_SEED, min(SEED_LETTERS, len(needle) // SEEDS_IN_SHORT_NEEDLE))
+    count = min(SEEDS, len(needle) // seed_letters)
+    step = (len(needle) - seed_letters) / max(1, count - 1)
     diagonals: list[tuple[int, int]] = []
     for offset in sorted({round(seed * step) for seed in range(count)}):
-        found = occurrences(letters, needle[offset : offset + SEED_LETTERS], SEED_PLACES + 1)
+        found = occurrences(letters, needle[offset : offset + seed_letters], SEED_PLACES + 1)
         if len(found) <= SEED_PLACES:
             diagonals.extend((at - offset, offset) for at in found)
     slack = int(len(needle) * (1 - NEAR_LIKENESS)) + 1
     groups: list[list[tuple[int, int]]] = []
     for diagonal in sorted(diagonals):
-        if groups and diagonal[0] - groups[-1][-1][0] <= slack + SEED_LETTERS:
+        if groups and diagonal[0] - groups[-1][-1][0] <= slack + seed_letters:
             groups[-1].append(diagonal)
         else:
             groups.append([diagonal])
@@ -393,7 +485,11 @@ def near_stretches(letters: str, needle: str) -> list[Stretch]:
     stretches: list[Stretch] = []
     for group in likeliest[:PLACES_COMPARED]:
         low = max(0, group[0][0] - slack)
-        nearest = nearest_stretch(needle, letters[low : group[-1][0] + len(needle) + slack])
+        nearest = nearest_stretch(
+            needle,
+            letters[low : group[-1][0] + len(needle) + slack],
+            group[0][0] - low + len(needle),
+        )
         if is_near(nearest, needle):
             stretches.append(
                 Stretch(start=low + nearest.start, end=low + nearest.end, distance=nearest.distance)
@@ -401,62 +497,116 @@ def near_stretches(letters: str, needle: str) -> list[Stretch]:
     return stretches
 
 
-def exact_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
-    # Where the other revision holds the passage's very letters: of several places, the one
-    # its surroundings are found beside, then the nearest to where it stood. A passage that is
-    # not distinct is found only by its surroundings, or where both revisions hold it once.
+def standing_out_widely(
+    passage: MarkedLetters, held: Spelling, places: list[Stretch]
+) -> list[Stretch]:
+    # Of places that are as like the passage, the one whose wider surroundings stand out, as
+    # those of one of two copies of a text do; none where none does, or where there are too
+    # many to compare.
+    if not 1 < len(places) <= WIDE_RIVALS:
+        return []
+    weighed = sorted(
+        (
+            (wide_likeness(passage, held.letters, place.start, place.end), number)
+            for number, place in enumerate(places)
+        ),
+        reverse=True,
+    )
+    (likest, number), (next_likest, _) = weighed[:2]
+    return [places[number]] if likest - next_likest >= WIDE_MARGIN else []
+
+
+def exact_stretches(passage: MarkedLetters, held: Spelling, found: list[int]) -> list[Stretch]:
+    # Where the other revision holds the passage's very letters. Of several places, those
+    # with the likest surroundings are rivals; of them, the one whose wider surroundings stand
+    # out, and failing that the nearest to where the passage stood. A passage that is not
+    # distinct is found only where its surroundings are found and the place has no rival or
+    # stands out by its wider surroundings, or where both revisions hold it once: surroundings
+    # that stand beside several places, as the words around a date in a list of references
+    # do, tell none of them.
     size = len(passage.letters)
-    found = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
     length = max(1, len(held.letters))
     weighed = [
-        (sum(likeness), -abs(at / length - passage.place), at, likeness)
+        (sum(likeness), abs(at / length - passage.place), at, likeness)
         for at in found
         for likeness in [surroundings(passage, held.letters, at, at + size)]
     ]
-    return [
-        Stretch(start=at, end=at + size, distance=0)
-        for _, _, at, likeness in sorted(weighed)[-1:]
-        if is_distinct(passage.letters)
-        or max(likeness) >= SURROUNDINGS_FOUND
-        or (len(found) == 1 and passage.once)
+    best = max(score for score, _, _, _ in weighed)
+    rivals = sorted(
+        (offset, at, likeness)
+        for score, offset, at, likeness in weighed
+        if score > best - SURROUNDINGS_MARGIN
+    )
+    places = [Stretch(start=at, end=at + size, distance=0) for _, at, _ in rivals]
+    widely = standing_out_widely(passage, held, places)
+    chosen = widely or places[:1]
+    likeness = next(likeness for _, at, likeness in rivals if at == chosen[0].start)
+    stands_out = max(likeness) >= SURROUNDINGS_FOUND and (bool(widely) or len(rivals) == 1)
+    if is_distinct(passage.letters) or stands_out or len(found) == passage.copies == 1:
+        return chosen
+    return []
+
+
+def surrounded_stretches(
+    passage: MarkedLetters, held: Spelling, arounds: list[Stretch]
+) -> list[Stretch]:
+    # A passage that is not distinct, among the letters likest it with its surroundings. Where
+    # those are as like at several places, the place whose wider surroundings stand out.
+    likest = min(around.distance for around in arounds)
+    placed = [
+        Stretch(
+            start=around.start + among.start,
+            end=around.start + among.end,
+            distance=among.distance,
+        )
+        for around in arounds
+        if around.distance - likest < NEAR_MARGIN
+        for among in [among_surroundings(passage, held.letters[around.start : around.end])]
+        if among.end > among.start and is_near(among, passage.letters)
     ]
+    return placed if len(placed) == 1 else standing_out_widely(passage, held, placed)
 
 
-def near_stretch(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
-    # Where the other revision holds letters a little unlike the passage's. A passage that is
-    # not distinct is looked for with its surroundings, and then found among them.
-    if is_distinct(passage.letters):
-        candidates = near_stretches(held.letters, passage.letters)
-    else:
-        candidates = [
-            Stretch(
-                start=around.start + within.start,
-                end=around.start + within.end,
-                distance=within.distance,
-            )
-            for around in near_stretches(
-                held.letters, passage.before + passage.letters + passage.after
-            )
-            for within in [
-                nearest_stretch(passage.letters, held.letters[around.start : around.end])
-            ]
-            if is_near(within, passage.letters)
-        ]
+def distinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
+    # A distinct passage, where the other revision holds its very letters, or else letters a
+    # little unlike them. Of several places of letters a little unlike, which are copies of
+    # one text, the one whose wider surroundings stand out, and failing that the likest, then
+    # the one with the likest surroundings, then the nearest to where it stood. Of copies of a
+    # text, one may have changed: where the other revision holds fewer copies as they are than
+    # the passage's revision holds, the passage may be a copy that changed.
+    found = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
+    if found and len(found) >= passage.copies:
+        return exact_stretches(passage, held, found)
+    near = near_stretches(held.letters, passage.letters)
+    if found:
+        places = {at: Stretch(start=at, end=at + len(passage.letters), distance=0) for at in found}
+        for stretch in near:
+            places.setdefault(stretch.start, stretch)
+        return standing_out_widely(passage, held, [*places.values()]) or exact_stretches(
+            passage, held, found
+        )
     length = max(1, len(held.letters))
-    weighed = [
+    weighed = sorted(
         (
             -stretch.distance,
             sum(surroundings(passage, held.letters, stretch.start, stretch.end)),
             -abs(stretch.start / length - passage.place),
-            stretch.start,
-            stretch.end,
+            number,
         )
-        for stretch in candidates
-    ]
-    return [
-        Stretch(start=start, end=end, distance=-distance)
-        for distance, _, _, start, end in sorted(weighed)[-1:]
-    ]
+        for number, stretch in enumerate(near)
+    )
+    return standing_out_widely(passage, held, near) or [near[number] for *_, number in weighed[-1:]]
+
+
+def indistinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
+    # A passage that is not distinct is what stands with its surroundings: it is looked for
+    # with them, and found among them, the very letters or letters a little unlike them. Only
+    # where its surroundings are not found so is it looked for by its letters alone.
+    arounds = near_stretches(held.letters, passage.before + passage.letters + passage.after)
+    if arounds:
+        return surrounded_stretches(passage, held, arounds)
+    found = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
+    return exact_stretches(passage, held, found) if found else []
 
 
 def standing_in(passage: Passage, marked_in: Document, document: Document) -> Standing:
@@ -471,12 +621,14 @@ def standing_in(passage: Passage, marked_in: Document, document: Document) -> St
     letters = marked_letters(passage, marked_in, spellings.spelling(marked_in))
     if not letters.letters:
         return Lost()
-    exact = exact_stretches(letters, held)
-    chosen = exact or near_stretch(letters, held)
+    if is_distinct(letters.letters):
+        chosen = distinct_stretches(letters, held)
+    else:
+        chosen = indistinct_stretches(letters, held)
     if not chosen:
         return Lost()
     pieces = pieces_of(held, chosen[0].start, chosen[0].end)
     return Found(
         passage=Passage(anchors=anchors_at(document, pieces)),
-        exact=bool(exact) and is_spaced_alike(letters, document, pieces),
+        exact=not chosen[0].distance and is_spaced_alike(letters, document, pieces),
     )
