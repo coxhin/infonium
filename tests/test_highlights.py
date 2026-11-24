@@ -612,6 +612,7 @@ def test_a_library_made_before_highlights_is_served_and_left_as_it_was(
     note = app.client.post(
         "/api/notes",
         json={
+            "edition": 1,
             "title": "On an older library",
             "markdown": "[it](passage:a)",
             "passages": [{"id": "a", "passage": passage(sources[1].document, blocks, [(1, 0, 3)])}],
