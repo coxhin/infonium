@@ -810,14 +810,14 @@ def note_view(shown: ShownNote) -> NoteView:
         markdown=shown.text.markdown,
         passages=[
             LinkedPassage(
-                id=passage.linked.id,
-                item=passage.item_id,
-                title=passage.title,
-                revision=passage.now.revision,
-                passage=passage.linked.passage,
-                standing=passage.now.standing,
+                id=linked.note_passage.id,
+                item=linked.item_id,
+                title=linked.title,
+                revision=linked.now.revision,
+                passage=linked.note_passage.passage,
+                standing=linked.now.standing,
             )
-            for passage in shown.passages
+            for linked in shown.passages
         ],
         made=shown.text.made,
         changed=shown.text.changed,

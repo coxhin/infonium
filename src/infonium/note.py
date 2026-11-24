@@ -99,13 +99,13 @@ class NoteText(BaseModel):
 class KeptPassage(BaseModel):
     # A passage of a note as it is kept, with the item it lies in.
     item_id: str
-    linked: NotePassage
+    note_passage: NotePassage
 
 
 class ShownPassage(BaseModel):
     # A passage of a note as a reader is shown it: the item it lies in and what that item is
     # called now, and where it stands in the document the item holds now.
-    linked: NotePassage
+    note_passage: NotePassage
     item_id: str
     title: str
     now: StandingNow
@@ -204,7 +204,7 @@ class Notes:
         kept = NoteDraft(
             title=text.title,
             markdown=text.markdown,
-            passages=[kept_passage.linked for kept_passage in self.kept_passages(note_id)],
+            passages=[kept_passage.note_passage for kept_passage in self.kept_passages(note_id)],
         )
         if draft != kept:
             self.remove(note_id)
@@ -236,7 +236,7 @@ class Notes:
             .order_by(note_passage_table.c.position)
         )
         return [
-            KeptPassage(item_id=item_id, linked=NotePassage.model_validate_json(body))
+            KeptPassage(item_id=item_id, note_passage=NotePassage.model_validate_json(body))
             for item_id, body in rows
         ]
 
@@ -245,10 +245,10 @@ class Notes:
             text=self.text(note_id),
             passages=[
                 ShownPassage(
-                    linked=kept.linked,
+                    note_passage=kept.note_passage,
                     item_id=kept.item_id,
                     title=self.standings.holding(kept.item_id).title,
-                    now=self.standings.now(kept.item_id, kept.linked.passage),
+                    now=self.standings.now(kept.item_id, kept.note_passage.passage),
                 )
                 for kept in self.kept_passages(note_id)
             ],
