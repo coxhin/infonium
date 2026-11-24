@@ -34,6 +34,16 @@
   position: relative;
 }
 
+/* Of an earlier revision: that it is only to be read, and the way back. */
+.revision-controls .read-only {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.revision-controls .back-to-holding {
+  font-size: 0.8rem;
+}
+
 .revision-picker .earlier-mark {
   margin-left: 0.4rem;
   padding: 0 0.3rem;

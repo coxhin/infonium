@@ -12,8 +12,10 @@ export const POINTED_CLASS = "pointed";
 // Segments of one block follow each other as sentences of one paragraph do.
 export const SEGMENT_GAP = " ";
 // The control to translate a block again stands in the narrow margin beside the block, where
-// a word would not fit.
+// a word would not fit. Its mark is drawn by its stylesheet from this attribute, not written
+// into the page, so that a selection that runs past it copies nothing of it.
 const AGAIN_MARK = "↻";
+export const MARK_ATTRIBUTE = "data-mark";
 
 // A range of a block's text, in code points.
 export type TextRange = { start: number; end: number };
@@ -56,9 +58,8 @@ export function AgainControl({
         }
         aria-label={missing ? "单独翻译这一段" : "重新翻译这一段"}
         onClick={() => onAgain(number)}
-      >
-        {AGAIN_MARK}
-      </button>
+        {...{ [MARK_ATTRIBUTE]: AGAIN_MARK }}
+      />
       {again?.state === "underway" && (
         <p className="again-note">{missing ? "正在单独翻译这一段…" : "正在重新翻译这一段…"}</p>
       )}

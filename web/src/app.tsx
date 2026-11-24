@@ -129,7 +129,7 @@ function DocumentPane({
 }: {
   entry: ReadEntry;
   wanted: Shown | undefined;
-  head: (shownDocument: string) => ReactNode;
+  head: (shownDocument: string, earlier: boolean) => ReactNode;
 }) {
   const [opened, setOpened] = useState<Opened>();
   const [failed, setFailed] = useState<{ key: string; reason: string }>();
@@ -188,7 +188,7 @@ function DocumentPane({
             }
       }
       link={link}
-      head={head(shownDocument(shown))}
+      head={head(shownDocument(shown), shown.kind === "earlier")}
     />
   );
 }
@@ -263,12 +263,13 @@ function ReadPane({
     }
   }
 
-  function head(shown: string): ReactNode {
+  function head(shown: string, earlier: boolean): ReactNode {
     return (
       <RevisionHead
         itemId={entry.id}
         revisions={revisions}
         shownDocument={shown}
+        earlier={earlier}
         underway={reading.attempt.kind === "underway"}
         interrupted={interrupted}
         rereading={rereading}

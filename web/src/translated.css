@@ -51,6 +51,11 @@
   width: 2rem;
 }
 
+/* The mark is drawn here, not written into the page, so a selection copies none of it. */
+.again::before {
+  content: attr(data-mark);
+}
+
 .again {
   position: absolute;
   top: 0.15rem;
