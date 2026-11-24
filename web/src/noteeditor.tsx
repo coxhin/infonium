@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { Opener } from "./chat";
 import type { Citing } from "./citing";
-import type { NoteDraft } from "./client";
+import type { Anchors, NoteDraft } from "./client";
 import { revisionLink } from "./links";
 import {
   attachWriter,
@@ -246,6 +246,13 @@ function lookOf(linked: Linked, citing: Citing): ChipLook {
   };
 }
 
+// A passage the item's current document has lost is shown in the revision it was linked in.
+// Both steps run in one task, so that the column waits for that revision's reader.
+function openInRevision(citing: Citing, anchors: Anchors, itemId: string, revision: number) {
+  citing.awaitOpening(anchors, itemId);
+  location.hash = revisionLink(itemId, revision);
+}
+
 function openAddress(address: string): void {
   if (isWebAddress(address)) {
     window.open(address, "_blank", "noopener,noreferrer");
@@ -383,8 +390,7 @@ function Writing({
     const { whereabouts, itemId } = linked;
     const { seat: seated, citing: pointing, onOpen: opening } = near.current;
     if (whereabouts.kind === "lost") {
-      pointing.awaitOpening(whereabouts.anchors, itemId);
-      location.hash = revisionLink(itemId, whereabouts.revision);
+      openInRevision(pointing, whereabouts.anchors, itemId, whereabouts.revision);
     } else if (seated?.itemId === itemId) {
       pointing.point(whereabouts.anchors);
     } else {
