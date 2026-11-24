@@ -131,8 +131,9 @@ function RevisionPicker({
   );
 }
 
-// The part of the reader's head that is about revisions: which one is on show and the others,
-// the offer to read the source again, which says first what will happen and starts only once
+// The part of the reader's head that is about revisions: which one is on show and the others;
+// of an earlier one, that it can be read and not marked, and the way back, which stays in the
+// head while the line above the text scrolls away; the offer to read the source again, which says first what will happen and starts only once
 // the reader confirms, and what came of the last reading. It says why the revisions could not
 // be read, and, as the library does, that the watch of a reading has lost the service and is
 // trying again.
@@ -140,6 +141,7 @@ export function RevisionHead({
   itemId,
   revisions: loaded,
   shownDocument,
+  earlier,
   underway,
   interrupted,
   rereading,
@@ -149,6 +151,7 @@ export function RevisionHead({
   itemId: string;
   revisions: Loaded<ItemRevisions>;
   shownDocument: string;
+  earlier: boolean;
   underway: boolean;
   interrupted: boolean;
   rereading: Rereading;
@@ -184,6 +187,14 @@ export function RevisionHead({
       <div className="revision-controls">
         {revisions !== undefined && revisions.revisions.length > 1 && shown !== undefined && (
           <RevisionPicker itemId={itemId} revisions={revisions} shown={shown} />
+        )}
+        {earlier && (
+          <>
+            <span className="read-only">只能阅读，不能标注</span>
+            <a className="back-to-holding" href={itemLink(itemId)}>
+              回到现在的版本
+            </a>
+          </>
         )}
         <button
           ref={offer}
@@ -266,7 +277,7 @@ export function EarlierLine({
   return (
     <p className="earlier-line">
       这是这一篇较早的一次读取：{revisionTold(earlier)}
-      。这里只显示它当时读到的原文，没有译文和原件。
+      。这里只显示它当时读到的原文，没有译文和原件，也不能标注。
       <a href={itemLink(itemId)}>
         回到现在的版本{holding === undefined ? "" : `（${revisionName(holding)}）`}
       </a>
