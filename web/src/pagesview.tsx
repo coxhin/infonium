@@ -1,7 +1,10 @@
 import { useMemo } from "react";
 import { layoutOf, placedOf, type AreaText } from "./areas";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
-import { PageViewer } from "./pages";
+import { NO_MARKING } from "./marking";
+import { PageViewer, type PageMarks } from "./pages";
+import { PageText } from "./pagelines";
+import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
 import { SEGMENT_GAP } from "./translated";
 import type { ViewContext } from "./views";
@@ -13,13 +16,16 @@ const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
 // it stands for, and in 对照 the source stands beside each page, or under each area where
-// there is no room for two. The boxes of a passage pointed at are outlined above it all.
+// there is no room for two. The reader's highlights are drawn on the lines they cover, and the
+// reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
+// above it all.
 export function PagesView({
   entry,
   itemDocument,
   setting,
   translation,
   pointed,
+  marking,
   onShow,
 }: ViewContext) {
   // Worked out anew at every act of pointing, so that the pages turn to the same boxes again.
@@ -30,7 +36,31 @@ export function PagesView({
         : pointed.anchors.flatMap((anchor) => pagePlaces(placesOf(itemDocument.blocks, anchor))),
     [pointed, itemDocument],
   );
+  const pointedBlocks = useMemo(
+    () => new Set(pointed?.anchors.map((anchor) => anchor.block_number)),
+    [pointed],
+  );
   const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
+  const text = useMemo(() => new PageText(itemDocument.blocks), [itemDocument]);
+  const marks = useMemo<PageMarks>(() => {
+    const onPages = pageMarksOf(text, marking.marked, marking.opened);
+    return {
+      text,
+      onPages,
+      blocks: markedBlocksOf(marking.marked, marking.opened),
+      selecting:
+        marking === NO_MARKING
+          ? undefined
+          : {
+              text,
+              documentId: itemDocument.id,
+              marked: marking.marked,
+              pageMarks: onPages,
+              onSelect: marking.onSelect,
+              onPress: marking.onPress,
+            },
+    };
+  }, [text, marking, itemDocument.id]);
   const shown = setting !== "source";
   const overlays = useMemo(() => {
     if (!shown) {
@@ -64,10 +94,11 @@ export function PagesView({
       <PageViewer
         source={sourceLink(entry.id)}
         pointed={boxes}
-        pointedBlock={pointed?.anchors[0].block_number}
+        pointedBlocks={pointedBlocks}
         inView={onShow}
         overlays={overlays}
         pairing={setting === "both"}
+        marks={marks}
       />
     </>
   );
