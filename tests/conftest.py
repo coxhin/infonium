@@ -219,8 +219,10 @@ def start_app(
         return started[-1]
 
     yield start
-    # A request the stand-in holds is let go, so that the index's work ends with the service.
+    # A request the stand-in holds is let go, so that the index's work ends with the service,
+    # and so is a fetch the stand-in site holds, so that its reading ends.
     embedder.reset()
+    site.let_go()
     for app in started:
         if app.running:
             app.client.__exit__(None, None, None)
