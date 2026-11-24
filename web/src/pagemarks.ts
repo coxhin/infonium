@@ -13,12 +13,15 @@ import {
 // The reader's highlights in the page a web article was read from, and the passages the reader
 // selects there.
 
-// A highlight is drawn in colours of its own, the same on any page, light or dark: its words
-// dark on green, and those of the one open in the notebook on a deeper green; one with a
-// comment is underlined. Where its words are not drawn, its element is tinted whole, more
-// quietly, in a green that lets the page's own colours through. Each look is a highlight of
-// its own in the page's registry, so that where two overlap the one that says more is drawn:
-// the open one over the others, exact words over a tint, and the passage pointed at, whose
+// A highlight is drawn in the green the app's views share (the light values of `--marked`,
+// `--opened` and `--marked-line` in styles.css, whose variables do not reach the page), the
+// same on any page, light or dark: its words dark on that green, so that they read on a dark
+// page as on a white one, and those of the one open in the notebook on the deeper green; one
+// with a comment is underlined. Where its words are not drawn, its element is tinted whole,
+// more quietly, in the same green made translucent, which lets the page's own colours and
+// words through: light on a white page, dark on a dark one. Each look is a highlight of its
+// own in the page's registry, so that where two overlap the one that says more is drawn: the
+// open one over the others, exact words over a tint, and the passage pointed at, whose
 // priority is higher still, over them all.
 const HIGHLIGHT_PREFIX = "infonium-marked";
 type Extent = "words" | "whole";
@@ -29,12 +32,15 @@ const LOOKS: Look[] = (["words", "whole"] as const).flatMap((extent) =>
   ),
 );
 const WORDS_INK = "#1f2328";
-const WORDS_BACKGROUND = "#c3ecbf";
-const OPENED_WORDS_BACKGROUND = "#7fd486";
-const WORDS_UNDERLINE = "#1b5e20";
-const WHOLE_BACKGROUND = "rgb(76 175 80 / 0.2)";
-const OPENED_WHOLE_BACKGROUND = "rgb(76 175 80 / 0.42)";
-const WHOLE_UNDERLINE = "#43a047";
+const WORDS_BACKGROUND = "#cdeccb";
+const OPENED_WORDS_BACKGROUND = "#86cf80";
+const WORDS_UNDERLINE = "#2f7d32";
+// The opened green, translucent: over white about the shade of the words' green, over a dark
+// page a dark green under which light words still read.
+const WHOLE_BACKGROUND = "rgb(134 207 128 / 0.35)";
+const OPENED_WHOLE_BACKGROUND = "rgb(134 207 128 / 0.5)";
+// Between the two greens of `--marked-line`, so that it shows on a white page and a dark one.
+const WHOLE_UNDERLINE = "#5fa85b";
 const UNDERLINE_THICKNESS = "2px";
 const IMPORTANT = " !important";
 
