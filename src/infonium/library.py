@@ -448,7 +448,7 @@ class Library:
                     document_table.c.body: document.model_dump_json(),
                 }
             )
-            .on_conflict_do_nothing()
+            .on_conflict_do_nothing(index_elements=[document_table.c.id])
         )
         next_number = sqlalchemy.select(
             sqlalchemy.literal(document.id),
@@ -474,7 +474,7 @@ class Library:
                 ],
                 next_number,
             )
-            .on_conflict_do_nothing()
+            .on_conflict_do_nothing(index_elements=[revision_table.c.document_id])
         )
         return bool(kept.rowcount)
 

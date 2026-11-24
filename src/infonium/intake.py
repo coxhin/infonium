@@ -38,7 +38,6 @@ from infonium.library import (
     Item,
     LibraryStore,
     Link,
-    NotInLibrary,
     Origin,
     Read,
     Reading,
@@ -80,6 +79,11 @@ NOTHING_KEPT = (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NothingToReadAgain(Exception):
+    # An upload is in the library, but no file of it is, since no reading of it succeeded.
+    pass
 
 
 class Source(BaseModel):
@@ -353,7 +357,7 @@ class Intake:
                 return self.begin_link(owner, url)
             case Upload(name=name) if not kept:
                 # The file of an upload is kept only beside a document read from it.
-                raise NotInLibrary(NOTHING_KEPT.format(name=name))
+                raise NothingToReadAgain(NOTHING_KEPT.format(name=name))
             case Upload():
                 with self.store.snapshot(kept[0].snapshot).open("rb") as content:
                     arrived = self.store.staged(content)
