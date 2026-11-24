@@ -309,7 +309,6 @@ def sections_one_removed(draw: st.DrawFn) -> tuple[Revised, int]:
     return revised, removed * size + SECTION_SENTENCES
 
 
-@OWN_COPY_GONE
 @given(data=st.data(), made=sections_one_removed())
 @settings(max_examples=100, suppress_health_check=SLOW, phases=UNSHRUNK)
 def test_a_sentence_said_in_every_section_is_lost_with_its_own_section(
@@ -483,7 +482,6 @@ def test_a_cell_is_found_in_its_place_when_a_row_is_put_in_above_and_lost_when_i
         )
 
 
-@OTHER_ENTRY
 @given(data=st.data(), change=st.sampled_from(ENTRY_CHANGES))
 @settings(max_examples=150, suppress_health_check=SLOW, phases=UNSHRUNK)
 def test_an_entry_of_a_list_of_references_removed_rewritten_or_renumbered_is_lost(
