@@ -27,6 +27,13 @@ SURROUNDINGS = 32
 SURROUNDINGS_SLACK = 4
 GRAM = 3
 SURROUNDINGS_FOUND = 0.5
+# A passage that is not distinct is looked for with one side of its surroundings when that side
+# holds this many letters at least, and the other side is not found with it. A passage looked
+# for or found by one side only needs this share of that side.
+ONE_SIDE_LETTERS = SURROUNDINGS // 2
+ONE_SIDE_FOUND = 0.7
+BEFORE_FIELD = "before"
+AFTER_FIELD = "after"
 # Places whose surroundings are less like the passage's than the likest by this much, as the
 # sum of the shares of both sides, are not its rivals.
 SURROUNDINGS_MARGIN = 0.5
@@ -547,37 +554,59 @@ def exact_stretches(passage: MarkedLetters, held: Spelling, found: list[int]) ->
     return []
 
 
-def surrounded_stretches(
+def is_surrounded(passage: MarkedLetters, held: Spelling, stretch: Stretch) -> bool:
+    # Whether a side of the passage's surroundings that it has is found beside a place. Where
+    # it has one side only, that side must be found more nearly whole.
+    likeness = surroundings(passage, held.letters, stretch.start, stretch.end)
+    present = [
+        side_likeness
+        for side, side_likeness in zip((passage.before, passage.after), likeness, strict=True)
+        if side
+    ]
+    needed = SURROUNDINGS_FOUND if len(present) > 1 else ONE_SIDE_FOUND
+    return any(side_likeness >= needed for side_likeness in present)
+
+
+def surrounded_places(
     passage: MarkedLetters, held: Spelling, arounds: list[Stretch]
 ) -> list[Stretch]:
-    # A passage that is not distinct, among the letters likest it with its surroundings. Where
-    # those are as like at several places, the place whose wider surroundings stand out.
-    likest = min(around.distance for around in arounds)
-    placed = [
-        Stretch(
-            start=around.start + among.start,
-            end=around.start + among.end,
-            distance=among.distance,
-        )
+    # A passage that is not distinct, among the letters likest it with its surroundings, where
+    # its surroundings are found beside it.
+    likest = min((around.distance for around in arounds), default=0)
+    return [
+        stretch
         for around in arounds
         if around.distance - likest < NEAR_MARGIN
         for among in [among_surroundings(passage, held.letters[around.start : around.end])]
         if among.end > among.start and is_near(among, passage.letters)
+        for stretch in [
+            Stretch(
+                start=around.start + among.start,
+                end=around.start + among.end,
+                distance=among.distance,
+            )
+        ]
+        if is_surrounded(passage, held, stretch)
     ]
-    return placed if len(placed) == 1 else standing_out_widely(passage, held, placed)
 
 
 def distinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
     # A distinct passage, where the other revision holds its very letters, or else letters a
-    # little unlike them. Of several places of letters a little unlike, which are copies of
-    # one text, the one whose wider surroundings stand out, and failing that the likest, then
-    # the one with the likest surroundings, then the nearest to where it stood. Of copies of a
-    # text, one may have changed: where the other revision holds fewer copies as they are than
-    # the passage's revision holds, the passage may be a copy that changed.
+    # little unlike them with each side of its surroundings found: a text a little unlike
+    # with other surroundings, as the next of a list of references is, is another text. Of
+    # several places of letters a little unlike, which are copies of one text, the one whose
+    # wider surroundings stand out, and failing that the likest, then the one with the likest
+    # surroundings, then the nearest to where it stood. Of copies of a text, one may have
+    # changed: where the other revision holds fewer copies as they are than the passage's
+    # revision holds, the passage may be a copy that changed.
     found = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
     if found and len(found) >= passage.copies:
         return exact_stretches(passage, held, found)
-    near = near_stretches(held.letters, passage.letters)
+    near = [
+        stretch
+        for stretch in near_stretches(held.letters, passage.letters)
+        if is_surrounded(passage, held, stretch)
+    ]
     if found:
         places = {at: Stretch(start=at, end=at + len(passage.letters), distance=0) for at in found}
         for stretch in near:
@@ -600,11 +629,28 @@ def distinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
 
 def indistinct_stretches(passage: MarkedLetters, held: Spelling) -> list[Stretch]:
     # A passage that is not distinct is what stands with its surroundings: it is looked for
-    # with them, and found among them, the very letters or letters a little unlike them. Only
-    # where its surroundings are not found so is it looked for by its letters alone.
-    arounds = near_stretches(held.letters, passage.before + passage.letters + passage.after)
-    if arounds:
-        return surrounded_stretches(passage, held, arounds)
+    # with them, and found among them, the very letters or letters a little unlike them; where
+    # one side of them has changed, with the other side alone, when that side holds letters
+    # enough. Only where its surroundings are not found so is it looked for by its letters
+    # alone.
+    sided = [
+        passage,
+        *(
+            passage.model_copy(update={side: ""})
+            for side, kept in ((AFTER_FIELD, passage.before), (BEFORE_FIELD, passage.after))
+            if len(kept) >= ONE_SIDE_LETTERS
+        ),
+    ]
+    # Where it is found so at several places, the place whose wider surroundings stand out;
+    # where none does, it is doubtful which.
+    for surrounded in sided:
+        placed = surrounded_places(
+            surrounded,
+            held,
+            near_stretches(held.letters, surrounded.before + surrounded.letters + surrounded.after),
+        )
+        if placed:
+            return placed if len(placed) == 1 else standing_out_widely(passage, held, placed)
     found = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
     return exact_stretches(passage, held, found) if found else []
 
