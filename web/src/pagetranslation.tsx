@@ -79,7 +79,7 @@ export function PageTranslation({
   const flows = useMemo(() => {
     const paperUnder = (text: AreaText) => colours.get(text.key)?.paper;
     const facts: PageFacts = {
-      paperOf: (text) => {
+      paperLevelsOf: (text) => {
         const read = colours.get(text.key);
         return read === undefined ? undefined : paperLevelsOf(read);
       },

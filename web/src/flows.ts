@@ -112,7 +112,7 @@ export type Blank = { blank: number; drawn: boolean };
 // What a flow is told of the page it is set on.
 export type PageFacts = {
   // The paper a text's lines stand on, alike for papers alike to the eye.
-  paperOf: (text: AreaText) => string | undefined;
+  paperLevelsOf: (text: AreaText) => string | undefined;
   // Whether the page shows only a text's paper in a box, its letters reaching in aside.
   blank: (box: Box, text: AreaText) => boolean;
   // How far into a box, from one of its sides, the page shows only a text's paper.
@@ -181,8 +181,8 @@ function besideIsBlank(text: AreaText, column: Column, facts: PageFacts): boolea
 // lines, with only blank paper between their lines across the column. What is drawn there ends
 // the flow though it lie within a room, as the rule above a footnote does.
 function goesOn(last: AreaText, next: AreaText, column: Column, facts: PageFacts): boolean {
-  const paper = facts.paperOf(last);
-  if (paper === undefined || paper !== facts.paperOf(next)) {
+  const paper = facts.paperLevelsOf(last);
+  if (paper === undefined || paper !== facts.paperLevelsOf(next)) {
     return false;
   }
   const foot = footOf(last.area.box);
@@ -209,10 +209,9 @@ function flowPrintOf(texts: AreaText[], vertical: boolean, body: BodyPrint): Flo
   return { size: typeset.size, pitch: typeset.pitch ?? typeset.size * spacing };
 }
 
-type Span = { left: number; width: number };
-
-function overlapsAcross(one: Span, other: Span): boolean {
-  return one.left < other.left + other.width && other.left < one.left + one.width;
+// A strip of a page between a column's sides.
+function stripOf(sides: Column, top: number, height: number): Box {
+  return { left: sides.left, width: widthOf(sides), top, height };
 }
 
 function overlapsDown(one: Box, other: Box): boolean {
@@ -256,7 +255,7 @@ function verticalReachOf(
 // paper's edge and the clearance before it. And how far above the paper what is drawn stands.
 function paperTopOf(
   first: AreaText,
-  across: Span,
+  sides: Column,
   print: FlowPrint,
   facts: PageFacts,
 ): { top: number; over: number | undefined } {
@@ -266,7 +265,7 @@ function paperTopOf(
   const roomTop = first.area.room.top;
   const overTop = Math.max(0, roomTop - margin);
   const overhead = facts.blankInto(
-    { ...across, top: overTop, height: lines.top - overTop },
+    stripOf(sides, overTop, lines.top - overTop),
     "bottom",
     first,
   );
@@ -286,7 +285,7 @@ function paperTopOf(
 function paperFootOf(
   texts: AreaText[],
   top: number,
-  across: Span,
+  sides: Column,
   others: { lines: Box[]; rooms: Box[] },
   print: FlowPrint,
   facts: PageFacts,
@@ -301,11 +300,11 @@ function paperFootOf(
   const roomFoot = footOf(last.area.room);
   const lastFoot = footOf(last.area.box);
   const linesUnder = others.lines.filter(
-    (other) => overlapsAcross(other, across) && other.top > first.area.box.top,
+    (other) => overlapOf(sidesOf(other), sides) > 0 && other.top > first.area.box.top,
   );
   const linesWithin = linesUnder.filter((other) => other.top < roomFoot);
   const roomsUnder = others.rooms.filter(
-    (other) => overlapsAcross(other, across) && other.top >= roomFoot - TOUCHING,
+    (other) => overlapOf(sidesOf(other), sides) > 0 && other.top >= roomFoot - TOUCHING,
   );
   const growthEnd = Math.min(
     1,
@@ -315,7 +314,7 @@ function paperFootOf(
   );
   const lookedTo = Math.max(lastFoot, Math.min(1, Math.max(growthEnd, roomFoot) + margin));
   const underneath = facts.blankInto(
-    { ...across, top: lastFoot, height: lookedTo - lastFoot },
+    stripOf(sides, lastFoot, lookedTo - lastFoot),
     "top",
     last,
   );
@@ -354,20 +353,19 @@ function reachOf(
   if (first === undefined) {
     throw new Error("A flow holds at least one area.");
   }
-  const across = { left: sides.left, width: widthOf(sides) };
   const otherLines = lines
     .filter((line) => !blocks.has(line.blockNumber))
     .map((line) => line.box);
-  const { top, over } = paperTopOf(first, across, print, facts);
+  const { top, over } = paperTopOf(first, sides, print, facts);
   const { foot, tails, under, clear } = paperFootOf(
     texts,
     top,
-    across,
+    sides,
     { lines: otherLines, rooms },
     print,
     facts,
   );
-  return { room: { ...across, top, height: foot - top }, tails, drawn: { over, under }, clear };
+  return { room: stripOf(sides, top, foot - top), tails, drawn: { over, under }, clear };
 }
 
 function flowOf(

@@ -4,20 +4,24 @@
 // An area is justified unless that would widen the gaps of a line other than its last by more
 // than this part of its type size each.
 const MOST_WIDENING = 0.15;
-// Two runs of text whose tops lie closer than this part of the type size stand on one line.
+// Two parts of text whose tops lie closer than this part of the type size stand on one line.
 const SAME_LINE = 0.5;
 // The places a browser widens to justify a line: characters of Han, kana and hangul and of
 // their punctuation, and spaces.
 const WIDENED =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]|\s/gu;
 
-// A run of an area's text that stands on one line, or a formula, with where it stands, and
+// A part of an area's text that stands on one line, or a formula, with where it stands, and
 // whether it stands on the line itself rather than raised or lowered from it.
-type Run = { top: number; bottom: number; right: number; text: string; level: boolean };
+type LinePart = { top: number; bottom: number; right: number; text: string; level: boolean };
 
-// The runs of a text node, each on one line: where the node's fragments begin a new line, the
+// The parts of a text node, each on one line: where the node's fragments begin a new line, the
 // first character there is found by halving.
-function runsOf(node: Text, range: Range, tolerance: number): { start: number; end: number }[] {
+function linePartsOf(
+  node: Text,
+  range: Range,
+  tolerance: number,
+): { start: number; end: number }[] {
   range.selectNodeContents(node);
   const tops: number[] = [];
   for (const rect of range.getClientRects()) {
@@ -52,7 +56,7 @@ function runsOf(node: Text, range: Range, tolerance: number): { start: number; e
 // Whether justifying an area would widen the gaps of a line other than its last by more than a
 // part of its type size each. Its lines are set flush left to be measured: the width a line's
 // words leave free is shared among its gaps, and a line with none has one. The lines are told
-// by the runs of text set on them, and a raised or lowered run, or a formula, belongs to the
+// by the parts of text set on them, and a raised or lowered part, or a formula, belongs to the
 // line it stands across.
 export function stretches(area: HTMLElement): boolean {
   const content = area.getBoundingClientRect();
@@ -61,54 +65,54 @@ export function stretches(area: HTMLElement): boolean {
   const start = content.left + parseFloat(style.paddingInlineStart);
   const room = content.width - parseFloat(style.paddingInlineStart) * 2;
   const range = document.createRange();
-  const runs: Run[] = [];
+  const parts: LinePart[] = [];
   const walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     if (!(node instanceof Text) || node.parentElement?.closest(".formula") !== null) {
       continue;
     }
     const level = node.parentElement?.closest("sub, sup") === null;
-    for (const run of runsOf(node, range, SAME_LINE * size)) {
-      // A run of white space alone shows nothing, and is no line.
-      const text = node.data.slice(run.start, run.end);
+    for (const part of linePartsOf(node, range, SAME_LINE * size)) {
+      // A part of white space alone shows nothing, and is no line.
+      const text = node.data.slice(part.start, part.end);
       const words = text.trimEnd().length;
       if (text.trim() === "") {
         continue;
       }
-      range.setStart(node, run.start);
-      range.setEnd(node, run.start + words);
+      range.setStart(node, part.start);
+      range.setEnd(node, part.start + words);
       const rect = range.getBoundingClientRect();
-      runs.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text, level });
+      parts.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text, level });
     }
   }
   for (const formula of area.querySelectorAll(".formula")) {
     for (const rect of formula.getClientRects()) {
-      runs.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text: "", level: false });
+      parts.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text: "", level: false });
     }
   }
   // The lines are those of the text set level, or of all the text where none is; a raised or
-  // lowered run, or a formula, belongs to the line whose middle is nearest its own, and makes
+  // lowered part, or a formula, belongs to the line whose middle is nearest its own, and makes
   // no line of its own.
-  const lines: Run[] = [];
-  const byTop = (one: Run, other: Run) => one.top - other.top;
-  const leveled = runs.some((run) => run.level);
-  for (const run of runs.filter((each) => each.level || !leveled)) {
-    const line = lines.find((each) => Math.abs(each.top - run.top) < SAME_LINE * size);
+  const lines: LinePart[] = [];
+  const byTop = (one: LinePart, other: LinePart) => one.top - other.top;
+  const leveled = parts.some((part) => part.level);
+  for (const part of parts.filter((each) => each.level || !leveled)) {
+    const line = lines.find((each) => Math.abs(each.top - part.top) < SAME_LINE * size);
     if (line === undefined) {
-      lines.push({ ...run });
+      lines.push({ ...part });
     } else {
-      line.right = Math.max(line.right, run.right);
-      line.bottom = Math.max(line.bottom, run.bottom);
-      line.text += run.text;
+      line.right = Math.max(line.right, part.right);
+      line.bottom = Math.max(line.bottom, part.bottom);
+      line.text += part.text;
     }
   }
-  const middleOf = (run: Run) => (run.top + run.bottom) / 2;
-  for (const run of runs.filter((each) => leveled && !each.level)) {
-    const off = (line: Run) => Math.abs(middleOf(line) - middleOf(run));
+  const middleOf = (part: LinePart) => (part.top + part.bottom) / 2;
+  for (const part of parts.filter((each) => leveled && !each.level)) {
+    const off = (line: LinePart) => Math.abs(middleOf(line) - middleOf(part));
     const line = [...lines].sort((one, other) => off(one) - off(other))[0];
     if (line !== undefined) {
-      line.right = Math.max(line.right, run.right);
-      line.text += run.text;
+      line.right = Math.max(line.right, part.right);
+      line.text += part.text;
     }
   }
   return lines

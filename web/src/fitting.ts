@@ -101,7 +101,7 @@ function shareOf(flow: Flow, spare: number, leading: number): number {
 // of the letters of all its flows that fit at the narrowest, so that a few tight flows do not
 // hold the rest back.
 const HELD_LETTERS = 0.9;
-const LETTER = /[\p{L}\p{N}]/u;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
 
 // A flow's letters: the letters and digits of its areas' translation, each formula counting as
 // one.
@@ -113,7 +113,7 @@ function lettersOf(flow: Flow): number {
     count += formulas.length;
     characters.forEach((character, at) => {
       const inFormula = formulas.some((mark) => mark.start <= at && at < mark.end);
-      if (!inFormula && LETTER.test(character)) {
+      if (!inFormula && LETTER_OR_DIGIT.test(character)) {
         count += 1;
       }
     });
