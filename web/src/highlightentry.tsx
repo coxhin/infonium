@@ -1,11 +1,11 @@
-import { memo, useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import { anchorsOf, type Highlight, type Passage } from "./client";
 import { announce } from "./announce";
 import { CutText, useCut } from "./cuttext";
 import { CommentField, typingUnkept, type CommentNow } from "./highlightcomment";
 import { RemoveControl } from "./highlightremoval";
 import { wasMarkedAgain, type Opened } from "./highlights";
-import { NOTE_DOWN_PRESS, NoteDown, type Taking } from "./notedown";
+import { NoteDown, type Taking } from "./notedown";
 
 // What an entry asks of the list it is in. The list keeps these the same from render to
 // render, so that an entry is drawn again only when its own highlight changes.
@@ -136,12 +136,6 @@ function quoteTaking(highlight: Highlight, commentNow: () => Promise<string>): T
   };
 }
 
-function keepFieldFocused(event: MouseEvent): void {
-  if (event.target instanceof Element && event.target.closest(`.${NOTE_DOWN_PRESS}`) !== null) {
-    event.preventDefault();
-  }
-}
-
 // Scrolls the list the entry is in, and only that, so that the whole entry is in view, or its
 // start where it is taller than the list: in the one-column layout, scrolling the page as well
 // would move the reader under the drawer.
@@ -252,10 +246,7 @@ export const HighlightEntry = memo(function HighlightEntry({
             {highlight.comment === "" ? "写批注" : "改批注"}
           </button>
         )}
-        {/* Pressing 记到笔记 leaves the keyboard in an open comment's field: leaving it would
-            keep the comment and close the field, which moves the control from under the
-            pointer before the press ends. The press keeps the comment itself. */}
-        <span className="entry-actions" onMouseDown={keepFieldFocused}>
+        <span className="entry-actions">
           <NoteDown
             taking={quoteTaking(
               highlight,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Anchor, Statement } from "./client";
 import { announce } from "./announce";
 import { reasonOf } from "./loading";
@@ -109,8 +109,6 @@ export type NoteDownShape = "words" | "mark";
 
 // The class of a statement that keeps a gutter for its control's mark.
 export const NOTE_GUTTER = "note-gutter";
-// The class of the control's press.
-export const NOTE_DOWN_PRESS = "notedown-press";
 
 // The mark that stands for the control beside a statement; the control's name is its label.
 const MARK = "✎";
@@ -129,6 +127,11 @@ function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
 // The control that puts what infonium wrote, or a highlight, into the note being written.
 // It is quiet until the pointer is over what it belongs to or the keyboard is in it, and
 // keeps its room meanwhile; once it has something to say, it stays on show.
+//
+// A press by the pointer takes the keyboard only once it is a press, not as the button goes
+// down: a comment field open elsewhere is then left, and keeps its comment by itself, only after
+// the press, so that the field closing cannot move the control from under the pointer before the
+// press ends. A press by the keyboard finds it here already.
 export function NoteDown({
   taking,
   label,
@@ -139,6 +142,7 @@ export function NoteDown({
   shape?: NoteDownShape;
 }) {
   const [noting, setNoting] = useState<Noting>({ state: "idle" });
+  const pressButton = useRef<HTMLButtonElement>(null);
 
   const { excerpts, leftOut } = taking;
   // After a failure part way, a press puts in only what the note has not taken.
@@ -146,6 +150,7 @@ export function NoteDown({
   const rest = excerpts.length - taken;
 
   async function press() {
+    pressButton.current?.focus({ preventScroll: true });
     setNoting({ state: "writing" });
     try {
       const noted = await noteFrom(
@@ -169,10 +174,12 @@ export function NoteDown({
   return (
     <span className="notedown" data-state={noting.state} data-shape={shape}>
       <button
-        className={NOTE_DOWN_PRESS}
+        ref={pressButton}
+        className="notedown-press"
         aria-label={taken === 0 ? label : undefined}
         title={pressTitle(shape, leftOut)}
         disabled={noting.state === "writing"}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => void press()}
       >
         {shape === "mark" ? (
