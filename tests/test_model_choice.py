@@ -3,12 +3,15 @@ from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
 
+import httpx2
 import pytest
 from pydantic import SecretStr
 
 from infonium import api
-from infonium.language_model import FORM_TOLD, GLM_REASONING_EFFORT, JSON_OBJECT, reply_schema
+from infonium.digest import DraftDigest
+from infonium.language_model import FORM_TOLD, JSON_OBJECT, reply_schema
 from infonium.library import LOCAL_OWNER
+from infonium.library_tools import SEARCH_TOOL
 from infonium.rendition import Reply
 from infonium.shelf import (
     EARLIER_MODEL,
@@ -18,6 +21,7 @@ from infonium.shelf import (
     Unsurveyed,
 )
 from infonium.survey import DocumentSurvey
+from tests.conversation import asking
 from tests.model_standin import (
     GLM_CHAT_PATH,
     GLM_KEY,
@@ -26,15 +30,17 @@ from tests.model_standin import (
     STANDIN_MODEL,
     TRANSLATION_MODEL,
     Asked,
+    Call,
     Rejection,
 )
 from tests.model_standin import Reply as StreamedReply
-from tests.service import App
+from tests.service import App, digest_reply
 from tests.translation_standin import (
     TITLE,
     asks_passages,
     block_path,
     by_number,
+    form_name,
     is_survey,
     kept,
     long_paragraphs,
@@ -47,8 +53,11 @@ from tests.translation_standin import (
     translation_path,
 )
 
-MODELS_PATH = "/api/translation-models"
+MODELS_PATH = "/api/models"
+LIBRARY_CONVERSATION = "/api/conversation"
 NOT_OFFERED = "no-such-model"
+QUESTION = "When was the quay extended?"
+ANSWER = json.dumps({"statements": [{"text": "In 1901.", "citations": []}]})
 # A document long enough to take several requests.
 SEVERAL_REQUESTS_PARAGRAPHS = 40
 # The paragraph whose request the first model is refused, so that its translation stops with
@@ -63,6 +72,24 @@ def glm_model() -> str:
     return api.settings.glm_models[0]
 
 
+def glm_flash() -> str:
+    return api.settings.glm_models[1]
+
+
+def with_glm_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(api.settings, "glm_api_key", SecretStr(GLM_KEY))
+
+
+def answering(asked: Asked) -> StreamedReply | Rejection:
+    # Translates passages, writes digests, and answers questions about an item or the
+    # library, citing nothing.
+    if is_survey(asked) or asks_passages(asked):
+        return translating()(asked)
+    if form_name(asked) == DraftDigest.__name__:
+        return digest_reply(asked)
+    return StreamedReply(pieces=[ANSWER])
+
+
 def offered(app: App) -> dict[str, Any]:
     served = app.client.get(MODELS_PATH)
     assert served.status_code == HTTPStatus.OK, f"GET of the models failed: {served.text}"
@@ -71,7 +98,7 @@ def offered(app: App) -> dict[str, Any]:
 
 
 def asked_with(app: App, item_id: str, model: str) -> dict[str, Any]:
-    put = app.client.put(translation_path(item_id), json={"model": model})
+    put = app.client.put(translation_path(item_id), params={"model": model})
     assert put.status_code == HTTPStatus.OK, f"PUT of a translation failed: {put.text}"
     view: dict[str, Any] = put.json()
     return view
@@ -85,25 +112,110 @@ def translation_requests(app: App) -> list[Asked]:
     return [asked for asked in app.model.asked() if is_survey(asked) or asks_passages(asked)]
 
 
+def digest_path(item_id: str) -> str:
+    return f"/api/items/{item_id}/digest"
+
+
+def conversation_path(item_id: str) -> str:
+    return f"/api/items/{item_id}/conversation"
+
+
+def asking_with(app: App, path: str, params: dict[str, str]) -> dict[str, Any]:
+    query = f"?{httpx2.QueryParams(params)}" if params else ""
+    questioned = asking(app.client, f"{path}{query}", QUESTION)
+    assert questioned.status == HTTPStatus.OK, f"a question was refused: {questioned.body}"
+    assert questioned.events[-1]["kind"] == "answered", (
+        f"a question the stand-in answered was not answered: {questioned.events}"
+    )
+    turn: dict[str, Any] = questioned.events[-1]["turn"]
+    return turn
+
+
+# What a reader may choose.
+
+
 def test_a_reader_is_offered_the_default_then_the_digest_model_then_glms_unready_without_its_key(
     app: App,
 ) -> None:
     assert offered(app) == {
-        "default": TRANSLATION_MODEL,
         "models": [
             {"name": TRANSLATION_MODEL, "ready": True},
             {"name": STANDIN_MODEL, "ready": True},
             *({"name": name, "ready": False} for name in api.settings.glm_models),
         ],
+        "translation": TRANSLATION_MODEL,
+        "answering": STANDIN_MODEL,
     }, "the models offered are not the default, the digest model and GLM's, in that order"
 
 
 def test_glms_models_are_ready_once_glms_key_is_set(
     app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(api.settings, "glm_api_key", SecretStr(GLM_KEY))
+    with_glm_key(monkeypatch)
     unready = [model["name"] for model in offered(app)["models"] if not model["ready"]]
     assert unready == [], f"models are offered as unready though GLM's key is set: {unready}"
+
+
+OPERATIONS: dict[str, Callable[[App, str, dict[str, str]], httpx2.Response]] = {
+    "translation PUT": lambda app, item, query: app.client.put(
+        translation_path(item), params=query
+    ),
+    "translation POST": lambda app, item, query: app.client.post(
+        translation_path(item), params=query
+    ),
+    "digest PUT": lambda app, item, query: app.client.put(digest_path(item), params=query),
+    "digest POST": lambda app, item, query: app.client.post(digest_path(item), params=query),
+    "block again": lambda app, item, query: app.client.post(block_path(item, 0), params=query),
+    "item question": lambda app, item, query: app.client.post(
+        conversation_path(item), params=query, json={"text": QUESTION}
+    ),
+    "library question": lambda app, item, query: app.client.post(
+        LIBRARY_CONVERSATION, params=query, json={"text": QUESTION}
+    ),
+}
+
+
+@pytest.mark.parametrize("operation", OPERATIONS)
+def test_a_model_that_is_not_offered_is_refused_and_nothing_is_asked(
+    app: App, operation: str
+) -> None:
+    app.model.reset(answering)
+    document = kept(app, long_paragraphs(3))
+    refused = OPERATIONS[operation](app, document.item_id, {"model": NOT_OFFERED})
+    assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
+        f"{operation} with a model not offered answered {refused.status_code}: {refused.text}"
+    )
+    assert TRANSLATION_MODEL in refused.text, (
+        f"the refusal of a model not offered does not name the models offered: {refused.text}"
+    )
+    quiet(app)
+    progress = translation(app, document.item_id)["progress"]
+    assert progress == {"kind": "unasked"} and app.model.asked() == [], (
+        f"{operation} with a model not offered asked the model, or started a translation: "
+        f"{progress}"
+    )
+
+
+@pytest.mark.parametrize(
+    "operation", ["digest PUT", "digest POST", "item question", "library question"]
+)
+def test_a_glm_model_without_glms_key_is_refused_before_anything_is_sent(
+    app: App, operation: str
+) -> None:
+    app.model.reset(answering)
+    document = kept(app, long_paragraphs(3))
+    refused = OPERATIONS[operation](app, document.item_id, {"model": glm_model()})
+    assert refused.status_code == HTTPStatus.SERVICE_UNAVAILABLE, (
+        f"{operation} of GLM without GLM's key answered {refused.status_code}: {refused.text}"
+    )
+    assert "INFONIUM_GLM_API_KEY" in refused.json()["detail"], (
+        f"the refusal of GLM without its key does not say what is missing: {refused.text}"
+    )
+    quiet(app)
+    assert app.model.asked() == [], f"{operation} of GLM without GLM's key sent requests"
+
+
+# A translation.
 
 
 def test_a_translation_is_made_with_the_model_asked_for(app: App) -> None:
@@ -134,30 +246,10 @@ def test_a_translation_asked_for_without_a_model_is_made_with_the_default(app: A
     )
 
 
-@pytest.mark.parametrize("ask", ["put", "post"])
-def test_a_model_that_is_not_offered_is_refused_and_nothing_starts(app: App, ask: str) -> None:
-    app.model.reset(translating())
-    document = kept(app, long_paragraphs(3))
-    refused = getattr(app.client, ask)(
-        translation_path(document.item_id), json={"model": NOT_OFFERED}
-    )
-    assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
-        f"{ask.upper()} with a model not offered answered {refused.status_code}: {refused.text}"
-    )
-    assert TRANSLATION_MODEL in refused.text, (
-        f"the refusal of a model not offered does not name the models offered: {refused.text}"
-    )
-    quiet(app)
-    progress = translation(app, document.item_id)["progress"]
-    assert progress == {"kind": "unasked"} and app.model.asked() == [], (
-        f"a translation asked of a model not offered started: {progress}"
-    )
-
-
 def test_a_glm_model_is_asked_at_glms_endpoint_with_glms_key_for_json_of_the_form_it_is_told(
     app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(api.settings, "glm_api_key", SecretStr(GLM_KEY))
+    with_glm_key(monkeypatch)
     app.model.reset(translating())
     document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS))
     asked_with(app, document.item_id, glm_model())
@@ -187,28 +279,26 @@ def test_a_glm_model_is_asked_at_glms_endpoint_with_glms_key_for_json_of_the_for
         assert system.endswith(told), (
             f"a request to GLM does not tell the form {form.__name__} after its instructions"
         )
-        assert asked.body["reasoning_effort"] == GLM_REASONING_EFFORT, (
-            f"a request to GLM asks it to reason {asked.body.get('reasoning_effort')}"
-        )
 
 
-def test_the_model_that_writes_digests_is_still_asked_at_its_own_endpoint_with_its_own_key(
+def test_each_glm_model_is_asked_to_reason_as_much_as_is_set_for_it(
     app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(api.settings, "glm_api_key", SecretStr(GLM_KEY))
+    with_glm_key(monkeypatch)
+    monkeypatch.setattr(api.settings, "glm_reasoning_efforts", {glm_model(): "low"})
     app.model.reset(translating())
-    document = kept(app, long_paragraphs(3))
-    asked_with(app, document.item_id, glm_model())
-    settled(app, document.item_id)
-    sent = len(app.model.asked())
-    again = app.client.post(block_path(document.item_id, 1))
-    assert again.status_code == HTTPStatus.OK, f"a block was not translated again: {again.text}"
-    [asked] = app.model.asked()[sent:]
-    assert (asked.path, asked.key, asked.body["model"]) == (
-        RESPONSES_PATH,
-        MODEL_KEY,
-        STANDIN_MODEL,
-    ), f"a block translated again went to {asked.path} with another key, of {asked.body['model']}"
+    for model in (glm_model(), glm_flash()):
+        document = kept(app, long_paragraphs(3))
+        asked_with(app, document.item_id, model)
+        settled(app, document.item_id)
+    efforts = {
+        (asked.body["model"], asked.body.get("reasoning_effort"))
+        for asked in translation_requests(app)
+    }
+    assert efforts == {(glm_model(), "low"), (glm_flash(), None)}, (
+        f"GLM's models were asked to reason {efforts}, where {glm_model()} is set to low and "
+        f"{glm_flash()} to the endpoint's default"
+    )
 
 
 def test_a_glm_translation_without_glms_key_stops_and_sends_nothing_anywhere(app: App) -> None:
@@ -316,4 +406,91 @@ def test_a_record_kept_before_the_model_was_named_was_made_with_the_earlier_mode
     earlier = record.model_dump(mode="json", exclude={"model"})
     assert TranslationRecord.model_validate(earlier).model == EARLIER_MODEL, (
         "a record that names no model is not read as made with the earlier model"
+    )
+
+
+# Digests, answers, and a block translated again.
+
+
+def test_a_digest_is_written_by_the_model_chosen_and_kept_whatever_is_chosen_later(
+    app: App,
+) -> None:
+    app.model.reset(answering)
+    document = kept(app, long_paragraphs(3))
+    written = app.client.put(digest_path(document.item_id), params={"model": TRANSLATION_MODEL})
+    assert written.status_code == HTTPStatus.OK, f"a digest was not written: {written.text}"
+    [asked] = app.model.asked()
+    assert asked.body["model"] == written.json()["model"] == TRANSLATION_MODEL, (
+        f"a digest asked of {TRANSLATION_MODEL} was written by {asked.body['model']}"
+    )
+    kept_digest = app.client.put(digest_path(document.item_id), params={"model": STANDIN_MODEL})
+    assert kept_digest.json() == written.json() and len(app.model.asked()) == 1, (
+        "a digest kept was written again because another model was chosen"
+    )
+    rewritten = app.client.post(digest_path(document.item_id), params={"model": STANDIN_MODEL})
+    assert rewritten.json()["model"] == app.model.asked()[-1].body["model"] == STANDIN_MODEL, (
+        "a digest written anew was not written by the model chosen"
+    )
+
+
+@pytest.mark.parametrize("scope", ["item", "library"])
+def test_a_question_is_answered_by_the_model_chosen_or_else_the_digest_model(
+    app: App, scope: str
+) -> None:
+    app.model.reset(answering)
+    document = kept(app, long_paragraphs(3))
+    path = conversation_path(document.item_id) if scope == "item" else LIBRARY_CONVERSATION
+    for model, expected in ((TRANSLATION_MODEL, TRANSLATION_MODEL), (None, STANDIN_MODEL)):
+        sent = len(app.model.asked())
+        params = {} if model is None else {"model": model}
+        answered = asking_with(app, path, params)
+        asked_models = {asked.body["model"] for asked in app.model.asked()[sent:]}
+        assert answered["answer"]["model"] == expected and asked_models == {expected}, (
+            f"a question asked of {model} was answered by {answered['answer']['model']}, "
+            f"asking {asked_models}"
+        )
+
+
+def test_a_block_is_translated_again_by_the_model_chosen(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_glm_key(monkeypatch)
+    app.model.reset(translating())
+    document = kept(app, long_paragraphs(3))
+    asked_with(app, document.item_id, TRANSLATION_MODEL)
+    settled(app, document.item_id)
+    sent = len(app.model.asked())
+    again = app.client.post(block_path(document.item_id, 1), params={"model": glm_flash()})
+    assert again.status_code == HTTPStatus.OK, f"a block was not translated again: {again.text}"
+    [asked] = app.model.asked()[sent:]
+    assert (asked.path, asked.key, asked.body["model"], again.json()["model"]) == (
+        GLM_CHAT_PATH,
+        GLM_KEY,
+        glm_flash(),
+        glm_flash(),
+    ), f"a block asked again of {glm_flash()} went to {asked.path}, of {asked.body['model']}"
+    sent = len(app.model.asked())
+    app.client.post(block_path(document.item_id, 2))
+    [asked] = app.model.asked()[sent:]
+    assert (asked.path, asked.key, asked.body["model"]) == (
+        RESPONSES_PATH,
+        MODEL_KEY,
+        STANDIN_MODEL,
+    ), f"a block asked again of no model went to {asked.path}, of {asked.body['model']}"
+
+
+def test_glm_answering_about_the_library_is_held_to_json_but_in_the_first_request_that_may_search(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_glm_key(monkeypatch)
+    kept(app, long_paragraphs(3))
+    searched = StreamedReply(
+        calls=[Call(name=SEARCH_TOOL, arguments=json.dumps({"query": "quay"}))]
+    )
+    app.model.reset(lambda asked: StreamedReply(pieces=[ANSWER]) if asked.number else searched)
+    asking_with(app, LIBRARY_CONVERSATION, {"model": glm_flash()})
+    formats = [asked.body.get("response_format") for asked in app.model.asked()]
+    assert formats == [None, {"type": JSON_OBJECT}], (
+        f"a GLM reply that searched first was asked with the forms {formats}, where the first "
+        "request, which may search, holds it to nothing and the next to JSON"
     )

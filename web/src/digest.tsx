@@ -36,10 +36,20 @@ function DigestBody({ digest, citing }: { digest: Digest; citing: Citing }) {
 
 // What infonium wrote about the open item. Its citations point into the reader, at passages
 // of the document that is on show there.
-export function DigestPanel({ itemId, citing }: { itemId: string; citing: Citing }) {
+// A digest is written by the model chosen when it is first asked for or written anew; one that
+// is kept stays when another model is chosen.
+export function DigestPanel({
+  itemId,
+  model,
+  citing,
+}: {
+  itemId: string;
+  model: string | undefined;
+  citing: Citing;
+}) {
   const [round, setRound] = useState(0);
   const digest = useLoaded(
-    () => (round === 0 ? ensureDigest(itemId) : rewriteDigest(itemId)),
+    () => (round === 0 ? ensureDigest(itemId, model) : rewriteDigest(itemId, model)),
     `${itemId}:${round}`,
   );
 

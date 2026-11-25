@@ -11,7 +11,7 @@ from hypothesis import settings
 from pydantic import SecretStr
 
 from infonium import api, embedding, intake, search, speech
-from infonium.language_model import LanguageModel, WireApi, endable_openai_model, openai_model
+from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
 from tests import pdf_engine_standin
@@ -171,24 +171,17 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
-    # The service's own providers of its translator and of the models it translates with,
-    # called anew for each start.
+    # The service's own providers of its translator and of its models, called anew for each
+    # start.
     made_translator = api.translator.__wrapped__
-    made_translation_model = api.translation_model.__wrapped__
+    made_language_model = api.language_model.__wrapped__
+    made_answering_model = api.answering_model.__wrapped__
 
     def start(
         wire_api: WireApi = WireApi.RESPONSES,
         embedding_model: str = EMBEDDING_MODEL,
         language: str = api.settings.language,
     ) -> App:
-        @cache
-        def language_model() -> LanguageModel:
-            return openai_model(name=STANDIN_MODEL, wire_api=wire_api)
-
-        @cache
-        def answering_model() -> LanguageModel:
-            return endable_openai_model(name=STANDIN_MODEL, wire_api=wire_api)
-
         store = LibraryStore(tmp_path / "data")
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
@@ -202,20 +195,19 @@ def start_app(
             ),
         )
         monkeypatch.setattr(api, "block_index", lambda: index)
-        monkeypatch.setattr(api, "language_model", language_model)
-        monkeypatch.setattr(api, "answering_model", answering_model)
 
-        # The translator is made anew for each start by the service's own provider, on the
-        # test's library and models, and so are the models it translates with. Its default
-        # model has a name of its own, so that the stand-in tells its requests from those of
-        # the model that writes digests. GLM's endpoint is the stand-in's, reached with no key
-        # until a test gives one.
+        # The translator and the models are made anew for each start by the service's own
+        # providers, on the test's library, speaking the wire API given. The default model of
+        # translations has a name of its own, so that the stand-in tells its requests from
+        # those of the model that writes digests. GLM's endpoint is the stand-in's, reached
+        # with no key until a test gives one.
         monkeypatch.setattr(api.settings, "wire_api", wire_api)
         monkeypatch.setattr(api.settings, "model", STANDIN_MODEL)
         monkeypatch.setattr(api.settings, "translation_model", TRANSLATION_MODEL)
         monkeypatch.setattr(api.settings, "glm_base_url", GLM_BASE_URL)
         monkeypatch.setattr(api.settings, "glm_api_key", None)
-        monkeypatch.setattr(api, "translation_model", cache(made_translation_model))
+        monkeypatch.setattr(api, "language_model", cache(made_language_model))
+        monkeypatch.setattr(api, "answering_model", cache(made_answering_model))
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)

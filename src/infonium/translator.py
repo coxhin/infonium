@@ -7,7 +7,7 @@ from threading import Event, Lock
 
 from pydantic import BaseModel
 
-from infonium.asking import Work, requests_of, translate_blocks
+from infonium.asking import Work, document_first_uses, requests_of, translate_blocks
 from infonium.document import BlockNumber, Document
 from infonium.language_model import LanguageModel, StructuredCompletion
 from infonium.library import Item, Library, LibraryStore, NotInLibrary, Read
@@ -121,20 +121,15 @@ def gather_failure(failures: list[BaseException], request: Future[None]) -> None
 
 class Translator:
     # Translates documents of a library into one language, block by block and off the
-    # thread that asks, and keeps each block as it comes. A translation is made with the
-    # model asked for, by its name; one block is translated again with a model of its own.
-    # The models are made when they are first asked for.
+    # thread that asks, and keeps each block as it comes. A translation, and one block
+    # translated again, is made with the model asked for, by its name; the models are made
+    # when they are first asked for.
     def __init__(
-        self,
-        store: LibraryStore,
-        language: str,
-        translating: Callable[[str], LanguageModel],
-        retranslating: Callable[[], LanguageModel],
+        self, store: LibraryStore, language: str, models: Callable[[str], LanguageModel]
     ) -> None:
         self.store = store
         self.language = language
-        self.translating = translating
-        self.retranslating = retranslating
+        self.models = models
         self.pool = ThreadPoolExecutor(
             max_workers=TRANSLATIONS_AT_ONCE, thread_name_prefix="translator"
         )
@@ -242,9 +237,11 @@ class Translator:
         self.translate_in_background(owner, item_id, record.document_id, record.run, ended)
         return self.standing(owner, item_id)
 
-    def retranslated(self, owner: str, item_id: str, block_number: BlockNumber) -> TranslatedBlock:
-        # Translates one block again with the model that writes digests, and keeps it in
-        # place of its earlier translation. Only a translation that was asked for and is
+    def retranslated(
+        self, owner: str, item_id: str, block_number: BlockNumber, model: str
+    ) -> TranslatedBlock:
+        # Translates one block again with the model, and keeps it in place of its earlier
+        # translation. Only a translation that was asked for and is
         # needed has blocks to translate again, and a block that is never translated has none.
         with self.opened(owner) as (library, shelf):
             holding = library.holding(item_id)
@@ -255,19 +252,21 @@ class Translator:
         if block_number >= len(blocks) or not is_translated(blocks[block_number]):
             raise NotInLibrary(NOT_TRANSLATED.format(block_number=block_number, item_id=item_id))
         kept: list[TranslatedBlock] = []
+        terms = [
+            term
+            for record in records
+            if isinstance(record.survey, Surveyed)
+            for term in record.survey.terms
+        ]
         work = Work(
             document=holding.document,
             title=holding.title,
-            terms=[
-                term
-                for record in records
-                if isinstance(record.survey, Surveyed)
-                for term in record.survey.terms
-            ],
+            terms=terms,
+            first_uses=document_first_uses(holding.document, terms),
             numbers=[block_number],
         )
         keep = partial(self.keep_again, owner, holding.document.id, kept)
-        translate_blocks(self.retranslating(), self.language, work, keep, lambda: True)
+        translate_blocks(self.models(model), self.language, work, keep, lambda: True)
         [block] = kept
         return block
 
@@ -373,7 +372,7 @@ class Translator:
             return
         document = holding.document
         pending = [number for number in translated_numbers(document) if number not in kept]
-        model = self.translating(records[0].model)
+        model = self.models(records[0].model)
         match records[0].survey:
             case Unsurveyed() if pending:
                 survey = surveyed(model, self.language, document)
@@ -390,12 +389,19 @@ class Translator:
         requesting = ThreadPoolExecutor(
             max_workers=REQUESTS_AT_ONCE, thread_name_prefix="translation-request"
         )
+        firsts = document_first_uses(document, terms)
         requests = [
             requesting.submit(
                 translate_blocks,
                 model,
                 self.language,
-                Work(document=document, title=holding.title, terms=terms, numbers=numbers),
+                Work(
+                    document=document,
+                    title=holding.title,
+                    terms=terms,
+                    first_uses=firsts,
+                    numbers=numbers,
+                ),
                 partial(self.keep_in_run, owner, item_id, document_id, run),
                 partial(self.goes_on, owner, item_id, document_id, run, ended),
             )

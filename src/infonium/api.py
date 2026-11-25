@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from urllib.parse import urldefrag, urlsplit
 
 import openai
-from fastapi import Depends, FastAPI, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, BaseModel, Field, HttpUrl
 
@@ -50,9 +50,11 @@ from infonium.item_conversation import (
 )
 from infonium.language_model import (
     MODEL_FAILURES,
+    GlmEndpoint,
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
+    endable_glm_model,
     endable_openai_model,
     glm_model,
     openai_model,
@@ -119,7 +121,11 @@ OPENAI_LOGGER = "openai"
 NO_GLM_KEY = (
     "{model} is reached at GLM's endpoint with GLM's key, and INFONIUM_GLM_API_KEY is not set"
 )
-NOT_OFFERED = "no translation model is named {model}; the models are {models}"
+NOT_OFFERED = "no model is offered by the name {model}; the models are {models}"
+CHOSEN_MODEL = (
+    "The model to ask, one of those GET /api/models offers; without one, the default of the"
+    " operation"
+)
 NAMES_BETWEEN = ", "
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
@@ -159,15 +165,45 @@ def block_index() -> BlockIndex:
     )
 
 
-@cache
-def language_model() -> LanguageModel:
-    return openai_model(name=settings.model, wire_api=settings.wire_api)
+class UnreachableModel(Exception):
+    # infonium lacks what it needs to reach the model's endpoint.
+    pass
+
+
+def offered_models() -> list[str]:
+    # The models a reader may choose, for a translation and for digests and answers, in the
+    # order a reader is offered them: the one that translates unless the reader chooses
+    # another, the one that writes digests and answers unless the reader chooses another,
+    # then GLM's.
+    return list(dict.fromkeys([settings.translation_model, settings.model, *settings.glm_models]))
+
+
+def glm_endpoint(name: str) -> GlmEndpoint:
+    # GLM's endpoint, for one of its models, which cannot be reached without GLM's key.
+    if settings.glm_api_key is None:
+        raise UnreachableModel(NO_GLM_KEY.format(model=name))
+    return GlmEndpoint(
+        base_url=settings.glm_base_url,
+        api_key=settings.glm_api_key,
+        reasoning_efforts=settings.glm_reasoning_efforts,
+    )
 
 
 @cache
-def answering_model() -> LanguageModel:
-    # The model that writes digests, over connections that a reader who leaves cuts.
-    return endable_openai_model(name=settings.model, wire_api=settings.wire_api)
+def language_model(name: str) -> LanguageModel:
+    # A model at the endpoint that serves it: one of GLM's at GLM's endpoint, any other at
+    # the endpoint that a client of the openai package finds by itself.
+    if name in settings.glm_models:
+        return glm_model(name=name, endpoint=glm_endpoint(name))
+    return openai_model(name=name, wire_api=settings.wire_api)
+
+
+@cache
+def answering_model(name: str) -> LanguageModel:
+    # The same model, over connections that a reader who leaves cuts.
+    if name in settings.glm_models:
+        return endable_glm_model(name=name, endpoint=glm_endpoint(name))
+    return endable_openai_model(name=name, wire_api=settings.wire_api)
 
 
 @cache
@@ -175,38 +211,9 @@ def answering() -> Answering:
     return Answering()
 
 
-class UnreachableModel(Exception):
-    # infonium lacks what it needs to reach the model's endpoint.
-    pass
-
-
-def offered_translation_models() -> list[str]:
-    # The models a document may be translated with, in the order a reader is offered them:
-    # the one a translation is made with unless the reader chooses another, the one that
-    # writes digests, then GLM's.
-    return list(dict.fromkeys([settings.translation_model, settings.model, *settings.glm_models]))
-
-
-@cache
-def translation_model(name: str) -> LanguageModel:
-    # A model a translation is made with, at the endpoint that serves it: one of GLM's at
-    # GLM's endpoint with GLM's key, any other at the endpoint of the model that writes
-    # digests.
-    if name not in settings.glm_models:
-        return openai_model(name=name, wire_api=settings.wire_api)
-    if settings.glm_api_key is None:
-        raise UnreachableModel(NO_GLM_KEY.format(model=name))
-    return glm_model(name=name, base_url=settings.glm_base_url, api_key=settings.glm_api_key)
-
-
 @cache
 def translator() -> Translator:
-    return Translator(
-        store=library_store(),
-        language=settings.language,
-        translating=translation_model,
-        retranslating=language_model,
-    )
+    return Translator(store=library_store(), language=settings.language, models=language_model)
 
 
 @asynccontextmanager
@@ -282,29 +289,40 @@ class TranslationView(BaseModel):
 
 
 def offered_model(name: str) -> str:
-    offered = offered_translation_models()
+    offered = offered_models()
     if name not in offered:
         raise ValueError(NOT_OFFERED.format(model=name, models=NAMES_BETWEEN.join(offered)))
     return name
 
 
-class TranslationAsked(BaseModel):
-    # The model a translation that starts or goes on is made with, one of those offered.
-    model: Annotated[str, AfterValidator(offered_model)]
+# The model a reader chose for what an operation asks of a model; none, the default.
+ChosenModel = Annotated[
+    Annotated[str, AfterValidator(offered_model)] | None, Query(description=CHOSEN_MODEL)
+]
 
 
-class TranslationModelView(BaseModel):
-    # A model a document may be translated with, and whether infonium has what it needs to
-    # reach it: one of GLM's needs GLM's key.
+def translating_with(model: str | None) -> str:
+    return settings.translation_model if model is None else model
+
+
+def answering_with(model: str | None) -> str:
+    return settings.model if model is None else model
+
+
+class ModelView(BaseModel):
+    # A model a reader may choose, and whether infonium has what it needs to reach it: one
+    # of GLM's needs GLM's key.
     name: str
     ready: bool
 
 
-class TranslationModels(BaseModel):
-    # The models a document may be translated with, in the order a reader is offered them,
-    # and the one a translation is made with unless the reader chooses another.
-    default: str
-    models: list[TranslationModelView]
+class ModelsView(BaseModel):
+    # The models a reader may choose, in the order a reader is offered them, and those asked
+    # where the reader chooses none: the one that translates a document, and the one that
+    # writes digests, answers questions and translates one block again.
+    models: list[ModelView]
+    translation: str
+    answering: str
 
 
 class PageBlocks(BaseModel):
@@ -386,6 +404,7 @@ app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY)
 app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -393,6 +412,7 @@ SERVED_PAGE: dict[int | str, dict[str, Any]] = {
     HTTPStatus.OK: {"content": {HTML_MEDIA_TYPE: {"schema": {"type": "string"}}}}
 }
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
+UNREACHABLE: dict[int | str, dict[str, Any]] = {HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
@@ -448,6 +468,15 @@ async def ended_on_leaving(request: Request, ending: Ending) -> None:
     ending.end()
 
 
+def chosen_answerer(model: ChosenModel = None) -> LanguageModel:
+    # The model that answers a question, made before a line of the answer is sent, so that
+    # one that cannot be reached is refused as the request.
+    return answering_model(answering_with(model))
+
+
+Answerer = Annotated[LanguageModel, Depends(chosen_answerer)]
+
+
 async def answer_ending(request: Request) -> AsyncIterator[Ending]:
     # A reader who leaves in the middle of an answer ends it at once, whatever the model is
     # doing: the thread that writes the lines waits in a read of the model's reply, and only
@@ -488,8 +517,7 @@ def digest_view(digest: Digest) -> DigestView:
     )
 
 
-def written_digest(holding: Holding, owner: str) -> Digest:
-    model = language_model()
+def written_digest(holding: Holding, owner: str, model: LanguageModel) -> Digest:
     completion = model.structured(
         instructions=digest_instructions(settings.language),
         prompt=numbered_blocks(holding.title, holding.document),
@@ -553,19 +581,22 @@ def item_source(item_id: str, owner: Owner) -> FileResponse:
     )
 
 
-@app.post("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED)
-def rewrite_digest(item_id: str, owner: Owner) -> DigestView:
+@app.post("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
+def rewrite_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
     with library_store().library(owner) as library:
         holding = library.holding(item_id)
-    return digest_view(written_digest(holding, owner))
+    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
 
 
-@app.put("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED)
-def ensure_digest(item_id: str, owner: Owner) -> DigestView:
+@app.put("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
+def ensure_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
+    # The digest kept, whatever model wrote it, or one written by the model chosen.
     with library_store().library(owner) as library:
         holding = library.holding(item_id)
         kept = library.kept_digests(holding.document.id)
-    return digest_view(kept[0] if kept else written_digest(holding, owner))
+    if kept:
+        return digest_view(kept[0])
+    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
 
 
 @app.get("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
@@ -575,52 +606,46 @@ def item_translation(item_id: str, owner: Owner) -> TranslationView:
     return translation_view(translator().standing(owner, item_id))
 
 
-@app.get("/api/translation-models")
-def translation_models() -> TranslationModels:
-    return TranslationModels(
-        default=settings.translation_model,
+@app.get("/api/models")
+def models_offered() -> ModelsView:
+    return ModelsView(
         models=[
-            TranslationModelView(
+            ModelView(
                 name=name,
                 ready=name not in settings.glm_models or settings.glm_api_key is not None,
             )
-            for name in offered_translation_models()
+            for name in offered_models()
         ],
+        translation=settings.translation_model,
+        answering=settings.model,
     )
 
 
-def asked_model(asked: TranslationAsked | None) -> str:
-    # A translation asked for without a model is made with the default.
-    return settings.translation_model if asked is None else asked.model
-
-
 @app.put("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def ensure_translation(
-    item_id: str, owner: Owner, asked: TranslationAsked | None = None
-) -> TranslationView:
-    # Starts the translation with the model asked for unless it is under way, done or
-    # unneeded. One that stopped goes on from the blocks it has, with that model.
-    return translation_view(translator().ensure(owner, item_id, asked_model(asked)))
+def ensure_translation(item_id: str, owner: Owner, model: ChosenModel = None) -> TranslationView:
+    # Starts the translation with the model chosen unless it is under way, done or unneeded.
+    # One that stopped goes on from the blocks it has, with that model.
+    return translation_view(translator().ensure(owner, item_id, translating_with(model)))
 
 
 @app.post("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def translate_anew(
-    item_id: str, owner: Owner, asked: TranslationAsked | None = None
-) -> TranslationView:
-    # Starts the translation from its first block with the model asked for, in place of what
+def translate_anew(item_id: str, owner: Owner, model: ChosenModel = None) -> TranslationView:
+    # Starts the translation from its first block with the model chosen, in place of what
     # was translated before.
-    return translation_view(translator().anew(owner, item_id, asked_model(asked)))
+    return translation_view(translator().anew(owner, item_id, translating_with(model)))
 
 
 @app.post(
     "/api/items/{item_id}/translation/blocks/{block_number}",
-    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED,
+    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED | UNREACHABLE,
 )
-def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> TranslatedBlock:
-    # Translates one block again with the model that writes digests, and keeps the result in
-    # place of the block's earlier translation. A translation that was never asked for, or
-    # that is not needed, has no block to translate again.
-    return translator().retranslated(owner, item_id, block_number)
+def retranslate_block(
+    item_id: str, block_number: BlockNumber, owner: Owner, model: ChosenModel = None
+) -> TranslatedBlock:
+    # Translates one block again with the model chosen for digests and answers, and keeps the
+    # result in place of the block's earlier translation. A translation that was never asked
+    # for, or that is not needed, has no block to translate again.
+    return translator().retranslated(owner, item_id, block_number, answering_with(model))
 
 
 @cache
@@ -692,20 +717,20 @@ def item_conversation(item_id: str, owner: Owner) -> Conversation:
         return Conversation(turns=item_turns(transaction, item_id).turns())
 
 
-@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
+@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING | UNREACHABLE)
 def ask_about_item(
     item_id: str,
     question: Question,
     owner: Owner,
     questioned: QuestionedItem,
     ending: AnswerEnding,
+    answerer: Answerer,
 ) -> Iterator[ChatEvent]:
-    # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON.
+    # Answers a question about the item's document, after the questions asked of it before,
+    # with the model chosen. What happens on the way is sent as it happens, each event a line
+    # of JSON.
     yield from told(
-        answer_progress(
-            answering_model(), questioned.holding, questioned.turns, question.text, ending
-        ),
+        answer_progress(answerer, questioned.holding, questioned.turns, question.text, ending),
         owner,
         lambda transaction: item_turns(transaction, item_id),
     )
@@ -745,16 +770,20 @@ def library_conversation(owner: Owner) -> Conversation:
         return Conversation(turns=library_turns(transaction).turns())
 
 
-@app.post("/api/conversation", responses=ANSWERING)
+@app.post("/api/conversation", responses=ANSWERING | UNREACHABLE)
 def ask_about_library(
-    question: Question, owner: Owner, turns: QuestionedLibrary, ending: AnswerEnding
+    question: Question,
+    owner: Owner,
+    turns: QuestionedLibrary,
+    ending: AnswerEnding,
+    answerer: Answerer,
 ) -> Iterator[ChatEvent]:
     # Answers a question about everything the library holds, after the questions asked of
-    # the library before, and sends its events the same way. The model searches and reads
-    # the library's blocks with tools that change nothing.
+    # the library before, with the model chosen, and sends its events the same way. The
+    # model searches and reads the library's blocks with tools that change nothing.
     shelf = library_shelf(library_store(), block_index(), owner)
     yield from told(
-        library_answer_progress(answering_model(), shelf, turns, question.text, ending),
+        library_answer_progress(answerer, shelf, turns, question.text, ending),
         owner,
         library_turns,
     )

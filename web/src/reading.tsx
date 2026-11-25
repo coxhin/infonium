@@ -56,11 +56,13 @@ export function ReadItem({
     setMade((before) => (before.has(name) ? before : new Set(before).add(name)));
   }
   const setting = useSetting();
-  const modelChoice = useModelChoice();
+  const translationChoice = useModelChoice("translation");
+  const answeringChoice = useModelChoice("answering");
   const translation = useTranslation(
     entry.id,
     shown !== undefined && shown.showsTranslation && setting !== "source",
-    modelChoice.chosen,
+    translationChoice.chosen,
+    answeringChoice.chosen,
   );
   const [pointed, setPointed] = useState<Pointed>();
   const [played, setPlayed] = useState<TimePlace[]>([]);
@@ -113,7 +115,11 @@ export function ReadItem({
               </div>
             )}
             <SettingSwitch setting={setting} />
-            <ModelChoiceSelect choice={modelChoice} />
+            <ModelChoiceSelect
+              choice={translationChoice}
+              label="翻译模型"
+              title="开始、继续或全部重新翻译时用这个模型"
+            />
             {setting !== "source" && <TranslationNote translation={translation} />}
           </div>
           {surface === "time" && (

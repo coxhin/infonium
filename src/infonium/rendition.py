@@ -10,6 +10,7 @@ from typing import Final
 from pydantic import BaseModel
 
 from infonium.document import (
+    CHINESE_MARKS,
     FormulaMark,
     LinkMark,
     Mark,
@@ -110,8 +111,15 @@ it.
 same in every passage. Where the request lists terms, translate a listed term as it is \
 listed wherever a passage uses it in that sense; words that only look like a listed term \
 are translated for what they say.
-- {terms_kept_in_english} A term kept in English stands alone, with no translation after \
-it in brackets.
+- {terms_kept_in_english} A term kept in English stands alone, but at its first use in \
+the whole document its {language} word follows it, after a space, in round brackets of \
+Latin script, as in "Fresnel lens (菲涅尔透镜)" in Chinese, where {language} has a word \
+for it. The request names under a heading of its own the passage in which the document \
+first uses a listed term: give the word there, at the term's first use in that passage, \
+and nowhere else. A term kept in English that the request does not list is first used \
+where these passages first use it, unless the text before them does.
+- Punctuate the translation as {language} is written: in Chinese, with the marks \
+{chinese_marks} and never a comma or a colon of Latin script.
 - Keep the value of every number, and write numbers and units the way {language} writes \
 them.
 - Some words are enclosed in tags such as <b1>...</b1>, <a2>...</a2> or <code3>...</code3>. \
@@ -124,6 +132,8 @@ its tags, character for character.
 TITLE = "Title: {title}"
 TERMS = "Terms:"
 TERM = "{source} = {translation}"
+FIRST_USES = "First use in the document of a term kept as it is written:"
+FIRST_USE = "{source}: passage [{number}]"
 BEFORE = "Text before the passages:\n{text}"
 PASSAGES = "Passages to translate:"
 BLOCK = "Block {number}:"
@@ -154,12 +164,21 @@ class PassageBlock(BaseModel):
     in_segments: bool
 
 
+class FirstUse(BaseModel):
+    # A term the list keeps as it is written, by its source, and the passage, by its number,
+    # in which the document first uses it.
+    source: str
+    passage: int
+
+
 class Passages(BaseModel):
     # Passages to translate, by the blocks they belong to, numbered from 1 across the blocks
-    # in the order they are given; the terms of their document; and the text of the document
-    # around them.
+    # in the order they are given; the terms of their document, and the passages among them
+    # in which the document first uses a term kept as it is written; and the text of the
+    # document around them.
     title: str
     terms: list[Term]
+    first_uses: list[FirstUse]
     before: str
     blocks: list[PassageBlock]
     after: str
@@ -286,6 +305,21 @@ def prompt(passages: Passages) -> str:
                 )
             ]
             if terms
+            else []
+        ),
+        *(
+            [
+                "\n".join(
+                    [
+                        FIRST_USES,
+                        *(
+                            FIRST_USE.format(source=use.source, number=use.passage)
+                            for use in passages.first_uses
+                        ),
+                    ]
+                )
+            ]
+            if passages.first_uses
             else []
         ),
         *([BEFORE.format(text=passages.before)] if passages.before else []),
@@ -481,6 +515,7 @@ def renditions(model: LanguageModel, language: str, passages: Passages) -> Rendi
         instructions=INSTRUCTIONS.format(
             language=language,
             terms_kept_in_english=TERMS_KEPT_IN_ENGLISH.format(language=language),
+            chinese_marks=CHINESE_MARKS,
         ),
         prompt=prompt(passages),
         output=Reply,

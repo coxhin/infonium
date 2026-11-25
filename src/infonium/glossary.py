@@ -77,6 +77,22 @@ def form_found(form: str, said: str, words: set[str]) -> bool:
     return bool(form_words) and all(word_found(word, words) for word in form_words)
 
 
+def is_kept(term: Term) -> bool:
+    # Whether the list keeps the term as the document writes it: a term of art kept in
+    # English, or a name that the language of the translation writes as it is written.
+    return term.translation.casefold() in term_forms(term)
+
+
+def first_uses(terms: list[Term], texts: dict[int, str]) -> dict[str, int]:
+    # Of the terms kept as they are written, by their sources, the number of the first of
+    # the texts, in the order of their numbers, that uses each.
+    uses: dict[str, int] = {}
+    for number, text in sorted(texts.items()):
+        for term in occurring_terms([term for term in terms if is_kept(term)], [text]):
+            uses.setdefault(term.source, number)
+    return uses
+
+
 def occurring_terms(terms: list[Term], texts: list[str]) -> list[Term]:
     # The terms one of whose forms the texts use, in whatever form their words take.
     said = "\n".join(texts).casefold()

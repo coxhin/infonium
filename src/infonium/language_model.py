@@ -105,16 +105,14 @@ FORM_TOLD = (
     "\n\nReply with one JSON object of the form {name}, and nothing else. It follows this "
     "JSON schema:\n{schema}"
 )
-# GLM's models always reason, and by default at length; infonium asks them to reason little.
-# Six made-up paragraphs took glm-5.3 10.5 s and 1,199 output tokens by default, 3.4 s and 264
-# asked so, and glm-5.3-flash 6.6 s and 780 against 3.5 s and 265. Reasoning little, flash kept
-# a term of art in English that the request's list translated, in 4 runs of 4; reasoning more
-# (high), in none of 2.
-GLM_REASONING_EFFORT: Final = "low"
 INPUT_TEXT: Final = "input_text"
 MESSAGE_ITEM: Final = "message"
 FUNCTION_CALL_ITEM: Final = "function_call"
 FUNCTION_OUTPUT_ITEM: Final = "function_call_output"
+
+
+# How much a model of GLM's endpoint may be asked to reason, as the endpoint names it.
+type GlmReasoning = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class WireApi(StrEnum):
@@ -418,7 +416,9 @@ class ChatCompletionsLanguageModel(LanguageModel):
     def system_text(self, instructions: str, output: type[BaseModel]) -> str:
         return instructions
 
-    def reply_format(self, output: type[BaseModel]) -> ResponseFormat:
+    def reply_format(self, output: type[BaseModel], searching: bool) -> ResponseFormat | Omit:
+        # How the request holds the reply to its form; searching, it is the first request of
+        # a reply that lets the model call tools.
         return {
             "type": JSON_SCHEMA,
             "json_schema": {
@@ -500,7 +500,9 @@ class ChatCompletionsLanguageModel(LanguageModel):
             stream = self.client.chat.completions.create(
                 model=self.name,
                 messages=sent,
-                response_format=self.reply_format(output),
+                response_format=self.reply_format(
+                    output, bool(tools) and offered == TOOLS_OFFERED and request == 0
+                ),
                 reasoning_effort=self.reasoning_effort,
                 tools=[
                     pydantic_function_tool(
@@ -558,15 +560,21 @@ class ChatCompletionsLanguageModel(LanguageModel):
 
 class GlmLanguageModel(ChatCompletionsLanguageModel):
     # A model of GLM's endpoint, which speaks the Chat Completions API. The reply is held to
-    # its form as it is read, as every reply is.
-    reasoning_effort = GLM_REASONING_EFFORT
+    # its form as it is read, as every reply is. GLM's models always reason.
+    def __init__(self, client: OpenAI, name: str, reasoning_effort: GlmReasoning | Omit) -> None:
+        super().__init__(client=client, name=name)
+        self.reasoning_effort = reasoning_effort
 
     def system_text(self, instructions: str, output: type[BaseModel]) -> str:
         schema = json.dumps(reply_schema(output), ensure_ascii=False)
         return instructions + FORM_TOLD.format(name=output.__name__, schema=schema)
 
-    def reply_format(self, output: type[BaseModel]) -> ResponseFormat:
-        return {"type": JSON_OBJECT}
+    def reply_format(self, output: type[BaseModel], searching: bool) -> ResponseFormat | Omit:
+        # Held to JSON, glm-5.3-flash called no tool in 3 tries of 3, and wrote what it would
+        # search for instead; not held, it called tools, but after their results answered in
+        # prose in 2 replies of 3. So the first request of a reply that offers tools leaves the
+        # model to the form it is told, and every later one holds it to JSON.
+        return omit if searching else {"type": JSON_OBJECT}
 
 
 def responses_message(message: Message) -> ResponseInputItemParam:
@@ -752,13 +760,40 @@ def endable_openai_model(name: str, wire_api: WireApi) -> LanguageModel:
     return WIRE_API_MODELS[wire_api](client=client, name=name)
 
 
-def glm_model(name: str, base_url: str, api_key: SecretStr) -> LanguageModel:
-    # A model of GLM's endpoint, reached with GLM's own key alone: never with the address or
-    # the key that a client of the openai package finds by itself.
+class GlmEndpoint(BaseModel):
+    # Where GLM's models are reached, with GLM's own key alone: never with the address or the
+    # key that a client of the openai package finds by itself. And how much each model is
+    # asked to reason, by name; a model not named reasons as much as the endpoint has it.
+    base_url: str
+    api_key: SecretStr
+    reasoning_efforts: dict[str, GlmReasoning]
+
+    def reasoning_effort(self, name: str) -> GlmReasoning | Omit:
+        return self.reasoning_efforts.get(name, omit)
+
+
+def glm_model(name: str, endpoint: GlmEndpoint) -> LanguageModel:
     client = OpenAI(
-        base_url=base_url,
-        api_key=api_key.get_secret_value(),
+        base_url=endpoint.base_url,
+        api_key=endpoint.api_key.get_secret_value(),
         timeout=MODEL_TIMEOUT_SECONDS,
         max_retries=MODEL_RETRIES,
     )
-    return GlmLanguageModel(client=client, name=name)
+    return GlmLanguageModel(
+        client=client, name=name, reasoning_effort=endpoint.reasoning_effort(name)
+    )
+
+
+def endable_glm_model(name: str, endpoint: GlmEndpoint) -> LanguageModel:
+    # A model of GLM's endpoint whose replies an Ending cuts at once, as endable_openai_model
+    # makes one of the other endpoint.
+    client = OpenAI(
+        base_url=endpoint.base_url,
+        api_key=endpoint.api_key.get_secret_value(),
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_retries=0,
+        http_client=endable_http_client(),
+    )
+    return GlmLanguageModel(
+        client=client, name=name, reasoning_effort=endpoint.reasoning_effort(name)
+    )

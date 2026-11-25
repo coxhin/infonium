@@ -51,8 +51,8 @@ export function AgainControl({
         disabled={again?.state === "underway"}
         title={
           missing
-            ? "这一段没能译出，用写摘要的模型单独翻译这一段"
-            : "用写摘要的模型重新翻译这一段"
+            ? "这一段没能译出，用摘要和对话的模型单独翻译这一段"
+            : "用摘要和对话的模型重新翻译这一段"
         }
         aria-label={missing ? "单独翻译这一段" : "重新翻译这一段"}
         onClick={() => onAgain(number)}

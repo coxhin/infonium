@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   askAboutItem,
   askAboutLibrary,
@@ -80,8 +80,14 @@ function readConversation(scope: Scope): Promise<Conversation> {
   return scope.kind === "item" ? readItemConversation(scope.itemId) : readLibraryConversation();
 }
 
-function asked(scope: Scope, question: string): AsyncGenerator<ChatEvent> {
-  return scope.kind === "item" ? askAboutItem(scope.itemId, question) : askAboutLibrary(question);
+function asked(
+  scope: Scope,
+  question: string,
+  model: string | undefined,
+): AsyncGenerator<ChatEvent> {
+  return scope.kind === "item"
+    ? askAboutItem(scope.itemId, question, model)
+    : askAboutLibrary(question, model);
 }
 
 function forgotten(scope: Scope): Promise<void> {
@@ -129,8 +135,13 @@ export function canAsk(chat: Chat): boolean {
 }
 
 // The conversations the column has shown, each kept whole while another is on show, and each
-// answered on, even when the reader has turned to another.
-export function useConversations(): Conversations {
+// answered on, even when the reader has turned to another. A question is asked of the model
+// given when it is sent, which may be after its conversation is read.
+export function useConversations(model: string | undefined): Conversations {
+  const modelNow = useRef(model);
+  useEffect(() => {
+    modelNow.current = model;
+  }, [model]);
   const [chats, setChats] = useState<ReadonlyMap<string, Chat>>(new Map());
   // A conversation is read once, when it is first shown, and again only when asked to.
   const requested = useRef(new Set<string>());
@@ -239,7 +250,7 @@ export function useConversations(): Conversations {
 
   async function answer(scope: Scope, question: string) {
     try {
-      for await (const event of asked(scope, question)) {
+      for await (const event of asked(scope, question, modelNow.current)) {
         switch (event.kind) {
           case "drafted":
             update(scope, (chat) =>

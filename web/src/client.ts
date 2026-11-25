@@ -15,7 +15,7 @@ export type Digest = Schemas["DigestView"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
-export type TranslationModels = Schemas["TranslationModels"];
+export type ModelsOffered = Schemas["ModelsView"];
 export type TranslatedBlock = Schemas["TranslatedBlock"];
 export type Segment = Schemas["Segment"];
 export type PageBlocks = Schemas["PageBlocks"];
@@ -160,21 +160,34 @@ export function readDocument(itemId: string): Promise<ItemDocument> {
   );
 }
 
-export function rewriteDigest(itemId: string): Promise<Digest> {
+// The model an operation asks, as the reader chose it; none, the service's default.
+function chosen(model: string | undefined) {
+  return model === undefined ? {} : { model };
+}
+
+export function readModels(): Promise<ModelsOffered> {
+  return settled(api.GET("/api/models"));
+}
+
+export function rewriteDigest(itemId: string, model: string | undefined): Promise<Digest> {
   return settled(
-    api.POST("/api/items/{item_id}/digest", { params: { path: { item_id: itemId } } }),
+    api.POST("/api/items/{item_id}/digest", {
+      params: { path: { item_id: itemId }, query: chosen(model) },
+    }),
   );
 }
 
 // Writing a digest takes a model call, so views that ask for the same item's digest while one
-// request is under way share that request.
+// request is under way share that request. A digest kept is given whatever model is chosen.
 const digestsUnderWay = new Map<string, Promise<Digest>>();
 
-export function ensureDigest(itemId: string): Promise<Digest> {
+export function ensureDigest(itemId: string, model: string | undefined): Promise<Digest> {
   const underWay =
     digestsUnderWay.get(itemId) ??
     settled(
-      api.PUT("/api/items/{item_id}/digest", { params: { path: { item_id: itemId } } }),
+      api.PUT("/api/items/{item_id}/digest", {
+        params: { path: { item_id: itemId }, query: chosen(model) },
+      }),
     ).finally(() => digestsUnderWay.delete(itemId));
   digestsUnderWay.set(itemId, underWay);
   return underWay;
@@ -186,19 +199,12 @@ export function readTranslation(itemId: string): Promise<Translation> {
   );
 }
 
-// What a translation that starts or goes on is asked of: the model named, or without one the
-// service's default.
-function askedOf(model: string | undefined) {
-  return model === undefined ? undefined : { model };
-}
-
 // Starts the translation with the model unless it is under way, done or unneeded; one that
 // stopped goes on with it.
 export function ensureTranslation(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
     api.PUT("/api/items/{item_id}/translation", {
-      params: { path: { item_id: itemId } },
-      body: askedOf(model),
+      params: { path: { item_id: itemId }, query: chosen(model) },
     }),
   );
 }
@@ -206,20 +212,19 @@ export function ensureTranslation(itemId: string, model: string | undefined): Pr
 export function translateAnew(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
     api.POST("/api/items/{item_id}/translation", {
-      params: { path: { item_id: itemId } },
-      body: askedOf(model),
+      params: { path: { item_id: itemId }, query: chosen(model) },
     }),
   );
 }
 
-export function readTranslationModels(): Promise<TranslationModels> {
-  return settled(api.GET("/api/translation-models"));
-}
-
-export function retranslateBlock(itemId: string, blockNumber: number): Promise<TranslatedBlock> {
+export function retranslateBlock(
+  itemId: string,
+  blockNumber: number,
+  model: string | undefined,
+): Promise<TranslatedBlock> {
   return settled(
     api.POST("/api/items/{item_id}/translation/blocks/{block_number}", {
-      params: { path: { item_id: itemId, block_number: blockNumber } },
+      params: { path: { item_id: itemId, block_number: blockNumber }, query: chosen(model) },
     }),
   );
 }
@@ -236,10 +241,14 @@ export function readItemConversation(itemId: string): Promise<Conversation> {
   );
 }
 
-export function askAboutItem(itemId: string, text: string): AsyncGenerator<ChatEvent> {
+export function askAboutItem(
+  itemId: string,
+  text: string,
+  model: string | undefined,
+): AsyncGenerator<ChatEvent> {
   return eventLines(
     api.POST("/api/items/{item_id}/conversation", {
-      params: { path: { item_id: itemId } },
+      params: { path: { item_id: itemId }, query: chosen(model) },
       body: { text },
       parseAs: "stream",
     }),
@@ -256,8 +265,14 @@ export function readLibraryConversation(): Promise<Conversation> {
   return settled(api.GET("/api/conversation"));
 }
 
-export function askAboutLibrary(text: string): AsyncGenerator<ChatEvent> {
-  return eventLines(api.POST("/api/conversation", { body: { text }, parseAs: "stream" }));
+export function askAboutLibrary(text: string, model: string | undefined): AsyncGenerator<ChatEvent> {
+  return eventLines(
+    api.POST("/api/conversation", {
+      params: { query: chosen(model) },
+      body: { text },
+      parseAs: "stream",
+    }),
+  );
 }
 
 export function forgetLibraryConversation(): Promise<void> {

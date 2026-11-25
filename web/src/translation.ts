@@ -23,8 +23,10 @@ type OfEpoch<Value> = { epoch: number; values: ReadonlyMap<number, Value> };
 export type TranslationState = {
   // Nothing is loaded for an item until its translation is first wanted.
   loaded: Loaded<Translation> | undefined;
-  // The model a translation that starts or goes on is asked of; none: the service's default.
+  // The model a translation that starts or goes on is asked of, and the one a block is
+  // translated again by; none: the service's default.
   model: string | undefined;
+  againModel: string | undefined;
   interrupted: boolean;
   // The blocks translated so far by number. A block keeps its object for as long as its
   // translation stays the same, so that a view drawn from it need not be drawn again.
@@ -108,11 +110,13 @@ function withValue<Value>(
 // The translation of an item's document. It is read the first time it is wanted, and asked
 // for only when the service has never been asked for it; then it is watched while it is under
 // way, whatever is wanted afterwards. A translation that stopped goes on only when the reader
-// asks it to. A translation that starts or goes on is asked of the model given at that moment.
+// asks it to. A translation that starts or goes on is asked of the model given at that moment,
+// and a block translated again of the other model given.
 export function useTranslation(
   itemId: string,
   wanted: boolean,
   model: string | undefined,
+  againModel: string | undefined,
 ): TranslationState {
   const [asked, setAsked] = useState(wanted);
   if (wanted && !asked) {
@@ -202,7 +206,7 @@ export function useTranslation(
   const translateAgain = useCallback(
     (blockNumber: number) => {
       setAgain((before) => withValue(before, epoch, blockNumber, { state: "underway" }));
-      retranslateBlock(itemId, blockNumber).then(
+      retranslateBlock(itemId, blockNumber, againModel).then(
         (block) => {
           setTranslatedAgain((before) => withValue(before, epoch, blockNumber, block));
           setAgain((before) => withValue<Again>(before, epoch, blockNumber, undefined));
@@ -218,7 +222,7 @@ export function useTranslation(
           ),
       );
     },
-    [itemId, epoch],
+    [itemId, epoch, againModel],
   );
 
   let loaded: Loaded<Translation> | undefined;
@@ -235,6 +239,7 @@ export function useTranslation(
   return {
     loaded,
     model,
+    againModel,
     interrupted: watched.interrupted,
     blocks,
     again: again.values,

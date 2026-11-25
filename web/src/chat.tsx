@@ -444,6 +444,7 @@ function ChatScope({
 // The chat about the item on show or about the whole library. With no item on show, only the
 // library can be asked, whatever was chosen.
 export function ChatPanel({
+  model,
   itemId,
   seat,
   scope,
@@ -452,6 +453,8 @@ export function ChatPanel({
   citing,
   onOpen,
 }: {
+  // The model a question is asked of when it is sent; none: the service's default.
+  model: string | undefined;
   itemId: string | undefined;
   seat: Seat | undefined;
   scope: ScopeKind;
@@ -460,7 +463,7 @@ export function ChatPanel({
   citing: Citing;
   onOpen: Opener;
 }) {
-  const conversations = useConversations();
+  const conversations = useConversations(model);
   const kind: ScopeKind = itemId === undefined ? "library" : scope;
 
   return (

@@ -60,6 +60,12 @@ CELL_SEPARATOR: CellSeparator = "\t"
 WORD_GAP = " "
 LINE_BREAK = "\n"
 SOFT_HYPHEN = "\N{SOFT HYPHEN}"
+# The marks that Chinese is punctuated with, where Latin script has a comma, a full stop, a
+# colon, a semicolon, an exclamation mark and a question mark.
+CHINESE_MARKS = (
+    "\N{FULLWIDTH COMMA}\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH COLON}\N{FULLWIDTH SEMICOLON}"
+    "\N{FULLWIDTH EXCLAMATION MARK}\N{FULLWIDTH QUESTION MARK}"
+)
 # Chinese characters, kana, and the punctuation and full-width forms written with them. Text
 # in these takes no space between words.
 UNSPACED_CODE_POINTS = (
