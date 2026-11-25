@@ -17,7 +17,7 @@ const NO_PAGES: PagePlace[] = [];
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
-// it stands for, and in 对照 the source stands beside each page, or under each area where
+// it stands for, and in 对照 the source stands beside each page, or under each flow where
 // there is no room for two. The reader's highlights are drawn on the lines they cover, and the
 // reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
 // above it all. The pages open where the reader stood in the file as it arrived, if they did.

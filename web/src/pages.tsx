@@ -119,7 +119,7 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
 }
 
 // How a page's translation is shown: over the page alone, over the page and the source beside
-// it, or over the page with each area letting the source through when pressed.
+// it, or over the page with each flow letting the source through when pressed.
 export type Overlay = { texts: PageTexts; paired: boolean; revealing: boolean };
 
 // The reader's highlights as the pages draw them: on each page, and by the blocks they run
