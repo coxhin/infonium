@@ -280,7 +280,9 @@ export function isBlank(
 
 // How far into a box the drawing shows only a paper, from its top, or from its right where the
 // run of lines goes across, as a part of the page's height or width: up to the first line of
-// pixels that holds a rule or more than specks, past the reach of the letters above it.
+// pixels that holds a rule or more than specks, past the reach of the letters above it, and
+// short of it by as much again, so that the edge of a paper laid there and the letters set on
+// it do not reach what is drawn.
 export function blankInto(
   canvas: HTMLCanvasElement,
   box: Box,
@@ -301,7 +303,7 @@ export function blankInto(
     (line, index) =>
       (lines.longest[line] ?? 0) >= rule || (index >= reach && (lines.drawn[line] ?? 0) >= SPECKS),
   );
-  const blank = first === -1 ? inOrder.length : first;
+  const blank = first === -1 ? inOrder.length : Math.max(0, first - reach);
   return across
     ? Math.min(box.width, blank / canvas.width)
     : Math.min(box.height, blank / canvas.height);
