@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { layoutOf, placedOf, type AreaText } from "./areas";
+import { layoutOf, placedOf, translatedText, writtenUnspaced, type AreaText } from "./areas";
 import { useArrivalPosition } from "./arrival";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
-import { PageViewer, type PageMarks } from "./pages";
+import { PageViewer, type Overlays, type PageMarks } from "./pages";
 import { PageText } from "./pagelines";
 import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
@@ -16,7 +16,7 @@ const NO_PAGES: PagePlace[] = [];
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
-// it stands for, and in 对照 the source stands beside each page, or under each area where
+// it stands for, and in 对照 the source stands beside each page, or under each flow where
 // there is no room for two. The reader's highlights are drawn on the lines they cover, and the
 // reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
 // above it all. The pages open where the reader stood in the file as it arrived, if they did.
@@ -63,7 +63,16 @@ export function PagesView({
     };
   }, [text, marking, itemDocument.id]);
   const shown = setting !== "source";
-  const overlays = useMemo(() => {
+  // Whether the translation is written without spaces between words, which tells the leadings
+  // its pages may take.
+  const unspaced = useMemo(
+    () =>
+      writtenUnspaced(
+        [...translation.blocks.values()].map((block) => translatedText(block, SEGMENT_GAP).text),
+      ),
+    [translation.blocks],
+  );
+  const overlays = useMemo<Overlays | undefined>(() => {
     if (!shown) {
       return undefined;
     }
@@ -84,8 +93,8 @@ export function PagesView({
         onPages.set(text.area.page, onPage);
       }
     });
-    return onPages;
-  }, [shown, translation.blocks, itemDocument, layout]);
+    return { texts: onPages, layout, unspaced };
+  }, [shown, translation.blocks, itemDocument, layout, unspaced]);
   const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
   const opening = useArrivalPosition(entry.id);
   return (

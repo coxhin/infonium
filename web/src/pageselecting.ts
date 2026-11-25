@@ -34,6 +34,8 @@ const SETTLED = 250;
 const PAGE_SELECTOR = ".page[data-page]";
 const TRANSLATED_AREAS = ".page[data-translated] .area[data-block-translated]";
 const AREA_SELECTOR = ".area[data-block-translated]";
+const OPEN_FLOW = ".flow[data-open]";
+const PRESSABLE_FLOW = '.flow[role="button"]';
 
 // What marking on the pages is told by the view: where the document's text lies, the
 // highlights as they are drawn, and where a selection is handed over.
@@ -139,15 +141,16 @@ function holdsTextOf(range: Range, element: Element): boolean {
   return inside.toString().trim() !== "";
 }
 
-// An area lets the source through, and so stands for nothing, where it was pressed to show it.
+// An area lets the source through, and so stands for nothing, where its flow was pressed to
+// show it.
 function standing(area: Element): boolean {
-  return !(area.closest(".revealing") !== null && area.hasAttribute("data-open"));
+  return !(area.closest(".revealing") !== null && area.closest(OPEN_FLOW) !== null);
 }
 
-// An area that does something of its own when pressed: shows the source under it, or its text
-// whole.
+// An area whose flow does something of its own when pressed: shows the source under it, or its
+// text whole.
 function pressable(area: Element): boolean {
-  return area.getAttribute("role") === "button";
+  return area.closest(PRESSABLE_FLOW) !== null;
 }
 
 function areaOf(page: HTMLElement, blockNumber: number): HTMLElement | undefined {

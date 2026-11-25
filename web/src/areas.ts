@@ -161,14 +161,10 @@ function areaOf(lines: PagePlace[], downward: boolean, typeset: Typeset, others:
   };
 }
 
-// The areas of one block: its lines in the order of its text, a new area wherever the next
-// line does not go on from the last in the same column, or would make the area cover lines of
-// other blocks. Each area is set as the block's text runs on its page.
-export function areasOf(
-  places: PagePlace[],
-  othersOn: (page: number) => Box[],
-  typesetOn: (page: number) => Typeset,
-): Area[] {
+// The runs of one block's lines: its lines in the order of its text, a new run wherever the
+// next line does not go on from the last in the same column, or would make the run cover lines
+// of other blocks.
+function runsOf(places: PagePlace[], othersOn: (page: number) => Box[]): PagePlace[][] {
   const lines = [...places].sort((first, second) => first.start - second.start);
   const downward = isDownward(lines);
   const runs: PagePlace[][] = [];
@@ -186,7 +182,18 @@ export function areasOf(
       runs.push([line]);
     }
   }
-  return runs.map((run) => {
+  return runs;
+}
+
+// The areas of one block, one a run of its lines, each set as the block's text runs on its
+// page.
+export function areasOf(
+  places: PagePlace[],
+  othersOn: (page: number) => Box[],
+  typesetOn: (page: number) => Typeset,
+): Area[] {
+  const downward = isDownward(places);
+  return runsOf(places, othersOn).map((run) => {
     const page = run[0]?.page ?? 0;
     return areaOf(run, downward, typesetOn(page), othersOn(page));
   });
@@ -240,11 +247,28 @@ function typesetOf(measures: Measures): Typeset | undefined {
 // heading its level too. The engine gives the boxes of lines in whole points, so the boxes of
 // one paragraph, or of one page's paragraphs, may run a point or two taller or shorter than
 // those of the next in the same print; what all of a document's lines of a type show together
-// is its print, and a page keeps its own only where it clearly differs.
+// is its print, and a page keeps its own only where it clearly differs. The body print is what
+// all the document's paragraphs show together. The runs of three lines or more of every block,
+// translated or not, tell the columns of each page.
 export type Layout = {
   boxes: Map<number, { blockNumber: number; box: Box }[]>;
   kinds: Map<string, Typeset>;
+  body: Typeset | undefined;
+  runs: Map<number, Box[]>;
 };
+
+// Paragraphs and list items are the body text: their print is told by how far apart their
+// lines are, against the body print's pitch, since the boxes of their lines are taller wherever
+// a line holds a formula or a raised letter.
+const BODY_KINDS = new Set<Block["kind"]>(["paragraph", "list_item"]);
+
+export function isBody(kind: Block["kind"]): boolean {
+  return BODY_KINDS.has(kind);
+}
+
+// A run of this many lines or more is one a column is told by.
+const COLUMN_RUN = 3;
+const PARAGRAPH: Block["kind"] = "paragraph";
 
 function typeOf(block: Block): string {
   return block.kind === "heading" ? `${block.kind}${block.level}` : block.kind;
@@ -254,6 +278,10 @@ const KEY_PARTS = "|";
 
 function kindOnPage(page: number, block: Block): string {
   return `${page}${KEY_PARTS}${typeOf(block)}`;
+}
+
+function paragraphsOn(page: number): string {
+  return `${page}${KEY_PARTS}${PARAGRAPH}`;
 }
 
 function gathered(into: Map<string, Measures>, key: string, measures: Measures): void {
@@ -268,10 +296,19 @@ function pagePlacesOf(block: Block): PagePlace[] {
   return block.places.filter((place) => place.kind === "page");
 }
 
+function othersOf(layoutBoxes: Layout["boxes"], page: number, blockNumber: number): Box[] {
+  return (layoutBoxes.get(page) ?? [])
+    .filter((other) => other.blockNumber !== blockNumber)
+    .map((other) => other.box);
+}
+
+const NO_MEASURES: Measures = { sizes: [], pitches: [] };
+
 export function layoutOf(blocks: Block[]): Layout {
   const boxes = new Map<number, { blockNumber: number; box: Box }[]>();
   const measured = new Map<string, Measures>();
   const throughout = new Map<string, Measures>();
+  const bodyKeys = new Set<string>();
   blocks.forEach((block, blockNumber) => {
     const byPage = new Map<number, PagePlace[]>();
     for (const place of pagePlacesOf(block)) {
@@ -286,13 +323,27 @@ export function layoutOf(blocks: Block[]): Layout {
       const own = measuresOf(textLinesOf(block, places));
       gathered(measured, kindOnPage(page, block), own);
       gathered(throughout, typeOf(block), own);
+      if (isBody(block.kind)) {
+        bodyKeys.add(kindOnPage(page, block));
+      }
     });
   });
+  const body = typesetOf(throughout.get(PARAGRAPH) ?? NO_MEASURES);
+  const bodyPrint = printOf(body);
   const kinds = new Map<string, Typeset>();
   measured.forEach((measures, key) => {
     const onPage = typesetOf(measures);
+    if (bodyPrint !== undefined && bodyKeys.has(key)) {
+      kinds.set(
+        key,
+        onPage?.pitch === undefined
+          ? bodyPrint
+          : printOfPitch(onPage.pitch, Math.min(...measures.sizes), bodyPrint),
+      );
+      return;
+    }
     const type = key.slice(key.indexOf(KEY_PARTS) + 1);
-    const whole = typesetOf(throughout.get(type) ?? { sizes: [], pitches: [] });
+    const whole = typesetOf(throughout.get(type) ?? NO_MEASURES);
     // A page keeps its own size only where its lines of the type show a pitch: the box of a
     // lone line, a heading's above all, tells its print too loosely to set a page apart.
     const own =
@@ -305,10 +356,69 @@ export function layoutOf(blocks: Block[]): Layout {
       kinds.set(key, typeset);
     }
   });
-  return { boxes, kinds };
+  const runs = new Map<number, Box[]>();
+  blocks.forEach((block, blockNumber) => {
+    const places = pagePlacesOf(block);
+    if (isDownward(places)) {
+      return;
+    }
+    for (const run of runsOf(places, (page) => othersOf(boxes, page, blockNumber))) {
+      const page = run[0]?.page;
+      if (page !== undefined && run.length >= COLUMN_RUN) {
+        runs.set(page, [...(runs.get(page) ?? []), union(run)]);
+      }
+    }
+  });
+  return { boxes, kinds, body, runs };
 }
 
 const NO_TYPESET: Typeset = { size: 0, pitch: undefined };
+
+// A print whose pitch is known.
+type Print = { size: number; pitch: number };
+
+function printOf(typeset: Typeset | undefined): Print | undefined {
+  return typeset?.pitch === undefined ? undefined : { size: typeset.size, pitch: typeset.pitch };
+}
+
+// The print of body text whose lines stand this far apart: the body print where the pitch is
+// the body print's, and elsewhere the body print's size in the proportion of the two pitches,
+// as a footnote's lines are closer by as much as its letters are smaller. A pitch clearly wider
+// is taken for larger letters only where the smallest line is larger too: the lines of a
+// paragraph that holds a formula, or that the engine boxed unevenly, stand further apart than
+// its print's, 24 points for a paragraph of the 12 point pitch in one paper.
+function printOfPitch(pitch: number, smallest: number, body: Print): Print {
+  const ratio = pitch / body.pitch;
+  const told = { size: body.size * ratio, pitch };
+  if (ratio < 1 - SAME_TYPE) {
+    return told;
+  }
+  if (ratio > 1 + SAME_TYPE && smallest > body.size * (1 + SAME_TYPE)) {
+    return told;
+  }
+  return body;
+}
+
+// A block of body text is set by its own pitch, and one of a single line, which has none, in
+// what its page's paragraphs take.
+function bodyTypeset(own: Measures, paragraphs: Typeset | undefined, body: Print): Typeset {
+  const ownTypeset = typesetOf(own);
+  if (ownTypeset?.pitch === undefined) {
+    return paragraphs ?? body;
+  }
+  return printOfPitch(ownTypeset.pitch, Math.min(...own.sizes), body);
+}
+
+// How the body text of a page is set in the source: the body print's size and pitch, as
+// fractions of the page's height, and the leading of the page's paragraphs, or of the
+// document's where the page has none.
+export type BodyPrint = { size: number; pitch: number; spacing: number };
+
+export function bodyPrintOn(layout: Layout, page: number): BodyPrint {
+  const body = layout.body ?? NO_TYPESET;
+  const spacing = spacingOf(layout.kinds.get(paragraphsOn(page)) ?? body);
+  return { size: body.size, pitch: body.pitch ?? body.size * spacingOf(body), spacing };
+}
 
 // A block is set in the type of its kind, unless its lines show it clearly larger or smaller.
 // Where the block and its kind both have a pitch, the pitch tells the size, as the steps
@@ -342,6 +452,25 @@ const NO_BREAK_AFTER = new Set([..."（「『《〈【〔“‘([{"]);
 const SPACE = /\s/u;
 // Characters of scripts written without spaces between words.
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+const LETTER = /\p{L}/u;
+
+// Whether texts are written in a script without spaces between words: more of their letters
+// are Han, kana or hangul than not.
+export function writtenUnspaced(texts: Iterable<string>): boolean {
+  let unspaced = 0;
+  let spaced = 0;
+  for (const text of texts) {
+    for (const character of text) {
+      if (UNSPACED.test(character)) {
+        unspaced += 1;
+      } else if (LETTER.test(character)) {
+        spaced += 1;
+      }
+    }
+  }
+  return unspaced > spaced;
+}
 
 // Whether a line may be broken before the character at this place of the text: after a space
 // in a spaced script, or between two characters of an unspaced one where no mark forbids it.
@@ -449,15 +578,14 @@ export function placedOf(
   if (KEPT_AS_PAGE.has(block.kind) || places.length === 0) {
     return [];
   }
-  const othersOn = (page: number) =>
-    (layout.boxes.get(page) ?? [])
-      .filter((other) => other.blockNumber !== blockNumber)
-      .map((other) => other.box);
-  const typesetOn = (page: number) =>
-    blockTypeset(
-      measuresOf(textLinesOf(block, places.filter((place) => place.page === page))),
-      layout.kinds.get(kindOnPage(page, block)),
-    );
+  const othersOn = (page: number) => othersOf(layout.boxes, page, blockNumber);
+  const bodyPrint = printOf(layout.body);
+  const typesetOn = (page: number) => {
+    const own = measuresOf(textLinesOf(block, places.filter((place) => place.page === page)));
+    return isBody(block.kind) && bodyPrint !== undefined
+      ? bodyTypeset(own, layout.kinds.get(paragraphsOn(page)), bodyPrint)
+      : blockTypeset(own, layout.kinds.get(kindOnPage(page, block)));
+  };
   const areas = areasOf(places, othersOn, typesetOn);
   const whole = translatedText(translated, gap);
   const pieces = partedByShares(

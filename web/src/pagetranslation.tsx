@@ -7,221 +7,216 @@ import {
   type CSSProperties,
   type MouseEvent,
 } from "react";
-import { percent, type AreaText, type Box } from "./areas";
+import {
+  bodyPrintOn,
+  percent,
+  type AreaText,
+  type BodyPrint,
+  type Box,
+  type Layout,
+} from "./areas";
 import { MarkedText } from "./blocks";
+import type { PagePlace } from "./client";
+import {
+  columnsOf,
+  fitted,
+  flowsOf,
+  leadingRatioOf,
+  leadingsOf,
+  type Fitting,
+  type Flow,
+  type Measure,
+  type PageFacts,
+  type Setting,
+} from "./flows";
+import {
+  blankInto,
+  coloursOf,
+  evened,
+  isBlank,
+  paperOf,
+  type Colours,
+  type Drawn,
+} from "./pagedrawing";
 import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagemarking";
 import "./pagetranslation.css";
 
-// Text is made smaller to fit its area, but never below this part of the source's size.
-export const FLOOR = 0.6;
-const FITTING_STEPS = 7;
 // How long a press waits, in milliseconds, to be told from the first of a double press.
 const DOUBLE_PRESS = 250;
-// Colours are read from a grid of this many points across an area of the drawn page, each
-// channel to this many levels; a colour this far from the paper's is ink.
-const SAMPLES = 24;
-const LEVELS = 16;
-const INK_DISTANCE = 96;
-const DARKEST_PART = 0.1;
-// Edges drawn in colour lean this far to red or to blue, and both kinds make up at least this
-// part of what stands out.
-const FRINGE = 40;
-const FRINGED_PART = 0.15;
-const PAPER = "rgb(255, 255, 255)";
-const INK = "rgb(20, 20, 20)";
+// An area is justified unless that would stretch a line other than its last by more than this
+// part of the line's width: where the line's words take less than the rest.
+const LEAST_FILLED_LINE = 0.85;
+// While lines are measured, the areas of a page are set flush left.
+const MEASURING_LINES = "data-measuring-lines";
+const CITED = ".area[data-cited]";
 
-export type Colours = { paper: string; ink: string };
+// The colours read from each drawing of a page, by area: a translation that arrives block by
+// block reads only the areas that are new.
+const coloursRead = new WeakMap<Drawn, Map<string, Colours>>();
 
-// The canvas a page was last drawn on, and how many drawings of it have ended.
-export type Drawn = { canvas: HTMLCanvasElement; count: number };
-
-// Text of one kind on one paper is set in one ink across a page: the ink read from each area
-// varies with how much of the letters' soft edges it caught, so the areas of a kind that lie on
-// the same paper take one ink, the truest of those alike to the middle of their inks. An ink
-// that stands out from that middle, as a red notice among black paragraphs, is the text's own
-// colour and is kept.
-function evened(
-  texts: AreaText[],
-  read: ReadonlyMap<string, Colours>,
-): ReadonlyMap<string, Colours> {
-  const groups = new Map<string, string[]>();
+function coloursFrom(drawn: Drawn, texts: AreaText[]): ReadonlyMap<string, Colours> {
+  const read = coloursRead.get(drawn) ?? new Map<string, Colours>();
+  coloursRead.set(drawn, read);
   for (const text of texts) {
-    const colours = read.get(text.key);
-    if (colours !== undefined) {
-      const group = groupOf(text, colours);
-      groups.set(group, [...(groups.get(group) ?? []), colours.ink]);
+    if (!read.has(text.key)) {
+      const colours = coloursOf(drawn.canvas, text.area.box);
+      if (colours !== undefined) {
+        read.set(text.key, colours);
+      }
     }
   }
-  const middles = new Map<string, string>();
-  groups.forEach((inks, group) => {
-    const sorted = [...inks].sort((first, second) => brightnessOf(first) - brightnessOf(second));
-    middles.set(group, sorted[Math.floor(sorted.length / 2)] ?? INK);
-  });
-  // Of the inks alike to the middle, the one furthest from the paper is the truest: letters
-  // drawn small lose their middle to their soft edges and read lighter than they are printed.
-  const truest = new Map<string, string>();
-  for (const text of texts) {
-    const colours = read.get(text.key);
-    const group = colours === undefined ? undefined : groupOf(text, colours);
-    const middle = group === undefined ? undefined : middles.get(group);
-    if (colours === undefined || group === undefined || middle === undefined) {
-      continue;
-    }
-    const paper = rgbOf(colours.paper);
-    const kept = truest.get(group) ?? middle;
-    const alike = distance(rgbOf(middle), rgbOf(colours.ink)) <= ALIKE_INKS;
-    if (alike && distance(rgbOf(colours.ink), paper) > distance(rgbOf(kept), paper)) {
-      truest.set(group, colours.ink);
-    }
-  }
-  const evenedColours = new Map<string, Colours>();
-  for (const text of texts) {
-    const colours = read.get(text.key);
-    if (colours !== undefined) {
-      const middle = middles.get(groupOf(text, colours));
-      const alike = middle !== undefined && distance(rgbOf(middle), rgbOf(colours.ink)) <= ALIKE_INKS;
-      const ink = alike ? (truest.get(groupOf(text, colours)) ?? middle) : colours.ink;
-      evenedColours.set(text.key, { paper: colours.paper, ink });
+  return evened(texts, read);
+}
+
+// A length along a flow's run as a part of the page's width, which the text's sizes are
+// given in so that the page scales without being set again.
+function acrossWidth(flow: Flow, length: number, shape: number): number {
+  return flow.vertical ? length : length * shape;
+}
+
+function cqw(part: number): string {
+  return `${part * 100}cqw`;
+}
+
+// Whether an area's lines, set flush left, leave a line other than the last less filled than
+// justifying it would bear. The words of a line are the pieces of text and the formulas that
+// stand on it, told apart from the next line's by where they stand down the area.
+function stretches(area: HTMLElement): boolean {
+  const content = area.getBoundingClientRect();
+  const padding = parseFloat(getComputedStyle(area).paddingInlineStart) * 2;
+  const room = content.width - padding;
+  const pieces: DOMRect[] = [];
+  const walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if (node.parentElement?.closest(".formula") === null) {
+      range.selectNodeContents(node);
+      pieces.push(...range.getClientRects());
     }
   }
-  return evenedColours;
-}
-
-// Inks closer than this, as a distance between colours, are one ink read unevenly; the greys
-// read from black text lie within 60 of one another, a red is some 250 from them.
-const ALIKE_INKS = 80;
-
-function rgbOf(colour: string): Rgb {
-  const [red = 0, green = 0, blue = 0] = (colour.match(/\d+/g) ?? []).map(Number);
-  return [red, green, blue];
-}
-
-// Papers alike to the eye are one paper: each channel is taken to eight levels.
-const PAPER_LEVEL = 32;
-
-function groupOf(text: AreaText, colours: Colours): string {
-  const paper = (colours.paper.match(/\d+/g) ?? []).map((channel) =>
-    Math.floor(Number(channel) / PAPER_LEVEL),
-  );
-  return `${text.kind}|${paper.join(",")}`;
-}
-
-function brightnessOf(colour: string): number {
-  return (colour.match(/\d+/g) ?? []).reduce((sum, channel) => sum + Number(channel), 0);
-}
-
-type Rgb = [number, number, number];
-
-function distance(first: Rgb, second: Rgb): number {
-  return Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
-}
-
-function rgb([red, green, blue]: Rgb): string {
-  return `rgb(${red}, ${green}, ${blue})`;
-}
-
-// The colour most of an area has, as the paper, and the colour most of what stands out from
-// it has, as the ink: both read from the page as it is drawn.
-export function coloursOf(canvas: HTMLCanvasElement, box: Box): Colours | undefined {
-  const context = canvas.getContext("2d");
-  if (context === null || canvas.width === 0) {
-    return undefined;
+  for (const formula of area.querySelectorAll(".formula")) {
+    pieces.push(...formula.getClientRects());
   }
-  const left = Math.floor(box.left * canvas.width);
-  const top = Math.floor(box.top * canvas.height);
-  const width = Math.max(1, Math.floor(box.width * canvas.width));
-  const height = Math.max(1, Math.floor(box.height * canvas.height));
-  const pixels = context.getImageData(left, top, width, height).data;
-  const counts = new Map<string, number>();
-  const samples: Rgb[] = [];
-  const step = 256 / LEVELS;
-  for (let row = 0; row < SAMPLES; row += 1) {
-    for (let column = 0; column < SAMPLES * 2; column += 1) {
-      const x = Math.floor(((column + 0.5) / (SAMPLES * 2)) * width);
-      const y = Math.floor(((row + 0.5) / SAMPLES) * height);
-      const at = (y * width + x) * 4;
-      const colour: Rgb = [pixels[at] ?? 0, pixels[at + 1] ?? 0, pixels[at + 2] ?? 0];
-      samples.push(colour);
-      const level = colour.map((channel) => Math.floor(channel / step)).join(",");
-      counts.set(level, (counts.get(level) ?? 0) + 1);
+  const lines: { top: number; bottom: number; right: number }[] = [];
+  for (const piece of pieces
+    .filter((each) => each.width > 0)
+    .sort((one, other) => one.top + one.bottom - (other.top + other.bottom))) {
+    const middle = (piece.top + piece.bottom) / 2;
+    const line = lines.at(-1);
+    if (line !== undefined && middle <= line.bottom) {
+      line.right = Math.max(line.right, piece.right);
+    } else {
+      lines.push({ top: piece.top, bottom: piece.bottom, right: piece.right });
     }
   }
-  const ranked = [...counts.entries()].sort((first, second) => second[1] - first[1]);
-  const winning = ranked[0]?.[0];
-  if (winning === undefined) {
-    return undefined;
-  }
-  // The paper is the commonest exact colour of the commonest bin: a bin holds the paper and the
-  // soft edges of letters near it alike, and the first sample to fall in may be such an edge.
-  const exact = new Map<string, { colour: Rgb; count: number }>();
-  for (const sample of samples) {
-    if (sample.map((channel) => Math.floor(channel / step)).join(",") === winning) {
-      const counted = exact.get(sample.join(",")) ?? { colour: sample, count: 0 };
-      counted.count += 1;
-      exact.set(sample.join(","), counted);
-    }
-  }
-  const paper = [...exact.values()].sort((first, second) => second.count - first.count)[0]?.colour;
-  if (paper === undefined) {
-    return undefined;
-  }
-  // The ink is the darkest of what stands out from the paper, as the soft edges of letters are
-  // lighter. The edges of small letters may be drawn in colour, reddish on one side and bluish
-  // on the other; where both are found, the ink is taken to be grey, as dark as the darkest.
-  const brightness = (colour: Rgb) => colour[0] + colour[1] + colour[2];
-  const inked = samples
-    .filter((sample) => distance(sample, paper) > INK_DISTANCE)
-    .sort((first, second) => brightness(first) - brightness(second));
-  const darkest = inked[Math.floor(inked.length * DARKEST_PART)];
-  const reddish = inked.filter(([red, , blue]) => red - blue > FRINGE).length;
-  const bluish = inked.filter(([red, , blue]) => blue - red > FRINGE).length;
-  const fringed = Math.min(reddish, bluish) >= FRINGED_PART * inked.length;
-  const grey = darkest === undefined ? undefined : Math.round(brightness(darkest) / 3);
-  const ink: Rgb | undefined =
-    darkest === undefined || grey === undefined ? undefined : fringed ? [grey, grey, grey] : darkest;
-  const light = paper[0] + paper[1] + paper[2] > 384;
-  return { paper: rgb(paper), ink: ink === undefined ? (light ? INK : PAPER) : rgb(ink) };
+  return lines
+    .slice(0, -1)
+    .some((line) => line.right - content.left - padding / 2 < LEAST_FILLED_LINE * room);
 }
 
-// One area of a page with the part of a translation set in it: at the size of the source's
-// lines, made smaller only as far as it must be to fit, and cut, with a mark, where it does not
-// fit at the floor. Pressing it or focusing it shows the text whole; where the source is to be
-// seen under the translation, pressing it shows the source until it is pressed again.
+// What a page is told of its translation: the areas set over it, and what the document tells of
+// every page, from which the page's columns, its body print and its leadings are worked out.
+export type PageTexts = { texts: AreaText[]; layout: Layout; unspaced: boolean };
+
+// One area of a flow: it begins at its own left side and runs to the flow's right, after the
+// gap its room leaves above it and the shares of spare room the gap takes. Its text is set at
+// its print's size times its flow's step, led as its flow's leading says of its print.
 function TranslatedArea({
   text,
+  flow,
+  index,
   shape,
+  spacing,
   colours,
-  revealing,
-  width,
+  ragged,
   pointed,
-  onMarked,
+  cited,
   marked,
   drawing,
 }: {
   text: AreaText;
+  flow: Flow;
+  index: number;
   shape: number;
+  spacing: number;
   colours: Colours | undefined;
-  revealing: boolean;
-  width: number;
+  ragged: boolean;
   // Whether the area holds the translation of a block a passage pointed at runs through: it
   // is then marked whole, as the text view marks the translated block.
   pointed: boolean;
-  onMarked: (area: HTMLElement) => void;
+  // Whether it holds the translation of the first line pointed at on its page.
+  cited: boolean;
   // How the strongest of the highlights that run through the area's block is drawn, if any
   // does; and the selection, which the area is drawn in where it takes text of its block.
   marked: MarkState | undefined;
   drawing: SelectionDrawing;
 }) {
-  const element = useRef<HTMLDivElement>(null);
   const selected = useSelectedBlock(drawing, text.blockNumber);
-  useEffect(() => {
-    if (pointed && element.current !== null) {
-      onMarked(element.current);
-    }
-  }, [pointed, onMarked]);
-  const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
+  const { area, piece } = text;
+  const size = area.vertical ? area.typeset.size : area.typeset.size * shape;
+  const ratio = leadingRatioOf(text, spacing);
+  const gap = acrossWidth(flow, flow.gaps[index] ?? 0, shape);
+  const style = {
+    "--size": cqw(size),
+    marginInlineStart: area.vertical ? undefined : cqw(area.room.left - flow.left),
+    marginBlockStart: `calc(${cqw(gap)} + var(--share) * ${flow.weights[index] ?? 0})`,
+    lineHeight: `calc(var(--leading) * ${ratio})`,
+    color: colours?.ink,
+  } as CSSProperties;
+  return (
+    <div
+      className={[
+        "area",
+        pointed ? "pointed" : "",
+        marked !== undefined ? "marked" : "",
+        selected ? "selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      data-mark={marked}
+      style={style}
+      data-block-translated={text.blockNumber}
+      data-kind={text.kind}
+      data-ragged={ragged ? "" : undefined}
+      data-cited={cited ? "" : undefined}
+    >
+      {text.marker !== undefined && <span className="marker">{text.marker}</span>}
+      <MarkedText text={piece.text} marks={piece.marks} />
+    </div>
+  );
+}
+
+// A flow of areas set as one run of text over the paper of its room. Pressing a cut flow or
+// focusing it shows its text whole; where the source is to be seen under the translation,
+// pressing it shows the source under all its areas until it is pressed again.
+function TranslatedFlow({
+  flow,
+  setting,
+  ragged,
+  shape,
+  spacing,
+  colours,
+  revealing,
+  pointedBlocks,
+  cited,
+  markedBlocks,
+  drawing,
+}: {
+  flow: Flow;
+  setting: Setting;
+  ragged: ReadonlySet<string>;
+  shape: number;
+  spacing: number;
+  colours: ReadonlyMap<string, Colours>;
+  revealing: boolean;
+  pointedBlocks: ReadonlySet<number>;
+  cited: string | undefined;
+  markedBlocks: ReadonlyMap<number, MarkState>;
+  drawing: SelectionDrawing;
+}) {
+  const element = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  // A press turns the area once it is plain that it selected nothing: a drag that selects its
+  // A press turns the flow once it is plain that it selected nothing: a drag that selects its
   // text ends in a click too, and a double click begins with one.
   const turning = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(turning.current), []);
@@ -243,91 +238,42 @@ function TranslatedArea({
       }
     }, DOUBLE_PRESS);
   };
-  const { area, piece } = text;
-  // The size of the text as a part of the page's width.
-  const size = area.vertical ? area.typeset.size : area.typeset.size * shape;
-  const spacing = area.spacing;
-  // Fonts that come after the first fitting, a formula's above all, change what the text
-  // takes, so the area is fitted again once they are in.
-  const [fontsIn, setFontsIn] = useState(false);
-  useEffect(() => {
-    let current = true;
-    void document.fonts.ready.then(() => current && setFontsIn(true));
-    return () => {
-      current = false;
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    const box = element.current;
-    if (box === null) {
-      return;
-    }
-    const overflows = (ratio: number) => {
-      box.style.setProperty("--fit", String(ratio));
-      return area.vertical
-        ? box.scrollWidth > box.clientWidth + 1
-        : box.scrollHeight > box.clientHeight + 1;
-    };
-    let found: { ratio: number; cut: boolean } = { ratio: 1, cut: false };
-    if (overflows(1)) {
-      if (overflows(FLOOR)) {
-        found = { ratio: FLOOR, cut: true };
-      } else {
-        let low = FLOOR;
-        let high = 1;
-        for (let step = 0; step < FITTING_STEPS; step += 1) {
-          const middle = (low + high) / 2;
-          if (overflows(middle)) {
-            high = middle;
-          } else {
-            low = middle;
-          }
-        }
-        found = { ratio: low, cut: false };
-      }
-    }
-    box.style.setProperty("--fit", String(found.ratio));
-    setFit(found);
-  }, [piece, size, spacing, width, fontsIn]);
-
-  // The text stands in the room its source's lines take with their leading.
+  const { room } = flow;
+  const paper = colours.get(flow.key)?.paper;
+  const place: Box = flow.vertical
+    ? { ...room, left: room.left - setting.growth, width: room.width + setting.growth }
+    : {
+        left: flow.left,
+        top: room.top,
+        width: flow.right - flow.left,
+        height: room.height + setting.growth,
+      };
   const style = {
-    left: percent(area.room.left),
-    top: percent(area.room.top),
-    width: percent(area.room.width),
-    height: percent(area.room.height),
-    "--size": `${size * 100}cqw`,
-    "--fit": fit.ratio,
-    lineHeight: spacing,
-    backgroundColor: colours?.paper,
-    "--paper": colours?.paper,
-    color: colours?.ink,
+    left: percent(place.left),
+    top: percent(place.top),
+    width: percent(place.width),
+    height: percent(place.height),
+    "--body": cqw(acrossWidth(flow, flow.print.size, shape)),
+    "--leading": setting.leading,
+    "--step": setting.step,
+    "--share": cqw(acrossWidth(flow, setting.share, shape)),
+    backgroundColor: paper,
+    "--paper": paper,
   } as CSSProperties;
-  const pressable = fit.cut || revealing;
+  const pressable = setting.cut || revealing;
   return (
     <div
       ref={element}
-      className={[
-        "area",
-        area.vertical ? "vertical" : "",
-        pointed ? "pointed" : "",
-        marked !== undefined ? "marked" : "",
-        selected ? "selected" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      data-mark={marked}
+      className={flow.vertical ? "flow vertical" : "flow"}
       style={style}
-      data-fit={fit.ratio.toFixed(2)}
-      data-cut={fit.cut ? "" : undefined}
+      data-leading={setting.leading.toFixed(2)}
+      data-step={setting.step.toFixed(2)}
+      data-cut={setting.cut ? "" : undefined}
       data-open={open ? "" : undefined}
-      data-block-translated={text.blockNumber}
-      data-kind={text.kind}
       tabIndex={pressable ? 0 : undefined}
       role={pressable ? "button" : undefined}
       aria-pressed={pressable ? open : undefined}
-      aria-label={revealing ? "按下看这一段的原文" : undefined}
+      aria-label={revealing ? "按下看这几段的原文" : undefined}
       onClick={pressable ? pressed : undefined}
       onKeyDown={
         pressable
@@ -340,66 +286,212 @@ function TranslatedArea({
           : undefined
       }
     >
-      {text.marker !== undefined && <span className="marker">{text.marker}</span>}
-      <MarkedText text={piece.text} marks={piece.marks} />
+      {flow.texts.map((text, index) => (
+        <TranslatedArea
+          key={text.key}
+          text={text}
+          flow={flow}
+          index={index}
+          shape={shape}
+          spacing={spacing}
+          colours={colours.get(text.key)}
+          ragged={ragged.has(text.key)}
+          pointed={pointedBlocks.has(text.blockNumber)}
+          cited={cited === text.key}
+          marked={markedBlocks.get(text.blockNumber)}
+          drawing={drawing}
+        />
+      ))}
     </div>
   );
 }
 
-// The translation set over one drawn page. The colours are read from the drawing once it is
-// there; until then the areas wait. Where the source is to be seen under the translation, an
-// area pressed shows it.
+function overlaps(one: Box, other: Box): boolean {
+  return (
+    one.left < other.left + other.width &&
+    other.left < one.left + one.width &&
+    one.top < other.top + other.height &&
+    other.top < one.top + one.height
+  );
+}
+
+// The flows of a page with how each is fitted, and the areas set flush left.
+type Fitted = { flows: Flow[]; fitting: Fitting; ragged: ReadonlySet<string> };
+
+const NO_RAGGED: ReadonlySet<string> = new Set();
+
+// The translation set over one drawn page, as flows. The colours and what is blank are read from
+// the drawing; the flows are fitted when the page is drawn, when a block of the page arrives,
+// when the fonts arrive and when the page's width changes. Where the source is to be seen under
+// the translation, a flow pressed shows it.
 export function PageTranslation({
+  page,
   texts,
   shape,
   drawn,
   revealing,
   width,
+  pointed,
   pointedBlocks,
   onMarked,
   markedBlocks,
   drawing,
 }: {
-  texts: AreaText[];
+  page: number;
+  texts: PageTexts;
   shape: number;
   drawn: Drawn;
   revealing: boolean;
   width: number;
+  // The lines of the page a passage pointed at runs through.
+  pointed: PagePlace[];
   pointedBlocks: ReadonlySet<number>;
-  // Told of each area that comes to be marked.
+  // Told of the area that holds the first line pointed at, each time it is set.
   onMarked: (area: HTMLElement) => void;
   markedBlocks: ReadonlyMap<number, MarkState>;
   drawing: SelectionDrawing;
 }) {
-  const [read, setRead] = useState<ReadonlyMap<string, Colours>>(new Map());
+  const root = useRef<HTMLDivElement>(null);
+  const { layout, unspaced } = texts;
+  const body: BodyPrint = useMemo(() => bodyPrintOn(layout, page), [layout, page]);
+  const leadings = useMemo(() => leadingsOf(body.spacing, unspaced), [body, unspaced]);
+  const colours = useMemo(() => coloursFrom(drawn, texts.texts), [drawn, texts.texts]);
+  const flows = useMemo(() => {
+    const paperUnder = (text: AreaText) => colours.get(text.key)?.paper;
+    const facts: PageFacts = {
+      paperOf: (text) => {
+        const read = colours.get(text.key);
+        return read === undefined ? undefined : paperOf(read);
+      },
+      blank: (box, text) => {
+        const paper = paperUnder(text);
+        return paper !== undefined && isBlank(drawn.canvas, box, paper, body.size);
+      },
+      blankInto: (box, across, text) => {
+        const paper = paperUnder(text);
+        return paper === undefined ? 0 : blankInto(drawn.canvas, box, across, paper, body.size);
+      },
+    };
+    const lines = (layout.boxes.get(page) ?? []).map((line) => line.box);
+    return flowsOf(texts.texts, columnsOf(layout.runs.get(page) ?? []), lines, body, facts);
+  }, [texts.texts, colours, drawn, layout, page, body]);
+  const cited = useMemo(() => {
+    const [first] = pointed;
+    return first === undefined
+      ? undefined
+      : texts.texts.find((text) => text.area.lines.some((line) => overlaps(line, first)))?.key;
+  }, [pointed, texts.texts]);
+
+  // Fonts that come after the first fitting, a formula's above all, change what the text
+  // takes, so the page is fitted again once they are in.
+  const [fontsIn, setFontsIn] = useState(false);
   useEffect(() => {
-    setRead((before) => {
-      const after = new Map(before);
-      for (const text of texts) {
-        if (!after.has(text.key)) {
-          const colours = coloursOf(drawn.canvas, text.area.box);
-          if (colours !== undefined) {
-            after.set(text.key, colours);
-          }
+    let current = true;
+    void document.fonts.ready.then(() => current && setFontsIn(true));
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const [fitting, setFitting] = useState<Fitted>();
+  const current = fitting?.flows === flows ? fitting : undefined;
+  useLayoutEffect(() => {
+    const host = root.current;
+    if (host === null) {
+      return;
+    }
+    const elements = new Map(
+      [...host.querySelectorAll<HTMLElement>(":scope > .flow")].map((element, index) => [
+        flows[index],
+        element,
+      ]),
+    );
+    const set = (flow: Flow, values: { leading: number; step: number; share: number }) => {
+      const element = elements.get(flow);
+      element?.style.setProperty("--leading", String(values.leading));
+      element?.style.setProperty("--step", String(values.step));
+      element?.style.setProperty("--share", cqw(acrossWidth(flow, values.share, shape)));
+    };
+    const pageBox = host.getBoundingClientRect();
+    const measure: Measure = (trials) => {
+      trials.forEach((trial, flow) => set(flow, { ...trial, share: 0 }));
+      const reaches = new Map<Flow, number>();
+      trials.forEach((_, flow) => {
+        const element = elements.get(flow);
+        const last = element?.lastElementChild;
+        if (element === undefined || last === null || last === undefined) {
+          return;
         }
+        const flowBox = element.getBoundingClientRect();
+        const lastBox = last.getBoundingClientRect();
+        reaches.set(
+          flow,
+          flow.vertical
+            ? (flowBox.right - lastBox.left) / pageBox.width
+            : (lastBox.bottom - flowBox.top) / pageBox.height,
+        );
+      });
+      return reaches;
+    };
+    const result = fitted(flows, leadings, measure);
+    flows.forEach((flow) => {
+      const setting = result.settings.get(flow.key);
+      if (setting !== undefined) {
+        set(flow, setting);
       }
-      return after;
     });
-  }, [texts, drawn]);
-  const colours = useMemo(() => evened(texts, read), [texts, read]);
+    host.setAttribute(MEASURING_LINES, "");
+    const ragged = new Set<string>();
+    elements.forEach((element, flow) => {
+      [...element.children].forEach((area, index) => {
+        const text = flow?.texts[index];
+        const across = text !== undefined && flow?.vertical === false;
+        if (across && area instanceof HTMLElement && stretches(area)) {
+          ragged.add(text.key);
+        }
+      });
+    });
+    host.removeAttribute(MEASURING_LINES);
+    setFitting({ flows, fitting: result, ragged });
+  }, [flows, leadings, shape, width, fontsIn]);
+
+  useEffect(() => {
+    const area = root.current?.querySelector<HTMLElement>(CITED);
+    if (current !== undefined && area !== null && area !== undefined) {
+      onMarked(area);
+    }
+  }, [current, cited, onMarked]);
+
+  const first: Setting = {
+    leading: leadings[0] ?? body.spacing,
+    step: 1,
+    growth: 0,
+    cut: false,
+    share: 0,
+  };
   return (
-    <div className={revealing ? "page-translation revealing" : "page-translation"}>
-      {texts.map((text) => (
-        <TranslatedArea
-          key={text.key}
-          text={text}
+    <div
+      ref={root}
+      className={revealing ? "page-translation revealing" : "page-translation"}
+      data-leading={
+        current !== undefined && flows.length > 0
+          ? current.fitting.leading.toFixed(2)
+          : undefined
+      }
+    >
+      {flows.map((flow) => (
+        <TranslatedFlow
+          key={flow.key}
+          flow={flow}
+          setting={current?.fitting.settings.get(flow.key) ?? first}
+          ragged={current?.ragged ?? NO_RAGGED}
           shape={shape}
-          colours={colours.get(text.key)}
+          spacing={body.spacing}
+          colours={colours}
           revealing={revealing}
-          width={width}
-          pointed={pointedBlocks.has(text.blockNumber)}
-          onMarked={onMarked}
-          marked={markedBlocks.get(text.blockNumber)}
+          pointedBlocks={pointedBlocks}
+          cited={cited}
+          markedBlocks={markedBlocks}
           drawing={drawing}
         />
       ))}
