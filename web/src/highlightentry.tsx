@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState, type MouseEvent, type RefObject } fr
 import { anchorsOf, type Highlight, type Passage } from "./client";
 import { announce } from "./announce";
 import { CutText, useCut } from "./cuttext";
-import { CommentField, typingUnkept, type SettleComment } from "./highlightcomment";
+import { CommentField, typingUnkept, type CommentNow } from "./highlightcomment";
 import { RemoveControl } from "./highlightremoval";
 import { wasMarkedAgain, type Opened } from "./highlights";
 import { NOTE_DOWN_PRESS, NoteDown, type Taking } from "./notedown";
@@ -126,15 +126,12 @@ function StandingNote({ highlight, actions }: { highlight: Highlight; actions: E
   );
 }
 
-function quoteTaking(highlight: Highlight, comment: string): Taking {
+// The highlight's passage where it stands now, with its comment as the reader sees it when the
+// press comes: what is typed in its open field is kept first.
+function quoteTaking(highlight: Highlight, commentNow: () => Promise<string>): Taking {
+  const cited = { anchors: anchorsOf(passageNow(highlight)), itemId: highlight.item };
   return {
-    excerpts: [
-      {
-        kind: "quote",
-        cited: { anchors: anchorsOf(passageNow(highlight)), itemId: highlight.item },
-        comment,
-      },
-    ],
+    excerpts: [async () => ({ kind: "quote", cited, comment: await commentNow() })],
     leftOut: 0,
   };
 }
@@ -227,7 +224,7 @@ export const HighlightEntry = memo(function HighlightEntry({
 }) {
   const entry = useRef<HTMLLIElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
-  const settler = useRef<SettleComment>(null);
+  const commentNow = useRef<CommentNow>(null);
   const [editing, setEditing] = useState(() => typingUnkept(highlight.id));
   const markedAgain = useOpening(opening, highlight, entry, setEditing);
 
@@ -247,7 +244,7 @@ export const HighlightEntry = memo(function HighlightEntry({
         editing={editing}
         setEditing={setEditing}
         editButton={editButton}
-        settler={settler}
+        commentNow={commentNow}
       />
       <div className="entry-foot">
         {!editing && (
@@ -260,10 +257,10 @@ export const HighlightEntry = memo(function HighlightEntry({
             pointer before the press ends. The press keeps the comment itself. */}
         <span className="entry-actions" onMouseDown={keepFieldFocused}>
           <NoteDown
-            taking={quoteTaking(highlight, highlight.comment)}
-            settled={async () =>
-              quoteTaking(highlight, (await settler.current?.()) ?? highlight.comment)
-            }
+            taking={quoteTaking(
+              highlight,
+              async () => (await commentNow.current?.()) ?? highlight.comment,
+            )}
             label="记到笔记：这条高亮"
           />
           <RemoveControl highlight={highlight} onRemoved={actions.removed} />

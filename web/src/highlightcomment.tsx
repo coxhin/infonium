@@ -34,7 +34,7 @@ type Sending = { text: string; outcome: Promise<Kept> };
 
 // The comment as the reader sees it in an open field, once what was typed and not kept yet is
 // kept; it rejects, saying why, when that cannot be kept.
-export type SettleComment = () => Promise<string>;
+export type CommentNow = () => Promise<string>;
 
 // What the reader typed into a field: its text, and the comment the field showed when the typing
 // began. A field holds no typing until its text differs from that comment, and an untouched
@@ -59,14 +59,15 @@ export function CommentField({
   editing,
   setEditing,
   editButton,
-  settler,
+  commentNow,
 }: {
   highlight: Highlight;
   editing: boolean;
   setEditing: (editing: boolean) => void;
   editButton: RefObject<HTMLButtonElement | null>;
-  // Holds how to settle the comment while the field is open, and nothing while it is closed.
-  settler: RefObject<SettleComment | null>;
+  // Holds how to have the comment as the reader sees it while the field is open, and nothing
+  // while it is closed.
+  commentNow: RefObject<CommentNow | null>;
 }) {
   const [typed, setTyped] = useState<Typed | undefined>(() => unkept.get(highlight.id));
   const shown = typed?.text ?? highlight.comment;
@@ -155,7 +156,7 @@ export function CommentField({
 
   // An untouched field gives the comment as it stands and is left as it is; a keeping of the
   // very text typed, under way or done, is awaited, not sent again; other typing is kept first.
-  async function settle(): Promise<string> {
+  async function commentAsSeen(): Promise<string> {
     const sent = sending.current;
     const outcome =
       typed === undefined
@@ -169,13 +170,13 @@ export function CommentField({
     return outcome.comment;
   }
 
-  // Set after every drawing, so that what is settled is what the field holds now.
+  // Set after every drawing, so that what is handed over is what the field holds now.
   useLayoutEffect(() => {
-    settler.current = editing ? settle : null;
+    commentNow.current = editing ? commentAsSeen : null;
   });
   useEffect(
     () => () => {
-      settler.current = null;
+      commentNow.current = null;
     },
     [],
   );

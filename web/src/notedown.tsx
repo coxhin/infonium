@@ -5,9 +5,14 @@ import { reasonOf } from "./loading";
 import { noteDown, showNote, type Cited, type Excerpt, type Noted } from "./notes";
 import "./notedown.css";
 
+// One excerpt a press puts into a note, as it stands when the press comes: a highlight's
+// comment may still be being typed then, and is kept first. It rejects, saying why, when the
+// excerpt cannot be had.
+export type PressedExcerpt = () => Promise<Excerpt>;
+
 // What is put into a note at one press, in order, and how many citations were left out of it
-// because the item they lie in could not be told.
-export type Taking = { excerpts: Excerpt[]; leftOut: number };
+// because the item they lie in could not be told. The control is drawn and pressed from it.
+export type Taking = { excerpts: PressedExcerpt[]; leftOut: number };
 
 // A failure says how many of the excerpts, counted from the first, the note took before it,
 // and which note that was, so that a press after it puts in only the rest.
@@ -24,7 +29,7 @@ export function statementTaking(
   itemOf: (anchor: Anchor) => string | undefined,
 ): Taking {
   let leftOut = 0;
-  const excerpts = statements.map((statement): Excerpt => {
+  const excerpts = statements.map((statement): PressedExcerpt => {
     const cited = statement.anchors.flatMap((anchor): Cited[] => {
       const itemId = itemOf(anchor);
       if (itemId === undefined) {
@@ -33,7 +38,8 @@ export function statementTaking(
       }
       return [{ anchors: [anchor], itemId }];
     });
-    return { kind: "statement", text: statement.text, cited };
+    const excerpt: Excerpt = { kind: "statement", text: statement.text, cited };
+    return () => Promise.resolve(excerpt);
   });
   return { excerpts, leftOut };
 }
@@ -60,7 +66,7 @@ class StoppedPartWay extends Error {
 // The excerpts from the given one on go into the note one after another, each awaited, so that
 // they arrive in the note in their order; the note that took the last is the one said.
 async function noteFrom(
-  excerpts: Excerpt[],
+  excerpts: PressedExcerpt[],
   taken: number,
   noted: Noted | undefined,
 ): Promise<Noted> {
@@ -68,7 +74,7 @@ async function noteFrom(
   for (const [at, excerpt] of excerpts.entries()) {
     if (at >= taken) {
       try {
-        last = await noteDown(excerpt);
+        last = await noteDown(await excerpt());
       } catch (error) {
         throw new StoppedPartWay(reasonOf(error), at, last);
       }
@@ -122,17 +128,13 @@ function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
 
 // The control that puts what infonium wrote, or a highlight, into the note being written.
 // It is quiet until the pointer is over what it belongs to or the keyboard is in it, and
-// keeps its room meanwhile; once it has something to say, it stays on show. Settled gives what
-// a press takes where some of it may still be being written, as a highlight's comment; it holds
-// as many excerpts as taking, with which the control is drawn.
+// keeps its room meanwhile; once it has something to say, it stays on show.
 export function NoteDown({
   taking,
-  settled,
   label,
   shape = "words",
 }: {
   taking: Taking;
-  settled?: () => Promise<Taking>;
   label: string;
   shape?: NoteDownShape;
 }) {
@@ -146,9 +148,8 @@ export function NoteDown({
   async function press() {
     setNoting({ state: "writing" });
     try {
-      const pressed = settled === undefined ? excerpts : (await settled()).excerpts;
       const noted = await noteFrom(
-        pressed,
+        excerpts,
         taken,
         noting.state === "failed" ? noting.noted : undefined,
       );
