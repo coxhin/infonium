@@ -252,8 +252,9 @@ function typesetOf(measures: Measures): Typeset | undefined {
 // one paragraph, or of one page's paragraphs, may run a point or two taller or shorter than
 // those of the next in the same print; what all of a document's lines of a type show together
 // is its print, and a page keeps its own only where it clearly differs. The body print is what
-// all the document's paragraphs show together. The runs of three lines or more of every block,
-// translated or not, tell the columns of each page.
+// all the document's paragraphs show together, or its list items where it has no paragraph,
+// or all its text, tables and listings aside, where it has neither. The runs of three lines or
+// more of every block, translated or not, tell the columns of each page.
 export type Layout = {
   boxes: Map<number, { blockNumber: number; box: Box }[]>;
   kinds: Map<string, Typeset>;
@@ -273,6 +274,9 @@ export function isBody(kind: Block["kind"]): boolean {
 // A run of this many lines or more is one a column is told by.
 const COLUMN_RUN = 3;
 const PARAGRAPH: Block["kind"] = "paragraph";
+const LIST_ITEM: Block["kind"] = "list_item";
+// The measures of all the text of a document are gathered under this key beside its types'.
+const ALL_TEXT = "*";
 
 function typeOf(block: Block): string {
   return block.kind === "heading" ? `${block.kind}${block.level}` : block.kind;
@@ -327,12 +331,17 @@ export function layoutOf(blocks: Block[]): Layout {
       const own = measuresOf(textLinesOf(block, places));
       gathered(measured, kindOnPage(page, block), own);
       gathered(throughout, typeOf(block), own);
+      if (!KEPT_AS_PAGE.has(block.kind)) {
+        gathered(throughout, ALL_TEXT, own);
+      }
       if (isBody(block.kind)) {
         bodyKeys.add(kindOnPage(page, block));
       }
     });
   });
-  const body = typesetOf(throughout.get(PARAGRAPH) ?? NO_MEASURES);
+  const body = [PARAGRAPH, LIST_ITEM, ALL_TEXT]
+    .map((type) => typesetOf(throughout.get(type) ?? NO_MEASURES))
+    .find((typeset) => typeset !== undefined);
   const bodyPrint = printOf(body);
   const kinds = new Map<string, Typeset>();
   measured.forEach((measures, key) => {
