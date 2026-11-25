@@ -202,12 +202,16 @@ export function areasOf(
 // The sizes and the steps between lines that a set of lines shows, measured against its
 // smallest line: a line much taller than that is left out, and so is a step that is no line's
 // pitch beside it. Each step is measured three ways, from a line's top, its middle and its foot
-// to the next one's, and the pitch is the median of them all, so that neither a line boxed
-// taller than its neighbour, as one that holds a formula or a raised letter, nor a box a point
-// off in whole points decides it: two body paragraphs of one paper read 10 points top to top
-// where their print's pitch is 12, and 11.5 so; captions of three lines whose middles stand
-// 9.5 and 10.5 points apart read 10. Over the body text of two papers the pitches so measured
-// lie closer to the body's than measured any one way.
+// to the next one's, and the pitch is the median of them all. From the tops a step is not moved
+// by a line boxed deeper below its letters, as one with a lowered letter; from the feet not by
+// one boxed taller above them, as one with a raised letter or a formula; from the middles by
+// either, or by a box a point off in whole points at its top or its foot, only half as much.
+// Of the other measures tried over two papers, each way alone and the first middle to the last
+// over the steps each lost some of five blocks whose print is known: two body paragraphs with
+// a tall line, which read 10 points top to top where their print's pitch is 12, and 11.5 so,
+// and three captions of three lines, whose middles stand 9.5 and 10.5 points apart and which
+// read 10. Tops and feet pooled kept the five, but took a body paragraph for smaller print and
+// two captions for the body's, which this one does not.
 type Measures = { sizes: number[]; pitches: number[] };
 
 function measuresOf(places: PagePlace[]): Measures {
