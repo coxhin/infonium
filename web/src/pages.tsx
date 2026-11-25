@@ -21,7 +21,7 @@ import {
 } from "./pagemarking";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
-import { scrollerOf, viewOf } from "./scrolling";
+import { scrollerOf, uncoveredTop } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -44,12 +44,12 @@ const UNDER_CLASS = "under";
 const READING_WAIT = 500;
 const POINTED_AREA = "area.pointed";
 
-// Where the reader stands in the pages: the page at the top of what the scroller shows, and how
-// far down that page the view begins, as a part of its height.
+// Where the reader stands in the pages: the page at the top of what the scroller shows them of,
+// and how far down that page the view begins, as a part of its height.
 export type PagePosition = { page: number; within: number };
 
 function positionOf(viewer: Element): PagePosition | undefined {
-  const top = viewOf(viewer).top;
+  const top = uncoveredTop(viewer);
   const pages = [...viewer.children];
   const page = pages.findIndex((shown) => shown.getBoundingClientRect().bottom > top);
   const place = pages[page]?.getBoundingClientRect();
@@ -62,7 +62,7 @@ function turnTo(viewer: Element, { page, within }: PagePosition) {
   const place = viewer.children[page]?.getBoundingClientRect();
   if (place !== undefined) {
     const scroller = scrollerOf(viewer) ?? document.scrollingElement;
-    scroller?.scrollBy({ top: place.top - viewOf(viewer).top + within * place.height });
+    scroller?.scrollBy({ top: place.top - uncoveredTop(viewer) + within * place.height });
   }
 }
 
@@ -425,19 +425,14 @@ function Pages({
   }, [file]);
 
   // The pages open where they were asked to, once they have their shapes and are on show,
-  // unless a passage is pointed at, which they turn to instead.
+  // unless a passage is pointed at then, which they turn to instead.
   const opened = useRef(false);
   useEffect(() => {
-    if (
-      opening !== undefined &&
-      !opened.current &&
-      shapes !== undefined &&
-      inView &&
-      pointed.length === 0 &&
-      viewer.current !== null
-    ) {
+    if (opening !== undefined && !opened.current && shapes !== undefined && inView) {
       opened.current = true;
-      turnTo(viewer.current, opening);
+      if (pointed.length === 0 && viewer.current !== null) {
+        turnTo(viewer.current, opening);
+      }
     }
   }, [opening, shapes, inView, pointed]);
 

@@ -561,6 +561,17 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** FirstUnderway */
+        FirstUnderway: {
+            arrival: components["schemas"]["KeptSource"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "underway";
+            /** Starts */
+            starts: number;
+        };
         /** FormulaMark */
         FormulaMark: {
             /**
@@ -1220,7 +1231,6 @@ export interface components {
         };
         /** Underway */
         Underway: {
-            arrived: components["schemas"]["KeptSource"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1240,7 +1250,7 @@ export interface components {
         /** Unread */
         Unread: {
             /** Attempt */
-            attempt: components["schemas"]["Underway"] | components["schemas"]["Failed"];
+            attempt: components["schemas"]["FirstUnderway"] | components["schemas"]["Failed"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

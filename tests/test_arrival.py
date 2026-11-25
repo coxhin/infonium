@@ -11,12 +11,14 @@ from infonium.document import PDF_MEDIA_TYPE
 from infonium.library import (
     LOCAL_OWNER,
     Failed,
+    FirstUnderway,
     Item,
     KeptSource,
     LibraryStore,
-    Underway,
+    Link,
     Unread,
     Upload,
+    item_identity,
 )
 from tests.pdf_engine_standin import PDF_DATA
 from tests.service import POLL_SECONDS, SETTLE_SECONDS, SITE, App, stand
@@ -24,7 +26,9 @@ from tests.service import POLL_SECONDS, SETTLE_SECONDS, SITE, App, stand
 PDF_SAMPLE = "trap"
 PDF = (PDF_DATA / "samples" / f"{PDF_SAMPLE}.pdf").read_bytes()
 PDF_SNAPSHOT = sha256(PDF).hexdigest()
-ARRIVED = {"snapshot": PDF_SNAPSHOT, "media_type": PDF_MEDIA_TYPE}
+ARRIVAL = {"snapshot": PDF_SNAPSHOT, "media_type": PDF_MEDIA_TYPE}
+# Bytes that a site served before, kept as they arrived, which it serves no more.
+EARLIER = b"%PDF-1.4\n% an earlier file served at the same address\n"
 REFUSAL = "the engine refuses this file"
 
 
@@ -48,7 +52,7 @@ def refusing(engine: Path) -> None:
 
 
 def arrival(entry: dict[str, Any]) -> object:
-    return entry["reading"]["attempt"].get("arrived")
+    return entry["reading"]["attempt"].get("arrival")
 
 
 def entry_of(app: App, item_id: str) -> dict[str, Any]:
@@ -56,12 +60,13 @@ def entry_of(app: App, item_id: str) -> dict[str, Any]:
     return entry
 
 
-def arrived_entry(app: App, item_id: str) -> dict[str, Any]:
-    # The item once its source has arrived, or its reading has ended.
+def arrived_entry(app: App, item_id: str, awaited: object) -> dict[str, Any]:
+    # The item once the file it keeps as it arrived is the one awaited, or its reading has
+    # ended.
     deadline = time.monotonic() + SETTLE_SECONDS
     while True:
         entry = entry_of(app, item_id)
-        if arrival(entry) is not None or stand(entry).endswith(("/settled", "/failed")):
+        if arrival(entry) == awaited or stand(entry).endswith(("/settled", "/failed")):
             return entry
         if time.monotonic() > deadline:
             pytest.fail(f"the source of {entry['origin']} did not arrive in time")
@@ -78,7 +83,7 @@ def test_a_pdf_upload_is_shown_as_it_arrived_while_it_is_read(
     held_until(standin_pdf_engine(PDF_SAMPLE), gate)
     item_id = app.upload(f"{PDF_SAMPLE}.pdf", PDF).json()["id"]
     reading = entry_of(app, item_id)
-    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVED), (
+    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVAL), (
         f"a PDF uploaded is not kept as it arrived while it waits to be read: {reading}"
     )
     source = app.client.get(f"/api/items/{item_id}/source")
@@ -108,8 +113,8 @@ def test_a_pdf_link_shown_as_it_arrived_is_let_go_when_its_reading_fails(
     held_until(engine, gate)
     app.site.pages["paper"] = PDF
     item_id = app.link(f"{SITE}/page/paper").json()["id"]
-    reading = arrived_entry(app, item_id)
-    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVED), (
+    reading = arrived_entry(app, item_id, ARRIVAL)
+    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVAL), (
         f"a PDF fetched is not kept as it arrived while it is read: {reading}"
     )
     assert app.client.get(f"/api/items/{item_id}/source").content == PDF, (
@@ -142,7 +147,7 @@ def test_a_failed_reading_leaves_a_document_its_file_of_the_same_bytes(
 
 def test_a_file_kept_as_it_arrived_stays_while_another_reading_keeps_it(tmp_path: Path) -> None:
     store = LibraryStore(tmp_path / "data")
-    arrived = KeptSource(snapshot=PDF_SNAPSHOT, media_type=PDF_MEDIA_TYPE)
+    stored = KeptSource(snapshot=PDF_SNAPSHOT, media_type=PDF_MEDIA_TYPE)
     kept = store.snapshot(PDF_SNAPSHOT)
     kept.parent.mkdir(parents=True)
     kept.write_bytes(PDF)
@@ -150,15 +155,15 @@ def test_a_file_kept_as_it_arrived_stays_while_another_reading_keeps_it(tmp_path
         id="0" * 64,
         origin=Upload(name="other.pdf"),
         added=datetime.now(UTC),
-        reading=Unread(attempt=Underway(starts=1, arrived=arrived)),
+        reading=Unread(attempt=FirstUnderway(starts=1, arrival=stored)),
     )
     with store.library(LOCAL_OWNER) as library:
         library.keep_item(item)
-    store.release_arrival(arrived)
+    store.release_arrival(stored)
     assert kept.exists(), "a file another reading keeps as it arrived was taken away"
     with store.library(LOCAL_OWNER) as library:
         library.keep_item(item.model_copy(update={"reading": Unread(attempt=Failed(reason="x"))}))
-    store.release_arrival(arrived)
+    store.release_arrival(stored)
     assert not kept.exists(), "a file that nothing keeps any more was left"
 
 
@@ -174,21 +179,21 @@ def test_a_reading_cut_off_shows_its_file_again_when_it_begins_again(
     kept = store.snapshot(PDF_SNAPSHOT)
     kept.parent.mkdir(parents=True)
     kept.write_bytes(PDF)
-    arrived = KeptSource(snapshot=PDF_SNAPSHOT, media_type=PDF_MEDIA_TYPE)
+    stored = KeptSource(snapshot=PDF_SNAPSHOT, media_type=PDF_MEDIA_TYPE)
     with store.library(LOCAL_OWNER) as library:
         library.keep_item(
             Item(
                 id=item_id,
                 origin=Upload(name=f"{PDF_SAMPLE}.pdf"),
                 added=datetime.now(UTC),
-                reading=Unread(attempt=Underway(starts=1, arrived=arrived)),
+                reading=Unread(attempt=FirstUnderway(starts=1, arrival=stored)),
             )
         )
     store.lock.release()
     held_until(standin_pdf_engine(PDF_SAMPLE), gate)
     started = start_app()
     reading = entry_of(started, item_id)
-    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVED), (
+    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVAL), (
         f"a reading begun again after the service stopped lost its file as it arrived: {reading}"
     )
     assert started.client.get(f"/api/items/{item_id}/source").content == PDF, (
@@ -216,3 +221,72 @@ def test_a_reading_of_an_item_that_holds_a_document_keeps_nothing_as_it_arrived(
     gate.touch()
     assert stand(app.settled(item_id)) == "read/settled", "the PDF was not read again"
     assert snapshots(app.store) == [PDF_SNAPSHOT], "reading again kept another file"
+
+
+def test_a_link_fetched_again_after_a_restart_keeps_what_arrives_now(
+    start_app: Callable[..., App],
+    standin_pdf_engine: Callable[..., Path],
+    gate: Path,
+    tmp_path: Path,
+) -> None:
+    first = start_app()
+    first.site.pages["paper"] = PDF
+    first.stop()
+    store = LibraryStore(tmp_path / "data")
+    earlier = KeptSource(snapshot=sha256(EARLIER).hexdigest(), media_type=PDF_MEDIA_TYPE)
+    kept = store.snapshot(earlier.snapshot)
+    kept.parent.mkdir(parents=True)
+    kept.write_bytes(EARLIER)
+    url = f"{SITE}/page/paper"
+    item_id = item_identity(LOCAL_OWNER, url)
+    with store.library(LOCAL_OWNER) as library:
+        library.keep_item(
+            Item(
+                id=item_id,
+                origin=Link(url=url),
+                added=datetime.now(UTC),
+                reading=Unread(attempt=FirstUnderway(starts=1, arrival=earlier)),
+            )
+        )
+    store.lock.release()
+    held_until(standin_pdf_engine(PDF_SAMPLE), gate)
+    started = start_app()
+    reading = arrived_entry(started, item_id, ARRIVAL)
+    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVAL), (
+        f"a link fetched again does not keep the file that arrived now: {reading}"
+    )
+    assert snapshots(started.store) == [PDF_SNAPSHOT], (
+        "the file a link brought before was kept beside the one it brings now"
+    )
+    gate.touch()
+    assert stand(started.settled(item_id)) == "read/settled", "the PDF was not read"
+
+
+def test_an_upload_cut_off_before_it_was_kept_is_kept_when_it_begins_again(
+    start_app: Callable[..., App],
+    standin_pdf_engine: Callable[..., Path],
+    gate: Path,
+    tmp_path: Path,
+) -> None:
+    store = LibraryStore(tmp_path / "data")
+    item_id = store.upload_identity(LOCAL_OWNER, PDF_DATA / "samples" / f"{PDF_SAMPLE}.pdf")
+    store.upload(item_id).write_bytes(PDF)
+    with store.library(LOCAL_OWNER) as library:
+        library.keep_item(
+            Item(
+                id=item_id,
+                origin=Upload(name=f"{PDF_SAMPLE}.pdf"),
+                added=datetime.now(UTC),
+                reading=Unread(attempt=FirstUnderway(starts=1)),
+            )
+        )
+    store.lock.release()
+    held_until(standin_pdf_engine(PDF_SAMPLE), gate)
+    started = start_app()
+    reading = arrived_entry(started, item_id, ARRIVAL)
+    assert (stand(reading), arrival(reading)) == ("unread/underway", ARRIVAL), (
+        f"an upload begun again was not kept as it arrived: {reading}"
+    )
+    gate.touch()
+    assert stand(started.settled(item_id)) == "read/settled", "the PDF was not read"
+    assert snapshots(started.store) == [PDF_SNAPSHOT], "the PDF's file is kept twice, or not"

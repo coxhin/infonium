@@ -10,10 +10,10 @@ from infonium.library import (
     CUT_OFF,
     LOCAL_OWNER,
     READING_STARTS,
+    FirstUnderway,
     Item,
     LibraryStore,
     Link,
-    Underway,
     Unread,
     item_identity,
 )
@@ -254,7 +254,7 @@ def test_readings_cut_off_begin_again_until_they_are_given_up(
                     id=item_identity(LOCAL_OWNER, url),
                     origin=Link(url=url),
                     added=datetime.now(UTC),
-                    reading=Unread(attempt=Underway(starts=starts)),
+                    reading=Unread(attempt=FirstUnderway(starts=starts)),
                 )
             )
     (store.work / "leftover").mkdir()

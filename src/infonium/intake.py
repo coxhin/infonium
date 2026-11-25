@@ -35,6 +35,7 @@ from infonium.document import (
 )
 from infonium.library import (
     FIRST_READING,
+    FirstUnderway,
     Item,
     KeptSource,
     LibraryStore,
@@ -42,7 +43,6 @@ from infonium.library import (
     Origin,
     Read,
     Reading,
-    Unread,
     Upload,
     arrival_of,
     is_underway,
@@ -281,14 +281,14 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
 
 
 def link_readout(
-    url: str, directory: Path, engines: Engines, arrived: Callable[[Source], None]
+    url: str, directory: Path, engines: Engines, on_arrival: Callable[[Source], None]
 ) -> Readout:
-    # A file fetched from the address is handed to arrived before it is read; the recording a
-    # media page leads to is not.
+    # A file fetched from the address is handed to on_arrival before it is read; the recording
+    # a media page leads to is not.
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
     source = fetched(url, directory)
-    arrived(source)
+    on_arrival(source)
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
@@ -336,9 +336,10 @@ class Intake:
         self.store = store
         self.engines = engines
         self.pool = ThreadPoolExecutor(max_workers=readers, thread_name_prefix="reader")
-        # A change to an item's reading, and to the waiting copy of its upload, is made by
-        # one thread at a time. So an item that is being read is not taken for reading a
-        # second time, and a copy is not taken away from under a reading.
+        # A change to an item's reading, to the waiting copy of its upload, and to the files kept
+        # of sources as they arrived, is made by one thread at a time. So an item that is being
+        # read is not taken for reading a second time, a copy is not taken away from under a
+        # reading, and a file is not taken away while a reading or a document comes to name it.
         self.turn = Lock()
 
     def begin_link(self, owner: str, url: str) -> Item:
@@ -394,30 +395,36 @@ class Intake:
         return item
 
     def keep_arrival(self, owner: str, item_id: str, source: Source) -> None:
-        # The source of a first reading, where a reader can be shown it as it is, is kept as it
-        # arrived while it is read. A reading that ended meanwhile keeps nothing.
-        if source.media_type not in SHOWN_AS_ARRIVED:
+        # The source of an item that holds no document yet, where a reader can be shown it as it
+        # is, is kept as it arrived while it is read, in place of one kept before. A reading of
+        # an item that holds a document, or one that ended meanwhile, keeps nothing.
+        if source.media_type not in SHOWN_AS_ARRIVED or not self.is_first(owner, item_id):
             return
         staged = self.store.staged_snapshot(source.file)
-        arrived = KeptSource(snapshot=staged.name, media_type=source.media_type)
+        arrival = KeptSource(snapshot=staged.name, media_type=source.media_type)
         with self.turn:
             with self.store.library(owner) as library:
                 item = library.item(item_id)
-                first = isinstance(item.reading, Unread) and is_underway(item.reading)
+                first = isinstance(item.reading.attempt, FirstUnderway)
                 if first:
                     self.store.keep_snapshot(staged)
-                    library.keep_item(item_with(item, reading_arrived(item.reading, arrived)))
+                    library.keep_item(item_with(item, reading_arrived(item.reading, arrival)))
             if first:
-                self.let_go(item.reading, [arrived.snapshot])
+                self.drop_arrival(item.reading, [arrival.snapshot])
             else:
                 staged.file.unlink()
 
-    def let_go(self, earlier: Reading, kept: list[str]) -> None:
-        # The file a reading kept of its source as it arrived, once a change of the reading
-        # keeps it no longer.
-        for arrived in arrival_of(earlier):
-            if arrived.snapshot not in kept:
-                self.store.release_arrival(arrived)
+    def is_first(self, owner: str, item_id: str) -> bool:
+        # Whether a reading of an item that holds no document yet is under way.
+        with self.store.library(owner) as library:
+            return isinstance(library.item(item_id).reading.attempt, FirstUnderway)
+
+    def drop_arrival(self, earlier: Reading, kept: list[str]) -> None:
+        # The file a reading kept of its source as it arrived is released once a change of the
+        # reading keeps it no longer.
+        for arrival in arrival_of(earlier):
+            if arrival.snapshot not in kept:
+                self.store.release_arrival(arrival)
 
     def underway(self, owner: str, item_id: str) -> list[Item]:
         # The item when a reading of it is under way, and nothing otherwise.
@@ -466,7 +473,11 @@ class Intake:
                         partial(self.keep_arrival, owner, item_id),
                     )
                 case Upload(name=name):
+                    # An upload is kept as it arrived when its reading was asked for; this is
+                    # for a reading begun again after the service stopped before that.
                     source = uploaded(self.store.upload(item_id), name)
+                    if not arrival_of(item.reading):
+                        self.keep_arrival(owner, item_id, source)
                     readout = readout_of(source, Path(directory), self.engines)
             staged = self.store.staged_snapshot(readout.file)
         document = document_of(
@@ -489,7 +500,7 @@ class Intake:
                     staged.file.unlink()
                 library.keep_item(item_with(current, settled))
             self.drop_upload(current)
-            self.let_go(current.reading, [staged.name] if new_document else [])
+            self.drop_arrival(current.reading, [staged.name] if new_document else [])
 
     def record(self, owner: str, item_id: str, finished: Future[None]) -> None:
         error = None if finished.cancelled() else finished.exception()
@@ -507,7 +518,9 @@ class Intake:
                 library.keep_item(changed)
             if not is_underway(changed.reading):
                 self.drop_upload(changed)
-            self.let_go(item.reading, [arrived.snapshot for arrived in arrival_of(changed.reading)])
+            self.drop_arrival(
+                item.reading, [arrival.snapshot for arrival in arrival_of(changed.reading)]
+            )
         return changed
 
     def drop_upload(self, item: Item) -> None:

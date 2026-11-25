@@ -343,7 +343,7 @@ function ItemPane({
   switch (reading.attempt.kind) {
     case "underway":
       // A PDF read for the first time is shown as it arrived while it is read.
-      return reading.attempt.arrived?.media_type === PDF_MEDIA_TYPE ? (
+      return reading.attempt.arrival?.media_type === PDF_MEDIA_TYPE ? (
         <ArrivedPages itemId={itemId} />
       ) : (
         <Notice failed={false}>正在读取，PDF 和录音可能需要几分钟…</Notice>

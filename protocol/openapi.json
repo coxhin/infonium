@@ -410,6 +410,38 @@
         "title": "Figure",
         "type": "object"
       },
+      "FirstUnderway": {
+        "properties": {
+          "arrival": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeptSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "underway",
+            "default": "underway",
+            "title": "Kind",
+            "type": "string"
+          },
+          "starts": {
+            "minimum": 0.0,
+            "title": "Starts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "starts",
+          "arrival"
+        ],
+        "title": "FirstUnderway",
+        "type": "object"
+      },
       "FormulaMark": {
         "properties": {
           "end": {
@@ -2036,16 +2068,6 @@
       },
       "Underway": {
         "properties": {
-          "arrived": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/KeptSource"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "kind": {
             "const": "underway",
             "default": "underway",
@@ -2060,8 +2082,7 @@
         },
         "required": [
           "kind",
-          "starts",
-          "arrived"
+          "starts"
         ],
         "title": "Underway",
         "type": "object"
@@ -2087,13 +2108,13 @@
             "discriminator": {
               "mapping": {
                 "failed": "#/components/schemas/Failed",
-                "underway": "#/components/schemas/Underway"
+                "underway": "#/components/schemas/FirstUnderway"
               },
               "propertyName": "kind"
             },
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Underway"
+                "$ref": "#/components/schemas/FirstUnderway"
               },
               {
                 "$ref": "#/components/schemas/Failed"
