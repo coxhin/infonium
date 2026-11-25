@@ -518,10 +518,36 @@ function shareOf(flow: Flow, spare: number, leading: number): number {
   return Math.min(spare / shares, SHARE_LINES * flow.print.size * leading);
 }
 
-// Fits a page's flows: the page takes the widest of the leadings at which every flow that fits
-// at the narrowest fits, and each such flow takes it. A flow that does not fit at the narrowest
-// takes that one, the blank paper beyond its foot that it needs, and the first step of its
-// print's size at which it fits; at the last step it is cut at its foot.
+// The page takes the widest leading at which the flows that fit there hold at least this part
+// of the letters of all its flows that fit at the narrowest, so that a few tight flows do not
+// hold the rest back.
+const HELD_LETTERS = 0.9;
+const LETTER = /[\p{L}\p{N}]/u;
+
+// A flow's letters: the letters and digits of its areas' translation, each formula counting as
+// one.
+function lettersOf(flow: Flow): number {
+  let count = 0;
+  for (const { piece } of flow.texts) {
+    const characters = [...piece.text];
+    const formulas = piece.marks.filter((mark) => mark.kind === "formula");
+    count += formulas.length;
+    characters.forEach((character, at) => {
+      const inFormula = formulas.some((mark) => mark.start <= at && at < mark.end);
+      if (!inFormula && LETTER.test(character)) {
+        count += 1;
+      }
+    });
+  }
+  return count;
+}
+
+// Fits a page's flows. Of the flows that fit at the narrowest leading, the page takes the
+// widest leading at which those that fit hold nine tenths of their letters, and each of them
+// takes the page's or, where it does not fit there, the widest at which it fits. A flow that
+// does not fit at the narrowest takes that one, the blank paper beyond its foot that it needs,
+// and the first step of its print's size at which it fits; at the last step it is cut at its
+// foot.
 export function fitted(flows: Flow[], leadings: number[], measure: Measure): Fitting {
   const floor = leadings[0];
   if (floor === undefined) {
@@ -530,28 +556,88 @@ export function fitted(flows: Flow[], leadings: number[], measure: Measure): Fit
   const settings = new Map<string, Setting>();
   const atFloor = measure(trialsOf(flows, { leading: floor, step: 1 }));
   const fitting = flows.filter((flow) => fits(atFloor.get(flow) ?? Infinity, flow, slackOf(flow)));
+  // How far each flow's text reaches at each leading tried, by the leading's place in the list.
+  const reached = new Map<Flow, Map<number, number>>(
+    flows.map((flow) => [flow, new Map([[0, atFloor.get(flow) ?? Infinity]])]),
+  );
+  const reachAt = (flow: Flow, index: number) => reached.get(flow)?.get(index) ?? Infinity;
+  const tryAt = (places: ReadonlyMap<Flow, number>) => {
+    const asked = new Map(
+      [...places].filter(([flow, index]) => reached.get(flow)?.has(index) !== true),
+    );
+    if (asked.size === 0) {
+      return;
+    }
+    const trials = new Map(
+      [...asked].map(([flow, index]) => [flow, { leading: leadings[index] ?? floor, step: 1 }]),
+    );
+    measure(trials).forEach((reach, flow) => {
+      const index = asked.get(flow);
+      if (index !== undefined) {
+        reached.get(flow)?.set(index, reach);
+      }
+    });
+  };
+  const fitsAt = (flow: Flow, index: number) => fits(reachAt(flow, index), flow, slackOf(flow));
+  const letters = new Map(fitting.map((flow) => [flow, lettersOf(flow)]));
+  const allLetters = fitting.reduce((sum, flow) => sum + (letters.get(flow) ?? 0), 0);
+  const holds = (index: number) => {
+    tryAt(new Map(fitting.map((flow) => [flow, index])));
+    const held = fitting
+      .filter((flow) => fitsAt(flow, index))
+      .reduce((sum, flow) => sum + (letters.get(flow) ?? 0), 0);
+    return held >= HELD_LETTERS * allLetters;
+  };
   let widest = 0;
-  let reaches = atFloor;
   let low = 1;
   let high = fitting.length > 0 ? leadings.length - 1 : 0;
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    const leading = leadings[middle] ?? floor;
-    const tried = measure(trialsOf(fitting, { leading, step: 1 }));
-    if (fitting.every((flow) => fits(tried.get(flow) ?? Infinity, flow, slackOf(flow)))) {
+    if (holds(middle)) {
       widest = middle;
-      reaches = tried;
       low = middle + 1;
     } else {
       high = middle - 1;
     }
   }
+  // Each flow that fits at the narrowest but not at the page's leading looks for the widest at
+  // which it fits, all of them at once.
+  const own = new Map<Flow, number>(fitting.map((flow) => [flow, widest]));
+  const searched = new Map(
+    fitting
+      .filter((flow) => !fitsAt(flow, widest))
+      .map((flow) => [flow, { low: 1, high: widest - 1, found: 0 }]),
+  );
+  while ([...searched.values()].some((range) => range.low <= range.high)) {
+    const middles = new Map<Flow, number>();
+    searched.forEach((range, flow) => {
+      if (range.low <= range.high) {
+        middles.set(flow, Math.floor((range.low + range.high) / 2));
+      }
+    });
+    tryAt(middles);
+    middles.forEach((middle, flow) => {
+      const range = searched.get(flow);
+      if (range === undefined) {
+        return;
+      }
+      if (fitsAt(flow, middle)) {
+        range.found = middle;
+        range.low = middle + 1;
+      } else {
+        range.high = middle - 1;
+      }
+    });
+  }
+  searched.forEach((range, flow) => own.set(flow, range.found));
   const leading = leadings[widest] ?? floor;
   for (const flow of fitting) {
-    const reach = reaches.get(flow) ?? extentOf(flow);
+    const index = own.get(flow) ?? 0;
+    const reach = reachAt(flow, index);
     const growth = growthOf(reach, flow, slackOf(flow));
     const share = shareOf(flow, extentOf(flow) - reach, leading);
-    settings.set(flow.key, { leading, step: 1, growth, cut: false, share });
+    const ownLeading = leadings[index] ?? floor;
+    settings.set(flow.key, { leading: ownLeading, step: 1, growth, cut: false, share });
   }
   let left = flows.filter((flow) => !fitting.includes(flow));
   for (const step of STEPS) {
