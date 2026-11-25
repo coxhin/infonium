@@ -19,6 +19,7 @@ from infonium.document import (
 )
 from infonium.language_model import WireApi, openai_model
 from infonium.reasons import failure_reason
+from infonium.rendition import FIRST_USE, FIRST_USES
 from tests.model_standin import (
     INPUT_TOKENS,
     OUTPUT_TOKENS,
@@ -33,6 +34,7 @@ from tests.model_standin import (
 from tests.service import LEDGER, REVISED, SITE, App
 from tests.translation_standin import (
     RECORDING,
+    SECTION_END,
     TITLE,
     TRANSLATED,
     TRIES,
@@ -85,6 +87,9 @@ TERMS_LISTED = [
     ("skerrymouse / skerrymice", "skerrymouse", "skerrymice"),
 ]
 TERM_LINE = "{listed} = {rendering}"
+# Which paragraph of every six uses a term kept as it is written, so that its first use is a
+# passage of the first request but not its first passage.
+FIRST_USE_PARAGRAPH = 3
 # How many of a long document's first paragraphs use the term, so that its later requests do not.
 PARAGRAPHS_USING_THE_TERM = 2
 # A heading made of terms of its field alone, which a translation leaves as it is written.
@@ -384,6 +389,83 @@ def test_a_term_listed_as_itself_or_in_several_forms_goes_with_the_passages_that
     )
 
 
+def first_use_lines(asked: Asked) -> list[str]:
+    # The lines under the heading of a request that names first uses of kept terms.
+    text = asked.text()
+    if FIRST_USES not in text:
+        return []
+    return text.split(FIRST_USES, 1)[1].lstrip("\n").split(SECTION_END)[0].splitlines()
+
+
+def first_passage_using(asked: Asked, used: str) -> int:
+    return next(
+        passage.number for passage in passages_asked(asked) if used in plain(passage.text).split()
+    )
+
+
+@pytest.mark.parametrize(("listed", "rendering", "used"), TERMS_LISTED)
+def test_only_the_request_that_holds_a_kept_terms_first_use_names_its_passage(
+    app: App, listed: str, rendering: str, used: str
+) -> None:
+    def mentioning(number: int) -> str:
+        return f"{used} " if number % 6 == FIRST_USE_PARAGRAPH else ""
+
+    app.model.reset(translating(survey=survey_reply(terms={listed: rendering})))
+    document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS, mentioning))
+    translated_whole(app, document.item_id)
+    naming = [asked for asked in passage_requests(app) if first_use_lines(asked)]
+    holding = [
+        asked
+        for asked in passage_requests(app)
+        if f"Paragraph {FIRST_USE_PARAGRAPH} " in asked.text()
+    ]
+    assert naming == holding and len(naming) == 1, (
+        f"{len(naming)} requests name a first use of {listed}, where the one that holds "
+        f"paragraph {FIRST_USE_PARAGRAPH} should"
+    )
+    [asked] = naming
+    expected = FIRST_USE.format(source=listed, number=first_passage_using(asked, used))
+    assert first_use_lines(asked) == [expected], (
+        f"the request that holds the first use of {listed} names {first_use_lines(asked)}, "
+        f"not {expected!r}"
+    )
+
+
+@pytest.mark.parametrize(("term", "used"), TERMS_USED)
+def test_a_term_given_a_translation_has_no_first_use_named(app: App, term: str, used: str) -> None:
+    def mentioning(number: int) -> str:
+        return f"{used} " if number % 6 == 0 else ""
+
+    app.model.reset(translating(survey=survey_reply(terms={term: TERM_TRANSLATION})))
+    document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS, mentioning))
+    translated_whole(app, document.item_id)
+    named = [first_use_lines(asked) for asked in passage_requests(app) if first_use_lines(asked)]
+    assert named == [], f"a term the survey translates has first uses named: {named}"
+
+
+def test_a_block_asked_again_names_a_first_use_only_where_the_document_first_uses_the_term(
+    app: App,
+) -> None:
+    [(listed, rendering, used)] = TERMS_LISTED[:1]
+
+    def mentioning(number: int) -> str:
+        return f"{used} " if number in (1, 3) else ""
+
+    app.model.reset(translating(survey=survey_reply(terms={listed: rendering})))
+    document = kept(app, long_paragraphs(5, mentioning))
+    translated_whole(app, document.item_id)
+    named = []
+    for number in (1, 3):
+        sent = len(app.model.asked())
+        again = app.client.post(block_path(document.item_id, number))
+        assert again.status_code == HTTPStatus.OK, f"block {number} again failed: {again.text}"
+        [asked] = app.model.asked()[sent:]
+        named.append(first_use_lines(asked))
+    assert named == [[FIRST_USE.format(source=listed, number=1)], []], (
+        f"blocks 1 and 3 asked again, of which 1 first uses {listed}, name {named}"
+    )
+
+
 def test_a_heading_answered_with_its_own_words_is_kept_and_not_asked_again(app: App) -> None:
     def wording(passage: Passage) -> str:
         return passage.text if plain(passage.text) == HEADING_OF_TERMS else marked(passage)
@@ -533,6 +615,7 @@ def test_put_answers_at_once_and_changes_nothing_while_translating_or_translated
     answered_at_once = not gate.is_set()
     assert answered_at_once and started["progress"] == {
         "kind": "translating",
+        "model": TRANSLATION_MODEL,
         "translated": 0,
         "total": len(blocks),
     }, f"PUT did not answer at once with Translating: {started['progress']}"
@@ -569,6 +652,7 @@ def test_a_block_is_served_as_soon_as_it_is_kept(app: App, gate: threading.Event
     assert view["progress"]["kind"] == "translating", "the translation ended with requests held"
     assert view["progress"] == {
         "kind": "translating",
+        "model": TRANSLATION_MODEL,
         "translated": len(view["blocks"]),
         "total": len(blocks),
     }, f"Translating does not count the blocks kept: {view['progress']}"
@@ -604,7 +688,12 @@ def test_post_discards_what_was_translated_and_ends_the_run_before_it(
         "POST answered with blocks of the translation before it: it did not discard them"
     )
     assert answered["progress"] in (
-        {"kind": "translating", "translated": len(answered_texts), "total": len(blocks)},
+        {
+            "kind": "translating",
+            "model": TRANSLATION_MODEL,
+            "translated": len(answered_texts),
+            "total": len(blocks),
+        },
         {"kind": "translated"},
     ), f"POST did not answer with the new run's progress: {answered['progress']}"
     time.sleep(QUIET_SECONDS_SHORT)
@@ -775,6 +864,7 @@ def test_a_translation_whose_every_block_is_kept_one_by_one_is_translated(
         if number < len(blocks) - 1:
             assert progress == {
                 "kind": "stopped",
+                "model": TRANSLATION_MODEL,
                 "translated": number + 1,
                 "total": len(blocks),
                 "reason": stopped["progress"]["reason"],

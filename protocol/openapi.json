@@ -959,6 +959,50 @@
         "title": "Lost",
         "type": "object"
       },
+      "ModelView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ready"
+        ],
+        "title": "ModelView",
+        "type": "object"
+      },
+      "ModelsView": {
+        "properties": {
+          "answering": {
+            "title": "Answering",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelView"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "models",
+          "translation",
+          "answering"
+        ],
+        "title": "ModelsView",
+        "type": "object"
+      },
       "NoteDraft": {
         "properties": {
           "edition": {
@@ -1593,6 +1637,10 @@
             "title": "Kind",
             "type": "string"
           },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -1610,6 +1658,7 @@
         },
         "required": [
           "kind",
+          "model",
           "translated",
           "total",
           "reason"
@@ -1813,6 +1862,10 @@
             "title": "Kind",
             "type": "string"
           },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
           "total": {
             "minimum": 0.0,
             "title": "Total",
@@ -1826,6 +1879,7 @@
         },
         "required": [
           "kind",
+          "model",
           "translated",
           "total"
         ],
@@ -2138,6 +2192,26 @@
       },
       "post": {
         "operationId": "ask_about_library_api_conversation_post",
+        "parameters": [
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2201,6 +2275,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Ask About Library"
@@ -2492,6 +2576,24 @@
               "title": "Item Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
+            }
           }
         ],
         "requestBody": {
@@ -2567,6 +2669,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Ask About Item"
@@ -2584,62 +2696,23 @@
               "title": "Item Id",
               "type": "string"
             }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DigestView"
-                }
-              }
-            },
-            "description": "Successful Response"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Failure"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Failure"
-                }
-              }
-            },
-            "description": "Bad Gateway"
-          }
-        },
-        "summary": "Rewrite Digest"
-      },
-      "put": {
-        "operationId": "ensure_digest_api_items__item_id__digest_put",
-        "parameters": [
           {
-            "in": "path",
-            "name": "item_id",
-            "required": true,
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
             "schema": {
-              "title": "Item Id",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
             }
           }
         ],
@@ -2683,6 +2756,101 @@
               }
             },
             "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Rewrite Digest"
+      },
+      "put": {
+        "operationId": "ensure_digest_api_items__item_id__digest_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Ensure Digest"
@@ -3428,6 +3596,24 @@
               "title": "Item Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
+            }
           }
         ],
         "responses": {
@@ -3474,6 +3660,24 @@
             "schema": {
               "title": "Item Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
             }
           }
         ],
@@ -3536,6 +3740,24 @@
               "title": "Block Number",
               "type": "integer"
             }
+          },
+          {
+            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
+              "title": "Model"
+            }
           }
         ],
         "responses": {
@@ -3588,9 +3810,37 @@
               }
             },
             "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Retranslate Block"
+      }
+    },
+    "/api/models": {
+      "get": {
+        "operationId": "models_offered_api_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Models Offered"
       }
     },
     "/api/notes": {

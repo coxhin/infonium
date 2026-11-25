@@ -14,6 +14,9 @@ from infonium.translation import ProgressKind, Translated, TranslatedBlock, Unne
 # translation stands, and the blocks it has translated. Stored with every body, as the
 # library's tables do.
 TRANSLATION_FORMAT = 1
+# The model every translation was made with before a reader could choose one: a record kept
+# then names none.
+EARLIER_MODEL = "gpt-6-luna"
 
 translation_table = sqlalchemy.Table(
     "translation",
@@ -92,13 +95,15 @@ SurveyState = Annotated[Unsurveyed | Surveyed | Overruled, Field(discriminator="
 class TranslationRecord(BaseModel):
     # A translation of one item's document into one language: the title the document goes
     # by, what its survey found, the number of the run it goes on in or went on in last,
-    # counted from 1, how it stands, and what it has taken of its models.
+    # counted from 1, the model that run asks, how it stands, and what it has taken of its
+    # models.
     document_id: str
     item_id: str
     language: str
     title: str
     survey: SurveyState
     run: Annotated[int, Field(ge=1)]
+    model: str = EARLIER_MODEL
     course: Course
     input_tokens: int
     output_tokens: int

@@ -353,6 +353,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models Offered */
+        get: operations["models_offered_api_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/notes": {
         parameters: {
             query?: never;
@@ -747,6 +764,22 @@ export interface components {
              */
             kind: "lost";
         };
+        /** ModelView */
+        ModelView: {
+            /** Name */
+            name: string;
+            /** Ready */
+            ready: boolean;
+        };
+        /** ModelsView */
+        ModelsView: {
+            /** Answering */
+            answering: string;
+            /** Models */
+            models: components["schemas"]["ModelView"][];
+            /** Translation */
+            translation: string;
+        };
         /** NoteDraft */
         NoteDraft: {
             /**
@@ -1015,6 +1048,8 @@ export interface components {
              * @enum {string}
              */
             kind: "stopped";
+            /** Model */
+            model: string;
             /** Reason */
             reason: string;
             /** Total */
@@ -1128,6 +1163,8 @@ export interface components {
              * @enum {string}
              */
             kind: "translating";
+            /** Model */
+            model: string;
             /** Total */
             total: number;
             /** Translated */
@@ -1256,7 +1293,10 @@ export interface operations {
     };
     ask_about_library_api_conversation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1292,6 +1332,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };
@@ -1520,7 +1569,10 @@ export interface operations {
     };
     ask_about_item_api_items__item_id__conversation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1567,6 +1619,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };
@@ -1620,7 +1681,10 @@ export interface operations {
     };
     ensure_digest_api_items__item_id__digest_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1658,6 +1722,15 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1669,7 +1742,10 @@ export interface operations {
     };
     rewrite_digest_api_items__item_id__digest_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1707,6 +1783,15 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2277,7 +2362,10 @@ export interface operations {
     };
     ensure_translation_api_items__item_id__translation_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -2317,7 +2405,10 @@ export interface operations {
     };
     translate_anew_api_items__item_id__translation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -2357,7 +2448,10 @@ export interface operations {
     };
     retranslate_block_api_items__item_id__translation_blocks__block_number__post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -2411,6 +2505,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    models_offered_api_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelsView"];
                 };
             };
         };

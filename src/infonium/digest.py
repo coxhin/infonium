@@ -7,14 +7,15 @@ from infonium.citing import (
     Statement,
     grounded,
 )
-from infonium.document import Document
+from infonium.document import CHINESE_MARKS, Document
 
 INSTRUCTIONS = """\
 You digest a document for a reader who wants to grasp it quickly and check every claim \
 against the source.
 
 {blocks_explained}
-Write the digest in {language}.
+Write the digest in {language}, punctuated as {language} is written: in Chinese, with the \
+marks {chinese_marks} and never a comma or a colon of Latin script.
 
 Grounding rules:
 - Give every statement one to three citations.
@@ -59,7 +60,10 @@ class DraftDigest(BaseModel):
 
 def digest_instructions(language: str) -> str:
     return INSTRUCTIONS.format(
-        blocks_explained=BLOCKS_EXPLAINED, citing_rules=CITING_RULES, language=language
+        blocks_explained=BLOCKS_EXPLAINED,
+        citing_rules=CITING_RULES,
+        language=language,
+        chinese_marks=CHINESE_MARKS,
     )
 
 

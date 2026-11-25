@@ -7,6 +7,7 @@ import { NO_MARKING, type Marking, type Selected } from "./marking";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
 import { checkAnchor, hideAnchor } from "./reader";
+import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
 import { SettingSwitch, useSetting } from "./setting";
 import { SidePanel, useLosing } from "./side";
 import { TranslationNote } from "./translated";
@@ -83,9 +84,13 @@ export function ReadItem({
   }
   const chosenSetting = useSetting();
   const setting = earlier ? "source" : chosenSetting;
+  const translationChoice = useModelChoice("translation");
+  const answeringChoice = useModelChoice("answering");
   const translation = useTranslation(
     entry.id,
     shown !== undefined && shown.showsTranslation && setting !== "source",
+    translationChoice.chosen,
+    answeringChoice.chosen,
   );
   const [pointed, setPointed] = useState<Pointed>();
   const [played, setPlayed] = useState<TimePlace[]>([]);
@@ -158,6 +163,13 @@ export function ReadItem({
               </div>
             )}
             {!earlier && <SettingSwitch setting={setting} />}
+            {!earlier && (
+              <ModelChoiceSelect
+                choice={translationChoice}
+                label="翻译模型"
+                title="开始、继续或全部重新翻译时用这个模型"
+              />
+            )}
             {setting !== "source" && <TranslationNote translation={translation} />}
             {head}
           </div>

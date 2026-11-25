@@ -41,6 +41,15 @@
   opacity: 0.45;
 }
 
+.side .side-model {
+  padding: 0.4rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.side .side-model:empty {
+  display: none;
+}
+
 .side .lost {
   margin: 0;
   padding: 0.4rem 1.2rem;

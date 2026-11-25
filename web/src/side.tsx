@@ -14,6 +14,7 @@ import { ChatPanel, type ScopeKind } from "./chat";
 import { CitingNote, useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
 import { Announcer } from "./announce";
+import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
 import { NotebookPanel, useNotebookAsked } from "./notebook";
 import type { Seat, Unshown } from "./seat";
 import "./side.css";
@@ -225,6 +226,9 @@ export function SideColumn({
     }
   }, [seat?.itemId, tab]);
 
+  // The model the column's work is asked of: digests, answers, and a block translated again.
+  const answeringChoice = useModelChoice("answering");
+
   return (
     <aside className="side" data-folded={folded}>
       <div className="tabs" role="tablist">
@@ -245,6 +249,13 @@ export function SideColumn({
       <button className="fold" aria-expanded={!folded} onClick={() => setFolded(!folded)}>
         {folded ? "展开" : "收起"}
       </button>
+      <div className="side-model">
+        <ModelChoiceSelect
+          choice={answeringChoice}
+          label="摘要和对话的模型"
+          title="生成摘要、回答问题和单段重译（↻）时用这个模型；已有的摘要不会重写"
+        />
+      </div>
       <CitingNote citing={citing} />
       <div
         id={panelId("digest")}
@@ -254,7 +265,12 @@ export function SideColumn({
         hidden={tab !== "digest"}
       >
         {digestWanted ? (
-          <DigestPanel key={seat.holding} itemId={seat.itemId} citing={citing} />
+          <DigestPanel
+            key={seat.holding}
+            itemId={seat.itemId}
+            model={answeringChoice.chosen}
+            citing={citing}
+          />
         ) : (
           <p className="status">原文打开后，这里显示它的摘要。</p>
         )}
@@ -267,6 +283,7 @@ export function SideColumn({
         hidden={tab !== "chat"}
       >
         <ChatPanel
+          model={answeringChoice.chosen}
           itemId={selected}
           seat={seat}
           scope={chosenScope}
