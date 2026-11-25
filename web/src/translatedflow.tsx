@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties, type MouseEvent } from "react";
 import { percent, type AreaText, type Box } from "./areas";
 import { MarkedText } from "./blocks";
 import { leadingRatioOf, type Setting } from "./fitting";
+import { acrossWidth, cqw } from "./flowlengths";
 import { edgesOf, type Flow } from "./flows";
 import type { Colours } from "./pagedrawing";
 import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagemarking";
@@ -11,16 +12,6 @@ import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagem
 
 // How long a press waits, in milliseconds, to be told from the first of a double press.
 const DOUBLE_PRESS = 250;
-
-// A length along a flow's run as a part of the page's width, which the text's sizes are
-// given in so that the page scales without being set again.
-export function acrossWidth(flow: Flow, length: number, shape: number): number {
-  return flow.vertical ? length : length * shape;
-}
-
-export function cqw(part: number): string {
-  return `${part * 100}cqw`;
-}
 
 // One area of a flow: it begins at its own left side and runs to the flow's right, after the
 // gap its room leaves above it and the shares of spare room the gap takes. Its text is set at

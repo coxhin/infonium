@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { fitted, type Fitting, type Measure, type Setting } from "./fitting";
+import { acrossWidth, cqw } from "./flowlengths";
 import type { Flow } from "./flows";
 import { stretches } from "./justification";
-import { acrossWidth, cqw } from "./translatedflow";
 
 // When and how the flows of a drawn page are fitted: their text is measured as the browser
 // lays it out, the page's fitting is worked out, and the areas whose justified lines would
