@@ -335,12 +335,13 @@ function reachOf(
   const room = { ...across, top, height: foot - top };
   const tails = ownLines
     .filter((line) => footOf(line) > foot + TOUCHING)
-    .map((line) => ({ left: line.left, top: foot, width: line.width, height: footOf(line) - foot }));
+    .map((line) => ({ ...line, top: foot, height: footOf(line) - foot }));
   const drawn = {
     over: overhead.drawn ? top - drawnAbove : undefined,
     under: underneath.drawn ? drawnBelow - foot : undefined,
   };
-  const clear = foot < roomFoot - TOUCHING ? 0 : Math.max(0, Math.min(clearBelow, growthEnd) - foot);
+  const clear =
+    foot < roomFoot - TOUCHING ? 0 : Math.max(0, Math.min(clearBelow, growthEnd) - foot);
   return { room, tails, drawn, clear };
 }
 

@@ -160,7 +160,8 @@ function stretches(area: HTMLElement): boolean {
       range.setStart(node, run.start);
       range.setEnd(node, run.start + Math.max(words, 1));
       const rect = range.getBoundingClientRect();
-      runs.push({ top: rect.top, bottom: rect.bottom, right: words > 0 ? rect.right : start, text, level });
+      const right = words > 0 ? rect.right : start;
+      runs.push({ top: rect.top, bottom: rect.bottom, right, text, level });
     }
   }
   for (const formula of area.querySelectorAll(".formula")) {
