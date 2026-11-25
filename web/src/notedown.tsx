@@ -131,7 +131,9 @@ function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
 // A press by the pointer takes the keyboard only once it is a press, not as the button goes
 // down: a comment field open elsewhere is then left, and keeps its comment by itself, only after
 // the press, so that the field closing cannot move the control from under the pointer before the
-// press ends. A press by the keyboard finds it here already.
+// press ends. A press by the keyboard finds it here already. While it writes, the control
+// takes no press but keeps the keyboard, as a disabled button would not, so that Enter presses
+// it again once it is done or has failed.
 export function NoteDown({
   taking,
   label,
@@ -151,6 +153,9 @@ export function NoteDown({
 
   async function press() {
     pressButton.current?.focus({ preventScroll: true });
+    if (noting.state === "writing") {
+      return;
+    }
     setNoting({ state: "writing" });
     try {
       const noted = await noteFrom(
@@ -178,7 +183,7 @@ export function NoteDown({
         className="notedown-press"
         aria-label={taken === 0 ? label : undefined}
         title={pressTitle(shape, leftOut)}
-        disabled={noting.state === "writing"}
+        aria-disabled={noting.state === "writing"}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => void press()}
       >

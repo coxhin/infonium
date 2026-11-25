@@ -104,8 +104,20 @@ export function CommentField({
       setTyped(undefined);
       opened.focus({ preventScroll: true });
       opened.setSelectionRange(highlight.comment.length, highlight.comment.length);
-    } else if (!editing && returnFocus.current) {
-      returnFocus.current = false;
+    }
+  }, [editing]);
+
+  // A field closed with the keyboard in it gives the keyboard to the control that opens it again,
+  // unless the reader took it elsewhere meanwhile. That control is drawn beside the field once
+  // it closes, and is reached only after the drawing is done: a layout effect here runs before
+  // the control's reference is set.
+  useEffect(() => {
+    if (editing || !returnFocus.current) {
+      return;
+    }
+    returnFocus.current = false;
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (lost) {
       editButton.current?.focus({ preventScroll: true });
     }
   }, [editing]);

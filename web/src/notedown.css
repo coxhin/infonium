@@ -24,7 +24,11 @@
   background: none;
 }
 
-.notedown-press:hover {
+.notedown-press[aria-disabled="true"] {
+  cursor: default;
+}
+
+.notedown-press:hover:not([aria-disabled="true"]) {
   color: var(--accent);
   border-color: var(--accent);
 }
