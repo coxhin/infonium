@@ -6,7 +6,7 @@ from typing import Final
 import pikepdf
 from pikepdf import Name
 
-from infonium.pdfium import holds_wide_characters
+from infonium.pdfium import FIRST_WIDE, holds_wide_characters
 
 # MinerU reads a PDF's text layer through pdftext, which asks PDFium for the characters of a
 # page one unit of UTF-16 at a time. A character beyond the first 65,536 of Unicode comes in
@@ -21,7 +21,10 @@ from infonium.pdfium import holds_wide_characters
 # Where a font's map from its codes to text says what its codes stand for: one code at a time,
 # each with the string it stands for; or a range of codes that differ in their last byte, each
 # standing for the string named for the first code with its last unit counted on by one for
-# each code after it, or for the string listed for it.
+# each code after it, or for the string listed for it. The map is read and written here by
+# hand: the libraries that read such maps, pdfminer's and pypdf's, read them into text and write
+# none back, and a map is to change in its strings of such characters alone, every other entry
+# staying as PDFium reads it.
 SINGLE_CODES = re.compile(rb"(?<=beginbfchar)(.*?)(?=endbfchar)", re.DOTALL)
 CODE_RANGES = re.compile(rb"(?<=beginbfrange)(.*?)(?=endbfrange)", re.DOTALL)
 STRING = rb"<[0-9A-Fa-f\s]*>"
@@ -33,14 +36,14 @@ STRING_CLOSING = b">"
 LIST_OPENING = b"["
 LIST_CLOSING = b"]"
 LIST_GAP = b" "
-# The text a code stands for is written in UTF-16, high byte first, in hexadecimal digits.
+# The text a code stands for is written in UTF-16, high byte first, in hexadecimal digits. A
+# half of a character that a map writes without its other half is kept as it is written.
 TEXT_ENCODING = "utf-16-be"
+UNPAIRED_HALVES = "surrogatepass"
 UNIT_BYTES = 2
 UNIT_SPAN = 1 << 16
-HEX_DIGITS = "ascii"
-MISSING_DIGIT = b"0"
+DIGITS_ENCODING = "ascii"
 MOST_IN_RANGE = 256
-FIRST_WIDE = 0x10000
 # The form of a text in which a character that is a form of others, as a ligature or a letter
 # of a mathematical alphabet, is those others.
 PLAIN_FORM: Final = "NFKC"
@@ -57,52 +60,53 @@ def plain(text: str) -> str:
     return "".join(plain_characters)
 
 
-def string_bytes(written: bytes) -> bytes:
-    # The bytes a string of a font's map writes in hexadecimal digits between angle brackets.
-    # A string of an odd number of digits ends in a 0 that is not written.
-    digits = b"".join(written[1:-1].split())
-    return bytes.fromhex((digits + MISSING_DIGIT * (len(digits) % 2)).decode(HEX_DIGITS))
+def digits_of(written: bytes) -> bytes:
+    # The hexadecimal digits of a string of a font's map, without its brackets and spaces.
+    return b"".join(written[1:-1].split())
 
 
 def written_string(text: str) -> bytes:
-    units = text.encode(TEXT_ENCODING, "surrogatepass")
-    return STRING_OPENING + units.hex().upper().encode(HEX_DIGITS) + STRING_CLOSING
+    units = text.encode(TEXT_ENCODING, UNPAIRED_HALVES)
+    return STRING_OPENING + units.hex().upper().encode(DIGITS_ENCODING) + STRING_CLOSING
 
 
 def plain_string(written: bytes) -> bytes:
     # A string of a font's map, as the map writes it, with the text it stands for given plain.
-    # A string that is not whole units of UTF-16 is left as it is written.
-    units = string_bytes(written)
-    if len(units) % UNIT_BYTES:
+    # A string that is not written in whole units of UTF-16 is left as it is written: PDFium
+    # reads a string of an odd number of digits in a way of its own.
+    digits = digits_of(written)
+    if len(digits) % (2 * UNIT_BYTES):
         return written
-    text = units.decode(TEXT_ENCODING, "surrogatepass")
+    units = bytes.fromhex(digits.decode(DIGITS_ENCODING))
+    text = units.decode(TEXT_ENCODING, UNPAIRED_HALVES)
     plain_text = plain(text)
     return written if plain_text == text else written_string(plain_text)
-
-
-def code_of(written: bytes) -> int:
-    return int.from_bytes(string_bytes(written))
 
 
 def plain_range(found: re.Match[bytes]) -> bytes:
     # A range of a font's map with the text of each of its codes given plain: a range that
     # names one string for its first code is written as the list of its strings where the text
-    # of any code changes. A range that runs over more codes than a byte tells apart, or whose
-    # strings run past a unit, is left as it is written.
+    # of any code changes. A range is left as it is written where its codes are written in no
+    # digits or an odd number of them, which PDFium counts in a way of its own; where it runs
+    # over more codes than a byte tells apart; or where its strings run past a unit.
     first, last, gap, named = found.groups()
+    codes = [digits_of(code) for code in (first, last)]
+    if any(not digits or len(digits) % 2 for digits in codes):
+        return found[0]
     if named.startswith(LIST_OPENING):
         plain_list = LISTED_STRING.sub(lambda listed: plain_string(listed[0]), named)
         return found[0] if plain_list == named else first + LIST_GAP + last + gap + plain_list
-    units = string_bytes(named)
-    count = code_of(last) - code_of(first) + 1
-    if not units or len(units) % UNIT_BYTES or not 0 < count <= MOST_IN_RANGE:
+    digits = digits_of(named)
+    count = int(codes[1], 16) - int(codes[0], 16) + 1
+    if not digits or len(digits) % (2 * UNIT_BYTES) or not 0 < count <= MOST_IN_RANGE:
         return found[0]
+    units = bytes.fromhex(digits.decode(DIGITS_ENCODING))
     start = int.from_bytes(units[-UNIT_BYTES:])
     if start + count > UNIT_SPAN:
         return found[0]
     texts = [
         (units[:-UNIT_BYTES] + (start + step).to_bytes(UNIT_BYTES)).decode(
-            TEXT_ENCODING, "surrogatepass"
+            TEXT_ENCODING, UNPAIRED_HALVES
         )
         for step in range(count)
     ]
@@ -139,7 +143,12 @@ def plain_letters_file(file: Path, copy: Path) -> Path:
         }
         rewritten = {}
         for key, mapped in maps.items():
-            written = mapped.read_bytes()
+            # A map whose stream QPDF cannot decode is left as it is: PDFium reads of it what
+            # it can, and the file is read as it was.
+            try:
+                written = mapped.read_bytes()
+            except pikepdf.DataDecodingError:
+                continue
             plain_written = plain_map(written)
             if plain_written != written:
                 rewritten[key] = plain_written

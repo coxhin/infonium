@@ -14,7 +14,16 @@ from hypothesis import strategies as st
 from pikepdf import Name
 
 from infonium import pdf
-from infonium.plain_letters import FIRST_WIDE, plain, plain_letters_file, plain_map
+from infonium.pdfium import FIRST_WIDE
+from infonium.plain_letters import (
+    PLAIN_FORM,
+    TEXT_ENCODING,
+    UNPAIRED_HALVES,
+    plain,
+    plain_letters_file,
+    plain_map,
+    written_string,
+)
 from tests.pdf_engine_standin import PDF_DATA
 from tests.test_pdf import REFERENCE, SAMPLES, as_stored, differences
 
@@ -44,7 +53,6 @@ ALPHABETS = [
 AS_ITSELF = "itself"
 AS_EMOJI = "emoji"
 FIRST_EMOJI = 0x1F600
-TEXT_ENCODING = "utf-16-be"
 # How a run of a map's codes is written: a code at a time, as a range named by its first
 # string, or as a range that lists its strings.
 FORMS = ["single", "range", "list"]
@@ -73,7 +81,7 @@ def given_as(letter: str, alphabet: str) -> str:
 
 
 def text_of(digits: bytes) -> str:
-    return bytes.fromhex(digits.decode()).decode(TEXT_ENCODING, "surrogatepass")
+    return bytes.fromhex(digits.decode()).decode(TEXT_ENCODING, UNPAIRED_HALVES)
 
 
 def read_map(written: bytes) -> tuple[dict[int, str], int]:
@@ -98,21 +106,17 @@ def read_map(written: bytes) -> tuple[dict[int, str], int]:
                 for step, code in enumerate(codes):
                     last_unit = int.from_bytes(units[-2:]) + step
                     entries[code] = (units[:-2] + last_unit.to_bytes(2)).decode(
-                        TEXT_ENCODING, "surrogatepass"
+                        TEXT_ENCODING, UNPAIRED_HALVES
                     )
     [width] = widths
     return entries, width
 
 
-def written_string(text: str) -> str:
-    return "<" + text.encode(TEXT_ENCODING, "surrogatepass").hex().upper() + ">"
-
-
 def follows(entries: dict[int, str], earlier: int, code: int) -> bool:
     # Whether a code goes on from the one before it in a range: the next code with the same
     # bytes before its last, standing for the next string.
-    before = entries[earlier].encode(TEXT_ENCODING, "surrogatepass")
-    after = entries[code].encode(TEXT_ENCODING, "surrogatepass")
+    before = entries[earlier].encode(TEXT_ENCODING, UNPAIRED_HALVES)
+    after = entries[code].encode(TEXT_ENCODING, UNPAIRED_HALVES)
     return (
         code == earlier + 1
         and code >> 8 == earlier >> 8
@@ -142,12 +146,13 @@ def written_map(
         match form_of(len(run)):
             case "single":
                 singles.extend(
-                    f"<{each:0{2 * width}X}> {written_string(entries[each])}" for each in run
+                    f"<{each:0{2 * width}X}> {written_string(entries[each]).decode()}"
+                    for each in run
                 )
             case "range":
-                ranges.append(f"{first} {last} {written_string(entries[run[0]])}")
+                ranges.append(f"{first} {last} {written_string(entries[run[0]]).decode()}")
             case _:
-                listed = " ".join(written_string(entries[each]) for each in run)
+                listed = " ".join(written_string(entries[each]).decode() for each in run)
                 ranges.append(f"{first} {last} [{listed}]")
     blocks = [
         f"{len(chunk)} begin{kind}\n" + "\n".join(chunk) + f"\nend{kind}\n"
@@ -270,7 +275,7 @@ narrow_texts = st.text(
 def test_a_map_that_says_no_character_beyond_the_first_65536_is_left_as_it_is(
     entries: list[tuple[int, str]],
 ) -> None:
-    lines = "\n".join(f"<{code:04X}> {written_string(text)}" for code, text in entries)
+    lines = "\n".join(f"<{code:04X}> {written_string(text).decode()}" for code, text in entries)
     written = f"{len(entries)} beginbfchar\n{lines}\nendbfchar\n".encode()
     assert plain_map(written) == written, "a map without a wide character was written anew"
 
@@ -290,6 +295,61 @@ def test_any_map_however_written_is_read_without_failing(tokens: list[str]) -> N
     assert isinstance(plain_map(written), bytes), "a map was not read"
 
 
+odd_digits = st.from_regex(r"[0-9A-F]([0-9A-F]{2}){0,3}", fullmatch=True)
+wide_strings = st.sampled_from([*MATHEMATICAL_LETTERS.values()]).map(
+    lambda letter: letter.encode(TEXT_ENCODING).hex().upper()
+)
+
+
+@given(
+    odd_strings=st.lists(
+        st.tuples(st.integers(0, 0xFFFF), wide_strings, st.booleans()), max_size=6
+    ),
+    odd_codes=st.lists(st.tuples(odd_digits, odd_digits, wide_strings), max_size=6),
+)
+def test_an_entry_written_in_an_odd_number_of_digits_is_left_as_it_is_written(
+    odd_strings: list[tuple[int, str, bool]], odd_codes: list[tuple[str, str, str]]
+) -> None:
+    # A string of a mathematical letter with a digit dropped or added, or a range whose codes
+    # are written in an odd number of digits: PDFium reads either in a way of its own.
+    singles = "\n".join(
+        f"<{code:04X}> <{digits + 'A' if longer else digits[:-1]}>"
+        for code, digits, longer in odd_strings
+    )
+    ranges = "\n".join(f"<{first}> <{last}> <{digits}>" for first, last, digits in odd_codes)
+    written = (
+        f"{len(odd_strings)} beginbfchar\n{singles}\nendbfchar\n"
+        f"{len(odd_codes)} beginbfrange\n{ranges}\nendbfrange\n"
+    ).encode()
+    assert plain_map(written) == written, "an entry PDFium reads in a way of its own was rewritten"
+
+
+def test_a_map_that_cannot_be_decoded_is_left_and_the_others_are_given_plain(
+    tmp_path: Path,
+) -> None:
+    italic = dict.fromkeys(string.ascii_letters, "ITALIC")
+    styled = styled_file(sample_file("mixed_layers"), italic, lambda _: "single", tmp_path / STYLED)
+    with pikepdf.open(styled) as document:
+        maps = [
+            mapped
+            for font in document.objects
+            if isinstance(font, pikepdf.Dictionary)
+            and isinstance(mapped := font.get(Name.ToUnicode), pikepdf.Stream)
+        ]
+        assert len(maps) > 1, "the sample has no two fonts with maps of their own"
+        maps[0].write(b"not deflated", filter=Name.FlateDecode)
+        broken = tmp_path / "broken.pdf"
+        document.save(broken)
+    read = page_texts(broken)
+    assert any(ord(c) in MATHEMATICAL_BLOCK for text in read for c in text), (
+        "no letter of the file with a broken map is read as a mathematical one"
+    )
+    handed = plain_letters_file(broken, tmp_path / COPY)
+    assert handed != broken, "the fonts whose maps can be read were not given plain"
+    left = [c for text in page_texts(handed) for c in text if ord(c) in MATHEMATICAL_BLOCK]
+    assert not left, f"letters of the fonts whose maps can be read stay mathematical: {left}"
+
+
 @given(text=st.text())
 def test_a_plain_text_holds_no_character_beyond_the_first_65536_that_is_a_form_of_others(
     text: str,
@@ -299,7 +359,7 @@ def test_a_plain_text_holds_no_character_beyond_the_first_65536_that_is_a_form_o
         character
         for character in plain_text
         if ord(character) >= FIRST_WIDE
-        and all(ord(part) < FIRST_WIDE for part in unicodedata.normalize("NFKC", character))
+        and all(ord(part) < FIRST_WIDE for part in unicodedata.normalize(PLAIN_FORM, character))
     ]
     assert not wide, f"{text!r} was given plain as {plain_text!r}, which holds {wide!r}"
     narrow = "".join(character for character in text if ord(character) < FIRST_WIDE)

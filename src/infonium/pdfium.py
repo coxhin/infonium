@@ -1,6 +1,7 @@
 import ctypes
 import math
 import re
+import sys
 import threading
 from collections import Counter
 from pathlib import Path
@@ -30,7 +31,8 @@ UNFLATTENED = "PDFium could not draw the annotations of a page into its content"
 # letter drawn alike at several sizes is counted as one.
 REACH_DIGITS = 3
 # A character beyond the first 65,536 of Unicode, which UTF-16 writes in two units.
-WIDE_CHARACTER = re.compile("[\U00010000-\U0010ffff]")
+FIRST_WIDE = 0x10000
+WIDE_CHARACTER = re.compile(f"[{chr(FIRST_WIDE)}-{chr(sys.maxunicode)}]")
 
 
 class StoredPage(BaseModel):
