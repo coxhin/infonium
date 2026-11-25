@@ -345,14 +345,16 @@ function Page({
       void drawing?.promise.then(release, release);
     };
   }, [near, file, number, sharpened]);
-  // A page that leaves the pages gives up its drawings at once.
-  useEffect(
-    () => () => {
-      giveUp(canvas.current);
-      giveUp(copy.current);
-    },
-    [],
-  );
+  // A page that leaves the pages gives up its drawings at once. The canvases are taken while
+  // they stand, as their refs are emptied before this runs.
+  useEffect(() => {
+    const drawnCanvas = canvas.current;
+    const copied = copy.current;
+    return () => {
+      giveUp(drawnCanvas);
+      giveUp(copied);
+    };
+  }, []);
 
   // The source beside the translated page is the same drawing, copied.
   useEffect(() => {

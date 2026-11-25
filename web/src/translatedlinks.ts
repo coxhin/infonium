@@ -83,16 +83,20 @@ function escaped(words: string): string {
   return words.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Letters of scripts that write spaces between words: a word of theirs is bounded by what is
+// none of them, Chinese set straight against it included.
+const SPACED_LETTERS = "\\p{Script=Latin}\\p{Script=Greek}\\p{Script=Cyrillic}";
+
 // A pattern for words that do not begin inside a longer word or number.
 function openPattern(words: string): string {
-  const before = WORDLIKE.test(words.at(0) ?? "") ? "(?<![\\p{L}\\p{N}.])" : "";
+  const before = WORDLIKE.test(words.at(0) ?? "") ? `(?<![${SPACED_LETTERS}\\p{N}.])` : "";
   return `${before}${escaped(words)}`;
 }
 
 // A pattern for words as words of their own, not inside longer ones: a number is not found
 // inside a longer number, nor a word inside a longer word.
 function wordsPattern(words: string): string {
-  const after = WORDLIKE.test(words.at(-1) ?? "") ? "(?![\\p{L}\\p{N}]|\\.\\p{N})" : "";
+  const after = WORDLIKE.test(words.at(-1) ?? "") ? `(?![${SPACED_LETTERS}\\p{N}]|\\.\\p{N})` : "";
   return `${openPattern(words)}${after}`;
 }
 
