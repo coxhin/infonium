@@ -454,16 +454,21 @@ const SPACE = /\s/u;
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 const LETTER = /\p{L}/u;
+// A character of a script written without spaces takes the room of about this many Latin
+// letters on a line.
+const UNSPACED_WIDTH = 2;
 
-// Whether texts are written in a script without spaces between words: more of their letters
-// are Han, kana or hangul than not.
+// Whether texts are written in a script without spaces between words: more of their lines are
+// Han, kana or hangul than not, each such character taking the room of two other letters. A
+// translation into Chinese that keeps terms of art in English can hold more Latin letters than
+// Chinese characters, 14,057 to 10,668 in one paper, and still reads as Chinese.
 export function writtenUnspaced(texts: Iterable<string>): boolean {
   let unspaced = 0;
   let spaced = 0;
   for (const text of texts) {
     for (const character of text) {
       if (UNSPACED.test(character)) {
-        unspaced += 1;
+        unspaced += UNSPACED_WIDTH;
       } else if (LETTER.test(character)) {
         spaced += 1;
       }
