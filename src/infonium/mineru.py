@@ -22,7 +22,9 @@ from infonium.document import HeadingLevel, PageFraction, PageNumber
 # the line's height only when the character stands at exactly no angle. Any other it measures
 # by the outline of its ink, and then it splits words and takes plain letters for raised or
 # lowered ones. On a page that is only shown turned the lines lie, and it reads those worse
-# still. So it is given a file that turns no page: pdfium.upright_file makes one.
+# still. So it is given a file that turns no page: pdfium.upright_file makes one. A box of the
+# line's height is as high and as deep as the character's font says its letters reach, so it
+# is also given a file whose fonts say that truly: font_metrics.measured_file makes one.
 ENGINE_INPUT = "-p"
 ENGINE_OUTPUT = "-o"
 ENGINE_BACKEND = "-b"
