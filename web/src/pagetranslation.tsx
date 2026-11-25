@@ -47,10 +47,18 @@ import "./pagetranslation.css";
 
 // How long a press waits, in milliseconds, to be told from the first of a double press.
 const DOUBLE_PRESS = 250;
-// An area is justified unless that would stretch a line other than its last by more than this
-// part of the line's width: where the line's words take less than the rest.
-const LEAST_FILLED_LINE = 0.85;
-// While lines are measured, the areas of a page are set flush left.
+// An area is justified unless that would widen the gaps of a line other than its last by more
+// than this part of its type size each.
+const MOST_WIDENING = 0.15;
+// Two runs of text whose tops lie closer than this part of the type size stand on one line.
+const SAME_LINE = 0.5;
+// The places a browser widens to justify a line: characters of Han, kana and hangul and of
+// their punctuation, and spaces.
+const WIDENED =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]|\s/gu;
+// While a page is set, its text is set at its own size, not enlarged as a cut flow shown whole
+// is; while lines are measured, its areas are set flush left.
+const SETTING = "data-setting";
 const MEASURING_LINES = "data-measuring-lines";
 // A page whose width keeps changing, as while the reader zooms, keeps its setting, which scales
 // with it, and is set again once its width has stood still this long, in milliseconds.
@@ -89,40 +97,107 @@ function areasIn(flow: HTMLElement): NodeListOf<HTMLElement> {
   return flow.querySelectorAll<HTMLElement>(":scope > .area");
 }
 
-// Whether an area's lines, set flush left, leave a line other than the last less filled than
-// justifying it would bear. The words of a line are the pieces of text and the formulas that
-// stand on it, told apart from the next line's by where they stand down the area.
+// A run of an area's text that stands on one line, or a formula, with where it stands, and
+// whether it stands on the line itself rather than raised or lowered from it.
+type Run = { top: number; bottom: number; right: number; text: string; level: boolean };
+
+// The runs of a text node, each on one line: where the node's fragments begin a new line, the
+// first character there is found by halving.
+function runsOf(node: Text, range: Range, tolerance: number): { start: number; end: number }[] {
+  range.selectNodeContents(node);
+  const tops: number[] = [];
+  for (const rect of range.getClientRects()) {
+    if (tops.every((top) => Math.abs(top - rect.top) >= tolerance)) {
+      tops.push(rect.top);
+    }
+  }
+  tops.sort((one, other) => one - other);
+  const topOf = (at: number) => {
+    range.setStart(node, at);
+    range.setEnd(node, Math.min(node.length, at + 1));
+    return range.getClientRects()[0]?.top;
+  };
+  const starts = [0];
+  for (const lineTop of tops.slice(1)) {
+    let low = (starts.at(-1) ?? 0) + 1;
+    let high = node.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const top = topOf(middle);
+      if (top !== undefined && top >= lineTop - tolerance) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    starts.push(low);
+  }
+  return starts.map((start, index) => ({ start, end: starts[index + 1] ?? node.length }));
+}
+
+// Whether justifying an area would widen the gaps of a line other than its last by more than a
+// part of its type size each. Its lines are set flush left to be measured: the width a line's
+// words leave free is shared among its gaps, and a line with none has one. The lines are told
+// by the runs of text set on them, and a raised or lowered run, or a formula, belongs to the
+// line it stands across.
 function stretches(area: HTMLElement): boolean {
   const content = area.getBoundingClientRect();
-  const padding = parseFloat(getComputedStyle(area).paddingInlineStart) * 2;
-  const room = content.width - padding;
-  const pieces: DOMRect[] = [];
-  const walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
+  const style = getComputedStyle(area);
+  const size = parseFloat(style.fontSize);
+  const start = content.left + parseFloat(style.paddingInlineStart);
+  const room = content.width - parseFloat(style.paddingInlineStart) * 2;
   const range = document.createRange();
+  const runs: Run[] = [];
+  const walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    if (node.parentElement?.closest(".formula") === null) {
-      range.selectNodeContents(node);
-      pieces.push(...range.getClientRects());
+    if (!(node instanceof Text) || node.parentElement?.closest(".formula") !== null) {
+      continue;
+    }
+    const level = node.parentElement?.closest("sub, sup") === null;
+    for (const run of runsOf(node, range, SAME_LINE * size)) {
+      const text = node.data.slice(run.start, run.end);
+      const words = text.trimEnd().length;
+      range.setStart(node, run.start);
+      range.setEnd(node, run.start + Math.max(words, 1));
+      const rect = range.getBoundingClientRect();
+      runs.push({ top: rect.top, bottom: rect.bottom, right: words > 0 ? rect.right : start, text, level });
     }
   }
   for (const formula of area.querySelectorAll(".formula")) {
-    pieces.push(...formula.getClientRects());
+    for (const rect of formula.getClientRects()) {
+      runs.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text: "", level: false });
+    }
   }
-  const lines: { top: number; bottom: number; right: number }[] = [];
-  for (const piece of pieces
-    .filter((each) => each.width > 0)
-    .sort((one, other) => one.top + one.bottom - (other.top + other.bottom))) {
-    const middle = (piece.top + piece.bottom) / 2;
-    const line = lines.at(-1);
-    if (line !== undefined && middle <= line.bottom) {
-      line.right = Math.max(line.right, piece.right);
+  const lines: Run[] = [];
+  const byTop = (one: Run, other: Run) => one.top - other.top;
+  for (const run of runs.filter((each) => each.level)) {
+    const line = lines.find((each) => Math.abs(each.top - run.top) < SAME_LINE * size);
+    if (line === undefined) {
+      lines.push({ ...run });
     } else {
-      lines.push({ top: piece.top, bottom: piece.bottom, right: piece.right });
+      line.right = Math.max(line.right, run.right);
+      line.bottom = Math.max(line.bottom, run.bottom);
+      line.text += run.text;
+    }
+  }
+  for (const run of runs.filter((each) => !each.level)) {
+    const across = (line: Run) =>
+      Math.min(line.bottom, run.bottom) - Math.max(line.top, run.top);
+    const line = [...lines].sort((one, other) => across(other) - across(one))[0];
+    if (line === undefined || across(line) <= 0) {
+      lines.push({ ...run });
+    } else {
+      line.right = Math.max(line.right, run.right);
+      line.text += run.text;
     }
   }
   return lines
+    .sort(byTop)
     .slice(0, -1)
-    .some((line) => line.right - content.left - padding / 2 < LEAST_FILLED_LINE * room);
+    .some((line) => {
+      const gaps = Math.max(1, line.text.trim().match(WIDENED)?.length ?? 0);
+      return (room - (line.right - start)) / gaps > MOST_WIDENING * size;
+    });
 }
 
 // What a page is told of its translation: the areas set over it, and what the document tells of
@@ -507,6 +582,7 @@ export function PageTranslation({
       element?.style.setProperty("--step", String(values.step));
       element?.style.setProperty("--share", cqw(acrossWidth(flow, values.share, shape)));
     };
+    host.setAttribute(SETTING, "");
     const pageBox = host.getBoundingClientRect();
     const measure: Measure = (trials) => {
       trials.forEach((trial, flow) => set(flow, { ...trial, share: 0 }));
@@ -546,6 +622,7 @@ export function PageTranslation({
       });
     });
     host.removeAttribute(MEASURING_LINES);
+    host.removeAttribute(SETTING);
     const byArea = new Map<string, Setting>();
     flows.forEach((flow) => {
       const setting = result.settings.get(flow.key);

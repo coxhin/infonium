@@ -109,8 +109,12 @@
   outline: 2px solid #a8481f;
 }
 
-.page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible) .area,
-.page-translation.revealing .flow[data-cut]:focus-visible:not([data-open]) .area {
+.page-translation:not(.revealing, [data-setting])
+  .flow[data-cut]:is([data-open], :focus-visible)
+  .area,
+.page-translation.revealing:not([data-setting])
+  .flow[data-cut]:focus-visible:not([data-open])
+  .area {
   font-size: max(calc(var(--size) * var(--step)), 12px);
 }
 
