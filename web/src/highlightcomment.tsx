@@ -18,36 +18,42 @@ const COMMENT_CHARACTERS = 10_000;
 const AT_BOUND = `批注最多 ${COMMENT_CHARACTERS.toLocaleString()} 字，已经写满。`;
 const GONE = "这条高亮已在别处移除，批注没有保存。";
 const UNKEPT = "批注没有保存";
+const RETRY = "写下的内容还在，离开输入框或按 Ctrl+Enter 再试。";
 // A comment on show is cut after this many lines, as the marked words are cut.
 const COMMENT_LINES = 6;
 // The key code a browser gives a key that an input method takes while it composes.
 const COMPOSING_KEY_CODE = 229;
 
-// A failure is told by the field unless a press of 记到笔记 waits for the keeping, which then
-// tells it itself.
+// Who tells the reader how a keeping went, settled when it is sent: the field, for a keeping the
+// reader began by leaving it or by Ctrl+Enter; or the press of 记到笔记 that sent it, which says
+// a failure on its own line and in the status line, so that the field only says how to go on.
+type Teller = "field" | "press";
+
 type Keeping =
   | { state: "idle" }
   | { state: "keeping" }
-  | { state: "failed"; reason: string; toldByPress: boolean };
-
-// Who tells how a keeping went: the field, or a press that waits for it.
-type Telling = { byPress: boolean };
+  | { state: "failed"; reason: string; teller: Teller };
 
 // What came of keeping what was typed: the comment the service holds now, or why it holds
 // nothing new.
 type Kept = { kept: true; comment: string } | { kept: false; reason: string };
 
 // A keeping of what was typed, under way or done, the text it sends, and who tells its end.
-type Sending = { text: string; outcome: Promise<Kept>; telling: Telling };
+type Sending = { text: string; outcome: Promise<Kept>; teller: Teller };
 
 // The comment as the reader sees it in an open field, once what was typed and not kept yet is
 // kept; it rejects, saying why, when that cannot be kept.
 export type CommentNow = () => Promise<string>;
 
 // What the reader typed into a field: its text, and the comment the field showed when the typing
-// began. A field holds no typing until its text differs from that comment, and an untouched
-// field shows the comment as the highlights' store holds it, which another tab may change.
+// began. From the first key on the field shows the reader's text until it closes; while that
+// equals the comment it began from, it is no change. A field the reader has not typed into shows
+// the comment as the highlights' store holds it, which another tab may change.
 type Typed = { text: string; openedWith: string };
+
+function changed(typed: Typed | undefined): typed is Typed {
+  return typed !== undefined && typed.text !== typed.openedWith;
+}
 
 // What was typed into a comment and not kept, by highlight: the field comes back with it when
 // the entry is drawn anew, as when its item is opened again. A reload loses it.
@@ -91,7 +97,7 @@ export function CommentField({
   const sending = useRef<Sending | undefined>(undefined);
 
   useEffect(() => {
-    if (editing && typed !== undefined) {
+    if (editing && changed(typed)) {
       unkept.set(highlight.id, typed);
     } else {
       unkept.delete(highlight.id);
@@ -137,21 +143,21 @@ export function CommentField({
     setEditing(false);
   }
 
-  async function send(text: string, telling: Telling): Promise<Kept> {
+  async function send(text: string, teller: Teller): Promise<Kept> {
     setKeeping({ state: "keeping" });
     try {
       await noteOnHighlight(highlight.item, highlight.id, text);
     } catch (error) {
       // A highlight removed elsewhere has left the list with its entry and this field.
       if (highlightGone(error)) {
-        if (!telling.byPress) {
+        if (teller === "field") {
           announce(GONE);
         }
         return { kept: false, reason: GONE };
       }
       settled.current = false;
       const reason = requestReason(error);
-      setKeeping({ state: "failed", reason, toldByPress: telling.byPress });
+      setKeeping({ state: "failed", reason, teller });
       return { kept: false, reason: `${UNKEPT}：${reason}` };
     }
     setKeeping({ state: "idle" });
@@ -159,15 +165,14 @@ export function CommentField({
     return { kept: true, comment: text };
   }
 
-  function keep(byPress: boolean): Promise<Kept> {
+  function keep(teller: Teller): Promise<Kept> {
     settled.current = true;
-    if (typed === undefined) {
+    if (!changed(typed)) {
       setKeeping({ state: "idle" });
       close();
       return Promise.resolve({ kept: true, comment: highlight.comment });
     }
-    const telling = { byPress };
-    const sent: Sending = { text: typed.text, outcome: send(typed.text, telling), telling };
+    const sent: Sending = { text: typed.text, outcome: send(typed.text, teller), teller };
     sending.current = sent;
     void sent.outcome.then(({ kept }) => {
       if (!kept && sending.current === sent) {
@@ -177,19 +182,17 @@ export function CommentField({
     return sent.outcome;
   }
 
-  // An untouched field gives the comment as it stands and is left as it is; a keeping of the
-  // very text typed, under way or done, is awaited, not sent again; other typing is kept first.
+  // A field with no change gives the comment as it stands and is left as it is; a keeping of the
+  // very text typed, under way or done, is awaited, not sent again; other typing is kept first,
+  // by the press that asks, which tells how it went. A press comes here before it takes the
+  // keyboard, so that the field's blur finds the keeping begun.
   async function commentAsSeen(): Promise<string> {
     const sent = sending.current;
-    if (sent !== undefined) {
-      sent.telling.byPress = true;
-    }
-    const outcome =
-      typed === undefined
-        ? { kept: true as const, comment: highlight.comment }
-        : sent?.text === typed.text
-          ? await sent.outcome
-          : await keep(true);
+    const outcome = !changed(typed)
+      ? { kept: true as const, comment: highlight.comment }
+      : sent?.text === typed.text
+        ? await sent.outcome
+        : await keep("press");
     if (!outcome.kept) {
       throw new Error(outcome.reason);
     }
@@ -224,7 +227,7 @@ export function CommentField({
     }
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      void keep(false);
+      void keep("field");
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -255,17 +258,18 @@ export function CommentField({
         value={shown}
         readOnly={keeping.state === "keeping"}
         onChange={(event) => {
-          const openedWith = typed?.openedWith ?? highlight.comment;
-          const text = event.target.value;
-          setTyped(text === openedWith ? undefined : { text, openedWith });
+          setTyped({
+            text: event.target.value,
+            openedWith: typed?.openedWith ?? highlight.comment,
+          });
         }}
         onKeyDown={keyed}
-        onBlur={() => settled.current || void keep(false)}
+        onBlur={() => settled.current || void keep("field")}
       />
       {keeping.state === "keeping" && <p className="keeping">正在保存…</p>}
       {keeping.state === "failed" && (
-        <p className="status failed" role={keeping.toldByPress ? undefined : "alert"}>
-          {UNKEPT}：{keeping.reason}。写下的内容还在，离开输入框或按 Ctrl+Enter 再试。
+        <p className="status failed" role={keeping.teller === "field" ? "alert" : undefined}>
+          {keeping.teller === "field" ? `${UNKEPT}：${keeping.reason}。${RETRY}` : RETRY}
         </p>
       )}
       <small id={`comment-keys-${highlight.id}`}>
