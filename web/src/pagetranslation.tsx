@@ -155,13 +155,16 @@ function stretches(area: HTMLElement): boolean {
     }
     const level = node.parentElement?.closest("sub, sup") === null;
     for (const run of runsOf(node, range, SAME_LINE * size)) {
+      // A run of white space alone shows nothing, and is no line.
       const text = node.data.slice(run.start, run.end);
       const words = text.trimEnd().length;
+      if (text.trim() === "") {
+        continue;
+      }
       range.setStart(node, run.start);
-      range.setEnd(node, run.start + Math.max(words, 1));
+      range.setEnd(node, run.start + words);
       const rect = range.getBoundingClientRect();
-      const right = words > 0 ? rect.right : start;
-      runs.push({ top: rect.top, bottom: rect.bottom, right, text, level });
+      runs.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text, level });
     }
   }
   for (const formula of area.querySelectorAll(".formula")) {
@@ -169,9 +172,13 @@ function stretches(area: HTMLElement): boolean {
       runs.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text: "", level: false });
     }
   }
+  // The lines are those of the text set level, or of all the text where none is; a raised or
+  // lowered run, or a formula, belongs to the line whose middle is nearest its own, and makes
+  // no line of its own.
   const lines: Run[] = [];
   const byTop = (one: Run, other: Run) => one.top - other.top;
-  for (const run of runs.filter((each) => each.level)) {
+  const leveled = runs.some((run) => run.level);
+  for (const run of runs.filter((each) => each.level || !leveled)) {
     const line = lines.find((each) => Math.abs(each.top - run.top) < SAME_LINE * size);
     if (line === undefined) {
       lines.push({ ...run });
@@ -181,13 +188,11 @@ function stretches(area: HTMLElement): boolean {
       line.text += run.text;
     }
   }
-  for (const run of runs.filter((each) => !each.level)) {
-    const across = (line: Run) =>
-      Math.min(line.bottom, run.bottom) - Math.max(line.top, run.top);
-    const line = [...lines].sort((one, other) => across(other) - across(one))[0];
-    if (line === undefined || across(line) <= 0) {
-      lines.push({ ...run });
-    } else {
+  const middleOf = (run: Run) => (run.top + run.bottom) / 2;
+  for (const run of runs.filter((each) => leveled && !each.level)) {
+    const off = (line: Run) => Math.abs(middleOf(line) - middleOf(run));
+    const line = [...lines].sort((one, other) => off(one) - off(other))[0];
+    if (line !== undefined) {
       line.right = Math.max(line.right, run.right);
       line.text += run.text;
     }
