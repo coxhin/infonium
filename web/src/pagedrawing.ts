@@ -208,6 +208,10 @@ const DRAWN_DISTANCE = 48;
 // two papers, descenders reached one or two pixel rows into the strip under their line, and
 // letters at a line's end two columns into the strip beside it, at twice the printed size.
 const LETTERS_REACH = 0.25;
+// Where the boxes of lines leave out their letters' descenders, as for a font that says its
+// letters reach not below the line, the letters reach further, as ink that runs on from the
+// side unbroken, up to this part of the body's size.
+const LETTERS_FURTHEST = 0.5;
 // A run of pixels drawn on, across or down, this many times the body's size long is a rule or
 // the side of a frame wherever it stands: a part of a letter is shorter.
 const RULE_LENGTH = 2;
@@ -287,7 +291,8 @@ export function isBlank(
 
 // How far into a box the drawing shows only a paper, from one of its sides, as a part of the
 // page's height or width, and whether something is drawn there: up to the first line of pixels
-// that holds a rule, or more than specks past the reach of the letters beside that side.
+// that holds a rule, or more than specks past the reach of the letters beside that side, which
+// runs on as far as their ink does unbroken.
 export function blankInto(
   canvas: HTMLCanvasElement,
   box: Box,
@@ -305,10 +310,17 @@ export function blankInto(
   const along = byColumn ? pixels.height : pixels.width;
   const lines = drawnLines(pixels, rgbOf(paper), byColumn, 0, along);
   const inOrder = from === "top" ? [...lines.drawn.keys()] : [...lines.drawn.keys()].reverse();
-  const first = inOrder.findIndex(
-    (line, index) =>
-      (lines.longest[line] ?? 0) >= rule || (index >= reach && (lines.drawn[line] ?? 0) >= SPECKS),
-  );
+  const furthest = pixelsFor(canvas, size, LETTERS_FURTHEST);
+  let unbroken = true;
+  const first = inOrder.findIndex((line, index) => {
+    const drawn = lines.drawn[line] ?? 0;
+    if ((lines.longest[line] ?? 0) >= rule) {
+      return true;
+    }
+    unbroken = unbroken && drawn > 0;
+    const letters = index < reach || (unbroken && index < furthest);
+    return !letters && drawn >= SPECKS;
+  });
   const line = inOrder[first];
   if (line === undefined) {
     return { blank: byColumn ? box.width : box.height, drawn: false };
