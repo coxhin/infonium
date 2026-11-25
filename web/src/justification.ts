@@ -73,15 +73,15 @@ export function stretches(area: HTMLElement): boolean {
     }
     const level = node.parentElement?.closest("sub, sup") === null;
     for (const part of linePartsOf(node, range, SAME_LINE * size)) {
-      // A part of white space alone shows nothing, and is no line.
       const text = node.data.slice(part.start, part.end);
-      const words = text.trimEnd().length;
-      if (text.trim() === "") {
+      range.setStart(node, part.start);
+      range.setEnd(node, part.start + text.trimEnd().length);
+      const rect = range.getBoundingClientRect();
+      // A part that takes no width, but for the white space that ends its line, shows nothing,
+      // whatever it holds, white space alone or a character without width, and is no line.
+      if (rect.width === 0) {
         continue;
       }
-      range.setStart(node, part.start);
-      range.setEnd(node, part.start + words);
-      const rect = range.getBoundingClientRect();
       parts.push({ top: rect.top, bottom: rect.bottom, right: rect.right, text, level });
     }
   }
