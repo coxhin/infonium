@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { Anchor, Statement } from "./client";
 import { announce } from "./announce";
 import { reasonOf } from "./loading";
-import { noteDown, showNote, type Cited, type Excerpt, type Noted } from "./notes";
+import { inTurn, showNote, type Cited, type Excerpt, type Noted, type PutDown } from "./notes";
 import "./notedown.css";
 
 // One excerpt a press puts into a note, as it stands when the press comes: a highlight's
@@ -63,21 +63,21 @@ class StoppedPartWay extends Error {
   }
 }
 
-// The excerpts from the given one on go into the note one after another, each awaited, so that
-// they arrive in the note in their order; the note that took the last is the one said.
+// The excerpts from the given one on, begun at the press, go into the note one after another,
+// each awaited, so that they arrive in the note in their order; the note that took the last is
+// the one said.
 async function noteFrom(
-  excerpts: PressedExcerpt[],
+  pending: Promise<Excerpt>[],
   taken: number,
   noted: Noted | undefined,
+  putExcerpt: PutDown,
 ): Promise<Noted> {
   let last = noted;
-  for (const [at, excerpt] of excerpts.entries()) {
-    if (at >= taken) {
-      try {
-        last = await noteDown(await excerpt());
-      } catch (error) {
-        throw new StoppedPartWay(reasonOf(error), at, last);
-      }
+  for (const [index, excerpt] of pending.entries()) {
+    try {
+      last = await putExcerpt(await excerpt);
+    } catch (error) {
+      throw new StoppedPartWay(reasonOf(error), taken + index, last);
     }
   }
   if (last === undefined) {
@@ -152,17 +152,20 @@ export function NoteDown({
   const rest = excerpts.length - taken;
 
   async function press() {
-    pressButton.current?.focus({ preventScroll: true });
     if (noting.state === "writing") {
+      pressButton.current?.focus({ preventScroll: true });
       return;
     }
+    // The excerpts are begun before the press takes the keyboard, so that a comment still being
+    // typed is kept by the press, which tells how that went, and not by the field it leaves.
+    const pending = excerpts.slice(taken).map((excerpt) => excerpt());
+    // One that is not reached, as after a failure before it, is not awaited.
+    pending.forEach((excerpt) => void excerpt.catch(() => undefined));
+    pressButton.current?.focus({ preventScroll: true });
     setNoting({ state: "writing" });
+    const before = noting.state === "failed" ? noting.noted : undefined;
     try {
-      const noted = await noteFrom(
-        excerpts,
-        taken,
-        noting.state === "failed" ? noting.noted : undefined,
-      );
+      const noted = await inTurn((putExcerpt) => noteFrom(pending, taken, before, putExcerpt));
       setNoting({ state: "noted", noted, leftOut });
       announce(`已记到笔记《${noted.title}》${leftOutNote(leftOut)}`);
     } catch (error) {

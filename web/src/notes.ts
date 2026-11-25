@@ -223,11 +223,21 @@ async function putDown(excerpt: Excerpt): Promise<Noted> {
 
 // Puts an excerpt at the end of the note being written, with links to its passages, and makes
 // a note for it when none is being written; the result says where it went, once it is kept.
-// Excerpts are put down one after another, in the order they came.
+export type PutDown = (excerpt: Excerpt) => Promise<Noted>;
+
+// Takes a turn among the excerpts going into notes, at the moment it is asked for. The work runs
+// once every turn asked for before it is over, however long that waits, and puts its excerpts
+// down with what it is handed, so that nothing asked for later comes between them. A turn that
+// fails ends, and the turns after it still run.
+export function inTurn<Value>(work: (putExcerpt: PutDown) => Promise<Value>): Promise<Value> {
+  const done = excerpts.then(() => work(putDown));
+  excerpts = done.catch(() => undefined);
+  return done;
+}
+
+// Puts one excerpt down in a turn of its own.
 export function noteDown(excerpt: Excerpt): Promise<Noted> {
-  const noted = excerpts.then(() => putDown(excerpt));
-  excerpts = noted.catch(() => undefined);
-  return noted;
+  return inTurn((putExcerpt) => putExcerpt(excerpt));
 }
 
 // Asks for a note to be shown: the notebook comes on show with the note open in it.
