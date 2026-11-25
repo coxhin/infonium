@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     glm_models: list[str] = ["glm-5.3", "glm-5.3-flash"]
     glm_base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
     glm_api_key: SecretStr | None = None
-    glm_reasoning_efforts: dict[str, GlmReasoning] = {"glm-5.3": "low"}
+    glm_reasoning_efforts: dict[str, GlmReasoning] = {"glm-5.3": "low", "glm-5.3-flash": "medium"}
     pdf_engine: Path = Path("mineru")
     browser: Path = Path("google-chrome")
     speech_base_url: str = "http://127.0.0.1:8750/v1"

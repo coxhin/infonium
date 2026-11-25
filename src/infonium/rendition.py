@@ -10,6 +10,7 @@ from typing import Final
 from pydantic import BaseModel
 
 from infonium.document import (
+    CHINESE_GLOSS,
     CHINESE_MARKS,
     FormulaMark,
     LinkMark,
@@ -112,9 +113,9 @@ same in every passage. Where the request lists terms, translate a listed term as
 listed wherever a passage uses it in that sense; words that only look like a listed term \
 are translated for what they say.
 - {terms_kept_in_english} A term kept in English stands alone, but at its first use in \
-the whole document its {language} word follows it, after a space, in round brackets of \
-Latin script, as in "Fresnel lens (菲涅尔透镜)" in Chinese, where {language} has a word \
-for it. The request names under a heading of its own the passage in which the document \
+the whole document its {language} word follows it in brackets, as a translation into \
+{language} gives a gloss: "{chinese_gloss}" in Chinese, where {language} has a word for \
+it. The request names under a heading of its own the passage in which the document \
 first uses a listed term: give the word there, at the term's first use in that passage, \
 and nowhere else. A term kept in English that the request does not list is first used \
 where these passages first use it, unless the text before them does.
@@ -516,6 +517,7 @@ def renditions(model: LanguageModel, language: str, passages: Passages) -> Rendi
             language=language,
             terms_kept_in_english=TERMS_KEPT_IN_ENGLISH.format(language=language),
             chinese_marks=CHINESE_MARKS,
+            chinese_gloss=CHINESE_GLOSS,
         ),
         prompt=prompt(passages),
         output=Reply,
