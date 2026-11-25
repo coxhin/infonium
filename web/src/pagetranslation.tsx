@@ -21,18 +21,14 @@ import {
 import { MarkedText } from "./blocks";
 import type { PagePlace } from "./client";
 import {
-  columnsOf,
-  edgesOf,
   fitted,
-  flowsOf,
   leadingRatioOf,
   leadingsOf,
   type Fitting,
-  type Flow,
   type Measure,
-  type PageFacts,
   type Setting,
-} from "./flows";
+} from "./fitting";
+import { columnsOf, edgesOf, flowsOf, type Flow, type PageFacts } from "./flows";
 import {
   blankInto,
   coloursOf,

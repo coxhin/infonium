@@ -1,12 +1,11 @@
-import { isBody, overlap, type AreaText, type BodyPrint, type Box } from "./areas";
+import { overlap, type AreaText, type BodyPrint, type Box } from "./areas";
 
-// How the areas of a page's translation are set together. Areas of one column that follow one
-// another down the page with nothing drawn between them are one flow, set as one run of text
-// from the top of its first area's room; a page takes one leading, the widest at which its
-// flows fit; a flow that does not fit takes blank paper under it, then is set smaller in steps,
-// then is cut; and the room a flow leaves is spread between its blocks. What this must know of
-// the page, whether a part of it is blank paper, and of the text, how far it reaches, it is
-// told by the functions it is given.
+// Which areas of a page's translation are set together, and where their paper lies. Areas of
+// one column that follow one another down the page with nothing drawn between their lines are
+// one flow, set as one run of text from the top of its first area's room; its paper covers its
+// own lines and blank paper alone, and it may go beyond its foot only over blank paper. How the
+// flows of a page are fitted is fitting.ts's. What this must know of the page, whether a part
+// of it is blank paper, it is told by the functions it is given.
 
 // The left and right sides that blocks standing one above another share, as fractions of the
 // page's width.
@@ -252,18 +251,46 @@ function verticalReachOf(
   return { room, tails: [], drawn, clear: clearOf(beyond, print) };
 }
 
-// The page is looked into from a flow's lines beyond the top of its first area's room and the
-// foot of its last one's, by as far as its paper's edge and the clearance before it reach, and
-// below that by as far as the flow may go beyond its foot.
-function reachOf(
-  texts: AreaText[],
-  blocks: ReadonlySet<number>,
-  sides: Column,
-  lines: PageLine[],
-  rooms: Box[],
+// Where a flow's paper begins: at the top of its first area's room, or a clearance below what
+// is drawn there above its lines; the page is looked into above the room as far again as the
+// paper's edge and the clearance before it. And how far above the paper what is drawn stands.
+function paperTopOf(
+  first: AreaText,
+  across: Span,
   print: FlowPrint,
   facts: PageFacts,
-): Reach {
+): { top: number; over: number | undefined } {
+  const clearance = CLEARANCE * print.size;
+  const margin = (CLEARANCE + EDGE) * print.size;
+  const lines = first.area.box;
+  const roomTop = first.area.room.top;
+  const overTop = Math.max(0, roomTop - margin);
+  const overhead = facts.blankInto(
+    { ...across, top: overTop, height: lines.top - overTop },
+    "bottom",
+    first,
+  );
+  const drawnAbove = lines.top - overhead.blank;
+  const top =
+    overhead.drawn && drawnAbove > roomTop ? Math.min(lines.top, drawnAbove + clearance) : roomTop;
+  return { top, over: overhead.drawn ? top - drawnAbove : undefined };
+}
+
+// Where a flow's paper ends: at the foot of its last area's room, or a clearance above what is
+// drawn there under its lines, or above another block's lines that begin within the room; and
+// past that foot, the flow's own lines alone, as tails. How far beyond the foot it may go, only
+// where it reaches the room's foot: no further than two lines, other blocks' lines or other
+// areas' rooms, and a clearance short of what is drawn; the page is looked into as far again
+// as the paper's edge and the clearance before it. And how far under the foot what is drawn
+// stands.
+function paperFootOf(
+  texts: AreaText[],
+  top: number,
+  across: Span,
+  others: { lines: Box[]; rooms: Box[] },
+  print: FlowPrint,
+  facts: PageFacts,
+): { foot: number; tails: Box[]; under: number | undefined; clear: number } {
   const [first] = texts;
   const last = texts.at(-1);
   if (first === undefined || last === undefined) {
@@ -271,41 +298,15 @@ function reachOf(
   }
   const clearance = CLEARANCE * print.size;
   const margin = (CLEARANCE + EDGE) * print.size;
-  const across = { left: sides.left, width: widthOf(sides) };
-  const firstLines = first.area.box;
-  const lastLines = last.area.box;
-  // Above: the paper begins at the top of the first room, or a clearance below what is drawn
-  // there above the lines.
-  const roomTop = first.area.room.top;
-  const overTop = Math.max(0, roomTop - margin);
-  const overhead = facts.blankInto(
-    { ...across, top: overTop, height: firstLines.top - overTop },
-    "bottom",
-    first,
-  );
-  const drawnAbove = firstLines.top - overhead.blank;
-  const top =
-    overhead.drawn && drawnAbove > roomTop
-      ? Math.min(firstLines.top, drawnAbove + clearance)
-      : roomTop;
-  // Below: the paper ends at the foot of the last room, or a clearance above what is drawn
-  // there under the lines, or above another block's lines that begin within the room; it may go
-  // beyond that foot only where it reaches it.
   const roomFoot = footOf(last.area.room);
-  const ownLines = texts.flatMap((text) => text.area.lines);
-  const otherLines = lines
-    .filter((line) => !blocks.has(line.blockNumber))
-    .map((line) => line.box);
-  const linesUnder = otherLines.filter(
-    (other) => overlapsAcross(other, across) && other.top > firstLines.top,
+  const lastFoot = footOf(last.area.box);
+  const linesUnder = others.lines.filter(
+    (other) => overlapsAcross(other, across) && other.top > first.area.box.top,
   );
   const linesWithin = linesUnder.filter((other) => other.top < roomFoot);
-  const roomsUnder = rooms.filter(
+  const roomsUnder = others.rooms.filter(
     (other) => overlapsAcross(other, across) && other.top >= roomFoot - TOUCHING,
   );
-  const lastFoot = footOf(lastLines);
-  // The paper goes beyond its foot no further than two lines, other blocks' lines or other
-  // areas' rooms; the page is looked into as far again as its edge and the clearance before it.
   const growthEnd = Math.min(
     1,
     roomFoot + MOST_GROWTH_LINES * print.pitch,
@@ -331,17 +332,42 @@ function reachOf(
       ...linesWithin.map((other) => other.top - clearance),
     ),
   );
-  const room = { ...across, top, height: foot - top };
-  const tails = ownLines
+  const tails = texts
+    .flatMap((text) => text.area.lines)
     .filter((line) => footOf(line) > foot + TOUCHING)
     .map((line) => ({ ...line, top: foot, height: footOf(line) - foot }));
-  const drawn = {
-    over: overhead.drawn ? top - drawnAbove : undefined,
-    under: underneath.drawn ? drawnBelow - foot : undefined,
-  };
   const clear =
     foot < roomFoot - TOUCHING ? 0 : Math.max(0, Math.min(clearBelow, growthEnd) - foot);
-  return { room, tails, drawn, clear };
+  return { foot, tails, under: underneath.drawn ? drawnBelow - foot : undefined, clear };
+}
+
+function reachOf(
+  texts: AreaText[],
+  blocks: ReadonlySet<number>,
+  sides: Column,
+  lines: PageLine[],
+  rooms: Box[],
+  print: FlowPrint,
+  facts: PageFacts,
+): Reach {
+  const [first] = texts;
+  if (first === undefined) {
+    throw new Error("A flow holds at least one area.");
+  }
+  const across = { left: sides.left, width: widthOf(sides) };
+  const otherLines = lines
+    .filter((line) => !blocks.has(line.blockNumber))
+    .map((line) => line.box);
+  const { top, over } = paperTopOf(first, across, print, facts);
+  const { foot, tails, under, clear } = paperFootOf(
+    texts,
+    top,
+    across,
+    { lines: otherLines, rooms },
+    print,
+    facts,
+  );
+  return { room: { ...across, top, height: foot - top }, tails, drawn: { over, under }, clear };
 }
 
 function flowOf(
@@ -499,239 +525,4 @@ export function flowsOf(
     const rooms = texts.filter((text) => !placed.includes(text)).map((text) => text.area.room);
     return flowOf(placed, new Set(own.keys()), run.column, lines, rooms, body, facts);
   });
-}
-
-// The leadings a page may take, from the narrowest: a floor, a cap, and every multiple of 0.05
-// between. A script written without spaces between words wants more room between its lines
-// than the source's Latin, up to the cap; any other is set no more loosely than the source.
-const LEADING_STEP = 0.05;
-const UNSPACED_LEAST = 1.25;
-const UNSPACED_MOST = 1.6;
-const SPACED_LEAST = 1.15;
-// Leadings are told apart to two decimals.
-const LEADING_DIGITS = 100;
-
-export function leadingsOf(spacing: number, unspaced: boolean): number[] {
-  const floor = Math.min(unspaced ? UNSPACED_LEAST : SPACED_LEAST, spacing);
-  const cap = unspaced ? Math.max(UNSPACED_MOST, spacing) : spacing;
-  const between: number[] = [];
-  for (
-    let multiple = Math.floor(floor / LEADING_STEP + 1);
-    multiple * LEADING_STEP < cap - 1 / LEADING_DIGITS / 2;
-    multiple += 1
-  ) {
-    between.push(Math.round(multiple * LEADING_STEP * LEADING_DIGITS) / LEADING_DIGITS);
-  }
-  return [
-    ...new Set([floor, ...between.filter((leading) => leading > floor), cap]),
-  ];
-}
-
-// Body text takes a flow's leading; text of another print, as a heading, is led in the same
-// proportion to its own leading in the source.
-export function leadingRatioOf(text: AreaText, spacing: number): number {
-  return isBody(text.kind) ? 1 : text.area.spacing / spacing;
-}
-
-// What a flow's text is set at: its body's leading and the part of its print's size.
-export type Trial = { leading: number; step: number };
-
-// How a flow is set: at a leading and a step, its paper going so far beyond its foot over the
-// blank paper there, cut at its foot or not, and with a share of its spare room added to each
-// gap for each share the gap takes.
-export type Setting = Trial & { growth: number; cut: boolean; share: number };
-
-// The page's leading and how each of its flows, by key, is set.
-export type Fitting = { leading: number; settings: Map<string, Setting> };
-
-// How far each flow's text reaches at a trial, from the top of its room along the run of its
-// lines, with no spare room added: the measure is the page's, which lays the text out.
-export type Measure = (trials: ReadonlyMap<Flow, Trial>) => ReadonlyMap<Flow, number>;
-
-// The parts of its print's size a flow that does not fit is set at, in order.
-const STEPS = [1, 0.95, 0.9, 0.85, 0.8];
-// A flow fits whose text ends no lower than this part of the body's size beyond its foot, as
-// far as the blank paper there allows.
-const FIT_SLACK = 0.25;
-// A gap grows by no more than this part of a line of the body's pitch at the page's leading
-// for each share it takes.
-const SHARE_LINES = 0.5;
-
-function extentOf(flow: Flow): number {
-  return flow.vertical ? flow.room.width : flow.room.height;
-}
-
-// How far beyond its foot a flow may go: by a quarter of the body's size to fit, and by up to
-// two lines of the body's pitch where it does not fit otherwise, over blank paper alone.
-function slackOf(flow: Flow): number {
-  return Math.min(FIT_SLACK * flow.print.size, flow.clear);
-}
-
-function fits(reach: number, flow: Flow, beyond: number): boolean {
-  return reach <= extentOf(flow) + beyond;
-}
-
-// The paper a flow lays beyond its foot to cover its text there.
-function growthOf(reach: number, flow: Flow, beyond: number): number {
-  return Math.min(beyond, Math.max(0, reach - extentOf(flow)));
-}
-
-function trialsOf(flows: Flow[], trial: Trial): Map<Flow, Trial> {
-  return new Map(flows.map((flow) => [flow, trial]));
-}
-
-// The spare room a flow's text leaves above its foot, spread over its gaps: a share for each
-// share a gap takes, no more than half a line of the body's pitch at the page's leading.
-function shareOf(flow: Flow, spare: number, leading: number): number {
-  const shares = flow.weights.reduce((sum, weight) => sum + weight, 0);
-  if (spare <= 0 || shares === 0) {
-    return 0;
-  }
-  return Math.min(spare / shares, SHARE_LINES * flow.print.size * leading);
-}
-
-// The page takes the widest leading at which the flows that fit there hold at least this part
-// of the letters of all its flows that fit at the narrowest, so that a few tight flows do not
-// hold the rest back.
-const HELD_LETTERS = 0.9;
-const LETTER = /[\p{L}\p{N}]/u;
-
-// A flow's letters: the letters and digits of its areas' translation, each formula counting as
-// one.
-function lettersOf(flow: Flow): number {
-  let count = 0;
-  for (const { piece } of flow.texts) {
-    const characters = [...piece.text];
-    const formulas = piece.marks.filter((mark) => mark.kind === "formula");
-    count += formulas.length;
-    characters.forEach((character, at) => {
-      const inFormula = formulas.some((mark) => mark.start <= at && at < mark.end);
-      if (!inFormula && LETTER.test(character)) {
-        count += 1;
-      }
-    });
-  }
-  return count;
-}
-
-// Fits a page's flows. Of the flows that fit at the narrowest leading, the page takes the
-// widest leading at which those that fit hold nine tenths of their letters, and each of them
-// takes the page's or, where it does not fit there, the widest at which it fits. A flow that
-// does not fit at the narrowest takes that one, the blank paper beyond its foot that it needs,
-// and the first step of its print's size at which it fits; at the last step it is cut at its
-// foot.
-export function fitted(flows: Flow[], leadings: number[], measure: Measure): Fitting {
-  const floor = leadings[0];
-  if (floor === undefined) {
-    throw new Error("A page has at least one leading to take.");
-  }
-  const settings = new Map<string, Setting>();
-  const atFloor = measure(trialsOf(flows, { leading: floor, step: 1 }));
-  const fitting = flows.filter((flow) => fits(atFloor.get(flow) ?? Infinity, flow, slackOf(flow)));
-  // How far each flow's text reaches at each leading tried, by the leading's place in the list.
-  const reached = new Map<Flow, Map<number, number>>(
-    flows.map((flow) => [flow, new Map([[0, atFloor.get(flow) ?? Infinity]])]),
-  );
-  const reachAt = (flow: Flow, index: number) => reached.get(flow)?.get(index) ?? Infinity;
-  const tryAt = (places: ReadonlyMap<Flow, number>) => {
-    const asked = new Map(
-      [...places].filter(([flow, index]) => reached.get(flow)?.has(index) !== true),
-    );
-    if (asked.size === 0) {
-      return;
-    }
-    const trials = new Map(
-      [...asked].map(([flow, index]) => [flow, { leading: leadings[index] ?? floor, step: 1 }]),
-    );
-    measure(trials).forEach((reach, flow) => {
-      const index = asked.get(flow);
-      if (index !== undefined) {
-        reached.get(flow)?.set(index, reach);
-      }
-    });
-  };
-  const fitsAt = (flow: Flow, index: number) => fits(reachAt(flow, index), flow, slackOf(flow));
-  const letters = new Map(fitting.map((flow) => [flow, lettersOf(flow)]));
-  const allLetters = fitting.reduce((sum, flow) => sum + (letters.get(flow) ?? 0), 0);
-  const holds = (index: number) => {
-    tryAt(new Map(fitting.map((flow) => [flow, index])));
-    const held = fitting
-      .filter((flow) => fitsAt(flow, index))
-      .reduce((sum, flow) => sum + (letters.get(flow) ?? 0), 0);
-    return held >= HELD_LETTERS * allLetters;
-  };
-  let widest = 0;
-  let low = 1;
-  let high = fitting.length > 0 ? leadings.length - 1 : 0;
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2);
-    if (holds(middle)) {
-      widest = middle;
-      low = middle + 1;
-    } else {
-      high = middle - 1;
-    }
-  }
-  // Each flow that fits at the narrowest but not at the page's leading looks for the widest at
-  // which it fits, all of them at once.
-  const own = new Map<Flow, number>(fitting.map((flow) => [flow, widest]));
-  const searched = new Map(
-    fitting
-      .filter((flow) => !fitsAt(flow, widest))
-      .map((flow) => [flow, { low: 1, high: widest - 1, found: 0 }]),
-  );
-  while ([...searched.values()].some((range) => range.low <= range.high)) {
-    const middles = new Map<Flow, number>();
-    searched.forEach((range, flow) => {
-      if (range.low <= range.high) {
-        middles.set(flow, Math.floor((range.low + range.high) / 2));
-      }
-    });
-    tryAt(middles);
-    middles.forEach((middle, flow) => {
-      const range = searched.get(flow);
-      if (range === undefined) {
-        return;
-      }
-      if (fitsAt(flow, middle)) {
-        range.found = middle;
-        range.low = middle + 1;
-      } else {
-        range.high = middle - 1;
-      }
-    });
-  }
-  searched.forEach((range, flow) => own.set(flow, range.found));
-  const leading = leadings[widest] ?? floor;
-  for (const flow of fitting) {
-    const index = own.get(flow) ?? 0;
-    const reach = reachAt(flow, index);
-    const growth = growthOf(reach, flow, slackOf(flow));
-    const share = shareOf(flow, extentOf(flow) - reach, leading);
-    const ownLeading = leadings[index] ?? floor;
-    settings.set(flow.key, { leading: ownLeading, step: 1, growth, cut: false, share });
-  }
-  let left = flows.filter((flow) => !fitting.includes(flow));
-  for (const step of STEPS) {
-    if (left.length === 0) {
-      break;
-    }
-    const tried = step === 1 ? atFloor : measure(trialsOf(left, { leading: floor, step }));
-    left = left.filter((flow) => {
-      const reach = tried.get(flow) ?? Infinity;
-      if (!fits(reach, flow, flow.clear)) {
-        return true;
-      }
-      const growth = growthOf(reach, flow, flow.clear);
-      const share = shareOf(flow, extentOf(flow) + growth - reach, leading);
-      settings.set(flow.key, { leading: floor, step, growth, cut: false, share });
-      return false;
-    });
-  }
-  const least = STEPS.at(-1) ?? 1;
-  for (const flow of left) {
-    const growth = flow.clear;
-    settings.set(flow.key, { leading: floor, step: least, growth, cut: true, share: 0 });
-  }
-  return { leading, settings };
 }
