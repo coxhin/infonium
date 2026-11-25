@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { sourceLink, type PagePlace } from "./client";
 import { PageText } from "./pagelines";
-import { PageViewer, type PageMarks, type PagePosition } from "./pages";
+import { PageViewer, type PageMarks } from "./pages";
+import type { PagePosition } from "./pageturning";
 
 const NO_PLACES: PagePlace[] = [];
 const NO_BLOCKS: ReadonlySet<number> = new Set();

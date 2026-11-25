@@ -1,15 +1,16 @@
 /* A passage pointed at, glowing on a PDF's page over the words it holds: it comes up at once,
-   stays 1.4 s and fades over 0.5 s, as words glow in the text (glowing.css). A page is light
-   whatever the theme, so the glow multiplies into its paper and print under it stays dark.
-   Over the source it lies above the reader's highlights; on a page that shows the translation
-   it lies under it, where the translation's own sentences glow. */
+   stays whole and then fades, over the times words glow by (glowing.ts), which the element
+   carries as --glow-whole and --glow-fade. A page is light whatever the theme, so the glow
+   multiplies into its paper and print under it stays dark. Over the source it lies above the
+   reader's highlights; on a page that shows the translation it lies under it, where the
+   translation's own sentences glow. */
 
 .page-glow {
   position: absolute;
   inset: 0;
   z-index: 3;
   pointer-events: none;
-  animation: page-glow 1.9s linear forwards;
+  animation: page-glow var(--glow-fade) linear var(--glow-whole) forwards;
 }
 
 .page-glow.under {
@@ -25,14 +26,7 @@
 }
 
 @keyframes page-glow {
-  0% {
-    opacity: 0;
-  }
-  6%,
-  74% {
-    opacity: 1;
-  }
-  100% {
+  to {
     opacity: 0;
   }
 }

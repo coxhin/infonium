@@ -3,15 +3,17 @@ import "./glowing.css";
 // How a passage pointed at is shown where it stands: it glows for a moment and fades away, so
 // that the reader's eye is led to it and the page is left as it was. Words are made to glow
 // by the browser's highlights, here; boxes on a PDF's page by elements that fade by
-// themselves, as their stylesheet says (pageglow.tsx), over the same time.
+// themselves (pageglow.tsx), over the same times.
+
+// How long a glow stays whole, and how long it then takes to fade, in milliseconds.
+export const GLOW_WHOLE = 1400;
+export const GLOW_FADE = 500;
+export const GLOW_LASTS = GLOW_WHOLE + GLOW_FADE;
 
 // The highlight a glow begins in, and those it fades through, each lighter than the last.
 const GLOWING = "anchor";
 const FADING = ["anchor-fading-1", "anchor-fading-2", "anchor-fading-3", "anchor-fading-4"];
-// How long a glow stays whole, and how long each of its fading steps lasts, in milliseconds.
-// The boxes of a page take the same time: 1,400 ms whole, then 500 ms fading.
-const WHOLE = 1400;
-const STEP = 100;
+const STEP = GLOW_FADE / FADING.length;
 // The glow is drawn above the reader's highlights (textmarks.ts), so that it stays the stronger
 // where the two lie over each other.
 const GLOW_PRIORITY = 10;
@@ -51,17 +53,21 @@ export function glowOver(ranges: Range[]): void {
             CSS.highlights.set(next, highlight);
           }
         },
-        WHOLE + step * STEP,
+        GLOW_WHOLE + step * STEP,
       ),
     );
   });
 }
 
-// Adds words to the glow on show, which fade with it: words of the passage that come on show
-// after it began, as the translation of a page drawn later. A glow that has faded is not lit
-// again.
-export function glowAlso(ranges: Range[]): void {
+// Puts the glow on show over these ranges instead, as far as it has faded: the words it lay
+// over drawn anew, as a translation's text is when its links arrive, or more of them come on
+// show. A glow that has faded is not lit again.
+export function relight(ranges: Range[]): void {
+  if (glowing === undefined) {
+    return;
+  }
+  glowing.clear();
   for (const range of ranges) {
-    glowing?.add(range);
+    glowing.add(range);
   }
 }

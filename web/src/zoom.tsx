@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore, type RefObject } from "react";
+import { useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
 import "./zoom.css";
 
 // How large the reader shows a source, apart from the rest of the window: the pages of a PDF by
@@ -12,9 +12,17 @@ const STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const LEAST = 0.5;
 const MOST = 3;
 const NATURAL = 1;
-// How much a turn of the wheel with Ctrl held, or a pinch, zooms by: a notch of a wheel, 100
-// pixels, zooms by about a fifth; a pinch, which comes in small steps, as far as it goes.
-const WHEEL_RATE = 0.002;
+// How much a pinch, or a turn of the wheel with Ctrl held, zooms by. Chrome tells a pinch as
+// such turns whose pixels add up to 100 times the natural logarithm of the fingers' scale, so
+// at this rate the pages follow the fingers. A turn counts for no more than a step of this many
+// pixels, so that a notch of a wheel, 100 pixels, zooms by about a fifth, not by e. A turn told
+// in lines is taken at this many pixels a line.
+const PINCH_RATE = 0.01;
+const LARGEST_TURN = 20;
+const LINE_PIXELS = 16;
+// Turns this many milliseconds apart or closer are one gesture, which zooms from where the
+// last turn left it, unrounded: turns too small to change the zoom by a whole percent add up.
+const GESTURE_GAP = 300;
 // A zoom is kept to whole percents.
 const PERCENT = 100;
 // The shown zoom is near enough a step to count as on it.
@@ -70,6 +78,7 @@ export function useWheelZoom(
   kind: ZoomKind,
   onZooming: ((event: WheelEvent) => void) | undefined,
 ): void {
+  const gesture = useRef<{ zoom: number; at: number }>(undefined);
   useEffect(() => {
     const shown = element.current;
     if (shown === null) {
@@ -80,11 +89,19 @@ export function useWheelZoom(
         return;
       }
       event.preventDefault();
-      const before = storedZoom(kind);
-      const after = bounded(before * Math.exp(-event.deltaY * WHEEL_RATE));
-      if (after !== before) {
+      const last = gesture.current;
+      const from =
+        last !== undefined && event.timeStamp - last.at <= GESTURE_GAP
+          ? last.zoom
+          : storedZoom(kind);
+      const pixels =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * LINE_PIXELS : event.deltaY;
+      const turn = Math.min(LARGEST_TURN, Math.max(-LARGEST_TURN, pixels));
+      const zoom = Math.min(MOST, Math.max(LEAST, from * Math.exp(-turn * PINCH_RATE)));
+      gesture.current = { zoom, at: event.timeStamp };
+      if (bounded(zoom) !== storedZoom(kind)) {
         onZooming?.(event);
-        chooseZoom(kind, after);
+        chooseZoom(kind, zoom);
       }
     };
     shown.addEventListener("wheel", wheeled, { passive: false });

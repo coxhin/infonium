@@ -1,21 +1,22 @@
 import { pieceStarts, translatedText, type AreaText } from "./areas";
 import type { Mark, TranslatedBlock } from "./client";
 import type { PageText } from "./pagelines";
-import { linkOfTarget, type PageLink } from "./pagelinks";
+import { linkOfTarget, type LinkTarget, type PageLink } from "./pagelinks";
 
 // The links of a PDF's lines carried over to the translation set over them. A translation is
 // made of a block's text without its links, so a link is found again in it by the words it
 // lies over: a citation, a year, a number or an address, which a translation keeps as they are,
 // or a label such as "Figure 3", which it gives in its own words. Where every time the block
 // says those words they are a link to the same place, the translation's every saying of them
-// is that link; otherwise a link is carried only where the translation says them as often as
-// the source does, and the one it lies over is told by its place among them.
+// is that link, unless what it says could be part of other words, as a label of one character
+// such as 表 could; otherwise a link is carried only where the translation says them as often
+// as the source does, and the one it lies over is told by its place among them.
 
 type LinkMark = Extract<Mark, { kind: "link" }>;
 
 // A link of a block's source: the stretch of the block's text, in code points, that it lies
-// over, and the address of a link mark that leads where it does.
-export type SourceLink = { start: number; end: number; target: string };
+// over, and where it leads.
+export type SourceLink = { start: number; end: number; target: LinkTarget };
 
 // A line belongs to a link's box where this part of its height lies inside the box, and a word
 // of the line belongs to the link where this part of its width does.
@@ -64,11 +65,7 @@ export function sourceLinksOn(
       }
       if (first !== undefined && last !== undefined) {
         const found = byBlock.get(line.blockNumber) ?? [];
-        found.push({
-          start: line.start + first,
-          end: line.start + last,
-          target: linkOfTarget(target),
-        });
+        found.push({ start: line.start + first, end: line.start + last, target });
         byBlock.set(line.blockNumber, found);
       }
     }
@@ -81,48 +78,101 @@ const OPENING = /^[\s([{（【《“"']+/u;
 const CLOSING = /[\s)\]}）】》”"',;:，；：、。]+$/u;
 const WORDLIKE = /[\p{L}\p{N}]/u;
 const ADDRESS = /https?:\/\/\S+/u;
-const PLACE_PREFIX = "#";
 
 function escaped(words: string): string {
   return words.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// A pattern for words that do not begin inside a longer word or number.
+function openPattern(words: string): string {
+  const before = WORDLIKE.test(words.at(0) ?? "") ? "(?<![\\p{L}\\p{N}.])" : "";
+  return `${before}${escaped(words)}`;
+}
+
 // A pattern for words as words of their own, not inside longer ones: a number is not found
 // inside a longer number, nor a word inside a longer word.
 function wordsPattern(words: string): string {
-  const before = WORDLIKE.test(words.at(0) ?? "") ? "(?<![\\p{L}\\p{N}.])" : "";
   const after = WORDLIKE.test(words.at(-1) ?? "") ? "(?![\\p{L}\\p{N}]|\\.\\p{N})" : "";
-  return `${before}${escaped(words)}${after}`;
+  return `${openPattern(words)}${after}`;
 }
 
-// Where a pattern stands in a text, as stretches of code points.
-function stretchesOf(text: string, pattern: string): { start: number; end: number }[] {
-  return [...text.matchAll(new RegExp(pattern, "gu"))]
-    .filter((match) => match[0] !== "")
-    .map((match) => {
-      const start = [...text.slice(0, match.index)].length;
-      return { start, end: start + [...match[0]].length };
-    });
+function sameTarget(one: LinkTarget, other: LinkTarget): boolean {
+  return linkOfTarget(one) === linkOfTarget(other);
 }
+
+// Where a pattern stands in a text, as stretches of code points. The code points before each
+// saying are counted on from the saying before it.
+function stretchesOf(text: string, pattern: string): { start: number; end: number }[] {
+  const stretches: { start: number; end: number }[] = [];
+  let units = 0;
+  let points = 0;
+  for (const match of text.matchAll(new RegExp(pattern, "gu"))) {
+    if (match[0] === "") {
+      continue;
+    }
+    points += [...text.slice(units, match.index)].length;
+    units = match.index;
+    stretches.push({ start: points, end: points + [...match[0]].length });
+  }
+  return stretches;
+}
+
+// How a translation says a link's words: a pattern, and whether every saying of it may be the
+// link, or only the one at the link's place among them, as for a label of one character, which
+// may be the end of another word: 表 of 代表, 式 of 方式.
+type Saying = { pattern: string; everySaying: boolean };
 
 // Labels a paper names its parts by, and how a translation into Chinese says each with its
-// number, as patterns around the number.
-const LABELS: { source: RegExp; translated: (number: string) => string }[] = [
-  { source: /^(?:Figures?|Figs?\.)$/i, translated: (n) => `(?:图示|图)\\s?${n}` },
-  { source: /^(?:Tables?|Tabs?\.)$/i, translated: (n) => `(?:表格|表)\\s?${n}` },
+// number, as patterns around the number. A number in brackets is said in either kind.
+const NO_NUMBER_BEFORE = "(?<![\\p{N}.])";
+const bracketed = (n: string) => `(?:[（(]\\s?${n}\\s?[）)]|${n})`;
+const LABELS: { source: RegExp; translated: (number: string) => Saying[] }[] = [
+  {
+    source: /^(?:Figures?|Figs?\.)$/i,
+    translated: (n) => [
+      { pattern: `图示\\s?${n}`, everySaying: true },
+      { pattern: `图\\s?${n}`, everySaying: false },
+    ],
+  },
+  {
+    source: /^(?:Tables?|Tabs?\.)$/i,
+    translated: (n) => [
+      { pattern: `表格\\s?${n}`, everySaying: true },
+      { pattern: `表\\s?${n}`, everySaying: false },
+    ],
+  },
   {
     source: /^(?:Sections?|Secs?\.|§|Appendix|Appendices|App\.)$/i,
-    translated: (n) => `(?:第\\s?${n}\\s?[节章]|附录\\s?${n}|${n}\\s?节)`,
+    translated: (n) => [
+      { pattern: `第\\s?${n}\\s?[节章]`, everySaying: true },
+      { pattern: `附录\\s?${n}`, everySaying: true },
+      { pattern: `${NO_NUMBER_BEFORE}${n}\\s?节`, everySaying: false },
+    ],
   },
   {
     source: /^(?:Equations?|Eqs?\.)$/i,
-    translated: (n) => `(?:公式|方程|等式|式)\\s?[（(]?\\s?${n}\\s?[）)]?`,
+    translated: (n) => [
+      { pattern: `(?:公式|方程|等式)\\s?${bracketed(n)}`, everySaying: true },
+      { pattern: `式\\s?${bracketed(n)}`, everySaying: false },
+    ],
   },
-  { source: /^(?:Algorithms?|Algs?\.)$/i, translated: (n) => `算法\\s?${n}` },
-  { source: /^(?:Theorems?|Thms?\.)$/i, translated: (n) => `定理\\s?${n}` },
-  { source: /^Lemmas?$/i, translated: (n) => `引理\\s?${n}` },
-  { source: /^(?:Definitions?|Defs?\.)$/i, translated: (n) => `定义\\s?${n}` },
-  { source: /^(?:Chapters?|Chs?\.)$/i, translated: (n) => `第\\s?${n}\\s?章` },
+  {
+    source: /^(?:Algorithms?|Algs?\.)$/i,
+    translated: (n) => [{ pattern: `算法\\s?${n}`, everySaying: true }],
+  },
+  {
+    source: /^(?:Theorems?|Thms?\.)$/i,
+    translated: (n) => [{ pattern: `定理\\s?${n}`, everySaying: true }],
+  },
+  { source: /^Lemmas?$/i, translated: (n) => [{ pattern: `引理\\s?${n}`, everySaying: true }] },
+  {
+    source: /^(?:Definitions?|Defs?\.)$/i,
+    translated: (n) => [{ pattern: `定义\\s?${n}`, everySaying: true }],
+  },
+  {
+    source: /^(?:Chapters?|Chs?\.)$/i,
+    translated: (n) => [{ pattern: `第\\s?${n}\\s?章`, everySaying: true }],
+  },
 ];
 // A label's number: digits with their parts, a letter of an appendix, or either in brackets.
 const LABEL_NUMBER = /^\(?([A-Z]?\d+(?:\.\d+)*[a-z]?|[A-Z](?:\.\d+)*)\)?$/u;
@@ -130,8 +180,12 @@ const LABEL_BEFORE = /([A-Za-z§]+\.?)\s*$/u;
 const LABEL_REACH = 16;
 
 // One way of finding a link's words: as a pattern in the source, whose sayings are counted,
-// and as patterns in the translation, the first of which that is found is taken.
-type Search = { source: string; translated: string[] };
+// and as sayings in the translation, the first of which that is found is taken.
+type Search = { source: string; translated: Saying[] };
+
+function said(pattern: string): Saying {
+  return { pattern, everySaying: true };
+}
 
 // The ways a link's words are looked for, the surest first.
 function searchesFor(source: string, link: SourceLink): Search[] {
@@ -140,11 +194,11 @@ function searchesFor(source: string, link: SourceLink): Search[] {
   const words = raw.replace(OPENING, "").replace(CLOSING, "");
   const searches: Search[] = [];
   // An address is looked for as itself, with or without the end of a sentence after it.
-  const address = link.target.startsWith(PLACE_PREFIX) ? undefined : link.target;
+  const address = link.target.kind === "address" ? link.target.url : undefined;
   const shown = ADDRESS.exec(words)?.[0]?.replace(/[.,;:)]+$/u, "");
   for (const each of new Set([shown, address, address?.replace(/\/$/u, "")])) {
     if (each !== undefined && each !== "") {
-      searches.push({ source: wordsPattern(each), translated: [wordsPattern(each)] });
+      searches.push({ source: wordsPattern(each), translated: [said(wordsPattern(each))] });
     }
   }
   if (words === "" || !WORDLIKE.test(words)) {
@@ -165,25 +219,30 @@ function searchesFor(source: string, link: SourceLink): Search[] {
         : undefined;
   const label = LABELS.find((each) => labelled !== undefined && each.source.test(labelled.label));
   if (label !== undefined && labelled?.number !== undefined) {
+    const number = escaped(labelled.number);
     searches.push({
       source: wordsPattern(labelled.whole).replace(/ /g, "\\s+"),
       translated: [
-        `${label.translated(escaped(labelled.number))}(?![\\p{N}]|\\.\\p{N})`,
-        wordsPattern(labelled.whole),
+        ...label.translated(number).map((saying) => ({
+          ...saying,
+          pattern: `${saying.pattern}(?![\\p{N}]|\\.\\p{N})`,
+        })),
+        said(wordsPattern(labelled.whole)),
       ],
     });
   }
-  // An author's name with "et al." may be given with the translation's own word for the rest.
+  // An author's name with "et al." may be given with the translation's own word for the rest,
+  // with or without a space before it.
   const author = /^(\S+(?:\s\S+)?)\s+et\s+al\.?$/u.exec(words)?.[1];
   if (author !== undefined) {
     searches.push({
-      source: `${wordsPattern(author)}\\s+et\\s+al`,
-      translated: [`${wordsPattern(author)}\\s?(?:et\\s+al\\.?|等人?)`],
+      source: `${openPattern(author)}\\s+et\\s+al`,
+      translated: [said(`${openPattern(author)}(?:\\s+et\\s+al\\.?|\\s?等人?)`)],
     });
   }
-  searches.push({ source: wordsPattern(words), translated: [wordsPattern(words)] });
+  searches.push({ source: wordsPattern(words), translated: [said(wordsPattern(words))] });
   if (bare !== words) {
-    searches.push({ source: wordsPattern(bare), translated: [wordsPattern(bare)] });
+    searches.push({ source: wordsPattern(bare), translated: [said(wordsPattern(bare))] });
   }
   return searches;
 }
@@ -205,24 +264,24 @@ function carried(
   link: SourceLink,
   links: SourceLink[],
 ): { start: number; end: number }[] {
-  const toAddress = !link.target.startsWith(PLACE_PREFIX);
+  const toAddress = link.target.kind === "address";
   for (const search of searchesFor(source, link)) {
     const inSource = stretchesOf(source, search.source);
     const which = inSource.findIndex((stretch) => overlapping(stretch, link));
     const everyLinked =
       inSource.length > 0 &&
       inSource.every((stretch) =>
-        links.some((other) => other.target === link.target && overlapping(other, stretch)),
+        links.some((other) => sameTarget(other.target, link.target) && overlapping(other, stretch)),
       );
     if (which < 0 && !toAddress) {
       continue;
     }
-    for (const pattern of search.translated) {
-      const inTranslation = stretchesOf(translation, pattern);
+    for (const saying of search.translated) {
+      const inTranslation = stretchesOf(translation, saying.pattern);
       if (inTranslation.length === 0) {
         continue;
       }
-      if (everyLinked || which < 0) {
+      if ((everyLinked && saying.everySaying) || which < 0) {
         return inTranslation;
       }
       const at = inTranslation[which];
@@ -247,11 +306,34 @@ export function translatedLinkMarks(
   for (const link of links) {
     for (const stretch of carried(source, translation, link, links)) {
       if (![...taken, ...found].some((mark) => overlapping(mark, stretch))) {
-        found.push({ kind: "link", start: stretch.start, end: stretch.end, target: link.target });
+        found.push({
+          kind: "link",
+          start: stretch.start,
+          end: stretch.end,
+          target: linkOfTarget(link.target),
+        });
       }
     }
   }
   return found;
+}
+
+// The link marks of each translation of a block, kept for as long as the links of its source's
+// lines are the same, as the links of the pages arrive one page at a time.
+const marksKept = new WeakMap<TranslatedBlock, { key: string; marks: LinkMark[] }>();
+
+function marksOf(source: string, translated: TranslatedBlock, links: SourceLink[], gap: string) {
+  const key = links
+    .map((link) => `${link.start}-${link.end} ${linkOfTarget(link.target)}`)
+    .join("|");
+  const kept = marksKept.get(translated);
+  if (kept?.key === key) {
+    return kept.marks;
+  }
+  const whole = translatedText(translated, gap);
+  const marks = translatedLinkMarks(source, whole.text, links, whole.marks);
+  marksKept.set(translated, { key, marks });
+  return marks;
 }
 
 // An area given the links of its part of the translation, kept for as long as those links stay
@@ -270,12 +352,11 @@ export function linkedAreas(
   if (links === undefined || links.length === 0) {
     return areas;
   }
-  const whole = translatedText(translated, gap);
-  const marks = translatedLinkMarks(source, whole.text, links, whole.marks);
+  const marks = marksOf(source, translated, links, gap);
   if (marks.length === 0) {
     return areas;
   }
-  const starts = pieceStarts(whole.text, areas);
+  const starts = pieceStarts(translatedText(translated, gap).text, areas);
   return areas.map((area, index) => {
     const start = starts[index];
     if (start === undefined) {

@@ -26,11 +26,14 @@ const ABBREVIATIONS = new Set(
   ).split(" "),
 );
 const WORD_BEFORE = /([\p{L}.]+)$/u;
+// How far back from a full stop the word it ends is looked for, in characters: further than
+// the longest abbreviation.
+const WORD_REACH = 12;
 
 // Whether the full stop at this place ends a word that is never the last of a sentence: an
 // abbreviation, or an initial.
 function abbreviated(characters: string[], at: number): boolean {
-  const before = characters.slice(Math.max(0, at - 12), at).join("");
+  const before = characters.slice(Math.max(0, at - WORD_REACH), at).join("");
   const word = WORD_BEFORE.exec(before)?.[1];
   if (word === undefined) {
     return false;

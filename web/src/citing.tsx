@@ -433,13 +433,18 @@ export type CitationNumbers = (anchor: Anchor) => number;
 
 export function citationNumbers(statements: Statement[]): CitationNumbers {
   const numbers = new Map<string, number>();
-  for (const anchor of statements.flatMap((statement) => statement.anchors)) {
+  const numberOf = (anchor: Anchor) => {
     const key = passageKey(anchor);
-    if (!numbers.has(key)) {
-      numbers.set(key, numbers.size + 1);
+    const known = numbers.get(key);
+    if (known !== undefined) {
+      return known;
     }
-  }
-  return (anchor) => numbers.get(passageKey(anchor)) ?? numbers.size + 1;
+    const next = numbers.size + 1;
+    numbers.set(key, next);
+    return next;
+  };
+  statements.forEach((statement) => statement.anchors.forEach(numberOf));
+  return numberOf;
 }
 
 // A statement's citations as numbered chips, each titled with its quote. A chip whose passage

@@ -1,7 +1,7 @@
-/* A passage pointed at glows for a moment and fades: whole for 1.4 s, then lighter in steps
-   over 0.5 s (glowing.ts). The glow lets what it lies over through, so that where lines are set
-   closer than their letters are tall, as a translation on a PDF's page may be, the glow of one
-   line does not hide the letters of the line above it. */
+/* A passage pointed at glows for a moment and fades: whole, then lighter in steps, at the times
+   glowing.ts sets. The glow lets what it lies over through, so that where lines are set closer
+   than their letters are tall, as a translation on a PDF's page may be, the glow of one line
+   does not hide the letters of the line above it. */
 
 :root {
   --glow: light-dark(rgb(255 200 40 / 0.5), rgb(235 185 40 / 0.42));

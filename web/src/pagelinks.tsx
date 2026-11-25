@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
 import { percent, type Box } from "./areas";
+import { positionOf, turnTo, type PagePosition } from "./pageturning";
 import "./pagelinks.css";
 
 // The links a PDF's pages hold: where each lies on its page and where it leads, a place of the
@@ -42,8 +43,7 @@ function isRef(value: unknown): value is { num: number; gen: number } {
 // The height on the page a destination names: the top of an XYZ or a FitH view, or of the
 // rectangle of a FitR one; other views show the page from its top.
 function namedHeight(kind: unknown, args: unknown[]): unknown {
-  const name =
-    typeof kind === "object" && kind !== null && "name" in kind ? kind.name : undefined;
+  const name = typeof kind === "object" && kind !== null && "name" in kind ? kind.name : undefined;
   switch (name) {
     case "XYZ":
       return args[1];
@@ -149,6 +149,8 @@ function pageLinks(file: PDFDocumentProxy, number: number): Promise<PageLink[]> 
   }
   let links = ofFile.get(number);
   if (links === undefined) {
+    // A page whose links cannot be read is shown without them: its drawing says itself why
+    // the page cannot be opened, if it cannot.
     links = file.getPage(number + 1).then(
       (page) => linksOf(file, page),
       () => [],
@@ -264,7 +266,8 @@ const TRANSLATED_LINK = ".page-translation a[href]";
 // Presses on the links of the pages: a press on a link follows it alone, so no selection
 // begins there and no highlight under it opens; a link of a translation that names a place of
 // the document turns the pages there, and one to the web opens in a tab of its own without
-// turning the area it stands in. A click that ends a drag follows nothing.
+// turning the area it stands in, whether pressed or reached by the keyboard. A click that ends
+// a drag follows nothing, and a place of the document opens in no other tab.
 export function useLinkPresses(
   viewer: RefObject<HTMLElement | null>,
   onPlace: (place: Place) => void,
@@ -274,10 +277,10 @@ export function useLinkPresses(
     if (shown === null) {
       return;
     }
-    const onLink = (event: Event) =>
-      event.target instanceof Element && event.target.closest(ANY_LINK) !== null;
+    const within = (event: Event, selector: string) =>
+      event.target instanceof Element && event.target.closest(selector) !== null;
     const pressed = (event: PointerEvent) => {
-      if (onLink(event)) {
+      if (within(event, ANY_LINK)) {
         event.stopPropagation();
       }
     };
@@ -290,42 +293,90 @@ export function useLinkPresses(
         event.preventDefault();
         event.stopPropagation();
         onPlace(place);
-      } else if (event.target instanceof Element && event.target.closest(TRANSLATED_LINK)) {
+      } else if (within(event, TRANSLATED_LINK)) {
+        event.stopPropagation();
+      }
+    };
+    // Enter on a link of a translation follows it by the click it fires; neither it nor a space
+    // reaches the area the link stands in, which they would open or close.
+    const keyed = (event: KeyboardEvent) => {
+      if ((event.key === "Enter" || event.key === " ") && within(event, TRANSLATED_LINK)) {
+        event.stopPropagation();
+      }
+    };
+    const auxiliary = (event: MouseEvent) => {
+      if (followedPlace(event.target) !== undefined) {
+        event.preventDefault();
         event.stopPropagation();
       }
     };
     shown.addEventListener("pointerdown", pressed, true);
     shown.addEventListener("click", clicked, true);
+    shown.addEventListener("keydown", keyed, true);
+    shown.addEventListener("auxclick", auxiliary, true);
     return () => {
       shown.removeEventListener("pointerdown", pressed, true);
       shown.removeEventListener("click", clicked, true);
+      shown.removeEventListener("keydown", keyed, true);
+      shown.removeEventListener("auxclick", auxiliary, true);
     };
   }, [viewer, onPlace]);
 }
 
+// How far below the top of what the pages show a place a link leads to is put, in pixels, so
+// that the line above it shows too.
+const PLACE_MARGIN = 24;
+
+// The way back from places links led to: where the reader stood before each link that led to a
+// place of the document, last last; following a link, returning through them, and giving them
+// up.
+export type GoingBackState = {
+  behind: PagePosition[];
+  follow: (place: Place) => void;
+  back: () => void;
+  dismiss: () => void;
+};
+
+export function useGoingBack(viewer: RefObject<HTMLElement | null>): GoingBackState {
+  const [behind, setBehind] = useState<PagePosition[]>([]);
+  const follow = useCallback(
+    (place: Place) => {
+      const shown = viewer.current;
+      const from = shown === null ? undefined : positionOf(shown);
+      if (shown === null || from === undefined) {
+        return;
+      }
+      setBehind((before) => [...before, from]);
+      turnTo(shown, { page: place.page, within: place.top ?? 0 }, PLACE_MARGIN);
+    },
+    [viewer],
+  );
+  const back = useCallback(() => {
+    const shown = viewer.current;
+    const to = behind.at(-1);
+    if (shown !== null && to !== undefined) {
+      turnTo(shown, to);
+    }
+    setBehind((before) => before.slice(0, -1));
+  }, [viewer, behind]);
+  const dismiss = useCallback(() => setBehind([]), []);
+  return { behind, follow, back, dismiss };
+}
+
 // The way back from the places links led to, last first: a press returns to where the reader
-// stood before the last one, and the other dismisses them all.
-export function GoingBack({
-  pages,
-  onBack,
-  onDismiss,
-}: {
-  // The page of each place the reader stood at before a link led on, in order.
-  pages: number[];
-  onBack: () => void;
-  onDismiss: () => void;
-}) {
-  const last = pages.at(-1);
+// stood before the last one, and the other gives them all up.
+export function GoingBack({ going }: { going: GoingBackState }) {
+  const last = going.behind.at(-1);
   if (last === undefined) {
     return null;
   }
   return (
     <div className="going-back">
       <div role="group" aria-label="跳转前的位置">
-        <button type="button" onClick={onBack} title="回到点链接之前看的位置">
-          ↩ 回到第 {last + 1} 页
+        <button type="button" onClick={going.back} title="回到点链接之前看的位置">
+          ↩ 回到第 {last.page + 1} 页
         </button>
-        <button type="button" onClick={onDismiss} aria-label="不用回去" title="不用回去">
+        <button type="button" onClick={going.dismiss} aria-label="不用回去" title="不用回去">
           ×
         </button>
       </div>

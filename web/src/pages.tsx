@@ -11,7 +11,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -32,6 +31,7 @@ import { glowsOn, PageGlow, useTranslatedGlow, type Glow } from "./pageglow";
 import {
   GoingBack,
   LinksLayer,
+  useGoingBack,
   useLinkPresses,
   usePageLinks,
   type PageLink,
@@ -39,8 +39,8 @@ import {
 } from "./pagelinks";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
-import { scrollerOf, uncoveredTop } from "./scrolling";
-import { useWheelZoom, useZoom } from "./zoom";
+import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
+import { scrollerOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -69,32 +69,6 @@ const UNDER_CLASS = "under";
 // milliseconds.
 const READING_WAIT = 500;
 const POINTED_AREA = "area.pointed";
-
-// Where the reader stands in the pages: the page at the top of what the scroller shows them of,
-// and how far down that page the view begins, as a part of its height.
-export type PagePosition = { page: number; within: number };
-
-function positionOf(viewer: Element): PagePosition | undefined {
-  const top = uncoveredTop(viewer);
-  const pages = [...viewer.children];
-  const page = pages.findIndex((shown) => shown.getBoundingClientRect().bottom > top);
-  const place = pages[page]?.getBoundingClientRect();
-  return place === undefined
-    ? undefined
-    : { page, within: Math.max(0, (top - place.top) / place.height) };
-}
-
-// Turns the pages so that the position given stands at the top of what they show, or this
-// many pixels below it.
-function turnTo(viewer: Element, { page, within }: PagePosition, margin = 0) {
-  const place = viewer.children[page]?.getBoundingClientRect();
-  if (place !== undefined) {
-    const scroller = scrollerOf(viewer) ?? document.scrollingElement;
-    scroller?.scrollBy({
-      top: place.top - uncoveredTop(viewer) + within * place.height - margin,
-    });
-  }
-}
 
 function overlaps(one: DOMRect, other: DOMRect): boolean {
   return (
@@ -186,6 +160,47 @@ function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   ));
 }
 
+// The scale a page is drawn at for a width on show. A page is drawn no smaller than at its
+// printed size twice over, however small it is on show: the colours of a translation are read
+// off the drawing, and drawn smaller, a thin stroke covers no pixel whole and black print reads
+// grey. That floor is bounded by a count of pixels, as a file may give its pages in pixels
+// rather than points; a page so large holds its strokes at many pixels already. A page shown
+// larger than either is drawn as it is shown, as before, and none larger than a bound.
+function sharpnessOf(shownWidth: number, width: number, height: number): number {
+  const shown = (shownWidth / width) * devicePixelRatio;
+  const bounded = Math.sqrt(MOST_FLOOR_PIXELS / (width * height));
+  const most = Math.sqrt(MOST_PIXELS / (width * height));
+  return Math.min(most, Math.max(shown, Math.min(LEAST_SHARPNESS, bounded)));
+}
+
+// A drawing given up: its pixels, as large as a photograph's, are let go at once.
+function giveUp(drawnCanvas: HTMLCanvasElement | null | undefined): void {
+  if (drawnCanvas !== null && drawnCanvas !== undefined) {
+    drawnCanvas.width = 0;
+    drawnCanvas.height = 0;
+  }
+}
+
+// How many times a page was drawn again to be sharp at a width it was made wider to, as by a
+// zoom, and the width it was last drawn for, which the drawing sets. A page shown more than a
+// tenth wider than it was drawn for is drawn again once its width has stood still; a page made
+// narrower keeps its sharper drawing.
+function useSharpening(
+  near: boolean,
+  width: number,
+): { sharpened: number; drawnWidth: { current: number } } {
+  const drawnWidth = useRef(0);
+  const [sharpened, setSharpened] = useState(0);
+  useEffect(() => {
+    if (!near || drawnWidth.current === 0 || width <= drawnWidth.current * BLURRED_WIDTH) {
+      return;
+    }
+    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), SETTLED_WIDTH);
+    return () => window.clearTimeout(waiting);
+  }, [near, width]);
+  return { sharpened, drawnWidth };
+}
+
 function Page({
   file,
   number,
@@ -227,12 +242,9 @@ function Page({
   const [drawn, setDrawn] = useState<Drawn>();
   const [width, setWidth] = useState(0);
   const paired = overlay?.paired ?? false;
-  // Whether the page is near what is on show now, as the drawing's cleanup must know; the width
-  // the page was last drawn for; and how many times it was drawn again to be sharp at a width
-  // it was made wider to.
+  // Whether the page is near what is on show now, as the drawing's cleanup must know.
   const nearNow = useRef(false);
-  const drawnWidth = useRef(0);
-  const [sharpened, setSharpened] = useState(0);
+  const { sharpened, drawnWidth } = useSharpening(near, width);
   // The page's links are read once it comes near, and told to whoever sets a translation over
   // the pages, which carries those it can.
   const links = usePageLinks(file, number, near);
@@ -272,6 +284,7 @@ function Page({
     let current = true;
     let drawnPage: PDFPageProxy | undefined;
     let drawing: RenderTask | undefined;
+    let aside: HTMLCanvasElement | undefined;
     function draw(page: PDFPageProxy) {
       const target = canvas.current;
       if (target === null || frame.current === null) {
@@ -280,22 +293,14 @@ function Page({
       drawnPage = page;
       setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
-      // A page is drawn no smaller than at its printed size twice over, however small it is on
-      // show: the colours of a translation are read off the drawing, and drawn smaller, a thin
-      // stroke covers no pixel whole and black print reads grey. That floor is bounded by a
-      // count of pixels, as a file may give its pages in pixels rather than points; a page so
-      // large holds its strokes at many pixels already. A page shown larger than either is
-      // drawn as it is shown, as before.
-      // No page is drawn larger than a bound, however far it is zoomed.
       drawnWidth.current = frame.current.clientWidth;
-      const shown = (frame.current.clientWidth / natural.width) * devicePixelRatio;
-      const bounded = Math.sqrt(MOST_FLOOR_PIXELS / (natural.width * natural.height));
-      const most = Math.sqrt(MOST_PIXELS / (natural.width * natural.height));
-      const sharpness = Math.min(most, Math.max(shown, Math.min(LEAST_SHARPNESS, bounded)));
-      const viewport = page.getViewport({ scale: sharpness });
+      const viewport = page.getViewport({
+        scale: sharpnessOf(frame.current.clientWidth, natural.width, natural.height),
+      });
       // A page drawn again to be sharper is drawn aside, and shown once it is whole, so that it
       // never shows blank meanwhile.
       const into = target.width > 0 && sharpened > 0 ? document.createElement("canvas") : target;
+      aside = into === target ? undefined : into;
       into.width = viewport.width;
       into.height = viewport.height;
       drawing = page.render({ canvas: into, viewport });
@@ -309,8 +314,7 @@ function Page({
             target.width = into.width;
             target.height = into.height;
             target.getContext("2d")?.drawImage(into, 0, 0);
-            into.width = 0;
-            into.height = 0;
+            giveUp(into);
           }
           setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 }));
         },
@@ -331,28 +335,24 @@ function Page({
       // until the new one is whole.
       if (!nearNow.current) {
         setDrawn(undefined);
-        for (const drawnCanvas of [canvas.current, copy.current]) {
-          if (drawnCanvas !== null) {
-            drawnCanvas.width = 0;
-            drawnCanvas.height = 0;
-          }
-        }
+        giveUp(canvas.current);
+        giveUp(copy.current);
       }
-      const release = () => void drawnPage?.cleanup();
+      const release = () => {
+        void drawnPage?.cleanup();
+        giveUp(aside);
+      };
       void drawing?.promise.then(release, release);
     };
   }, [near, file, number, sharpened]);
-
-  // A page made wider than it was drawn for, as by a zoom, is drawn again at its new width once
-  // that has stood still, so that its print stays sharp; a page made narrower keeps its sharper
-  // drawing.
-  useEffect(() => {
-    if (!near || drawnWidth.current === 0 || width <= drawnWidth.current * BLURRED_WIDTH) {
-      return;
-    }
-    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), SETTLED_WIDTH);
-    return () => window.clearTimeout(waiting);
-  }, [near, width]);
+  // A page that leaves the pages gives up its drawings at once.
+  useEffect(
+    () => () => {
+      giveUp(canvas.current);
+      giveUp(copy.current);
+    },
+    [],
+  );
 
   // The source beside the translated page is the same drawing, copied.
   useEffect(() => {
@@ -386,7 +386,7 @@ function Page({
   // drawn as lines on the source's page, and under the translation on a page that shows it.
   const translated = overlay !== undefined;
   return (
-    <div className="page-pair">
+    <div className="page-pair" data-paired={paired ? "" : undefined}>
       <div
         className="page"
         hidden={!paired}
@@ -450,9 +450,6 @@ const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
 const NO_TEXTS: AreaText[] = [];
-// How far below the top of what the pages show a place a link leads to is put, in pixels, so
-// that the line above it shows too.
-const PLACE_MARGIN = 24;
 const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
@@ -484,67 +481,10 @@ function Pages({
   const [drawing] = useState(() => new SelectionDrawing());
   usePageSelecting(viewer, drawing, marks.selecting, inView);
   useTranslatedGlow(viewer, glow, inView);
-  // Where the reader stood before each link that led to a place of the document, last last.
-  const [behind, setBehind] = useState<PagePosition[]>([]);
-  const follow = useCallback((place: Place) => {
-    const shown = viewer.current;
-    const from = shown === null ? undefined : positionOf(shown);
-    if (shown === null || from === undefined) {
-      return;
-    }
-    setBehind((before) => [...before, from]);
-    turnTo(shown, { page: place.page, within: place.top ?? 0 }, PLACE_MARGIN);
-  }, []);
-  useLinkPresses(viewer, follow);
-  // The zoom of the pages, and where the reader stands in them, which a zoom keeps: the place
-  // under the pointer for a pinch or the wheel with Ctrl held, and otherwise the place at the
-  // top of what the pages show.
-  const zoom = useZoom("pages");
-  const standing = useRef<PagePosition>(undefined);
-  const pinned = useRef<{ page: number; x: number; y: number; clientX: number; clientY: number }>(
-    undefined,
-  );
-  const zooming = useCallback((event: WheelEvent) => {
-    const pairs = [...(viewer.current?.children ?? [])];
-    const page = pairs.findIndex((pair) => pair.getBoundingClientRect().bottom > event.clientY);
-    const place = pairs[page]?.getBoundingClientRect();
-    pinned.current =
-      place === undefined
-        ? undefined
-        : {
-            page,
-            x: (event.clientX - place.left) / place.width,
-            y: (event.clientY - place.top) / place.height,
-            clientX: event.clientX,
-            clientY: event.clientY,
-          };
-  }, []);
-  useWheelZoom(viewer, "pages", zooming);
-  useLayoutEffect(() => {
-    const shown = viewer.current;
-    const pin = pinned.current;
-    pinned.current = undefined;
-    if (shown === null) {
-      return;
-    }
-    const place = pin === undefined ? undefined : shown.children[pin.page]?.getBoundingClientRect();
-    if (pin !== undefined && place !== undefined) {
-      (scrollerOf(shown) ?? document.scrollingElement)?.scrollBy({
-        top: place.top + pin.y * place.height - pin.clientY,
-      });
-      shown.scrollBy({ left: place.left + pin.x * place.width - pin.clientX });
-    } else if (standing.current !== undefined) {
-      turnTo(shown, standing.current);
-    }
-  }, [zoom]);
-  const goBack = useCallback(() => {
-    const shown = viewer.current;
-    const to = behind.at(-1);
-    if (shown !== null && to !== undefined) {
-      turnTo(shown, to);
-    }
-    setBehind((before) => before.slice(0, -1));
-  }, [behind]);
+  // A link that leads to a place of the document turns the pages there, with a way back.
+  const goingBack = useGoingBack(viewer);
+  useLinkPresses(viewer, goingBack.follow);
+  const zoom = usePagesZoom(viewer, inView, onTurned);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
   // The outline turned to under the translation before the area over it was set: the area is
@@ -592,33 +532,6 @@ function Pages({
       }
     }
   }, [opening, shapes, inView, pointed]);
-
-  // Where the reader stands is kept, and told if asked, as the pages scroll, once a frame at
-  // most. Whatever scrolls them is heard, since a change of the window's width may hand the
-  // scrolling from the reader's column to the window.
-  useEffect(() => {
-    const shown = viewer.current;
-    if (shown === null) {
-      return;
-    }
-    let frame = 0;
-    const scrolled = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const position = positionOf(shown);
-        if (position !== undefined) {
-          standing.current = position;
-          onTurned?.(position);
-        }
-      });
-    };
-    const heard = { capture: true, passive: true };
-    document.addEventListener("scroll", scrolled, heard);
-    return () => {
-      document.removeEventListener("scroll", scrolled, heard);
-      cancelAnimationFrame(frame);
-    };
-  }, [onTurned]);
 
   useEffect(() => {
     if (viewer.current === null) {
@@ -673,7 +586,7 @@ function Pages({
           markedBlocks={marks.blocks}
           drawing={drawing}
           glow={glow}
-          onPlace={follow}
+          onPlace={goingBack.follow}
           onLinks={onLinks}
           overlay={
             overlays === undefined
@@ -691,11 +604,7 @@ function Pages({
   return (
     <>
       {pages}
-      <GoingBack
-        pages={behind.map((position) => position.page)}
-        onBack={goBack}
-        onDismiss={() => setBehind([])}
-      />
+      <GoingBack going={goingBack} />
     </>
   );
 }

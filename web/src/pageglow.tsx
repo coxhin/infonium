@@ -1,7 +1,7 @@
-import { memo, useEffect, useRef, type RefObject } from "react";
+import { memo, useEffect, useRef, type CSSProperties, type RefObject } from "react";
 import { percent, pieceStarts, type AreaText } from "./areas";
 import { unitOffset, unitOffsets } from "./blocktext";
-import { glowAlso, glowOver } from "./glowing";
+import { GLOW_FADE, GLOW_LASTS, GLOW_WHOLE, glowOver, relight } from "./glowing";
 import type { PageText, Span } from "./pagelines";
 import type { Stretch } from "./sentences";
 import { rangeIn, textOf } from "./textpieces";
@@ -20,11 +20,12 @@ export type TranslatedGlow = { blockNumber: number; stretch: Stretch; pieces: Pl
 
 export type Glow = { key: number; spans: Span[]; translated: TranslatedGlow[] };
 
-// How long after an act of pointing the areas of a translation are waited for, in
-// milliseconds: a page far from where the reader stood is drawn, and its translation set,
-// after the pages have turned to it. The glow lasts 1,900 ms.
-const AREAS_AWAITED = 1500;
 const TRANSLATED_AREAS = ".page[data-translated] .area[data-block-translated]";
+// The times of a glow, for the boxes of a page to fade by as words do.
+const GLOW_TIMES = {
+  "--glow-whole": `${GLOW_WHOLE}ms`,
+  "--glow-fade": `${GLOW_FADE}ms`,
+} as CSSProperties;
 
 // Where each part of a block's translation that holds any of it begins in the whole of it.
 export function placedPieces(whole: string, areas: AreaText[]): PlacedPiece[] {
@@ -73,7 +74,7 @@ export const PageGlow = memo(function PageGlow({
     return null;
   }
   return (
-    <div key={glow.key} className={under ? "page-glow under" : "page-glow"}>
+    <div key={glow.key} className={under ? "page-glow under" : "page-glow"} style={GLOW_TIMES}>
       {boxes.map(({ box }, index) => (
         <div
           key={index}
@@ -114,8 +115,10 @@ function areaRanges(area: Element, glow: TranslatedGlow): Range[] {
 }
 
 // Makes the sentences of the translation that stand for the passage glow in the areas that
-// hold them, on translated pages, at every act of pointing while the pages are on show. Areas
-// that are set after the glow began, on a page drawn late, glow with it.
+// hold them, on translated pages, at every act of pointing while the pages are on show. For as
+// long as the glow lasts, the areas are watched: one set after the glow began, on a page drawn
+// late, glows with it, and one whose text is drawn anew, as when the links of its page arrive,
+// glows again over its new text.
 export function useTranslatedGlow(
   viewer: RefObject<HTMLElement | null>,
   glow: Glow | undefined,
@@ -131,30 +134,23 @@ export function useTranslatedGlow(
       return;
     }
     const blocks = new Map(current.translated.map((each) => [String(each.blockNumber), each]));
-    const done = new Set<Element>();
     let begun = false;
     const light = () => {
-      const ranges: Range[] = [];
-      for (const area of root.querySelectorAll<HTMLElement>(TRANSLATED_AREAS)) {
+      const ranges = [...root.querySelectorAll<HTMLElement>(TRANSLATED_AREAS)].flatMap((area) => {
         const each = blocks.get(area.dataset.blockTranslated ?? "");
-        if (each !== undefined && !done.has(area)) {
-          done.add(area);
-          ranges.push(...areaRanges(area, each));
-        }
-      }
-      if (ranges.length > 0) {
-        if (begun) {
-          glowAlso(ranges);
-        } else {
-          begun = true;
-          glowOver(ranges);
-        }
+        return each === undefined ? [] : areaRanges(area, each);
+      });
+      if (begun) {
+        relight(ranges);
+      } else if (ranges.length > 0) {
+        begun = true;
+        glowOver(ranges);
       }
     };
     light();
     const watcher = new MutationObserver(light);
-    watcher.observe(root, { childList: true, subtree: true });
-    const stop = window.setTimeout(() => watcher.disconnect(), AREAS_AWAITED);
+    watcher.observe(root, { childList: true, subtree: true, characterData: true });
+    const stop = window.setTimeout(() => watcher.disconnect(), GLOW_LASTS);
     return () => {
       watcher.disconnect();
       window.clearTimeout(stop);

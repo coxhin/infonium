@@ -97,13 +97,19 @@
   z-index: 1;
 }
 
+/* A page is as wide as the column holds, up to 62rem, and two side by side up to 125rem; then
+   times their zoom (--zoom), so that a zoomed page that fits the column stays in the middle of
+   it, and one that does not begins at its left edge. */
 .page-pair {
   display: flex;
   flex: none;
   gap: 0.6rem;
-  width: calc(100% * var(--zoom, 1));
-  max-width: calc(125rem * var(--zoom, 1));
+  width: calc(min(100%, 62rem) * var(--zoom, 1));
   justify-content: center;
+}
+
+.page-pair[data-paired] {
+  width: calc(min(100%, 125rem) * var(--zoom, 1));
 }
 
 .page-pair > .page {
