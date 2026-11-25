@@ -23,6 +23,7 @@ from tests.embedding_standin import (
     embedding_standin,
 )
 from tests.model_standin import (
+    GLM_BASE_URL,
     MODEL_BASE_URL,
     MODEL_KEY,
     STANDIN_MODEL,
@@ -170,8 +171,10 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
-    # The service's own provider of its translator, called anew for each start.
+    # The service's own providers of its translator and of the models it translates with,
+    # called anew for each start.
     made_translator = api.translator.__wrapped__
+    made_translation_model = api.translation_model.__wrapped__
 
     def start(
         wire_api: WireApi = WireApi.RESPONSES,
@@ -202,14 +205,17 @@ def start_app(
         monkeypatch.setattr(api, "language_model", language_model)
         monkeypatch.setattr(api, "answering_model", answering_model)
 
-        @cache
-        def translation_model() -> LanguageModel:
-            return openai_model(name=TRANSLATION_MODEL, wire_api=wire_api)
-
         # The translator is made anew for each start by the service's own provider, on the
-        # test's library and models; its translating model has a name of its own, so that the
-        # stand-in tells its requests from those of the model that writes digests.
-        monkeypatch.setattr(api, "translation_model", translation_model)
+        # test's library and models, and so are the models it translates with. Its default
+        # model has a name of its own, so that the stand-in tells its requests from those of
+        # the model that writes digests. GLM's endpoint is the stand-in's, reached with no key
+        # until a test gives one.
+        monkeypatch.setattr(api.settings, "wire_api", wire_api)
+        monkeypatch.setattr(api.settings, "model", STANDIN_MODEL)
+        monkeypatch.setattr(api.settings, "translation_model", TRANSLATION_MODEL)
+        monkeypatch.setattr(api.settings, "glm_base_url", GLM_BASE_URL)
+        monkeypatch.setattr(api.settings, "glm_api_key", None)
+        monkeypatch.setattr(api, "translation_model", cache(made_translation_model))
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)

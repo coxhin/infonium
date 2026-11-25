@@ -23,6 +23,8 @@ type OfEpoch<Value> = { epoch: number; values: ReadonlyMap<number, Value> };
 export type TranslationState = {
   // Nothing is loaded for an item until its translation is first wanted.
   loaded: Loaded<Translation> | undefined;
+  // The model a translation that starts or goes on is asked of; none: the service's default.
+  model: string | undefined;
   interrupted: boolean;
   // The blocks translated so far by number. A block keeps its object for as long as its
   // translation stays the same, so that a view drawn from it need not be drawn again.
@@ -106,8 +108,12 @@ function withValue<Value>(
 // The translation of an item's document. It is read the first time it is wanted, and asked
 // for only when the service has never been asked for it; then it is watched while it is under
 // way, whatever is wanted afterwards. A translation that stopped goes on only when the reader
-// asks it to.
-export function useTranslation(itemId: string, wanted: boolean): TranslationState {
+// asks it to. A translation that starts or goes on is asked of the model given at that moment.
+export function useTranslation(
+  itemId: string,
+  wanted: boolean,
+  model: string | undefined,
+): TranslationState {
   const [asked, setAsked] = useState(wanted);
   if (wanted && !asked) {
     setAsked(true);
@@ -116,6 +122,10 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
   useEffect(() => {
     wantedNow.current = wanted;
   }, [wanted]);
+  const modelNow = useRef(model);
+  useEffect(() => {
+    modelNow.current = model;
+  }, [model]);
   const [round, setRound] = useState<Round>({ asking: "read", count: 0, epoch: 0 });
   const [translatedAgain, setTranslatedAgain] = useState<OfEpoch<TranslatedBlock>>({
     epoch: 0,
@@ -136,7 +146,9 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
     }
     if (begun.current?.key !== key && round.asking !== "read") {
       const request =
-        round.asking === "anew" ? translateAnew(itemId) : ensureTranslation(itemId);
+        round.asking === "anew"
+          ? translateAnew(itemId, modelNow.current)
+          : ensureTranslation(itemId, modelNow.current);
       begun.current = { key, request };
       return request;
     }
@@ -146,7 +158,7 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
       .then(() => readTranslation(itemId))
       .then((translation) =>
         translation.progress.kind === "unasked" && wantedNow.current
-          ? ensureTranslation(itemId)
+          ? ensureTranslation(itemId, modelNow.current)
           : translation,
       );
   }
@@ -222,6 +234,7 @@ export function useTranslation(itemId: string, wanted: boolean): TranslationStat
 
   return {
     loaded,
+    model,
     interrupted: watched.interrupted,
     blocks,
     again: again.values,

@@ -1176,6 +1176,10 @@
             "title": "Kind",
             "type": "string"
           },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -1193,6 +1197,7 @@
         },
         "required": [
           "kind",
+          "model",
           "translated",
           "total",
           "reason"
@@ -1396,6 +1401,10 @@
             "title": "Kind",
             "type": "string"
           },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
           "total": {
             "minimum": 0.0,
             "title": "Total",
@@ -1409,10 +1418,63 @@
         },
         "required": [
           "kind",
+          "model",
           "translated",
           "total"
         ],
         "title": "Translating",
+        "type": "object"
+      },
+      "TranslationAsked": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "TranslationAsked",
+        "type": "object"
+      },
+      "TranslationModelView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ready"
+        ],
+        "title": "TranslationModelView",
+        "type": "object"
+      },
+      "TranslationModels": {
+        "properties": {
+          "default": {
+            "title": "Default",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationModelView"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "default",
+          "models"
+        ],
+        "title": "TranslationModels",
         "type": "object"
       },
       "TranslationView": {
@@ -2499,6 +2561,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TranslationAsked"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Asked"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -2546,6 +2625,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TranslationAsked"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Asked"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -2660,6 +2756,24 @@
           }
         },
         "summary": "Retranslate Block"
+      }
+    },
+    "/api/translation-models": {
+      "get": {
+        "operationId": "translation_models_api_translation_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationModels"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Translation Models"
       }
     }
   }

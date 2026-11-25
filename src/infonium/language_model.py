@@ -1,16 +1,17 @@
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
-from json import JSONDecodeError
 from typing import Any, Final, Literal
 
 from openai import (
     APIConnectionError,
     APIError,
     APIStatusError,
+    Omit,
     OpenAI,
     OpenAIError,
     omit,
@@ -19,6 +20,7 @@ from openai import (
 )
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+from openai.types.chat.completion_create_params import ResponseFormat
 from openai.types.responses import (
     Response,
     ResponseCompletedEvent,
@@ -34,7 +36,8 @@ from openai.types.responses import (
     ResponseTextDoneEvent,
 )
 from openai.types.responses.response import IncompleteDetails
-from pydantic import BaseModel, ValidationError
+from openai.types.shared import ReasoningEffort
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from infonium.model_connection import Ending, endable_http_client
 
@@ -94,6 +97,16 @@ ASSISTANT_ROLE: Final = "assistant"
 TOOL_ROLE: Final = "tool"
 FUNCTION_TOOL: Final = "function"
 JSON_SCHEMA: Final = "json_schema"
+JSON_OBJECT: Final = "json_object"
+# GLM's endpoint holds a reply to JSON but not to a schema, so its model is told the reply's
+# form after its instructions, by the form's name and schema.
+FORM_TOLD = (
+    "\n\nReply with one JSON object of the form {name}, and nothing else. It follows this "
+    "JSON schema:\n{schema}"
+)
+# GLM's models always reason, and by default as long as they may; infonium asks them to
+# reason little.
+GLM_REASONING_EFFORT: Final = "low"
 INPUT_TEXT: Final = "input_text"
 MESSAGE_ITEM: Final = "message"
 FUNCTION_CALL_ITEM: Final = "function_call"
@@ -394,6 +407,23 @@ def chat_tool_calls(pieces: dict[int, list[ChoiceDeltaToolCall]]) -> list[ToolCa
 
 
 class ChatCompletionsLanguageModel(LanguageModel):
+    # How much the model is asked to reason before it replies; by default, as much as the
+    # endpoint has it reason.
+    reasoning_effort: ReasoningEffort | Omit = omit
+
+    def system_text(self, instructions: str, output: type[BaseModel]) -> str:
+        return instructions
+
+    def reply_format(self, output: type[BaseModel]) -> ResponseFormat:
+        return {
+            "type": JSON_SCHEMA,
+            "json_schema": {
+                "name": output.__name__,
+                "schema": reply_schema(output),
+                "strict": True,
+            },
+        }
+
     def replying[Output: BaseModel](
         self,
         instructions: str,
@@ -403,7 +433,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
         ending: Ending,
     ) -> Generator[ReplyEvent[Output]]:
         sent: list[ChatCompletionMessageParam] = [
-            {"role": SYSTEM_ROLE, "content": instructions},
+            {"role": SYSTEM_ROLE, "content": self.system_text(instructions, output)},
             *(chat_message(message) for message in messages),
         ]
         spent = NO_TOKENS
@@ -466,14 +496,8 @@ class ChatCompletionsLanguageModel(LanguageModel):
             stream = self.client.chat.completions.create(
                 model=self.name,
                 messages=sent,
-                response_format={
-                    "type": JSON_SCHEMA,
-                    "json_schema": {
-                        "name": output.__name__,
-                        "schema": reply_schema(output),
-                        "strict": True,
-                    },
-                },
+                response_format=self.reply_format(output),
+                reasoning_effort=self.reasoning_effort,
                 tools=[
                     pydantic_function_tool(
                         tool.arguments, name=tool.name, description=tool.description
@@ -508,7 +532,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
             raise
         except APIError as failed:
             raise UnstructuredCompletion(failed.message) from failed
-        except JSONDecodeError as failed:
+        except json.JSONDecodeError as failed:
             raise UnstructuredCompletion(UNREADABLE_EVENT.format(error=failed)) from failed
         if refusal:
             raise UnstructuredCompletion(refusal)
@@ -526,6 +550,19 @@ class ChatCompletionsLanguageModel(LanguageModel):
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
         )
+
+
+class GlmLanguageModel(ChatCompletionsLanguageModel):
+    # A model of GLM's endpoint, which speaks the Chat Completions API. The reply is held to
+    # its form as it is read, as every reply is.
+    reasoning_effort = GLM_REASONING_EFFORT
+
+    def system_text(self, instructions: str, output: type[BaseModel]) -> str:
+        schema = json.dumps(reply_schema(output), ensure_ascii=False)
+        return instructions + FORM_TOLD.format(name=output.__name__, schema=schema)
+
+    def reply_format(self, output: type[BaseModel]) -> ResponseFormat:
+        return {"type": JSON_OBJECT}
 
 
 def responses_message(message: Message) -> ResponseInputItemParam:
@@ -677,7 +714,7 @@ class ResponsesLanguageModel(LanguageModel):
                             raise UnstructuredCompletion(INCOMPLETE_REPLY.format(reason=reason))
                         case ResponseFailedEvent() | ResponseIncompleteEvent():
                             raise UnstructuredCompletion(NO_PARSED_OUTPUT)
-        except JSONDecodeError as failed:
+        except json.JSONDecodeError as failed:
             raise UnstructuredCompletion(UNREADABLE_EVENT.format(error=failed)) from failed
         if not calls and not done:
             raise UnstructuredCompletion(NO_PARSED_OUTPUT)
@@ -709,3 +746,15 @@ def endable_openai_model(name: str, wire_api: WireApi) -> LanguageModel:
     # their connections, through openai_model.
     client = OpenAI(timeout=MODEL_TIMEOUT_SECONDS, max_retries=0, http_client=endable_http_client())
     return WIRE_API_MODELS[wire_api](client=client, name=name)
+
+
+def glm_model(name: str, base_url: str, api_key: SecretStr) -> LanguageModel:
+    # A model of GLM's endpoint, reached with GLM's own key alone: never with the address or
+    # the key that a client of the openai package finds by itself.
+    client = OpenAI(
+        base_url=base_url,
+        api_key=api_key.get_secret_value(),
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_retries=MODEL_RETRIES,
+    )
+    return GlmLanguageModel(client=client, name=name)

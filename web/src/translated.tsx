@@ -168,25 +168,35 @@ export const Row = memo(function Row({
 
 // A stop is said from the counts the service gives, with where a block left out can be
 // translated by itself; why it stopped follows as the service puts it, a detail read as it
-// stands.
+// stands. A translation goes on with the model chosen now, which the control names when it is
+// not the one the translation stopped with.
 function StoppedNote({
   progress,
+  model,
   onGoOn,
 }: {
-  progress: { translated: number; total: number; reason: string };
+  progress: { model: string; translated: number; total: number; reason: string };
+  model: string | undefined;
   onGoOn: () => void;
 }) {
   const left = progress.total - progress.translated;
+  const changed = model !== undefined && model !== progress.model;
   return (
     <p className="translation-note failed">
       <span>
-        翻译停在了半路：{progress.total} 段中已译 {progress.translated} 段，其余 {left}{" "}
-        段先显示原文。在「文本」里，没译的段落旁有 ↻，可以单独翻译它。
+        用 {progress.model} 的翻译停在了半路：{progress.total} 段中已译 {progress.translated}{" "}
+        段，其余 {left} 段先显示原文。在「文本」里，没译的段落旁有 ↻，可以单独翻译它。
       </span>
-      <button onClick={onGoOn}>继续翻译</button>
+      <button onClick={onGoOn}>{changed ? `改用 ${model} 继续翻译` : "继续翻译"}</button>
       <span className="stopped-reason">原因：{progress.reason}</span>
     </p>
   );
+}
+
+// The models that made the blocks on show, a translation's own and the one that translates a
+// block again, in the order they first come.
+function modelsOf(blocks: ReadonlyMap<number, TranslatedBlock>): string {
+  return [...new Set(Array.from(blocks.values(), (block) => block.model))].join("、");
 }
 
 // How far the translation has come, and what can be done about it from there.
@@ -225,21 +235,23 @@ export function TranslationNote({ translation }: { translation: TranslationState
       // nothing to count.
       return progress.translated === 0 ? (
         <p className="translation-note">
-          <span>正在翻译，第一批译文还没有到，通常要等几十秒</span>
+          <span>正在用 {progress.model} 翻译，第一批译文还没有到，通常要等几十秒</span>
           <progress />
           {interrupted}
         </p>
       ) : (
         <p className="translation-note">
           <span>
-            正在翻译：已译 {progress.translated} / {progress.total} 段
+            正在用 {progress.model} 翻译：已译 {progress.translated} / {progress.total} 段
           </span>
           <progress value={progress.translated} max={Math.max(progress.total, 1)} />
           {interrupted}
         </p>
       );
     case "stopped":
-      return <StoppedNote progress={progress} onGoOn={translation.goOn} />;
+      return (
+        <StoppedNote progress={progress} model={translation.model} onGoOn={translation.goOn} />
+      );
     case "unneeded":
       // The service judges the language from a sample; a reader who finds passages in another
       // language may have the document translated all the same.
@@ -255,7 +267,8 @@ export function TranslationNote({ translation }: { translation: TranslationState
       return (
         <p className="translation-note">
           <span>
-            已译完 · 输入 {input.toLocaleString()} · 输出 {output.toLocaleString()} tokens
+            已译完 · {modelsOf(translation.blocks)} · 输入 {input.toLocaleString()} · 输出{" "}
+            {output.toLocaleString()} tokens
           </span>
           <AnewControl translation={translation} kept={translation.blocks.size} />
         </p>
@@ -276,7 +289,10 @@ function AnewControl({ translation, kept }: { translation: TranslationState; kep
   }
   return (
     <span className="anew-asking" role="group" aria-label="确认全部重新翻译">
-      <span>重新翻译会丢掉现有的 {kept} 段译文，要等新的译文从头译出。</span>
+      <span>
+        {translation.model === undefined ? "" : `用 ${translation.model} `}重新翻译会丢掉现有的{" "}
+        {kept} 段译文，要等新的译文从头译出。
+      </span>
       <button
         onClick={() => {
           setAsking(false);

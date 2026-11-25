@@ -54,6 +54,29 @@
   z-index: 1;
 }
 
+/* The model translations are asked of, chosen beside the switch. */
+.model-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.model-choice select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.model-choice select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .translation-note {
   display: flex;
   flex-wrap: wrap;

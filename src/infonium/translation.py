@@ -64,17 +64,20 @@ class Unasked(Tagged):
 
 
 class Translating(Tagged):
-    # The translation is under way: of the blocks that are to be translated, so many are.
+    # The translation is under way, asking the model named: of the blocks that are to be
+    # translated, so many are.
     kind: Literal[ProgressKind.TRANSLATING] = ProgressKind.TRANSLATING
+    model: str
     translated: Annotated[int, Field(ge=0)]
     total: Annotated[int, Field(ge=0)]
 
 
 class Stopped(Tagged):
-    # The translation stopped before its end: of the blocks that are to be translated, so
-    # many are, and the reason is why it stopped. What was translated is kept, and a
-    # translation that is asked for again goes on from there.
+    # The translation stopped before its end, in a run that asked the model named: of the
+    # blocks that are to be translated, so many are, and the reason is why it stopped. What
+    # was translated is kept, and a translation that is asked for again goes on from there.
     kind: Literal[ProgressKind.STOPPED] = ProgressKind.STOPPED
+    model: str
     translated: Annotated[int, Field(ge=0)]
     total: Annotated[int, Field(ge=0)]
     reason: str

@@ -75,11 +75,11 @@ def progress_of(record: TranslationRecord, document: Document, kept: int) -> Pro
     total = len(translated_numbers(document))
     match record.course:
         case Running():
-            return Translating(translated=kept, total=total)
+            return Translating(model=record.model, translated=kept, total=total)
         case Halted() if kept == total:
             return Translated()
         case Halted(reason=reason):
-            return Stopped(translated=kept, total=total, reason=reason)
+            return Stopped(model=record.model, translated=kept, total=total, reason=reason)
         case course:
             return course
 
@@ -101,13 +101,14 @@ def restarted(
     records: list[TranslationRecord], first: TranslationRecord
 ) -> list[TranslationRecord]:
     # The translation as it starts: as the first record given when it was never asked for,
-    # in a new run when it has stopped, and not at all when it is under way, done or
-    # unneeded.
+    # in a new run that asks the first record's model when it has stopped, and not at all
+    # when it is under way, done or unneeded.
     match records:
         case []:
             return [first]
         case [TranslationRecord(course=Halted()) as record]:
-            return [record.model_copy(update={"run": record.run + 1, "course": Running()})]
+            update = {"run": record.run + 1, "model": first.model, "course": Running()}
+            return [record.model_copy(update=update)]
         case _:
             return []
 
@@ -120,13 +121,14 @@ def gather_failure(failures: list[BaseException], request: Future[None]) -> None
 
 class Translator:
     # Translates documents of a library into one language, block by block and off the
-    # thread that asks, and keeps each block as it comes. The models are made when they are
-    # first asked for.
+    # thread that asks, and keeps each block as it comes. A translation is made with the
+    # model asked for, by its name; one block is translated again with a model of its own.
+    # The models are made when they are first asked for.
     def __init__(
         self,
         store: LibraryStore,
         language: str,
-        translating: Callable[[], LanguageModel],
+        translating: Callable[[str], LanguageModel],
         retranslating: Callable[[], LanguageModel],
     ) -> None:
         self.store = store
@@ -182,8 +184,8 @@ class Translator:
         self.ends[key] = Event()
         return self.ends[key]
 
-    def ensure(self, owner: str, item_id: str) -> TranslationStanding:
-        # Starts the translation when it was never asked for or has stopped.
+    def ensure(self, owner: str, item_id: str, model: str) -> TranslationStanding:
+        # Starts the translation with the model when it was never asked for or has stopped.
         with self.turn, self.opened(owner) as (library, shelf):
             holding = library.holding(item_id)
             first = TranslationRecord(
@@ -193,6 +195,7 @@ class Translator:
                 title=holding.title,
                 survey=Unsurveyed(),
                 run=1,
+                model=model,
                 course=Running(),
                 input_tokens=0,
                 output_tokens=0,
@@ -209,10 +212,10 @@ class Translator:
             )
         return self.standing(owner, item_id)
 
-    def anew(self, owner: str, item_id: str) -> TranslationStanding:
-        # Discards what was translated and starts from the first block, in a run that takes
-        # the place of any under way. A document that the survey found to need no
-        # translation, or that a reader asked for anew after that, is translated whatever
+    def anew(self, owner: str, item_id: str, model: str) -> TranslationStanding:
+        # Discards what was translated and starts from the first block with the model, in a
+        # run that takes the place of any under way. A document that the survey found to need
+        # no translation, or that a reader asked for anew after that, is translated whatever
         # its language.
         with self.turn, self.opened(owner) as (library, shelf):
             holding = library.holding(item_id)
@@ -228,6 +231,7 @@ class Translator:
                 title=holding.title,
                 survey=Overruled() if overruled else Unsurveyed(),
                 run=1 + max((record.run for record in earlier), default=0),
+                model=model,
                 course=Running(),
                 input_tokens=0,
                 output_tokens=0,
@@ -369,9 +373,10 @@ class Translator:
             return
         document = holding.document
         pending = [number for number in translated_numbers(document) if number not in kept]
+        model = self.translating(records[0].model)
         match records[0].survey:
             case Unsurveyed() if pending:
-                survey = surveyed(self.translating(), self.language, document)
+                survey = surveyed(model, self.language, document)
                 if survey.output.written_in_asked_language:
                     self.keep_survey(owner, document_id, run, survey, Unneeded())
                     return
@@ -381,7 +386,6 @@ class Translator:
                 terms = found
             case _:
                 terms = []
-        model = self.translating()
         failures: list[BaseException] = []
         requesting = ThreadPoolExecutor(
             max_workers=REQUESTS_AT_ONCE, thread_name_prefix="translation-request"

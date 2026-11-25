@@ -27,7 +27,7 @@ from infonium.document import (
     TimePlace,
 )
 from infonium.transcript import SENTENCE_ENDS, ends_sentence
-from tests.model_standin import Rejection
+from tests.model_standin import TRANSLATION_MODEL, Rejection
 from tests.service import SITE, App
 from tests.translation_standin import (
     RECORDING,
@@ -153,7 +153,12 @@ def test_every_block_that_says_something_in_words_is_translated_and_no_other(
     app.model.reset(translating())
     document = kept(app, blocks)
     started = asked_for(app, document.item_id)
-    assert started["progress"] == {"kind": "translating", "translated": 0, "total": len(worded)}, (
+    assert started["progress"] == {
+        "kind": "translating",
+        "model": TRANSLATION_MODEL,
+        "translated": 0,
+        "total": len(worded),
+    }, (
         f"Translating does not count the {len(worded)} blocks that say something in words: "
         f"{started['progress']}"
     )

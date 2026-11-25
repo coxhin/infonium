@@ -12,7 +12,7 @@ from urllib.parse import urldefrag, urlsplit
 import openai
 from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AfterValidator, BaseModel, Field, HttpUrl
 
 from infonium.asking import UnusableTranslation
 from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE, PAGE_ATTRIBUTE
@@ -54,6 +54,7 @@ from infonium.language_model import (
     UnmeteredCompletion,
     UnstructuredCompletion,
     endable_openai_model,
+    glm_model,
     openai_model,
 )
 from infonium.library import (
@@ -115,6 +116,11 @@ OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
 UNBUILT = "this part of infonium is not built yet"
 OPENAI_LOGGER = "openai"
+NO_GLM_KEY = (
+    "{model} is reached at GLM's endpoint with GLM's key, and INFONIUM_GLM_API_KEY is not set"
+)
+NOT_OFFERED = "no translation model is named {model}; the models are {models}"
+NAMES_BETWEEN = ", "
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
 DISCONNECT = "http.disconnect"
@@ -169,9 +175,28 @@ def answering() -> Answering:
     return Answering()
 
 
+class UnreachableModel(Exception):
+    # infonium lacks what it needs to reach the model's endpoint.
+    pass
+
+
+def offered_translation_models() -> list[str]:
+    # The models a document may be translated with, in the order a reader is offered them:
+    # the one a translation is made with unless the reader chooses another, the one that
+    # writes digests, then GLM's.
+    return list(dict.fromkeys([settings.translation_model, settings.model, *settings.glm_models]))
+
+
 @cache
-def translation_model() -> LanguageModel:
-    return openai_model(name=settings.translation_model, wire_api=settings.wire_api)
+def translation_model(name: str) -> LanguageModel:
+    # A model a translation is made with, at the endpoint that serves it: one of GLM's at
+    # GLM's endpoint with GLM's key, any other at the endpoint of the model that writes
+    # digests.
+    if name not in settings.glm_models:
+        return openai_model(name=name, wire_api=settings.wire_api)
+    if settings.glm_api_key is None:
+        raise UnreachableModel(NO_GLM_KEY.format(model=name))
+    return glm_model(name=name, base_url=settings.glm_base_url, api_key=settings.glm_api_key)
 
 
 @cache
@@ -254,6 +279,32 @@ class TranslationView(BaseModel):
     output_tokens: int
     blocks: list[TranslatedBlock]
     blocks_to_translate: list[BlockNumber]
+
+
+def offered_model(name: str) -> str:
+    offered = offered_translation_models()
+    if name not in offered:
+        raise ValueError(NOT_OFFERED.format(model=name, models=NAMES_BETWEEN.join(offered)))
+    return name
+
+
+class TranslationAsked(BaseModel):
+    # The model a translation that starts or goes on is made with, one of those offered.
+    model: Annotated[str, AfterValidator(offered_model)]
+
+
+class TranslationModelView(BaseModel):
+    # A model a document may be translated with, and whether infonium has what it needs to
+    # reach it: one of GLM's needs GLM's key.
+    name: str
+    ready: bool
+
+
+class TranslationModels(BaseModel):
+    # The models a document may be translated with, in the order a reader is offered them,
+    # and the one a translation is made with unless the reader chooses another.
+    default: str
+    models: list[TranslationModelView]
 
 
 class PageBlocks(BaseModel):
@@ -524,17 +575,41 @@ def item_translation(item_id: str, owner: Owner) -> TranslationView:
     return translation_view(translator().standing(owner, item_id))
 
 
+@app.get("/api/translation-models")
+def translation_models() -> TranslationModels:
+    return TranslationModels(
+        default=settings.translation_model,
+        models=[
+            TranslationModelView(
+                name=name,
+                ready=name not in settings.glm_models or settings.glm_api_key is not None,
+            )
+            for name in offered_translation_models()
+        ],
+    )
+
+
+def asked_model(asked: TranslationAsked | None) -> str:
+    # A translation asked for without a model is made with the default.
+    return settings.translation_model if asked is None else asked.model
+
+
 @app.put("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def ensure_translation(item_id: str, owner: Owner) -> TranslationView:
-    # Starts the translation unless it is under way, done or unneeded. One that stopped goes
-    # on from the blocks it has.
-    return translation_view(translator().ensure(owner, item_id))
+def ensure_translation(
+    item_id: str, owner: Owner, asked: TranslationAsked | None = None
+) -> TranslationView:
+    # Starts the translation with the model asked for unless it is under way, done or
+    # unneeded. One that stopped goes on from the blocks it has, with that model.
+    return translation_view(translator().ensure(owner, item_id, asked_model(asked)))
 
 
 @app.post("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def translate_anew(item_id: str, owner: Owner) -> TranslationView:
-    # Starts the translation from its first block, in place of what was translated before.
-    return translation_view(translator().anew(owner, item_id))
+def translate_anew(
+    item_id: str, owner: Owner, asked: TranslationAsked | None = None
+) -> TranslationView:
+    # Starts the translation from its first block with the model asked for, in place of what
+    # was translated before.
+    return translation_view(translator().anew(owner, item_id, asked_model(asked)))
 
 
 @app.post(

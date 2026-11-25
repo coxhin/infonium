@@ -533,6 +533,7 @@ def test_put_answers_at_once_and_changes_nothing_while_translating_or_translated
     answered_at_once = not gate.is_set()
     assert answered_at_once and started["progress"] == {
         "kind": "translating",
+        "model": TRANSLATION_MODEL,
         "translated": 0,
         "total": len(blocks),
     }, f"PUT did not answer at once with Translating: {started['progress']}"
@@ -569,6 +570,7 @@ def test_a_block_is_served_as_soon_as_it_is_kept(app: App, gate: threading.Event
     assert view["progress"]["kind"] == "translating", "the translation ended with requests held"
     assert view["progress"] == {
         "kind": "translating",
+        "model": TRANSLATION_MODEL,
         "translated": len(view["blocks"]),
         "total": len(blocks),
     }, f"Translating does not count the blocks kept: {view['progress']}"
@@ -604,7 +606,12 @@ def test_post_discards_what_was_translated_and_ends_the_run_before_it(
         "POST answered with blocks of the translation before it: it did not discard them"
     )
     assert answered["progress"] in (
-        {"kind": "translating", "translated": len(answered_texts), "total": len(blocks)},
+        {
+            "kind": "translating",
+            "model": TRANSLATION_MODEL,
+            "translated": len(answered_texts),
+            "total": len(blocks),
+        },
         {"kind": "translated"},
     ), f"POST did not answer with the new run's progress: {answered['progress']}"
     time.sleep(QUIET_SECONDS_SHORT)
@@ -775,6 +782,7 @@ def test_a_translation_whose_every_block_is_kept_one_by_one_is_translated(
         if number < len(blocks) - 1:
             assert progress == {
                 "kind": "stopped",
+                "model": TRANSLATION_MODEL,
                 "translated": number + 1,
                 "total": len(blocks),
                 "reason": stopped["progress"]["reason"],

@@ -4,6 +4,7 @@ import type { Pointer } from "./citing";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
 import { checkAnchor, hideAnchor } from "./reader";
+import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
 import { SettingSwitch, useSetting } from "./setting";
 import { SidePanel, useLosing } from "./side";
 import { TranslationNote } from "./translated";
@@ -55,9 +56,11 @@ export function ReadItem({
     setMade((before) => (before.has(name) ? before : new Set(before).add(name)));
   }
   const setting = useSetting();
+  const modelChoice = useModelChoice();
   const translation = useTranslation(
     entry.id,
     shown !== undefined && shown.showsTranslation && setting !== "source",
+    modelChoice.chosen,
   );
   const [pointed, setPointed] = useState<Pointed>();
   const [played, setPlayed] = useState<TimePlace[]>([]);
@@ -110,6 +113,7 @@ export function ReadItem({
               </div>
             )}
             <SettingSwitch setting={setting} />
+            <ModelChoiceSelect choice={modelChoice} />
             {setting !== "source" && <TranslationNote translation={translation} />}
           </div>
           {surface === "time" && (

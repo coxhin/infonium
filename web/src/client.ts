@@ -15,6 +15,7 @@ export type Digest = Schemas["DigestView"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
+export type TranslationModels = Schemas["TranslationModels"];
 export type TranslatedBlock = Schemas["TranslatedBlock"];
 export type Segment = Schemas["Segment"];
 export type PageBlocks = Schemas["PageBlocks"];
@@ -185,17 +186,34 @@ export function readTranslation(itemId: string): Promise<Translation> {
   );
 }
 
-// Starts the translation unless it is under way, done or unneeded.
-export function ensureTranslation(itemId: string): Promise<Translation> {
+// What a translation that starts or goes on is asked of: the model named, or without one the
+// service's default.
+function askedOf(model: string | undefined) {
+  return model === undefined ? undefined : { model };
+}
+
+// Starts the translation with the model unless it is under way, done or unneeded; one that
+// stopped goes on with it.
+export function ensureTranslation(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
-    api.PUT("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+    api.PUT("/api/items/{item_id}/translation", {
+      params: { path: { item_id: itemId } },
+      body: askedOf(model),
+    }),
   );
 }
 
-export function translateAnew(itemId: string): Promise<Translation> {
+export function translateAnew(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
-    api.POST("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+    api.POST("/api/items/{item_id}/translation", {
+      params: { path: { item_id: itemId } },
+      body: askedOf(model),
+    }),
   );
+}
+
+export function readTranslationModels(): Promise<TranslationModels> {
+  return settled(api.GET("/api/translation-models"));
 }
 
 export function retranslateBlock(itemId: string, blockNumber: number): Promise<TranslatedBlock> {
