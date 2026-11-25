@@ -324,8 +324,13 @@ def test_an_entry_written_in_an_odd_number_of_digits_is_left_as_it_is_written(
     assert plain_map(written) == written, "an entry PDFium reads in a way of its own was rewritten"
 
 
-def test_a_map_that_cannot_be_decoded_is_left_and_the_others_are_given_plain(
-    tmp_path: Path,
+# A map's stream may be data its filter cannot decode, or name a filter that no reader knows.
+BROKEN_STREAMS = [(b"not deflated", "/FlateDecode"), (b"anything", "/NoSuchDecode")]
+
+
+@pytest.mark.parametrize(("data", "filter_name"), BROKEN_STREAMS)
+def test_a_map_that_cannot_be_read_is_left_and_the_others_are_given_plain(
+    data: bytes, filter_name: str, tmp_path: Path
 ) -> None:
     italic = dict.fromkeys(string.ascii_letters, "ITALIC")
     styled = styled_file(sample_file("mixed_layers"), italic, lambda _: "single", tmp_path / STYLED)
@@ -337,7 +342,7 @@ def test_a_map_that_cannot_be_decoded_is_left_and_the_others_are_given_plain(
             and isinstance(mapped := font.get(Name.ToUnicode), pikepdf.Stream)
         ]
         assert len(maps) > 1, "the sample has no two fonts with maps of their own"
-        maps[0].write(b"not deflated", filter=Name.FlateDecode)
+        maps[0].write(data, filter=Name(filter_name))
         broken = tmp_path / "broken.pdf"
         document.save(broken)
     read = page_texts(broken)

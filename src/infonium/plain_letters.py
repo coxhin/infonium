@@ -143,11 +143,12 @@ def plain_letters_file(file: Path, copy: Path) -> Path:
         }
         rewritten = {}
         for key, mapped in maps.items():
-            # A map whose stream QPDF cannot decode is left as it is: PDFium reads of it what
-            # it can, and the file is read as it was.
+            # A map whose stream QPDF cannot read, by a filter it does not know or data it
+            # cannot decode, is left as it is: PDFium reads of it what it can, and the file is
+            # read as it was.
             try:
                 written = mapped.read_bytes()
-            except pikepdf.DataDecodingError:
+            except pikepdf.PdfError:
                 continue
             plain_written = plain_map(written)
             if plain_written != written:
