@@ -3,7 +3,6 @@ import unicodedata
 from itertools import accumulate, pairwise
 from pathlib import Path
 from statistics import median
-from typing import Final
 
 from lxml import html
 from pydantic import BaseModel
@@ -54,6 +53,7 @@ from infonium.mineru import (
     word_lines,
 )
 from infonium.pdfium import WHOLE_TURN, Quarters, StoredFile, stored_file, upright_file
+from infonium.plain_letters import PLAIN_FORM, plain_letters_file
 
 EXTRACTOR = "pdf/1"
 # The file in the folder that the engine is given when the PDF turns a page.
@@ -61,6 +61,9 @@ UPRIGHT_COPY = "upright.pdf"
 # The file in the folder that the engine is given when a font of the PDF says its letters
 # reach less far than they do.
 MEASURED_COPY = "measured.pdf"
+# The file in the folder that the engine is given when a font of the PDF says a letter is one
+# of the mathematical alphabets.
+PLAIN_COPY = "plain.pdf"
 # The language model that recognises the words of a page read as a picture writes them the
 # way Markdown is written, where a dollar sign would open a formula: after a backslash.
 DOLLAR = "$"
@@ -83,8 +86,6 @@ WORD = re.compile(rf"{LETTERS}(?:{HYPHEN}{LETTERS})*")
 BROKEN_END = re.compile(rf"({LETTERS})[{HYPHENS}]$")
 SCRIPT_STYLES = {"sub": Style.SUBSCRIPT, "sup": Style.SUPERSCRIPT}
 SCRIPT = re.compile(rf"<({'|'.join(SCRIPT_STYLES)})>(.*?)</\1>", re.DOTALL)
-# The normal form of a text in which a ligature is its letters.
-PLAIN_FORM: Final = "NFKC"
 # The ligatures that begin with an f (ff, fi, fl, ffi, ffl), by the code points that stand
 # for them, with their letters written out.
 LIGATURES = {code: unicodedata.normalize(PLAIN_FORM, chr(code)) for code in range(0xFB00, 0xFB05)}
@@ -700,12 +701,15 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear. The engine is given the file
-    # with no page turned and with fonts that say how far their letters reach, and what it
-    # finds is placed on the pages as the file shows them.
+    # with no page turned, with fonts that say how far their letters reach, and with plain
+    # letters for those of the mathematical alphabets; the text layer is read from that file,
+    # so that its words are the engine's. What the engine finds is placed on the pages as the
+    # file shows them.
     upright = upright_file(file, folder / UPRIGHT_COPY)
-    stored = stored_file(upright.file)
     measured = measured_file(upright.file, folder / MEASURED_COPY)
-    to_parse = FileToParse(file=measured, engine=engine, folder=folder)
+    handed = plain_letters_file(measured, folder / PLAIN_COPY)
+    stored = stored_file(handed)
+    to_parse = FileToParse(file=handed, engine=engine, folder=folder)
     parsed = parsed_pages(to_parse, len(stored.pages))
     blocks = pdf_blocks(parsed, stored, upright.turned)
     if not blocks:

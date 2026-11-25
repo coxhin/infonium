@@ -1,5 +1,6 @@
 import ctypes
 import math
+import re
 import threading
 from collections import Counter
 from pathlib import Path
@@ -28,6 +29,8 @@ UNFLATTENED = "PDFium could not draw the annotations of a page into its content"
 # How far a letter reaches is told to a thousandth of the size it is drawn at, so that a
 # letter drawn alike at several sizes is counted as one.
 REACH_DIGITS = 3
+# A character beyond the first 65,536 of Unicode, which UTF-16 writes in two units.
+WIDE_CHARACTER = re.compile("[\U00010000-\U0010ffff]")
 
 
 class StoredPage(BaseModel):
@@ -223,3 +226,9 @@ def letter_reaches(file: Path, letters: frozenset[str]) -> dict[bytes, dict[str,
         name: {letter: counted.most_common(1)[0][0] for letter, counted in by_letter.items()}
         for name, by_letter in seen.items()
     }
+
+
+def holds_wide_characters(file: Path) -> bool:
+    # Whether the text layer of a file holds a character beyond the first 65,536 of Unicode.
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
+        return any(WIDE_CHARACTER.search(page.get_textpage().get_text_range()) for page in document)
