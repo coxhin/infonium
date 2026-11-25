@@ -48,6 +48,9 @@ const DOUBLE_PRESS = 250;
 const LEAST_FILLED_LINE = 0.85;
 // While lines are measured, the areas of a page are set flush left.
 const MEASURING_LINES = "data-measuring-lines";
+// A page whose width keeps changing, as while the reader zooms, keeps its setting, which scales
+// with it, and is set again once its width has stood still this long, in milliseconds.
+const WIDTH_SETTLES = 300;
 const CITED = ".area[data-cited]";
 
 // The colours read from each drawing of a page, by area: a translation that arrives block by
@@ -315,6 +318,16 @@ function overlaps(one: Box, other: Box): boolean {
   );
 }
 
+// A width that is taken once it has stood still for a moment; the first is taken at once.
+function useSettled(width: number): number {
+  const [settled, setSettled] = useState(width);
+  useEffect(() => {
+    const settling = window.setTimeout(() => setSettled(width), WIDTH_SETTLES);
+    return () => window.clearTimeout(settling);
+  }, [width]);
+  return settled;
+}
+
 // The flows of a page with how each is fitted, and the areas set flush left.
 type Fitted = { flows: Flow[]; fitting: Fitting; ragged: ReadonlySet<string> };
 
@@ -322,8 +335,8 @@ const NO_RAGGED: ReadonlySet<string> = new Set();
 
 // The translation set over one drawn page, as flows. The colours and what is blank are read from
 // the drawing; the flows are fitted when the page is drawn, when a block of the page arrives,
-// when the fonts arrive and when the page's width changes. Where the source is to be seen under
-// the translation, a flow pressed shows it.
+// when the fonts arrive and when the page's width has changed. Where the source is to be seen
+// under the translation, a flow pressed shows it.
 export function PageTranslation({
   page,
   texts,
@@ -393,6 +406,7 @@ export function PageTranslation({
     };
   }, []);
 
+  const settledWidth = useSettled(width);
   const [fitting, setFitting] = useState<Fitted>();
   const current = fitting?.flows === flows ? fitting : undefined;
   useLayoutEffect(() => {
@@ -453,7 +467,7 @@ export function PageTranslation({
     });
     host.removeAttribute(MEASURING_LINES);
     setFitting({ flows, fitting: result, ragged });
-  }, [flows, leadings, shape, width, fontsIn]);
+  }, [flows, leadings, shape, settledWidth, fontsIn]);
 
   useEffect(() => {
     const area = root.current?.querySelector<HTMLElement>(CITED);
