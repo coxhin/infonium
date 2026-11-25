@@ -14,6 +14,7 @@ import { SidePanel, useLosing } from "./side";
 import { TranslationNote } from "./translated";
 import { useTranslation } from "./translation";
 import { viewsOf, type Pointed, type ViewContext, type ViewName } from "./views";
+import { ZoomControl } from "./zoom";
 import "./reading.css";
 
 export type ReadEntry = ItemEntry & { reading: { kind: "read" } };
@@ -162,6 +163,9 @@ export function ReadItem({
                   </button>
                 ))}
               </div>
+            )}
+            {(shown?.name === "pages" || shown?.name === "text") && (
+              <ZoomControl kind={shown.name} />
             )}
             {!earlier && <SettingSwitch setting={setting} />}
             {!earlier && (

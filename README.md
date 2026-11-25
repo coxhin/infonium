@@ -31,6 +31,10 @@ Every source can also be read as text, each block in translation or followed by 
 
 Beside the switch, 翻译模型 chooses the model a translation is made with: the translating model of the settings, the model that writes digests, or one of GLM's models, reached at GLM's endpoint with GLM's key. Like the switch, the choice keeps its place from one source to the next. It applies to a translation that starts, goes on after it stopped, or starts again (全部重新翻译); a translation under way keeps its model, also after a restart. The line above the text names the model that translates or translated the source. A GLM model is offered without GLM's key set, but cannot be chosen.
 
+### Zoom
+
+Beside the views, − 100% + makes what the reader shows smaller or larger, apart from the rest of the window: a PDF's pages by their width, and the text as a whole. The two keep a zoom each, from one source to the next; pressing the percentage returns to 100%. Holding Ctrl while turning the wheel over the pages or the text, or pinching on a touchpad, zooms them too, around the place under the pointer for the pages. Pages zoomed wider than the column scroll sideways inside it, and are drawn again at their new size once the zoom stands still, so that their print stays sharp.
+
 ### Links in a PDF
 
 The links of a PDF's pages work as in a PDF reader. One to a place of the paper, as a citation, a figure, a table or a section, turns the pages there, and ↩ at the foot of the pages returns to where you were. One to an address on the web opens it in a new tab. A link shows when the pointer is on it. Over a translation set on the page, the translation's words carry the links: a citation, a year or an address where the translation keeps them, and a label such as "Figure 3" where it gives it as 图 3.
@@ -196,6 +200,7 @@ The blocks of every document the library holds are indexed in the library's file
 
 - A link the translation does not carry cannot be pressed in 译文, as the translation covers it; in 原文 and in the source of 对照 it can. A link is found in the translation by its words: in the two papers tried, 173 of the 181 links over translated paragraphs of one were carried, and 295 of 339 in the other, whose letters were misread, the rest lying over words the source lost or the translation rewrote or left out. Where the block says a link's words more than once and not always as that link, the translation must say them as often, and the link goes to the saying at its place among them; a translation that changes their order moves the link with it.
 - A link of the web opens only an http or https address, and not infonium's own. A mail address, a file and a script do nothing. The text (文本) of a PDF shows no links.
+- Pages zoomed wider than the column scroll sideways by a touchpad, or by the wheel with Shift held; their own scroll bar stands under the last page. A page is drawn at no more than 2²⁵ pixels, as pdf.js's own viewer draws it, so at the largest zooms on a sharp screen its print is stretched a little. Ctrl with + or − still zooms the whole window. The zoom was tried in Chrome only.
 
 ### Recordings
 

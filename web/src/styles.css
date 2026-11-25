@@ -314,19 +314,24 @@ main > .status {
   color: var(--on-accent);
 }
 
+/* The pages are as wide as the column holds, up to a bound, times their zoom (--zoom). Pages
+   zoomed wider than the column scroll sideways inside it, from their left edge; the column
+   alone scrolls them down. */
 .pages {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: safe center;
   gap: 1rem;
   padding: 1rem;
   background: var(--panel);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .page {
   position: relative;
   width: 100%;
-  max-width: 62rem;
+  max-width: calc(62rem * var(--zoom, 1));
   background: #ffffff;
   box-shadow: 0 0 0 1px var(--line);
   /* What is drawn on a page is layered within the page alone: its highlights, a selection and

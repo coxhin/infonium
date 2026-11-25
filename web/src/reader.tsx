@@ -21,6 +21,7 @@ import {
   TRANSLATION_ATTRIBUTE,
 } from "./translated";
 import type { TranslationState } from "./translation";
+import { useWheelZoom, useZoom } from "./zoom";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
 const NONE_LEFT_OUT: ReadonlySet<number> = new Set();
@@ -103,6 +104,10 @@ export function Reader({
   const article = useRef<HTMLElement>(null);
   useSelectionHandedOver(article, show, marking, onShow);
   const pressed = useTextMarks(article, show, marking);
+  // The text is zoomed as a whole, by the control in the reader's head, or by a pinch or the
+  // wheel with Ctrl held over it; the browser keeps the words at the top where they were.
+  const zoom = useZoom("text");
+  useWheelZoom(article, "text", undefined);
   // The passage glowing in this document goes when the document leaves the page. React runs
   // this before the effects of a reader that takes its place, so the passage that reader is
   // opened for glows.
@@ -111,6 +116,7 @@ export function Reader({
     <article
       ref={article}
       className="reader"
+      style={{ zoom }}
       onClickCapture={pressed}
       {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
     >
