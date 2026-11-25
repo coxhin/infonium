@@ -347,7 +347,7 @@ def test_a_reading_again_waits_its_turn_and_survives_a_restart(
     )
     assert (
         waiting["reading"]["attempt"]
-        == {"kind": "underway", "starts": 0}
+        == {"kind": "underway", "starts": 0, "arrived": None}
         == asked["reading"]["attempt"]
     ), f"R5: a reading again waiting its turn is not under way and not begun: {waiting}"
     app.stop()

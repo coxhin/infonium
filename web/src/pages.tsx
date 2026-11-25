@@ -21,7 +21,7 @@ import {
 } from "./pagemarking";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
-import { scrollerOf } from "./scrolling";
+import { scrollerOf, viewOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -43,6 +43,28 @@ const UNDER_CLASS = "under";
 // milliseconds.
 const READING_WAIT = 500;
 const POINTED_AREA = "area.pointed";
+
+// Where the reader stands in the pages: the page at the top of what the scroller shows, and how
+// far down that page the view begins, as a part of its height.
+export type PagePosition = { page: number; within: number };
+
+function positionOf(viewer: Element): PagePosition | undefined {
+  const top = viewOf(viewer).top;
+  const pages = [...viewer.children];
+  const page = pages.findIndex((shown) => shown.getBoundingClientRect().bottom > top);
+  const place = pages[page]?.getBoundingClientRect();
+  return place === undefined
+    ? undefined
+    : { page, within: Math.max(0, (top - place.top) / place.height) };
+}
+
+function turnTo(viewer: Element, { page, within }: PagePosition) {
+  const place = viewer.children[page]?.getBoundingClientRect();
+  if (place !== undefined) {
+    const scroller = scrollerOf(viewer) ?? document.scrollingElement;
+    scroller?.scrollBy({ top: place.top - viewOf(viewer).top + within * place.height });
+  }
+}
 
 function overlaps(one: DOMRect, other: DOMRect): boolean {
   return (
@@ -350,6 +372,8 @@ function Pages({
   overlays,
   pairing,
   marks,
+  opening,
+  onTurned,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
@@ -358,6 +382,8 @@ function Pages({
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
   marks: PageMarks;
+  opening: PagePosition | undefined;
+  onTurned: ((position: PagePosition) => void) | undefined;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
   const [drawing] = useState(() => new SelectionDrawing());
@@ -397,6 +423,49 @@ function Pages({
       current = false;
     };
   }, [file]);
+
+  // The pages open where they were asked to, once they have their shapes and are on show,
+  // unless a passage is pointed at, which they turn to instead.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (
+      opening !== undefined &&
+      !opened.current &&
+      shapes !== undefined &&
+      inView &&
+      pointed.length === 0 &&
+      viewer.current !== null
+    ) {
+      opened.current = true;
+      turnTo(viewer.current, opening);
+    }
+  }, [opening, shapes, inView, pointed]);
+
+  // Where the reader stands is told as the pages scroll, once a frame at most. Whatever scrolls
+  // them is heard, since a change of the window's width may hand the scrolling from the
+  // reader's column to the window.
+  useEffect(() => {
+    const shown = viewer.current;
+    if (onTurned === undefined || shown === null) {
+      return;
+    }
+    let frame = 0;
+    const scrolled = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const position = positionOf(shown);
+        if (position !== undefined) {
+          onTurned(position);
+        }
+      });
+    };
+    const heard = { capture: true, passive: true };
+    document.addEventListener("scroll", scrolled, heard);
+    return () => {
+      document.removeEventListener("scroll", scrolled, heard);
+      cancelAnimationFrame(frame);
+    };
+  }, [onTurned]);
 
   useEffect(() => {
     if (viewer.current === null) {
@@ -468,9 +537,10 @@ function Pages({
 // Shows a PDF page by page, outlines the boxes that were pointed at, draws the reader's
 // highlights, lets the reader select by dragging over the lines, and sets a translation over
 // the pages where one is given, by page; with the source beside each page, or under each area,
-// where pairing is asked for. The reader is drawn again whenever a view hands a selection over,
-// as at every frame of a scroll while one is held; the pages only when what they are given
-// changes.
+// where pairing is asked for. It opens at the position given, if one is, and tells where the
+// reader stands as they scroll, if asked to. The reader is drawn again whenever a view hands a
+// selection over, as at every frame of a scroll while one is held; the pages only when what
+// they are given changes.
 export const PageViewer = memo(function PageViewer({
   source,
   pointed,
@@ -479,6 +549,8 @@ export const PageViewer = memo(function PageViewer({
   overlays,
   pairing,
   marks,
+  opening,
+  onTurned,
 }: {
   source: string;
   pointed: PagePlace[];
@@ -489,6 +561,8 @@ export const PageViewer = memo(function PageViewer({
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
   marks: PageMarks;
+  opening: PagePosition | undefined;
+  onTurned: ((position: PagePosition) => void) | undefined;
 }) {
   const file = useFile(source);
   return (
@@ -504,6 +578,8 @@ export const PageViewer = memo(function PageViewer({
           overlays={overlays}
           pairing={pairing}
           marks={marks}
+          opening={opening}
+          onTurned={onTurned}
         />
       )}
     </>

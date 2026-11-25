@@ -729,6 +729,25 @@
         "title": "ItemRevisions",
         "type": "object"
       },
+      "KeptSource": {
+        "properties": {
+          "media_type": {
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "snapshot": {
+            "title": "Snapshot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot",
+          "media_type"
+        ],
+        "title": "KeptSource",
+        "type": "object"
+      },
       "Link": {
         "properties": {
           "kind": {
@@ -2017,6 +2036,16 @@
       },
       "Underway": {
         "properties": {
+          "arrived": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeptSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kind": {
             "const": "underway",
             "default": "underway",
@@ -2031,7 +2060,8 @@
         },
         "required": [
           "kind",
-          "starts"
+          "starts",
+          "arrived"
         ],
         "title": "Underway",
         "type": "object"

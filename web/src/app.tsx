@@ -10,6 +10,7 @@ import {
   type ItemRevisions,
   type Revision,
 } from "./client";
+import { ArrivedPages } from "./arrival";
 import { Library } from "./library";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { reasonOf, useWatched, type Loaded } from "./loading";
@@ -18,6 +19,7 @@ import { useRevisions } from "./itemrevisions";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
 import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
+import { PDF_MEDIA_TYPE } from "./views";
 
 const STILL_READING = "这一篇还在读取，读完后才能打开这段引文。";
 const READING_FAILED = "这一篇读取失败，打不开这段引文。";
@@ -340,7 +342,12 @@ function ItemPane({
   }
   switch (reading.attempt.kind) {
     case "underway":
-      return <Notice failed={false}>正在读取，PDF 和录音可能需要几分钟…</Notice>;
+      // A PDF read for the first time is shown as it arrived while it is read.
+      return reading.attempt.arrived?.media_type === PDF_MEDIA_TYPE ? (
+        <ArrivedPages itemId={itemId} />
+      ) : (
+        <Notice failed={false}>正在读取，PDF 和录音可能需要几分钟…</Notice>
+      );
     case "failed":
       return <Notice failed>读取失败：{reading.attempt.reason}</Notice>;
   }

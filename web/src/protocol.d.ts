@@ -673,6 +673,13 @@ export interface components {
             /** Revisions */
             revisions: components["schemas"]["Revision"][];
         };
+        /** KeptSource */
+        KeptSource: {
+            /** Media Type */
+            media_type: string;
+            /** Snapshot */
+            snapshot: string;
+        };
         /** Link */
         Link: {
             /**
@@ -1213,6 +1220,7 @@ export interface components {
         };
         /** Underway */
         Underway: {
+            arrived: components["schemas"]["KeptSource"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
