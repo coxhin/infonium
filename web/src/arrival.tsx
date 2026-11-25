@@ -39,6 +39,7 @@ export function ArrivedPages({ itemId }: { itemId: string }) {
         marks={marks}
         opening={opening}
         onTurned={turned}
+        onLinks={undefined}
       />
     </main>
   );

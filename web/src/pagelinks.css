@@ -1,0 +1,63 @@
+/* The links of a PDF's page, over the page: unseen until the pointer is on one or one has the
+   focus. A page is light whatever the theme, so they keep one colour. On a page that shows the
+   translation they lie under it; a link the translation carries is drawn in its text. */
+
+.page-links {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.page-links.under {
+  z-index: 0;
+}
+
+.page-link {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.page-link:hover,
+.page-link:focus-visible {
+  background: rgb(40 110 230 / 0.14);
+  outline: 1px solid rgb(40 110 230 / 0.55);
+}
+
+/* The way back from where links led, at the foot of what the pages show, beside the column's
+   right edge. It takes no room of its own. */
+.going-back {
+  position: sticky;
+  bottom: 1rem;
+  height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-right: 1.5rem;
+  z-index: 4;
+}
+
+.going-back > div {
+  display: flex;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
+  border-radius: 0.4rem;
+}
+
+.going-back button {
+  font-size: 0.85rem;
+  border-radius: 0;
+}
+
+.going-back button:first-child {
+  border-radius: 0.4rem 0 0 0.4rem;
+}
+
+.going-back button:last-child {
+  margin-left: -1px;
+  border-radius: 0 0.4rem 0.4rem 0;
+}

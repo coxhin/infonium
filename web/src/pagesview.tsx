@@ -1,18 +1,21 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { layoutOf, placedOf, translatedText, type AreaText } from "./areas";
 import { useArrivalPosition } from "./arrival";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
 import { PageViewer, type PageMarks } from "./pages";
 import { PageText } from "./pagelines";
+import type { PageLink } from "./pagelinks";
 import { placedPieces, type Glow, type TranslatedGlow } from "./pageglow";
 import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
 import { translatedStretch } from "./sentences";
 import { SEGMENT_GAP } from "./translated";
+import { linkedAreas, sourceLinksOn, type SourceLink } from "./translatedlinks";
 import type { Pointed, ViewContext } from "./views";
 
 const NO_PAGES: PagePlace[] = [];
+const NO_LINKS: ReadonlyMap<number, PageLink[]> = new Map();
 
 // Where each block's translation is set is worked out once for each translation of it.
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
@@ -80,6 +83,25 @@ export function PagesView({
     };
   }, [text, marking, itemDocument.id]);
   const shown = setting !== "source";
+  // The links of the pages read so far, by page, and by the block whose words each lies over:
+  // a translation set over the pages carries those it can.
+  const [pageLinks, setPageLinks] = useState(NO_LINKS);
+  const linksRead = useCallback(
+    (page: number, links: PageLink[]) =>
+      setPageLinks((before) =>
+        before.get(page) === links ? before : new Map(before).set(page, links),
+      ),
+    [],
+  );
+  const sourceLinks = useMemo(() => {
+    const byBlock = new Map<number, SourceLink[]>();
+    pageLinks.forEach((links, page) => {
+      sourceLinksOn(text, page, links).forEach((found, blockNumber) => {
+        byBlock.set(blockNumber, [...(byBlock.get(blockNumber) ?? []), ...found]);
+      });
+    });
+    return byBlock;
+  }, [text, pageLinks]);
   const overlays = useMemo(() => {
     if (!shown) {
       return undefined;
@@ -95,14 +117,21 @@ export function PagesView({
         placed = placedOf(block, blockNumber, translated, layout, SEGMENT_GAP);
         placedKept.set(translated, placed);
       }
-      for (const text of placed) {
+      const linked = linkedAreas(
+        placed,
+        block.text,
+        translated,
+        sourceLinks.get(blockNumber),
+        SEGMENT_GAP,
+      );
+      for (const text of linked) {
         const onPage = onPages.get(text.area.page) ?? [];
         onPage.push(text);
         onPages.set(text.area.page, onPage);
       }
     });
     return onPages;
-  }, [shown, translation.blocks, itemDocument, layout]);
+  }, [shown, translation.blocks, itemDocument, layout, sourceLinks]);
   // The passage pointed at, as it glows: its words on the source's lines, and where a
   // translation is on show, the sentences of each block's translation that stand for them.
   const glow = useMemo<Glow | undefined>(() => {
@@ -151,6 +180,7 @@ export function PagesView({
         marks={marks}
         opening={opening}
         onTurned={undefined}
+        onLinks={shown ? linksRead : undefined}
       />
     </>
   );

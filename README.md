@@ -23,13 +23,17 @@ A switch above the reader shows the source (原文), its translation (译文), o
 
 | Source | Its translation |
 | --- | --- |
-| PDF | On the page: each block is drawn where its lines stand, in the page's layout and at the size of its text. With both on show and room for two, the source's page stands beside the translated page. |
+| PDF | On the page: each block is drawn where its lines stand, in the page's layout and at the size of its text. With both on show and room for two, the source's page stands beside the translated page. The translation carries the page's links where it keeps their words. |
 | Recording | As lines that follow the playback: each sentence of the transcript with its translation. A click on a line plays from that moment. |
 | Web article | In the page's own layout: each block's translation stands in the place of its words, or after them with both on show. |
 
 Every source can also be read as text, each block in translation or followed by its translation. A formula is set as a formula and is never translated. One block can be translated again, by the model that writes digests.
 
 Beside the switch, 翻译模型 chooses the model a translation is made with: the translating model of the settings, the model that writes digests, or one of GLM's models, reached at GLM's endpoint with GLM's key. Like the switch, the choice keeps its place from one source to the next. It applies to a translation that starts, goes on after it stopped, or starts again (全部重新翻译); a translation under way keeps its model, also after a restart. The line above the text names the model that translates or translated the source. A GLM model is offered without GLM's key set, but cannot be chosen.
+
+### Links in a PDF
+
+The links of a PDF's pages work as in a PDF reader. One to a place of the paper, as a citation, a figure, a table or a section, turns the pages there, and ↩ at the foot of the pages returns to where you were. One to an address on the web opens it in a new tab. A link shows when the pointer is on it. Over a translation set on the page, the translation's words carry the links: a citation, a year or an address where the translation keeps them, and a label such as "Figure 3" where it gives it as 图 3.
 
 ### The chat
 
@@ -189,6 +193,9 @@ The blocks of every document the library holds are indexed in the library's file
 - How well a page read as pictures comes out depends on its writing, and that has been tried on no more than a paragraph of each. Latin, Cyrillic and Greek writing, Chinese and Japanese came out right or nearly, and Korean, Arabic, Thai, Hindi, Tamil, Bengali and Tibetan with a few wrong characters. In writing the engine does not know, Hebrew, Georgian, Armenian, Amharic and Khmer among what was tried, it writes words that are not on the page, and may take so long that the reading is given up.
 - MinerU's models want a GPU. On the machine infonium was built on, a PDF of up to ten pages took about 4 to 5.5 GB of its memory, and a scan of 40 pages about 10 GB.
 - MinerU reaches a server of its own on 127.0.0.1 through a proxy set with `HTTP_PROXY`, so where one is set, `NO_PROXY` must name 127.0.0.1. Behind a proxy that refused connections, a PDF failed once MinerU had waited for its server as long as `MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS` allows (300 seconds unless set; 30 in the run), and with 127.0.0.1 named in `NO_PROXY` it was read in 16 seconds. That `ALL_PROXY` and a lowercase `http_proxy` do the same comes from reading the code.
+
+- A link the translation does not carry cannot be pressed in 译文, as the translation covers it; in 原文 and in the source of 对照 it can. A link is found in the translation by its words: in the two papers tried, 173 of the 181 links over translated paragraphs of one were carried, and 295 of 339 in the other, whose letters were misread, the rest lying over words the source lost or the translation rewrote or left out. Where the block says a link's words more than once and not always as that link, the translation must say them as often, and the link goes to the saying at its place among them; a translation that changes their order moves the link with it.
+- A link of the web opens only an http or https address, and not infonium's own. A mail address, a file and a script do nothing. The text (文本) of a PDF shows no links.
 
 ### Recordings
 

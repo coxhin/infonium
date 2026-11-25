@@ -491,3 +491,24 @@ export function translatedText(translated: TranslatedBlock, gap: string): Piece 
   });
   return { text, marks };
 }
+
+// Where the part of a block's translation each area holds begins in the whole of it, in code
+// points: the parts are the whole in order, but for parts of spaces alone, which are given
+// empty and begin nowhere.
+export function pieceStarts(whole: string, areas: AreaText[]): (number | undefined)[] {
+  const characters = [...whole];
+  let reached = 0;
+  return areas.map(({ piece }) => {
+    const length = [...piece.text].length;
+    if (length === 0) {
+      return undefined;
+    }
+    for (let at = reached; at + length <= characters.length; at += 1) {
+      if (characters.slice(at, at + length).join("") === piece.text) {
+        reached = at + length;
+        return at;
+      }
+    }
+    return undefined;
+  });
+}

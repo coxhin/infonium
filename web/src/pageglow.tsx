@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, type RefObject } from "react";
-import { percent, type AreaText } from "./areas";
+import { percent, pieceStarts, type AreaText } from "./areas";
 import { unitOffset, unitOffsets } from "./blocktext";
 import { glowAlso, glowOver } from "./glowing";
 import type { PageText, Span } from "./pagelines";
@@ -26,26 +26,13 @@ export type Glow = { key: number; spans: Span[]; translated: TranslatedGlow[] };
 const AREAS_AWAITED = 1500;
 const TRANSLATED_AREAS = ".page[data-translated] .area[data-block-translated]";
 
-// Where each part of a block's translation begins in the whole of it. The parts are the whole
-// in order, but for parts of spaces alone, which are given empty.
+// Where each part of a block's translation that holds any of it begins in the whole of it.
 export function placedPieces(whole: string, areas: AreaText[]): PlacedPiece[] {
-  const characters = [...whole];
-  let reached = 0;
-  const placed: PlacedPiece[] = [];
-  for (const { piece } of areas) {
-    const length = [...piece.text].length;
-    if (length === 0) {
-      continue;
-    }
-    for (let at = reached; at + length <= characters.length; at += 1) {
-      if (characters.slice(at, at + length).join("") === piece.text) {
-        placed.push({ text: piece.text, start: at });
-        reached = at + length;
-        break;
-      }
-    }
-  }
-  return placed;
+  const starts = pieceStarts(whole, areas);
+  return areas.flatMap(({ piece }, index) => {
+    const start = starts[index];
+    return start === undefined ? [] : [{ text: piece.text, start }];
+  });
 }
 
 // Whether the passage runs over a line of this page.

@@ -20,6 +20,14 @@ import {
   type PageMark,
 } from "./pagemarking";
 import { glowsOn, PageGlow, useTranslatedGlow, type Glow } from "./pageglow";
+import {
+  GoingBack,
+  LinksLayer,
+  useLinkPresses,
+  usePageLinks,
+  type PageLink,
+  type Place,
+} from "./pagelinks";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
 import { scrollerOf, uncoveredTop } from "./scrolling";
@@ -59,11 +67,15 @@ function positionOf(viewer: Element): PagePosition | undefined {
     : { page, within: Math.max(0, (top - place.top) / place.height) };
 }
 
-function turnTo(viewer: Element, { page, within }: PagePosition) {
+// Turns the pages so that the position given stands at the top of what they show, or this
+// many pixels below it.
+function turnTo(viewer: Element, { page, within }: PagePosition, margin = 0) {
   const place = viewer.children[page]?.getBoundingClientRect();
   if (place !== undefined) {
     const scroller = scrollerOf(viewer) ?? document.scrollingElement;
-    scroller?.scrollBy({ top: place.top - uncoveredTop(viewer) + within * place.height });
+    scroller?.scrollBy({
+      top: place.top - uncoveredTop(viewer) + within * place.height - margin,
+    });
   }
 }
 
@@ -170,6 +182,8 @@ function Page({
   markedBlocks,
   drawing,
   glow,
+  onPlace,
+  onLinks,
 }: {
   file: PDFDocumentProxy;
   number: number;
@@ -183,6 +197,8 @@ function Page({
   markedBlocks: ReadonlyMap<number, MarkState>;
   drawing: SelectionDrawing;
   glow: Glow | undefined;
+  onPlace: (place: Place) => void;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -194,6 +210,14 @@ function Page({
   const [drawn, setDrawn] = useState<Drawn>();
   const [width, setWidth] = useState(0);
   const paired = overlay?.paired ?? false;
+  // The page's links are read once it comes near, and told to whoever sets a translation over
+  // the pages, which carries those it can.
+  const links = usePageLinks(file, number, near);
+  useEffect(() => {
+    if (links.length > 0) {
+      onLinks?.(number, links);
+    }
+  }, [links, number, onLinks]);
 
   useEffect(() => {
     if (frame.current === null) {
@@ -320,6 +344,7 @@ function Page({
         )}
         {paired && <SelectionLayer drawing={drawing} page={number} under={false} />}
         <Boxes boxes={boxes} under={false} />
+        {paired && <LinksLayer links={links} under={false} onPlace={onPlace} />}
         {paired && (
           <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={false} />
         )}
@@ -355,6 +380,7 @@ function Page({
           />
         )}
         <Boxes boxes={boxes} under={overlay !== undefined} />
+        <LinksLayer links={links} under={translated} onPlace={onPlace} />
         <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={translated} />
       </div>
     </div>
@@ -368,6 +394,9 @@ const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
 const NO_TEXTS: AreaText[] = [];
+// How far below the top of what the pages show a place a link leads to is put, in pixels, so
+// that the line above it shows too.
+const PLACE_MARGIN = 24;
 const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
@@ -381,6 +410,7 @@ function Pages({
   marks,
   opening,
   onTurned,
+  onLinks,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
@@ -392,11 +422,32 @@ function Pages({
   marks: PageMarks;
   opening: PagePosition | undefined;
   onTurned: ((position: PagePosition) => void) | undefined;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
   const [drawing] = useState(() => new SelectionDrawing());
   usePageSelecting(viewer, drawing, marks.selecting, inView);
   useTranslatedGlow(viewer, glow, inView);
+  // Where the reader stood before each link that led to a place of the document, last last.
+  const [behind, setBehind] = useState<PagePosition[]>([]);
+  const follow = useCallback((place: Place) => {
+    const shown = viewer.current;
+    const from = shown === null ? undefined : positionOf(shown);
+    if (shown === null || from === undefined) {
+      return;
+    }
+    setBehind((before) => [...before, from]);
+    turnTo(shown, { page: place.page, within: place.top ?? 0 }, PLACE_MARGIN);
+  }, []);
+  useLinkPresses(viewer, follow);
+  const goBack = useCallback(() => {
+    const shown = viewer.current;
+    const to = behind.at(-1);
+    if (shown !== null && to !== undefined) {
+      turnTo(shown, to);
+    }
+    setBehind((before) => before.slice(0, -1));
+  }, [behind]);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
   // The outline turned to under the translation before the area over it was set: the area is
@@ -506,7 +557,7 @@ function Pages({
     }
   }, [pointed, inView, shapes, pairing, wide]);
 
-  return (
+  const pages = (
     <div className="pages" ref={viewer}>
       {Array.from({ length: file.numPages }, (_, number) => (
         <Page
@@ -524,6 +575,8 @@ function Pages({
           markedBlocks={marks.blocks}
           drawing={drawing}
           glow={glow}
+          onPlace={follow}
+          onLinks={onLinks}
           overlay={
             overlays === undefined
               ? undefined
@@ -537,13 +590,25 @@ function Pages({
       ))}
     </div>
   );
+  return (
+    <>
+      {pages}
+      <GoingBack
+        pages={behind.map((position) => position.page)}
+        onBack={goBack}
+        onDismiss={() => setBehind([])}
+      />
+    </>
+  );
 }
 
 // Shows a PDF page by page, turns to the boxes that were pointed at and makes the passage glow
 // there, draws the reader's highlights, lets the reader select by dragging over the lines, and
 // sets a translation over the pages where one is given, by page; with the source beside each
-// page, or under each area, where pairing is asked for. It opens at the position given, if one is, and tells where the
-// reader stands as they scroll, if asked to. The reader is drawn again whenever a view hands a
+// page, or under each area, where pairing is asked for. A link of a page leads where it leads,
+// with a way back from a place of the document. It opens at the position given, if one is,
+// and tells where the reader stands as they scroll, if asked to; it tells the links of each
+// page as they are read, if asked to. The reader is drawn again whenever a view hands a
 // selection over, as at every frame of a scroll while one is held; the pages only when what
 // they are given changes.
 export const PageViewer = memo(function PageViewer({
@@ -557,6 +622,7 @@ export const PageViewer = memo(function PageViewer({
   marks,
   opening,
   onTurned,
+  onLinks,
 }: {
   source: string;
   pointed: PagePlace[];
@@ -571,6 +637,7 @@ export const PageViewer = memo(function PageViewer({
   marks: PageMarks;
   opening: PagePosition | undefined;
   onTurned: ((position: PagePosition) => void) | undefined;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const file = useFile(source);
   return (
@@ -589,6 +656,7 @@ export const PageViewer = memo(function PageViewer({
           marks={marks}
           opening={opening}
           onTurned={onTurned}
+          onLinks={onLinks}
         />
       )}
     </>
