@@ -37,8 +37,9 @@ const THIS_MACHINE = [
 const ADDRESS_END = /[.,;:!?'"]+$/;
 const LEADING_SPACE = /^[ \t]+/;
 const TRAILING_SPACE = /[ \t]+$/;
-// A line of nothing but spaces ends a paragraph, as an empty one does.
-const BLANK_LINES = /\n(?:[ \t]*\n)+/;
+// A line of nothing but white space of any kind ends a paragraph, as an empty one does: the
+// editor reads a paragraph of a no-break space alone as an empty one.
+const BLANK_LINES = /\n(?:[^\S\n]*\n)+/;
 // A line break inside a paragraph, as the editor writes one.
 const HARD_BREAK = "  \n";
 const SPACE_REFERENCES: Record<string, string> = { " ": "&#32;", "\t": "&#9;" };
