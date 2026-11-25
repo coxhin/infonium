@@ -1,4 +1,5 @@
 import type { AreaText, Box } from "./areas";
+import type { Blank, Side } from "./flows";
 
 // What a page's drawing shows, which is the one source of what is drawn on the page: the
 // colours of the paper and the ink under each area, and whether a part of the page is blank
@@ -111,7 +112,13 @@ function rgb([red, green, blue]: Rgb): string {
 }
 
 // The pixels of a part of the drawing, and where that part lies on the canvas.
-type Pixels = { data: Uint8ClampedArray; width: number; height: number };
+type Pixels = {
+  data: Uint8ClampedArray;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
 
 function pixelsOf(canvas: HTMLCanvasElement, box: Box): Pixels | undefined {
   const context = canvas.getContext("2d");
@@ -127,7 +134,7 @@ function pixelsOf(canvas: HTMLCanvasElement, box: Box): Pixels | undefined {
   }
   const width = right - left;
   const height = bottom - top;
-  return { data: context.getImageData(left, top, width, height).data, width, height };
+  return { data: context.getImageData(left, top, width, height).data, left, top, width, height };
 }
 
 // The colour most of an area has, as the paper, and the colour most of what stands out from
@@ -278,33 +285,41 @@ export function isBlank(
   return inside < SPECKS;
 }
 
-// How far into a box the drawing shows only a paper, from its top, or from its right where the
-// run of lines goes across, as a part of the page's height or width: up to the first line of
-// pixels that holds a rule or more than specks, past the reach of the letters above it, and
-// short of it by as much again, so that the edge of a paper laid there and the letters set on
-// it do not reach what is drawn.
+// How far into a box the drawing shows only a paper, from one of its sides, as a part of the
+// page's height or width, and whether something is drawn there: up to the first line of pixels
+// that holds a rule, or more than specks past the reach of the letters beside that side.
 export function blankInto(
   canvas: HTMLCanvasElement,
   box: Box,
-  across: boolean,
+  from: Side,
   paper: string,
   size: number,
-): number {
+): Blank {
   const pixels = pixelsOf(canvas, box);
   if (pixels === undefined) {
-    return 0;
+    return { blank: 0, drawn: false };
   }
   const reach = pixelsFor(canvas, size, LETTERS_REACH);
   const rule = pixelsFor(canvas, size, RULE_LENGTH);
-  const along = across ? pixels.height : pixels.width;
-  const lines = drawnLines(pixels, rgbOf(paper), across, 0, along);
-  const inOrder = across ? [...lines.drawn.keys()].reverse() : [...lines.drawn.keys()];
+  const byColumn = from === "right";
+  const along = byColumn ? pixels.height : pixels.width;
+  const lines = drawnLines(pixels, rgbOf(paper), byColumn, 0, along);
+  const inOrder = from === "top" ? [...lines.drawn.keys()] : [...lines.drawn.keys()].reverse();
   const first = inOrder.findIndex(
     (line, index) =>
       (lines.longest[line] ?? 0) >= rule || (index >= reach && (lines.drawn[line] ?? 0) >= SPECKS),
   );
-  const blank = first === -1 ? inOrder.length : Math.max(0, first - reach);
-  return across
-    ? Math.min(box.width, blank / canvas.width)
-    : Math.min(box.height, blank / canvas.height);
+  const line = inOrder[first];
+  if (line === undefined) {
+    return { blank: byColumn ? box.width : box.height, drawn: false };
+  }
+  // Measured from the box's own side to the near edge of the line found, which the pixels,
+  // taken in whole ones, need not share.
+  const blank =
+    from === "top"
+      ? (pixels.top + line) / canvas.height - box.top
+      : from === "bottom"
+        ? box.top + box.height - (pixels.top + line + 1) / canvas.height
+        : box.left + box.width - (pixels.left + line + 1) / canvas.width;
+  return { blank: Math.max(0, blank), drawn: true };
 }

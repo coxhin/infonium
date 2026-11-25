@@ -22,6 +22,7 @@ import { MarkedText } from "./blocks";
 import type { PagePlace } from "./client";
 import {
   columnsOf,
+  edgesOf,
   fitted,
   flowsOf,
   leadingRatioOf,
@@ -82,6 +83,10 @@ function acrossWidth(flow: Flow, length: number, shape: number): number {
 
 function cqw(part: number): string {
   return `${part * 100}cqw`;
+}
+
+function areasIn(flow: HTMLElement): NodeListOf<HTMLElement> {
+  return flow.querySelectorAll<HTMLElement>(":scope > .area");
 }
 
 // Whether an area's lines, set flush left, leave a line other than the last less filled than
@@ -284,71 +289,90 @@ function TranslatedFlow({
   const place: Box = flow.vertical
     ? { ...room, left: room.left - setting.growth, width: room.width + setting.growth }
     : { ...room, height: room.height + setting.growth };
-  const style = {
-    left: percent(place.left),
-    top: percent(place.top),
-    width: percent(place.width),
-    height: percent(place.height),
+  // The paper is laid in the colour of the page's, and its edge in a part of the body's size.
+  const paperStyle = (box: Box) => ({
+    left: percent(box.left),
+    top: percent(box.top),
+    width: percent(box.width),
+    height: percent(box.height),
     "--body": cqw(acrossWidth(flow, flow.print.size, shape)),
+    backgroundColor: paper,
+    "--paper": paper,
+  });
+  const edges = edgesOf(flow, setting.growth);
+  const style = {
+    ...paperStyle(place),
+    "--edge-top": edges.top ? undefined : 0,
+    "--edge-foot": edges.foot ? undefined : 0,
     "--leading": setting.leading,
     "--step": setting.step,
     "--share": cqw(acrossWidth(flow, setting.share, shape)),
-    backgroundColor: paper,
-    "--paper": paper,
   } as CSSProperties;
   const pressable = setting.cut || revealing;
   return (
-    <div
-      ref={element}
-      className={flow.vertical ? "flow vertical" : "flow"}
-      style={style}
-      data-leading={setting.leading.toFixed(2)}
-      data-step={setting.step.toFixed(2)}
-      data-cut={setting.cut ? "" : undefined}
-      data-open={open ? "" : undefined}
-      tabIndex={pressable ? 0 : undefined}
-      role={pressable ? "button" : undefined}
-      aria-pressed={pressable ? open : undefined}
-      aria-label={revealing ? "按下看这几段的原文" : undefined}
-      onClick={pressable ? pressed : undefined}
-      onKeyDown={
-        pressable
-          ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onTurn(flow);
+    <>
+      <div
+        ref={element}
+        className={flow.vertical ? "flow vertical" : "flow"}
+        style={style}
+        data-leading={setting.leading.toFixed(2)}
+        data-step={setting.step.toFixed(2)}
+        data-cut={setting.cut ? "" : undefined}
+        data-open={open ? "" : undefined}
+        data-bare={edges.top && edges.foot ? undefined : ""}
+        tabIndex={pressable ? 0 : undefined}
+        role={pressable ? "button" : undefined}
+        aria-pressed={pressable ? open : undefined}
+        aria-label={revealing ? "按下看这几段的原文" : undefined}
+        onClick={pressable ? pressed : undefined}
+        onKeyDown={
+          pressable
+            ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onTurn(flow);
+                }
               }
+            : undefined
+        }
+        onFocus={() => onFocused(flow)}
+        onBlur={(event) => {
+          // A flow taken off the page loses the focus too; only one still on show gave it up.
+          const left = event.currentTarget;
+          queueMicrotask(() => {
+            if (left.isConnected) {
+              onFocused(undefined);
             }
-          : undefined
-      }
-      onFocus={() => onFocused(flow)}
-      onBlur={(event) => {
-        // A flow taken off the page loses the focus too; only one still on show gave it up.
-        const left = event.currentTarget;
-        queueMicrotask(() => {
-          if (left.isConnected) {
-            onFocused(undefined);
-          }
-        });
-      }}
-    >
-      {flow.texts.map((text, index) => (
-        <TranslatedArea
-          key={text.key}
-          text={text}
-          flow={flow}
-          index={index}
-          shape={shape}
-          spacing={spacing}
-          colours={colours.get(text.key)}
-          ragged={ragged.has(text.key)}
-          pointed={pointedBlocks.has(text.blockNumber)}
-          cited={cited === text.key}
-          marked={markedBlocks.get(text.blockNumber)}
-          drawing={drawing}
+          });
+        }}
+      >
+        {flow.texts.map((text, index) => (
+          <TranslatedArea
+            key={text.key}
+            text={text}
+            flow={flow}
+            index={index}
+            shape={shape}
+            spacing={spacing}
+            colours={colours.get(text.key)}
+            ragged={ragged.has(text.key)}
+            pointed={pointedBlocks.has(text.blockNumber)}
+            cited={cited === text.key}
+            marked={markedBlocks.get(text.blockNumber)}
+            drawing={drawing}
+          />
+        ))}
+      </div>
+      {flow.tails.map((tail, index) => (
+        <div
+          key={index}
+          className="paper"
+          aria-hidden
+          data-open={open ? "" : undefined}
+          style={paperStyle(tail) as CSSProperties}
         />
       ))}
-    </div>
+    </>
   );
 }
 
@@ -420,12 +444,14 @@ export function PageTranslation({
         const paper = paperUnder(text);
         return paper !== undefined && isBlank(drawn.canvas, box, paper, body.size);
       },
-      blankInto: (box, across, text) => {
+      blankInto: (box, from, text) => {
         const paper = paperUnder(text);
-        return paper === undefined ? 0 : blankInto(drawn.canvas, box, across, paper, body.size);
+        return paper === undefined
+          ? { blank: 0, drawn: true }
+          : blankInto(drawn.canvas, box, from, paper, body.size);
       },
     };
-    const lines = (layout.boxes.get(page) ?? []).map((line) => line.box);
+    const lines = layout.boxes.get(page) ?? [];
     return flowsOf(texts.areas, columnsOf(layout.runs.get(page) ?? []), lines, body, facts);
   }, [texts.areas, colours, drawn, layout, page, body]);
   const cited = useMemo(() => {
@@ -487,8 +513,8 @@ export function PageTranslation({
       const reaches = new Map<Flow, number>();
       trials.forEach((_, flow) => {
         const element = elements.get(flow);
-        const last = element?.lastElementChild;
-        if (element === undefined || last === null || last === undefined) {
+        const last = element === undefined ? undefined : [...areasIn(element)].at(-1);
+        if (element === undefined || last === undefined) {
           return;
         }
         const flowBox = element.getBoundingClientRect();
@@ -512,9 +538,9 @@ export function PageTranslation({
     host.setAttribute(MEASURING_LINES, "");
     const ragged = new Set<string>();
     elements.forEach((element, flow) => {
-      [...element.children].forEach((area, index) => {
+      areasIn(element).forEach((area, index) => {
         const text = flow.texts[index];
-        if (text !== undefined && !flow.vertical && area instanceof HTMLElement && stretches(area)) {
+        if (text !== undefined && !flow.vertical && stretches(area)) {
           ragged.add(text.key);
         }
       });

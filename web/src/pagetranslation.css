@@ -13,13 +13,26 @@
   inset: 0;
 }
 
+/* The source's letters reach a little past the boxes of their lines; the paper is laid a
+   little past the flow to cover them, without taking room from the text, but not over its top
+   or its foot where something is drawn closer than that (--edge-top, --edge-foot). */
+.page-translation :is(.flow, .paper) {
+  --edge: max(2px, 0.2em);
+  box-shadow: 0 0 0 var(--edge) var(--paper, transparent);
+}
+
+.page-translation .flow[data-bare] {
+  box-shadow:
+    var(--edge) 0 0 0 var(--paper, transparent),
+    calc(-1 * var(--edge)) 0 0 0 var(--paper, transparent),
+    0 calc(var(--edge-foot, 1) * var(--edge)) 0 0 var(--paper, transparent),
+    0 calc(-1 * var(--edge-top, 1) * var(--edge)) 0 0 var(--paper, transparent);
+}
+
 .page-translation .flow {
   position: absolute;
   display: flow-root;
   font-size: var(--body);
-  /* The source's letters reach a little past the boxes of their lines; the paper is laid a
-     little past the flow to cover them, without taking room from the text. */
-  box-shadow: 0 0 0 max(2px, 0.2em) var(--paper, transparent);
 }
 
 .page-translation .flow.vertical {
@@ -56,8 +69,15 @@
   font-size: 0.9em;
 }
 
-/* A flow that fits may end a little below its foot, and its letters stand there over the edge
-   of its paper; a flow that does not fit is cut at its foot and ends in a mark, over its paper. */
+/* Where a flow's foot stands short of something drawn beside its last lines, its paper goes on
+   below over those lines alone. */
+.page-translation .paper {
+  position: absolute;
+  pointer-events: none;
+  font-size: var(--body);
+}
+
+/* A flow that does not fit is cut at its foot and ends in a mark, over its paper. */
 .page-translation .flow[data-cut] {
   overflow: hidden;
 }
@@ -99,7 +119,7 @@
 }
 
 /* Where the source is to be seen under the translation, a flow pressed lets it through. */
-.page-translation.revealing .flow[data-open] {
+.page-translation.revealing :is(.flow, .paper)[data-open] {
   opacity: 0;
 }
 
