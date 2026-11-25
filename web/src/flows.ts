@@ -71,18 +71,17 @@ function columnOf(box: Box, columns: Column[]): Column | undefined {
 
 // The body's print where a flow measures it: as fractions of the page's height for lines
 // written across, and for lines written downwards as fractions of its width.
-type Print = { size: number; pitch: number };
+type FlowPrint = { size: number; pitch: number };
 
-// Areas set as one run of text. Its sides are its column's, or the area's own where it stands
-// alone; its room reaches from the top of its first area's room to the foot of its last one's.
+// Areas set as one run of text. Its room's sides are its column's, or the area's own where it
+// stands alone; its room reaches from the top of its first area's room to the foot of its last
+// one's.
 // Lengths along the run of its lines, the gaps and how far it may grow, are fractions of the
 // page's height, or of its width for lines written downwards. Before each area stands the gap
 // that the rooms leave on the page and a number of shares of the flow's spare room.
 export type Flow = {
   key: string;
   texts: AreaText[];
-  left: number;
-  right: number;
   room: Box;
   vertical: boolean;
   gaps: number[];
@@ -90,7 +89,7 @@ export type Flow = {
   // How far under its room, or for lines written downwards beyond its left side, the page
   // shows blank paper that the flow may take.
   below: number;
-  print: Print;
+  print: FlowPrint;
 };
 
 // What a flow is told of the page it is set on.
@@ -166,7 +165,7 @@ function goesOn(last: AreaText, next: AreaText, column: Column, facts: PageFacts
 
 // A flow's own body print: the page's for lines written across, the area's own for lines
 // written downwards, which are measured across the page.
-function printOf(texts: AreaText[], vertical: boolean, body: BodyPrint): Print {
+function flowPrintOf(texts: AreaText[], vertical: boolean, body: BodyPrint): FlowPrint {
   const first = texts[0];
   if (!vertical || first === undefined) {
     return { size: body.size, pitch: body.pitch };
@@ -210,12 +209,12 @@ function belowOf(
   const reach = [...lines, ...rooms]
     .filter(
       (other) =>
-        other.top >= foot - TOUCHING && other.left < flow.right && flow.left < rightOf(other),
+        other.top >= foot - TOUCHING && other.left < rightOf(room) && room.left < rightOf(other),
     )
     .map((other) => other.top - foot);
   const bound = Math.max(0, Math.min(most, 1 - foot, ...reach));
   return facts.blankInto(
-    { left: flow.left, top: foot, width: flow.right - flow.left, height: bound },
+    { left: room.left, top: foot, width: room.width, height: bound },
     false,
     first,
   );
@@ -240,8 +239,6 @@ function flowOf(
   return {
     key: first.key,
     texts,
-    left: sides.left,
-    right: sides.right,
     room,
     vertical,
     gaps: texts.map((text, index) => {
@@ -252,7 +249,7 @@ function flowOf(
       const before = texts[index - 1];
       return before === undefined ? 0 : sharesBefore(text, before);
     }),
-    print: printOf(texts, vertical, body),
+    print: flowPrintOf(texts, vertical, body),
   };
 }
 
@@ -440,5 +437,5 @@ export function fitted(flows: Flow[], leadings: number[], measure: Measure): Fit
     const growth = flow.below;
     settings.set(flow.key, { leading: floor, step: least, growth, cut: true, share: 0 });
   }
-  return { leading: fitting.length > 0 ? leading : floor, settings };
+  return { leading, settings };
 }

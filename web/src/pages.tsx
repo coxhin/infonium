@@ -8,7 +8,7 @@ import {
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { percent, type AreaText, type Layout } from "./areas";
+import { percent } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
 import type { PageText } from "./pagelines";
@@ -21,7 +21,7 @@ import {
 } from "./pagemarking";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import type { Drawn } from "./pagedrawing";
-import { PageTranslation, type PageTexts } from "./pagetranslation";
+import { NO_PAGE_TEXTS, PageTranslation, type PageTexts } from "./pagetranslation";
 import { scrollerOf, uncoveredTop } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
@@ -117,11 +117,8 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
   return file;
 }
 
-// The areas of a translation by page, and what the document tells of every page.
-export type Overlays = { texts: Map<number, AreaText[]>; layout: Layout; unspaced: boolean };
-
 // How a page's translation is shown: over the page alone, over the page and the source beside
-// it, or over the page with each flow letting the source through when pressed.
+// it, or over the page with each area letting the source through when pressed.
 export type Overlay = { texts: PageTexts; paired: boolean; revealing: boolean };
 
 // The reader's highlights as the pages draw them: on each page, and by the blocks they run
@@ -136,9 +133,9 @@ export type PageMarks = {
 const NO_MARKS: PageMark[] = [];
 
 // The outline of the lines pointed at. On a page that shows the translation it lies under the
-// translation: an area that holds the cited block's translation is marked itself, and its flow
-// covers the outline until it is pressed to show the source under it; where the block has no
-// area there, the outline is what the page shows of it.
+// translation: an area that holds the cited block's translation is marked itself, and covers the
+// outline until it is pressed to show the source under it; where the block has no area there,
+// the outline is what the page shows of it.
 function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   return boxes.map((box, index) => (
     <div
@@ -360,7 +357,7 @@ function Page({
 const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
-const NO_TEXTS: AreaText[] = [];
+const NO_TEXTS: PageTexts = NO_PAGE_TEXTS;
 const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
@@ -378,7 +375,7 @@ function Pages({
   pointed: PagePlace[];
   pointedBlocks: ReadonlySet<number>;
   inView: boolean;
-  overlays: Overlays | undefined;
+  overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;
@@ -515,11 +512,7 @@ function Pages({
             overlays === undefined
               ? undefined
               : {
-                  texts: {
-                    texts: overlays.texts.get(number) ?? NO_TEXTS,
-                    layout: overlays.layout,
-                    unspaced: overlays.unspaced,
-                  },
+                  texts: overlays.get(number) ?? NO_TEXTS,
                   paired: pairing && wide,
                   revealing: pairing && !wide,
                 }
@@ -554,7 +547,7 @@ export const PageViewer = memo(function PageViewer({
   // set.
   pointedBlocks: ReadonlySet<number>;
   inView: boolean;
-  overlays: Overlays | undefined;
+  overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;

@@ -9,6 +9,8 @@ import {
 } from "react";
 import {
   bodyPrintOn,
+  layoutOf,
+  overlap,
   percent,
   type AreaText,
   type BodyPrint,
@@ -34,7 +36,7 @@ import {
   coloursOf,
   evened,
   isBlank,
-  paperOf,
+  paperLevelsOf,
   type Colours,
   type Drawn,
 } from "./pagedrawing";
@@ -119,7 +121,34 @@ function stretches(area: HTMLElement): boolean {
 
 // What a page is told of its translation: the areas set over it, and what the document tells of
 // every page, from which the page's columns, its body print and its leadings are worked out.
-export type PageTexts = { texts: AreaText[]; layout: Layout; unspaced: boolean };
+export type PageTexts = { areas: AreaText[]; layout: Layout; unspaced: boolean };
+
+export const NO_PAGE_TEXTS: PageTexts = { areas: [], layout: layoutOf([]), unspaced: false };
+
+// What each page of a document was last given, by the document's layout: a page whose areas
+// are the very ones it was given before is given the same again, so that it is not set again
+// when a translation under way is read again and its blocks are the same.
+const pagesGiven = new WeakMap<Layout, Map<number, PageTexts>>();
+
+export function pageTextsOf(
+  onPages: Map<number, AreaText[]>,
+  layout: Layout,
+  unspaced: boolean,
+): Map<number, PageTexts> {
+  const before = pagesGiven.get(layout);
+  const given = new Map<number, PageTexts>();
+  onPages.forEach((areas, page) => {
+    const kept = before?.get(page);
+    const same =
+      kept !== undefined &&
+      kept.unspaced === unspaced &&
+      kept.areas.length === areas.length &&
+      kept.areas.every((area, index) => area === areas[index]);
+    given.set(page, same ? kept : { areas, layout, unspaced });
+  });
+  pagesGiven.set(layout, given);
+  return given;
+}
 
 // One area of a flow: it begins at its own left side and runs to the flow's right, after the
 // gap its room leaves above it and the shares of spare room the gap takes. Its text is set at
@@ -161,7 +190,7 @@ function TranslatedArea({
   const gap = acrossWidth(flow, flow.gaps[index] ?? 0, shape);
   const style = {
     "--size": cqw(size),
-    marginInlineStart: area.vertical ? undefined : cqw(area.room.left - flow.left),
+    marginInlineStart: area.vertical ? undefined : cqw(area.room.left - flow.room.left),
     marginBlockStart: `calc(${cqw(gap)} + var(--share) * ${flow.weights[index] ?? 0})`,
     lineHeight: `calc(var(--leading) * ${ratio})`,
     color: colours?.ink,
@@ -245,12 +274,7 @@ function TranslatedFlow({
   const paper = colours.get(flow.key)?.paper;
   const place: Box = flow.vertical
     ? { ...room, left: room.left - setting.growth, width: room.width + setting.growth }
-    : {
-        left: flow.left,
-        top: room.top,
-        width: flow.right - flow.left,
-        height: room.height + setting.growth,
-      };
+    : { ...room, height: room.height + setting.growth };
   const style = {
     left: percent(place.left),
     top: percent(place.top),
@@ -309,15 +333,6 @@ function TranslatedFlow({
   );
 }
 
-function overlaps(one: Box, other: Box): boolean {
-  return (
-    one.left < other.left + other.width &&
-    other.left < one.left + one.width &&
-    one.top < other.top + other.height &&
-    other.top < one.top + one.height
-  );
-}
-
 // A width that is taken once it has stood still for a moment; the first is taken at once.
 function useSettled(width: number): number {
   const [settled, setSettled] = useState(width);
@@ -368,13 +383,13 @@ export function PageTranslation({
   const { layout, unspaced } = texts;
   const body: BodyPrint = useMemo(() => bodyPrintOn(layout, page), [layout, page]);
   const leadings = useMemo(() => leadingsOf(body.spacing, unspaced), [body, unspaced]);
-  const colours = useMemo(() => coloursFrom(drawn, texts.texts), [drawn, texts.texts]);
+  const colours = useMemo(() => coloursFrom(drawn, texts.areas), [drawn, texts.areas]);
   const flows = useMemo(() => {
     const paperUnder = (text: AreaText) => colours.get(text.key)?.paper;
     const facts: PageFacts = {
       paperOf: (text) => {
         const read = colours.get(text.key);
-        return read === undefined ? undefined : paperOf(read);
+        return read === undefined ? undefined : paperLevelsOf(read);
       },
       blank: (box, text) => {
         const paper = paperUnder(text);
@@ -386,14 +401,14 @@ export function PageTranslation({
       },
     };
     const lines = (layout.boxes.get(page) ?? []).map((line) => line.box);
-    return flowsOf(texts.texts, columnsOf(layout.runs.get(page) ?? []), lines, body, facts);
-  }, [texts.texts, colours, drawn, layout, page, body]);
+    return flowsOf(texts.areas, columnsOf(layout.runs.get(page) ?? []), lines, body, facts);
+  }, [texts.areas, colours, drawn, layout, page, body]);
   const cited = useMemo(() => {
     const [first] = pointed;
     return first === undefined
       ? undefined
-      : texts.texts.find((text) => text.area.lines.some((line) => overlaps(line, first)))?.key;
-  }, [pointed, texts.texts]);
+      : texts.areas.find((text) => text.area.lines.some((line) => overlap(line, first) > 0))?.key;
+  }, [pointed, texts.areas]);
 
   // Fonts that come after the first fitting, a formula's above all, change what the text
   // takes, so the page is fitted again once they are in.
@@ -414,12 +429,14 @@ export function PageTranslation({
     if (host === null) {
       return;
     }
-    const elements = new Map(
-      [...host.querySelectorAll<HTMLElement>(":scope > .flow")].map((element, index) => [
-        flows[index],
-        element,
-      ]),
-    );
+    const shown = [...host.querySelectorAll<HTMLElement>(":scope > .flow")];
+    const elements = new Map<Flow, HTMLElement>();
+    flows.forEach((flow, index) => {
+      const element = shown[index];
+      if (element !== undefined) {
+        elements.set(flow, element);
+      }
+    });
     const set = (flow: Flow, values: { leading: number; step: number; share: number }) => {
       const element = elements.get(flow);
       element?.style.setProperty("--leading", String(values.leading));
@@ -458,9 +475,8 @@ export function PageTranslation({
     const ragged = new Set<string>();
     elements.forEach((element, flow) => {
       [...element.children].forEach((area, index) => {
-        const text = flow?.texts[index];
-        const across = text !== undefined && flow?.vertical === false;
-        if (across && area instanceof HTMLElement && stretches(area)) {
+        const text = flow.texts[index];
+        if (text !== undefined && !flow.vertical && area instanceof HTMLElement && stretches(area)) {
           ragged.add(text.key);
         }
       });

@@ -86,14 +86,14 @@ function rgbOf(colour: string): Rgb {
 // Papers alike to the eye are one paper: each channel is taken to eight levels.
 const PAPER_LEVEL = 32;
 
-export function paperOf(colours: Colours): string {
+export function paperLevelsOf(colours: Colours): string {
   return (colours.paper.match(/\d+/g) ?? [])
     .map((channel) => Math.floor(Number(channel) / PAPER_LEVEL))
     .join(",");
 }
 
 function groupOf(text: AreaText, colours: Colours): string {
-  return `${text.kind}|${paperOf(colours)}`;
+  return `${text.kind}|${paperLevelsOf(colours)}`;
 }
 
 function brightnessOf(colour: string): number {

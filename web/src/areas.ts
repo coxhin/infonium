@@ -69,7 +69,7 @@ function union(boxes: Box[]): Box {
   return { left, top, width: right - left, height: bottom - top };
 }
 
-function overlap(first: Box, second: Box): number {
+export function overlap(first: Box, second: Box): number {
   const width =
     Math.min(first.left + first.width, second.left + second.width) -
     Math.max(first.left, second.left);
@@ -342,17 +342,21 @@ export function layoutOf(blocks: Block[]): Layout {
   const body = [PARAGRAPH, LIST_ITEM, ALL_TEXT]
     .map((type) => typesetOf(throughout.get(type) ?? NO_MEASURES))
     .find((typeset) => typeset !== undefined);
-  const bodyPrint = printOf(body);
+  const bodyPrint = pitchedOf(body);
   const kinds = new Map<string, Typeset>();
   measured.forEach((measures, key) => {
     const onPage = typesetOf(measures);
     if (bodyPrint !== undefined && bodyKeys.has(key)) {
-      kinds.set(
-        key,
-        onPage?.pitch === undefined
-          ? bodyPrint
-          : printOfPitch(onPage.pitch, Math.min(...measures.sizes), bodyPrint),
-      );
+      // A block of body text is set by its own pitch, or where it has none by its page's
+      // paragraphs': of body text, only the print of a page's paragraphs is kept.
+      if (key.endsWith(`${KEY_PARTS}${PARAGRAPH}`)) {
+        kinds.set(
+          key,
+          onPage?.pitch === undefined
+            ? bodyPrint
+            : printOfPitch(onPage.pitch, Math.min(...measures.sizes), bodyPrint),
+        );
+      }
       return;
     }
     const type = key.slice(key.indexOf(KEY_PARTS) + 1);
@@ -387,10 +391,10 @@ export function layoutOf(blocks: Block[]): Layout {
 
 const NO_TYPESET: Typeset = { size: 0, pitch: undefined };
 
-// A print whose pitch is known.
-type Print = { size: number; pitch: number };
+// A typeset whose pitch is known.
+type PitchedTypeset = { size: number; pitch: number };
 
-function printOf(typeset: Typeset | undefined): Print | undefined {
+function pitchedOf(typeset: Typeset | undefined): PitchedTypeset | undefined {
   return typeset?.pitch === undefined ? undefined : { size: typeset.size, pitch: typeset.pitch };
 }
 
@@ -400,7 +404,7 @@ function printOf(typeset: Typeset | undefined): Print | undefined {
 // is taken for larger letters only where the smallest line is larger too: the lines of a
 // paragraph that holds a formula, or that the engine boxed unevenly, stand further apart than
 // its print's, 24 points for a paragraph of the 12 point pitch in one paper.
-function printOfPitch(pitch: number, smallest: number, body: Print): Print {
+function printOfPitch(pitch: number, smallest: number, body: PitchedTypeset): PitchedTypeset {
   const ratio = pitch / body.pitch;
   const told = { size: body.size * ratio, pitch };
   if (ratio < 1 - SAME_TYPE) {
@@ -414,7 +418,11 @@ function printOfPitch(pitch: number, smallest: number, body: Print): Print {
 
 // A block of body text is set by its own pitch, and one of a single line, which has none, in
 // what its page's paragraphs take.
-function bodyTypeset(own: Measures, paragraphs: Typeset | undefined, body: Print): Typeset {
+function bodyTypeset(
+  own: Measures,
+  paragraphs: Typeset | undefined,
+  body: PitchedTypeset,
+): Typeset {
   const ownTypeset = typesetOf(own);
   if (ownTypeset?.pitch === undefined) {
     return paragraphs ?? body;
@@ -597,7 +605,7 @@ export function placedOf(
     return [];
   }
   const othersOn = (page: number) => othersOf(layout.boxes, page, blockNumber);
-  const bodyPrint = printOf(layout.body);
+  const bodyPrint = pitchedOf(layout.body);
   const typesetOn = (page: number) => {
     const own = measuresOf(textLinesOf(block, places.filter((place) => place.page === page)));
     return isBody(block.kind) && bodyPrint !== undefined

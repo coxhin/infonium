@@ -3,10 +3,11 @@ import { layoutOf, placedOf, translatedText, writtenUnspaced, type AreaText } fr
 import { useArrivalPosition } from "./arrival";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
-import { PageViewer, type Overlays, type PageMarks } from "./pages";
+import { PageViewer, type PageMarks } from "./pages";
 import { PageText } from "./pagelines";
 import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
+import { pageTextsOf } from "./pagetranslation";
 import { SEGMENT_GAP } from "./translated";
 import type { ViewContext } from "./views";
 
@@ -16,7 +17,7 @@ const NO_PAGES: PagePlace[] = [];
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
-// it stands for, and in 对照 the source stands beside each page, or under each flow where
+// it stands for, and in 对照 the source stands beside each page, or under each area where
 // there is no room for two. The reader's highlights are drawn on the lines they cover, and the
 // reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
 // above it all. The pages open where the reader stood in the file as it arrived, if they did.
@@ -63,16 +64,7 @@ export function PagesView({
     };
   }, [text, marking, itemDocument.id]);
   const shown = setting !== "source";
-  // Whether the translation is written without spaces between words, which tells the leadings
-  // its pages may take.
-  const unspaced = useMemo(
-    () =>
-      writtenUnspaced(
-        [...translation.blocks.values()].map((block) => translatedText(block, SEGMENT_GAP).text),
-      ),
-    [translation.blocks],
-  );
-  const overlays = useMemo<Overlays | undefined>(() => {
+  const overlays = useMemo(() => {
     if (!shown) {
       return undefined;
     }
@@ -93,8 +85,13 @@ export function PagesView({
         onPages.set(text.area.page, onPage);
       }
     });
-    return { texts: onPages, layout, unspaced };
-  }, [shown, translation.blocks, itemDocument, layout, unspaced]);
+    // Whether the translation is written without spaces between words tells the leadings its
+    // pages may take.
+    const unspaced = writtenUnspaced(
+      [...translation.blocks.values()].map((block) => translatedText(block, SEGMENT_GAP).text),
+    );
+    return pageTextsOf(onPages, layout, unspaced);
+  }, [shown, translation.blocks, itemDocument, layout]);
   const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
   const opening = useArrivalPosition(entry.id);
   return (

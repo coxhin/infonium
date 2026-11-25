@@ -110,8 +110,8 @@
 
 /* On the source's page the outline of a passage pointed at stands above all. On a page that
    shows the translation it lies under it: an area that holds the cited block's translation is
-   marked whole and its flow covers the outline until it is pressed to show the source; where
-   the block has no area, the outline is on show. */
+   marked whole and covers the outline until it is pressed to show the source; where the block
+   has no area, the outline is on show. */
 .page .page-box {
   z-index: 3;
 }
