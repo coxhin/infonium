@@ -23,14 +23,22 @@ const COMMENT_LINES = 6;
 // The key code a browser gives a key that an input method takes while it composes.
 const COMPOSING_KEY_CODE = 229;
 
-type Keeping = { state: "idle" } | { state: "keeping" } | { state: "failed"; reason: string };
+// A failure is told by the field unless a press of 记到笔记 waits for the keeping, which then
+// tells it itself.
+type Keeping =
+  | { state: "idle" }
+  | { state: "keeping" }
+  | { state: "failed"; reason: string; toldByPress: boolean };
+
+// Who tells how a keeping went: the field, or a press that waits for it.
+type Telling = { byPress: boolean };
 
 // What came of keeping what was typed: the comment the service holds now, or why it holds
 // nothing new.
 type Kept = { kept: true; comment: string } | { kept: false; reason: string };
 
-// A keeping of what was typed, under way or done, and the text it sends.
-type Sending = { text: string; outcome: Promise<Kept> };
+// A keeping of what was typed, under way or done, the text it sends, and who tells its end.
+type Sending = { text: string; outcome: Promise<Kept>; telling: Telling };
 
 // The comment as the reader sees it in an open field, once what was typed and not kept yet is
 // kept; it rejects, saying why, when that cannot be kept.
@@ -129,19 +137,21 @@ export function CommentField({
     setEditing(false);
   }
 
-  async function send(text: string): Promise<Kept> {
+  async function send(text: string, telling: Telling): Promise<Kept> {
     setKeeping({ state: "keeping" });
     try {
       await noteOnHighlight(highlight.item, highlight.id, text);
     } catch (error) {
       // A highlight removed elsewhere has left the list with its entry and this field.
       if (highlightGone(error)) {
-        announce(GONE);
+        if (!telling.byPress) {
+          announce(GONE);
+        }
         return { kept: false, reason: GONE };
       }
       settled.current = false;
       const reason = requestReason(error);
-      setKeeping({ state: "failed", reason });
+      setKeeping({ state: "failed", reason, toldByPress: telling.byPress });
       return { kept: false, reason: `${UNKEPT}：${reason}` };
     }
     setKeeping({ state: "idle" });
@@ -149,14 +159,15 @@ export function CommentField({
     return { kept: true, comment: text };
   }
 
-  function keep(): Promise<Kept> {
+  function keep(byPress: boolean): Promise<Kept> {
     settled.current = true;
     if (typed === undefined) {
       setKeeping({ state: "idle" });
       close();
       return Promise.resolve({ kept: true, comment: highlight.comment });
     }
-    const sent: Sending = { text: typed.text, outcome: send(typed.text) };
+    const telling = { byPress };
+    const sent: Sending = { text: typed.text, outcome: send(typed.text, telling), telling };
     sending.current = sent;
     void sent.outcome.then(({ kept }) => {
       if (!kept && sending.current === sent) {
@@ -170,12 +181,15 @@ export function CommentField({
   // very text typed, under way or done, is awaited, not sent again; other typing is kept first.
   async function commentAsSeen(): Promise<string> {
     const sent = sending.current;
+    if (sent !== undefined) {
+      sent.telling.byPress = true;
+    }
     const outcome =
       typed === undefined
         ? { kept: true as const, comment: highlight.comment }
         : sent?.text === typed.text
           ? await sent.outcome
-          : await keep();
+          : await keep(true);
     if (!outcome.kept) {
       throw new Error(outcome.reason);
     }
@@ -210,7 +224,7 @@ export function CommentField({
     }
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      void keep();
+      void keep(false);
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -246,11 +260,11 @@ export function CommentField({
           setTyped(text === openedWith ? undefined : { text, openedWith });
         }}
         onKeyDown={keyed}
-        onBlur={() => settled.current || void keep()}
+        onBlur={() => settled.current || void keep(false)}
       />
       {keeping.state === "keeping" && <p className="keeping">正在保存…</p>}
       {keeping.state === "failed" && (
-        <p className="status failed" role="alert">
+        <p className="status failed" role={keeping.toldByPress ? undefined : "alert"}>
           {UNKEPT}：{keeping.reason}。写下的内容还在，离开输入框或按 Ctrl+Enter 再试。
         </p>
       )}
