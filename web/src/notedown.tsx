@@ -1,13 +1,18 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Anchor, Statement } from "./client";
 import { announce } from "./announce";
 import { reasonOf } from "./loading";
-import { noteDown, showNote, type Cited, type Excerpt, type Noted } from "./notes";
+import { inTurn, showNote, type Cited, type Excerpt, type Noted, type PutDown } from "./notes";
 import "./notedown.css";
 
+// One excerpt a press puts into a note, as it stands when the press comes: a highlight's
+// comment may still be being typed then, and is kept first. It rejects, saying why, when the
+// excerpt cannot be had.
+export type PressedExcerpt = () => Promise<Excerpt>;
+
 // What is put into a note at one press, in order, and how many citations were left out of it
-// because the item they lie in could not be told.
-export type Taking = { excerpts: Excerpt[]; leftOut: number };
+// because the item they lie in could not be told. The control is drawn and pressed from it.
+export type Taking = { excerpts: PressedExcerpt[]; leftOut: number };
 
 // A failure says how many of the excerpts, counted from the first, the note took before it,
 // and which note that was, so that a press after it puts in only the rest.
@@ -24,7 +29,7 @@ export function statementTaking(
   itemOf: (anchor: Anchor) => string | undefined,
 ): Taking {
   let leftOut = 0;
-  const excerpts = statements.map((statement): Excerpt => {
+  const excerpts = statements.map((statement): PressedExcerpt => {
     const cited = statement.anchors.flatMap((anchor): Cited[] => {
       const itemId = itemOf(anchor);
       if (itemId === undefined) {
@@ -33,7 +38,8 @@ export function statementTaking(
       }
       return [{ anchors: [anchor], itemId }];
     });
-    return { kind: "statement", text: statement.text, cited };
+    const excerpt: Excerpt = { kind: "statement", text: statement.text, cited };
+    return () => Promise.resolve(excerpt);
   });
   return { excerpts, leftOut };
 }
@@ -57,21 +63,21 @@ class StoppedPartWay extends Error {
   }
 }
 
-// The excerpts from the given one on go into the note one after another, each awaited, so that
-// they arrive in the note in their order; the note that took the last is the one said.
+// The excerpts from the given one on, begun at the press, go into the note one after another,
+// each awaited, so that they arrive in the note in their order; the note that took the last is
+// the one said.
 async function noteFrom(
-  excerpts: Excerpt[],
+  pending: Promise<Excerpt>[],
   taken: number,
   noted: Noted | undefined,
+  putExcerpt: PutDown,
 ): Promise<Noted> {
   let last = noted;
-  for (const [at, excerpt] of excerpts.entries()) {
-    if (at >= taken) {
-      try {
-        last = await noteDown(excerpt);
-      } catch (error) {
-        throw new StoppedPartWay(reasonOf(error), at, last);
-      }
+  for (const [index, excerpt] of pending.entries()) {
+    try {
+      last = await putExcerpt(await excerpt);
+    } catch (error) {
+      throw new StoppedPartWay(reasonOf(error), taken + index, last);
     }
   }
   if (last === undefined) {
@@ -121,6 +127,13 @@ function pressTitle(shape: NoteDownShape, leftOut: number): string | undefined {
 // The control that puts what infonium wrote, or a highlight, into the note being written.
 // It is quiet until the pointer is over what it belongs to or the keyboard is in it, and
 // keeps its room meanwhile; once it has something to say, it stays on show.
+//
+// A press by the pointer takes the keyboard only once it is a press, not as the button goes
+// down: a comment field open elsewhere is then left, and keeps its comment by itself, only after
+// the press, so that the field closing cannot move the control from under the pointer before the
+// press ends. A press by the keyboard finds it here already. While it writes, the control
+// takes no press but keeps the keyboard, as a disabled button would not, so that Enter presses
+// it again once it is done or has failed.
 export function NoteDown({
   taking,
   label,
@@ -131,6 +144,7 @@ export function NoteDown({
   shape?: NoteDownShape;
 }) {
   const [noting, setNoting] = useState<Noting>({ state: "idle" });
+  const pressButton = useRef<HTMLButtonElement>(null);
 
   const { excerpts, leftOut } = taking;
   // After a failure part way, a press puts in only what the note has not taken.
@@ -138,13 +152,20 @@ export function NoteDown({
   const rest = excerpts.length - taken;
 
   async function press() {
+    if (noting.state === "writing") {
+      pressButton.current?.focus({ preventScroll: true });
+      return;
+    }
+    // The excerpts are begun before the press takes the keyboard, so that a comment still being
+    // typed is kept by the press, which tells how that went, and not by the field it leaves.
+    const pending = excerpts.slice(taken).map((excerpt) => excerpt());
+    // One that is not reached, as after a failure before it, is not awaited.
+    pending.forEach((excerpt) => void excerpt.catch(() => undefined));
+    pressButton.current?.focus({ preventScroll: true });
     setNoting({ state: "writing" });
+    const before = noting.state === "failed" ? noting.noted : undefined;
     try {
-      const noted = await noteFrom(
-        excerpts,
-        taken,
-        noting.state === "failed" ? noting.noted : undefined,
-      );
+      const noted = await inTurn((putExcerpt) => noteFrom(pending, taken, before, putExcerpt));
       setNoting({ state: "noted", noted, leftOut });
       announce(`已记到笔记《${noted.title}》${leftOutNote(leftOut)}`);
     } catch (error) {
@@ -161,10 +182,12 @@ export function NoteDown({
   return (
     <span className="notedown" data-state={noting.state} data-shape={shape}>
       <button
+        ref={pressButton}
         className="notedown-press"
         aria-label={taken === 0 ? label : undefined}
         title={pressTitle(shape, leftOut)}
-        disabled={noting.state === "writing"}
+        aria-disabled={noting.state === "writing"}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => void press()}
       >
         {shape === "mark" ? (

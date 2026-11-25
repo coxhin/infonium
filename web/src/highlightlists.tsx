@@ -24,7 +24,7 @@ import type { Loaded } from "./loading";
 import type { Seat } from "./seat";
 
 const HOW_TO_MARK =
-  "在原文里选中一段文字，按出现的「高亮」就能标上；标上的段落会列在这里，可以写评论，也可以记到笔记。";
+  "在原文里选中一段文字，按出现的「高亮」就能标上；标上的段落会列在这里，可以写批注，也可以记到笔记。";
 
 // What an entry asks of its list, made once and reading the latest of what it needs, so that
 // a list drawn again does not draw its entries again. A list given an opener opens the item a

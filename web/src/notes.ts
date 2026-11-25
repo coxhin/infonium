@@ -32,10 +32,10 @@ import { noteName, openedNote, openNote } from "./notelist";
 export type Cited = { anchors: Anchors; itemId: string };
 
 // A statement infonium wrote, of a digest or an answer, with the passages it cites; or a
-// passage quoted from a source.
+// passage quoted from a source, with what the reader noted on it, empty where nothing was.
 export type Excerpt =
   | { kind: "statement"; text: string; cited: Cited[] }
-  | { kind: "quote"; cited: Cited };
+  | { kind: "quote"; cited: Cited; comment: string };
 
 // Where an excerpt went: the note, and what it is called.
 export type Noted = { noteId: string; title: string };
@@ -58,18 +58,18 @@ const LAST_NOTED_KEY = "infonium.lastNoted";
 let lastNoted: string | undefined = sessionStorage.getItem(LAST_NOTED_KEY) ?? undefined;
 let excerpts: Promise<unknown> = Promise.resolve();
 
-// What the sources of an excerpt are called, by item.
+// What the sources of an excerpt are called, by item, for those whose title could be read.
 async function sourceTitles(cited: Cited[]): Promise<Map<string, string>> {
   const itemIds = [...new Set(cited.map((one) => one.itemId))];
   const titles = await Promise.all(
     itemIds.map((itemId) =>
       readEntry(itemId).then(
-        (entry) => itemTitle(entry),
-        () => UNNAMED_SOURCE,
+        (entry): [string, string][] => [[itemId, itemTitle(entry)]],
+        (): [string, string][] => [],
       ),
     ),
   );
-  return new Map(itemIds.map((itemId, index) => [itemId, titles[index] ?? UNNAMED_SOURCE]));
+  return new Map(titles.flat());
 }
 
 function citedOf(excerpt: Excerpt): Cited[] {
@@ -99,6 +99,7 @@ function written(
           excerpt.cited.anchors.map((anchor) => anchor.quote),
           titles.get(excerpt.cited.itemId) ?? UNNAMED_SOURCE,
           passageId,
+          excerpt.comment,
         )
       : statementMarkdown(excerpt.text, [...linked.keys()]);
   return { markdown, linked };
@@ -112,12 +113,14 @@ function sourcesOf(titles: ReadonlyMap<string, string>): string {
   return [...new Set(titles.values())].map((title) => `《${title}》`).join("、");
 }
 
-// Why an excerpt is not in a note: what was refused, named with its sources.
+// Why an excerpt is not in a note, and the sources it was taken from where their titles were
+// read; the control that asked says that it was not noted.
 function notNoted(error: unknown, titles: ReadonlyMap<string, string>): Error {
   if (error instanceof NotSent) {
     return error;
   }
-  return new Error(`摘自${sourcesOf(titles)}的内容没有记下：${failureText(error)}`);
+  const from = titles.size === 0 ? "" : `（摘自${sourcesOf(titles)}）`;
+  return new Error(`${failureText(error)}${from}`);
 }
 
 async function intoNewNote(excerpt: Excerpt, titles: ReadonlyMap<string, string>): Promise<Noted> {
@@ -222,11 +225,21 @@ async function putDown(excerpt: Excerpt): Promise<Noted> {
 
 // Puts an excerpt at the end of the note being written, with links to its passages, and makes
 // a note for it when none is being written; the result says where it went, once it is kept.
-// Excerpts are put down one after another, in the order they came.
+export type PutDown = (excerpt: Excerpt) => Promise<Noted>;
+
+// Takes a turn among the excerpts going into notes, at the moment it is asked for. The work runs
+// once every turn asked for before it is over, however long that waits, and puts its excerpts
+// down with what it is handed, so that nothing asked for later comes between them. A turn that
+// fails ends, and the turns after it still run.
+export function inTurn<Value>(work: (putExcerpt: PutDown) => Promise<Value>): Promise<Value> {
+  const done = excerpts.then(() => work(putDown));
+  excerpts = done.catch(() => undefined);
+  return done;
+}
+
+// Puts one excerpt down in a turn of its own.
 export function noteDown(excerpt: Excerpt): Promise<Noted> {
-  const noted = excerpts.then(() => putDown(excerpt));
-  excerpts = noted.catch(() => undefined);
-  return noted;
+  return inTurn((putExcerpt) => putExcerpt(excerpt));
 }
 
 // Asks for a note to be shown: the notebook comes on show with the note open in it.

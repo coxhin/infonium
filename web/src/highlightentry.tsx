@@ -1,8 +1,8 @@
-import { memo, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { anchorsOf, type Highlight, type Passage } from "./client";
 import { announce } from "./announce";
 import { CutText, useCut } from "./cuttext";
-import { CommentField, typingUnkept } from "./highlightcomment";
+import { CommentField, typingUnkept, type CommentNow } from "./highlightcomment";
 import { RemoveControl } from "./highlightremoval";
 import { wasMarkedAgain, type Opened } from "./highlights";
 import { NoteDown, type Taking } from "./notedown";
@@ -126,14 +126,12 @@ function StandingNote({ highlight, actions }: { highlight: Highlight; actions: E
   );
 }
 
-function quoteTaking(highlight: Highlight): Taking {
+// The highlight's passage where it stands now, with its comment as the reader sees it when the
+// press comes: what is typed in its open field is kept first.
+function quoteTaking(highlight: Highlight, commentAtPress: () => Promise<string>): Taking {
+  const cited = { anchors: anchorsOf(passageNow(highlight)), itemId: highlight.item };
   return {
-    excerpts: [
-      {
-        kind: "quote",
-        cited: { anchors: anchorsOf(passageNow(highlight)), itemId: highlight.item },
-      },
-    ],
+    excerpts: [async () => ({ kind: "quote", cited, comment: await commentAtPress() })],
     leftOut: 0,
   };
 }
@@ -196,7 +194,7 @@ function useOpening(
     if (!chosenInList.has(opening)) {
       const words = startOf(wordsOf(passageNow(highlight)));
       const opened = wasMarkedAgain(opening) ? MARKED_ALREADY : "笔记本里打开了高亮：";
-      announce(`${opened}${words}${opening.commenting ? "。可以写评论了" : ""}`);
+      announce(`${opened}${words}${opening.commenting ? "。可以写批注了" : ""}`);
     }
   }, [opening]);
   return again;
@@ -220,8 +218,21 @@ export const HighlightEntry = memo(function HighlightEntry({
 }) {
   const entry = useRef<HTMLLIElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
+  const commentNow = useRef<CommentNow>(null);
   const [editing, setEditing] = useState(() => typingUnkept(highlight.id));
   const markedAgain = useOpening(opening, highlight, entry, setEditing);
+
+  // An entry that leaves the list with the keyboard in it, as one removed elsewhere while its
+  // 记到笔记 was pressed, hands the keyboard on as the list does after a removal. This runs while
+  // the entry is still in the page, before it is taken out.
+  useLayoutEffect(() => {
+    const shown = entry.current;
+    return () => {
+      if (shown?.contains(document.activeElement)) {
+        actions.removed();
+      }
+    };
+  }, []);
 
   return (
     <li
@@ -239,15 +250,22 @@ export const HighlightEntry = memo(function HighlightEntry({
         editing={editing}
         setEditing={setEditing}
         editButton={editButton}
+        commentNow={commentNow}
       />
       <div className="entry-foot">
         {!editing && (
           <button ref={editButton} className="edit-comment" onClick={() => setEditing(true)}>
-            {highlight.comment === "" ? "写评论" : "改评论"}
+            {highlight.comment === "" ? "写批注" : "改批注"}
           </button>
         )}
         <span className="entry-actions">
-          <NoteDown taking={quoteTaking(highlight)} label="记到笔记：这条高亮" />
+          <NoteDown
+            taking={quoteTaking(
+              highlight,
+              async () => (await commentNow.current?.()) ?? highlight.comment,
+            )}
+            label="记到笔记：这条高亮"
+          />
           <RemoveControl highlight={highlight} onRemoved={actions.removed} />
         </span>
       </div>
