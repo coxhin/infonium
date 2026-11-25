@@ -24,7 +24,10 @@ from infonium.document import HeadingLevel, PageFraction, PageNumber
 # lowered ones. On a page that is only shown turned the lines lie, and it reads those worse
 # still. So it is given a file that turns no page: pdfium.upright_file makes one. A box of the
 # line's height is as high and as deep as the character's font says its letters reach, so it
-# is also given a file whose fonts say that truly: font_metrics.measured_file makes one.
+# is also given a file whose fonts say that truly: font_metrics.measured_file makes one. It
+# takes either half of a character beyond the first 65,536 of Unicode for a broken character,
+# and the letters of formulas set in a sentence are often such characters, so the fonts of the
+# file it is given say plain letters for them: plain_letters.plain_letters_file makes it.
 ENGINE_INPUT = "-p"
 ENGINE_OUTPUT = "-o"
 ENGINE_BACKEND = "-b"
