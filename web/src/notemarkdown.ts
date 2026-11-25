@@ -18,7 +18,12 @@ const UNDERLINE = /^(?:=+[ \t]*|-[-\s]*)$/;
 // around it a table.
 const TABLE_ROW_START = /^\|/;
 const TABLE_DELIMITER = /^(?=.*\|)\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-const WEB_ADDRESS = /https?:\/\/[^\s<>`　-〿＀-￯]+/g;
+// An address as the note's Markdown reader (GFM) takes one to link by itself: one with its
+// protocol, or one that starts with www.
+const WEB_ADDRESS = /(?:[hH][tT][tT][pP][sS]?:\/\/|www\.)[^\s<>`　-〿＀-￯]+/g;
+const WWW = "www.";
+// The protocol that reader gives an address that starts with www.
+const WWW_PROTOCOL = "http://";
 const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
 // The names of this machine, as the browser's reader of addresses writes them: loopback and
 // unspecified addresses however they were written, an IPv4 one inside an IPv6 one included,
@@ -34,7 +39,11 @@ const THIS_MACHINE = [
   /^\[::ffff:(?:7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)\]$/i,
   /^[^.[]+$/,
 ];
-const ADDRESS_END = /[.,;:!?'"]+$/;
+// What ends an address and is not part of it, as that reader tells it: these marks, and a
+// closing bracket that opened before the address. Closing quotes as they are printed end it
+// too, as their straight forms do.
+const ADDRESS_END_MARK = /[?!.,:;*_'"~’”]$/;
+const OPENING_OF: Record<string, string> = { ")": "(", "]": "[" };
 const LEADING_SPACE = /^[ \t]+/;
 const TRAILING_SPACE = /[ \t]+$/;
 // A line of nothing but white space of any kind ends a paragraph, as an empty one does: the
@@ -93,19 +102,40 @@ export function isWebAddress(address: string): boolean {
   );
 }
 
-// An address in a statement, which Markdown would take as a link by itself, is written as a
-// link to it, so that nothing in it is escaped and it comes back the same; an address the
-// editor would not link is left as text. The marks that end a sentence are not part of it.
+function countOf(text: string, character: string): number {
+  return text.split(character).length - 1;
+}
+
+// An address found in text, without the marks that end the sentence it stands in.
+function addressOf(found: string): string {
+  let address = found;
+  for (;;) {
+    const last = address.at(-1) ?? "";
+    const opening = OPENING_OF[last];
+    const closesBefore =
+      opening !== undefined && countOf(address, opening) < countOf(address, last);
+    if (!ADDRESS_END_MARK.test(last) && !closesBefore) {
+      return address;
+    }
+    address = address.slice(0, -1);
+  }
+}
+
+// An address in a statement or a comment, which Markdown would take as a link by itself, is
+// written as a link to it, so that nothing in it is escaped and it comes back the same, and so
+// that the reader links what infonium meant and no more. An address the editor would not link
+// is left as text, which the note's schema reads back without its escapes.
 function linkedAddresses(text: string): string {
   let written = "";
   let from = 0;
   for (const found of text.matchAll(WEB_ADDRESS)) {
-    const address = found[0].replace(ADDRESS_END, "");
-    if (!isWebAddress(address)) {
+    const address = addressOf(found[0]);
+    const target = address.startsWith(WWW) ? `${WWW_PROTOCOL}${address}` : address;
+    if (!isWebAddress(target)) {
       continue;
     }
     const at = found.index;
-    written += `${inlineText(text.slice(from, at))}[${inlineText(address)}](${address
+    written += `${inlineText(text.slice(from, at))}[${inlineText(address)}](${target
       .replace(/\(/g, "%28")
       .replace(/\)/g, "%29")})`;
     from = at + address.length;

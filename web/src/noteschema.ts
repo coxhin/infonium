@@ -26,6 +26,13 @@ const FOOTNOTE_DEFINITION = /^ {0,3}\[\^[^\]]+\]:/m;
 // What a link opens in, and what it tells the site it opens, whatever the HTML it came in said.
 const LINK_TARGET = "_blank";
 const LINK_REL = "noreferrer noopener";
+// How a link written as such opens: [words](address) or <address>; a link that starts
+// otherwise is an address Markdown linked by itself.
+const LINK_OPENINGS: ReadonlySet<string> = new Set(["[", "<"]);
+// Markdown's escapes, of a mark of ASCII punctuation, and a backslash at the end that is not
+// itself escaped.
+const ESCAPE = /\\([!-/:-@[-`{-~])/g;
+const CUT_ESCAPE = /(?<!\\)((?:\\\\)*)\\$/;
 const UNHELD_KINDS: Record<string, string | undefined> = {
   table: "表格",
   image: "图片",
@@ -113,9 +120,19 @@ const PassageLink = Node.create({
   },
 });
 
+// The text of an address that Markdown linked by itself, as it was written. Markdown keeps the
+// escapes inside such an address, and an escape that its end cuts in two leaves the backslash
+// in it and the escaped mark after it.
+function writtenAddress(linked: string): string {
+  return linked.replace(CUT_ESCAPE, "$1").replace(ESCAPE, "$1");
+}
+
 const WebLink = Link.extend({
   parseMarkdown(token, helpers) {
-    const address = String(token.href ?? "");
+    const bare = !LINK_OPENINGS.has(String(token.raw ?? "").charAt(0));
+    const address = bare
+      ? writtenAddress(String(token.href ?? ""))
+      : String(token.href ?? "");
     if (address.startsWith(PASSAGE_LINK)) {
       return helpers.createNode(PASSAGE_NODE, {
         id: address.slice(PASSAGE_LINK.length),
@@ -123,7 +140,10 @@ const WebLink = Link.extend({
         text: plainText(token.tokens),
       });
     }
-    const content = helpers.parseInline(token.tokens ?? []);
+    const words = bare ? writtenAddress(token.text ?? "") : undefined;
+    const content = helpers.parseInline(
+      words === undefined ? (token.tokens ?? []) : [{ type: "text", raw: words, text: words }],
+    );
     if (!isWebAddress(address)) {
       return content;
     }

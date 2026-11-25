@@ -47,7 +47,7 @@ A highlight is a passage you marked, with a comment if you wrote one. Select wor
 
 A highlight is drawn in every view of its source. Pressing one opens it in the notebook, and pressing its words in the notebook shows the passage in the source. With no source open, the notebook lists the highlights of every source.
 
-A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A highlight goes in with its comment, written as plain text after the quotation and its link; a comment still being typed is kept first. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
+A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A highlight goes in with its comment, written as plain text after the quotation and its link; a comment still being typed is kept first. A web address in a statement or a comment becomes a link in the note: one that starts with http://, https:// or www., without the punctuation that ends the sentence after it or a bracket that closes before it. An address of this machine stays text. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
 
 ### Reading a source again
 
@@ -259,6 +259,7 @@ The blocks of every document the library holds are indexed in the library's file
 - A note of 50 passages in 20 items of 2,000 blocks each opened in 157.5 ms the first time and in 8.0 ms once those documents were read. infonium keeps the 64 documents read last.
 - A screen keyboard was tried only as a window of 390 by 420 pixels, and the editor was not tried with a screen reader.
 - A comment written from right to left stands aligned to the left in a note, as every paragraph of a note does, though on its highlight it stands to the right.
+- An address with Chinese text right after it, with no space between, takes that text into its link: `https://example.com/page中的说法。` links `https://example.com/page中的说法`. A Chinese full stop, comma or bracket ends it.
 
 ### Reading a source again
 
