@@ -201,11 +201,13 @@ export function areasOf(
 
 // The sizes and the steps between lines that a set of lines shows, measured against its
 // smallest line: a line much taller than that is left out, and so is a step that is no line's
-// pitch beside it. A step runs from a line's middle to the next one's, so that a line boxed
-// taller than its neighbour, as one that holds a formula or a raised letter, does not make it
-// look shorter: measured top to top, two body paragraphs of one paper read 10 points where
-// their print's pitch is 12, and middle to middle 11.5. Over the body text of two papers the
-// steps so measured also lie closer to the body's pitch.
+// pitch beside it. Each step is measured three ways, from a line's top, its middle and its foot
+// to the next one's, and the pitch is the median of them all, so that neither a line boxed
+// taller than its neighbour, as one that holds a formula or a raised letter, nor a box a point
+// off in whole points decides it: two body paragraphs of one paper read 10 points top to top
+// where their print's pitch is 12, and 11.5 so; captions of three lines whose middles stand
+// 9.5 and 10.5 points apart read 10. Over the body text of two papers the pitches so measured
+// lie closer to the body's than measured any one way.
 type Measures = { sizes: number[]; pitches: number[] };
 
 function measuresOf(places: PagePlace[]): Measures {
@@ -220,11 +222,15 @@ function measuresOf(places: PagePlace[]): Measures {
     if (last === undefined || !goesOn(last, line, downward)) {
       return;
     }
-    const step = downward
-      ? last.left + last.width / 2 - (line.left + line.width / 2)
-      : line.top + line.height / 2 - (last.top + last.height / 2);
-    if (step > LEAST_STEP * ordinary && step < MOST_STEP * ordinary) {
-      pitches.push(step);
+    const steps = downward
+      ? [0, 0.5, 1].map(
+          (part) => last.left + last.width * part - (line.left + line.width * part),
+        )
+      : [0, 0.5, 1].map((part) => line.top + line.height * part - (last.top + last.height * part));
+    for (const step of steps) {
+      if (step > LEAST_STEP * ordinary && step < MOST_STEP * ordinary) {
+        pitches.push(step);
+      }
     }
   });
   return { sizes, pitches };
