@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -220,10 +221,14 @@ function TranslatedArea({
 
 // A flow of areas set as one run of text over the paper of its room. Pressing a cut flow or
 // focusing it shows its text whole; where the source is to be seen under the translation,
-// pressing it shows the source under all its areas until it is pressed again.
+// pressing it shows the source under all its areas until it is pressed again. Whether it is
+// open is its page's to keep, by its areas.
 function TranslatedFlow({
   flow,
   setting,
+  open,
+  onTurn,
+  onFocused,
   ragged,
   shape,
   spacing,
@@ -236,6 +241,11 @@ function TranslatedFlow({
 }: {
   flow: Flow;
   setting: Setting;
+  open: boolean;
+  onTurn: (flow: Flow) => void;
+  // Told when the flow takes the keyboard's focus, and when it gives it up while it stays on
+  // show.
+  onFocused: (flow: Flow | undefined) => void;
   ragged: ReadonlySet<string>;
   shape: number;
   spacing: number;
@@ -247,7 +257,6 @@ function TranslatedFlow({
   drawing: SelectionDrawing;
 }) {
   const element = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
   // A press turns the flow once it is plain that it selected nothing: a drag that selects its
   // text ends in a click too, and a double click begins with one.
   const turning = useRef<number>(undefined);
@@ -266,7 +275,7 @@ function TranslatedFlow({
         selection.containsNode(element.current, true) &&
         selection.toString().trim() !== "";
       if (!selects) {
-        setOpen((before) => !before);
+        onTurn(flow);
       }
     }, DOUBLE_PRESS);
   };
@@ -307,11 +316,21 @@ function TranslatedFlow({
           ? (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                setOpen(!open);
+                onTurn(flow);
               }
             }
           : undefined
       }
+      onFocus={() => onFocused(flow)}
+      onBlur={(event) => {
+        // A flow taken off the page loses the focus too; only one still on show gave it up.
+        const left = event.currentTarget;
+        queueMicrotask(() => {
+          if (left.isConnected) {
+            onFocused(undefined);
+          }
+        });
+      }}
     >
       {flow.texts.map((text, index) => (
         <TranslatedArea
@@ -343,10 +362,16 @@ function useSettled(width: number): number {
   return settled;
 }
 
-// The flows of a page with how each is fitted, and the areas set flush left.
-type Fitted = { flows: Flow[]; fitting: Fitting; ragged: ReadonlySet<string> };
+// The flows of a page with how each is fitted, how each area's flow was fitted, and the areas
+// set flush left.
+type Fitted = {
+  flows: Flow[];
+  fitting: Fitting;
+  byArea: ReadonlyMap<string, Setting>;
+  ragged: ReadonlySet<string>;
+};
 
-const NO_RAGGED: ReadonlySet<string> = new Set();
+const NO_AREAS: ReadonlySet<string> = new Set();
 
 // The translation set over one drawn page, as flows. The colours and what is blank are read from
 // the drawing; the flows are fitted when the page is drawn, when a block of the page arrives,
@@ -424,6 +449,19 @@ export function PageTranslation({
   const settledWidth = useSettled(width);
   const [fitting, setFitting] = useState<Fitted>();
   const current = fitting?.flows === flows ? fitting : undefined;
+  // What is open is kept by the areas, so that a flow stays open when a block arrives in it or
+  // joins it to another: a flow is open while any of its areas is.
+  const [openAreas, setOpenAreas] = useState<ReadonlySet<string>>(NO_AREAS);
+  const turn = useCallback((flow: Flow) => {
+    setOpenAreas((before) => {
+      const open = flow.texts.some((text) => before.has(text.key));
+      const after = new Set(before);
+      flow.texts.forEach((text) => (open ? after.delete(text.key) : after.add(text.key)));
+      return after;
+    });
+  }, []);
+  // The first area of the flow that holds the keyboard's focus.
+  const focused = useRef<string>(undefined);
   useLayoutEffect(() => {
     const host = root.current;
     if (host === null) {
@@ -482,7 +520,12 @@ export function PageTranslation({
       });
     });
     host.removeAttribute(MEASURING_LINES);
-    setFitting({ flows, fitting: result, ragged });
+    const byArea = new Map<string, Setting>();
+    flows.forEach((flow) => {
+      const setting = result.settings.get(flow.key);
+      flow.texts.forEach((text) => setting !== undefined && byArea.set(text.key, setting));
+    });
+    setFitting({ flows, fitting: result, byArea, ragged });
   }, [flows, leadings, shape, settledWidth, fontsIn]);
 
   useEffect(() => {
@@ -492,6 +535,26 @@ export function PageTranslation({
     }
   }, [current, cited, onMarked]);
 
+  // A flow that held the keyboard's focus and was taken off the page, as when a block arrives
+  // at its top, hands it on to the flow that now holds its first area.
+  useLayoutEffect(() => {
+    const kept = focused.current;
+    const host = root.current;
+    if (current === undefined || kept === undefined || host === null) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && host.contains(active)) {
+      return;
+    }
+    if (active !== null && active !== document.body) {
+      focused.current = undefined;
+      return;
+    }
+    const index = current.flows.findIndex((flow) => flow.texts.some((text) => text.key === kept));
+    host.querySelectorAll<HTMLElement>(":scope > .flow")[index]?.focus({ preventScroll: true });
+  }, [current]);
+
   const first: Setting = {
     leading: leadings[0] ?? body.spacing,
     step: 1,
@@ -499,22 +562,31 @@ export function PageTranslation({
     cut: false,
     share: 0,
   };
+  // Until the flows are fitted again, each keeps on show the setting its areas had.
+  const settingOf = (flow: Flow): Setting =>
+    (current === undefined
+      ? flow.texts.map((text) => fitting?.byArea.get(text.key)).find(Boolean)
+      : current.fitting.settings.get(flow.key)) ?? first;
+  const shownLeading = (current ?? fitting)?.fitting.leading;
   return (
     <div
       ref={root}
       className={revealing ? "page-translation revealing" : "page-translation"}
       data-leading={
-        current !== undefined && flows.length > 0
-          ? current.fitting.leading.toFixed(2)
-          : undefined
+        shownLeading !== undefined && flows.length > 0 ? shownLeading.toFixed(2) : undefined
       }
     >
       {flows.map((flow) => (
         <TranslatedFlow
           key={flow.key}
           flow={flow}
-          setting={current?.fitting.settings.get(flow.key) ?? first}
-          ragged={current?.ragged ?? NO_RAGGED}
+          setting={settingOf(flow)}
+          open={flow.texts.some((text) => openAreas.has(text.key))}
+          onTurn={turn}
+          onFocused={(shown) => {
+            focused.current = shown?.texts[0]?.key;
+          }}
+          ragged={(current ?? fitting)?.ragged ?? NO_AREAS}
           shape={shape}
           spacing={body.spacing}
           colours={colours}
