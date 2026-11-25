@@ -177,6 +177,7 @@ The blocks of every document the library holds are indexed in the library's file
 - The switch keeps its place from one source to the next, so a source opened while it stands on 译文 or 对照 is translated without another word from the reader.
 - If infonium is killed during a translation, the requests in flight are made again when it starts; blocks already kept are not. A document whose item is read again meanwhile is not translated further.
 - A translation that goes on with another model keeps the blocks translated before; only 全部重新翻译 makes them all with the model chosen.
+- On a made-up article of 41 blocks and 13,300 characters, glm-5.3-flash translated the whole in 11 to 14 seconds and glm-5.3 in 20, four requests at once, with no request refused and every link and style kept. GLM's models, asked to reason little, follow the rule that keeps a term of art in English over a translation the list gives it: in four runs of four, glm-5.3-flash kept Fresnel lens in English where its own list said 菲涅尔透镜.
 - The endpoint of GLM's Coding Plan, the default, is meant for the coding tools the plan names: Zhipu's FAQ says that called from elsewhere the plan's quota does not apply, and that a request may then be refused (error 1113) or charged to the account's balance. GLM's general endpoint, `https://open.bigmodel.cn/api/paas/v4`, is paid by use.
 
 ### The chat

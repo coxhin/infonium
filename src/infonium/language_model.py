@@ -98,14 +98,18 @@ TOOL_ROLE: Final = "tool"
 FUNCTION_TOOL: Final = "function"
 JSON_SCHEMA: Final = "json_schema"
 JSON_OBJECT: Final = "json_object"
-# GLM's endpoint holds a reply to JSON but not to a schema, so its model is told the reply's
-# form after its instructions, by the form's name and schema.
+# GLM's endpoint holds a reply to JSON but not to a schema: asked for a reply to a schema alone,
+# glm-5.3 answered [1]. So its model is told the reply's form after its instructions, by the
+# form's name and schema.
 FORM_TOLD = (
     "\n\nReply with one JSON object of the form {name}, and nothing else. It follows this "
     "JSON schema:\n{schema}"
 )
-# GLM's models always reason, and by default as long as they may; infonium asks them to
-# reason little.
+# GLM's models always reason, and by default at length; infonium asks them to reason little.
+# Six made-up paragraphs took glm-5.3 10.5 s and 1,199 output tokens by default, 3.4 s and 264
+# asked so, and glm-5.3-flash 6.6 s and 780 against 3.5 s and 265. Reasoning little, flash kept
+# a term of art in English that the request's list translated, in 4 runs of 4; reasoning more
+# (high), in none of 2.
 GLM_REASONING_EFFORT: Final = "low"
 INPUT_TEXT: Final = "input_text"
 MESSAGE_ITEM: Final = "message"
