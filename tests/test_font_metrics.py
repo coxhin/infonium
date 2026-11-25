@@ -1,4 +1,5 @@
 import json
+import math
 import tempfile
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from hypothesis import strategies as st
 from pikepdf import Name
 
 from infonium import pdf
-from infonium.font_metrics import MEASURED_LETTERS, measured_file
+from infonium.font_metrics import FIGURES_PER_SIZE, MEASURED_LETTERS, measured_file, unsubset
 from infonium.pdfium import letter_reaches, stored_file
 from tests.pdf_engine_standin import PDF_DATA
 from tests.test_pdf import REFERENCE, SAMPLES, as_stored, differences
@@ -27,6 +28,9 @@ XCHARTER_DESCENT = 0
 # every font of the samples, and of the fonts of the paper that say how far their letters
 # reach.
 ONE_HEIGHT = 0.02
+# The ink of a font's letters may reach a little beyond what the font says of them: in the fonts
+# tried that say it truly, by up to 15 thousandths of their size, and in the samples by 11.
+BEYOND_SAID = 20
 COPY = "measured.pdf"
 MISSTATED = "misstated.pdf"
 
@@ -56,15 +60,30 @@ def misstated(file: Path, ascent: int, descent: int, chosen: set[int], copy: Pat
 
 
 def figures_of(file: Path) -> dict[str, tuple[float, float]]:
-    # What each font of a file says of how far its letters reach, by the font's name.
+    # What each font of a file says of how far its letters reach, by the font's name without
+    # a tag, in the order the file holds the fonts' descriptors.
     with pikepdf.open(file) as document:
         return {
-            str(descriptor[Name.FontName]): (
+            unsubset(str(descriptor[Name.FontName]).removeprefix("/")): (
                 float(descriptor[Name.Ascent]),
                 float(descriptor[Name.Descent]),
             )
             for descriptor in descriptors_of(document)
         }
+
+
+def understated(file: Path) -> dict[str, tuple[float, float]]:
+    # Each font of a file that says its letters reach less far above or below the baseline
+    # than their ink does, by its name, with how far it says they reach.
+    said = figures_of(file)
+    found = {}
+    for name, reaches in letter_reaches(file, MEASURED_LETTERS).items():
+        ascent, descent = said.get(unsubset(name), (math.inf, -math.inf))
+        top = FIGURES_PER_SIZE * max(reach.ink_top for reach in reaches.values())
+        bottom = FIGURES_PER_SIZE * min(reach.ink_bottom for reach in reaches.values())
+        if ascent < top - BEYOND_SAID or descent > bottom + BEYOND_SAID:
+            found[unsubset(name)] = (ascent, descent)
+    return found
 
 
 def unevenly_set(file: Path) -> dict[str, float]:
@@ -112,6 +131,8 @@ def test_fonts_that_say_their_letters_reach_less_far_are_made_to_say_how_far_the
         assert handed != broken, f"{sample}, whose fonts set unevenly {before}, was handed as it is"
         after = unevenly_set(handed)
         assert not after, f"in the copy of {sample}, fonts still set unevenly: {after}"
+        short = understated(handed)
+        assert not short, f"in the copy of {sample}, fonts say their letters reach less: {short}"
         # The fonts are chosen in the order the file holds their descriptors, which a copy
         # need not keep.
         sound, mended = figures_of(sample_file(sample)), figures_of(handed)
