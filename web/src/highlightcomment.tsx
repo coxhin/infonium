@@ -10,6 +10,7 @@ import { announce } from "./announce";
 import { requestReason, type Highlight } from "./client";
 import { CutText, useCut } from "./cuttext";
 import { highlightGone, noteOnHighlight } from "./highlights";
+import { ToldElsewhere } from "./notedown";
 
 // The most the service keeps of one comment: COMMENT_CHARACTERS in src/infonium/highlight.py.
 // The service counts code points and the field counts UTF-16 units, so a field held to this
@@ -19,6 +20,13 @@ const AT_BOUND = `批注最多 ${COMMENT_CHARACTERS.toLocaleString()} 字，已�
 const GONE = "这条高亮已在别处移除，批注没有保存。";
 const UNKEPT = "批注没有保存";
 const RETRY = "写下的内容还在，离开输入框或按 Ctrl+Enter 再试。";
+// How long a press of 记到笔记 waits for its comment to be kept. The note's other presses wait
+// their turn behind it, and the client sets no bound on a request, so a keeping that never
+// answers would hold every later press in the tab. A keeping answers in milliseconds on a quiet
+// machine; 15 seconds leaves a loaded one room, and a keeping not answered by then is taken as
+// not answering for the press, while the reader can press again once it has.
+const PRESS_WAIT_MS = 15_000;
+const STILL_KEEPING = "批注还没有保存好，等保存好了再记";
 // A comment on show is cut after this many lines, as the marked words are cut.
 const COMMENT_LINES = 6;
 // The key code a browser gives a key that an input method takes while it composes.
@@ -58,6 +66,16 @@ function changed(typed: Typed | undefined): typed is Typed {
 // What was typed into a comment and not kept, by highlight: the field comes back with it when
 // the entry is drawn anew, as when its item is opened again. A reload loses it.
 const unkept = new Map<string, Typed>();
+
+// What came of a keeping by the time a press stops waiting for it; undefined while it is still
+// under way then.
+function withinPressWait(outcome: Promise<Kept>): Promise<Kept | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<undefined>((done) => {
+    timer = setTimeout(() => done(undefined), PRESS_WAIT_MS);
+  });
+  return Promise.race([outcome, waited]).finally(() => clearTimeout(timer));
+}
 
 // Whether a comment was being typed when its entry was last drawn away.
 export function typingUnkept(highlightId: string): boolean {
@@ -186,15 +204,28 @@ export function CommentField({
   // very text typed, under way or done, is awaited, not sent again; other typing is kept first,
   // by the press that asks, which tells how it went. A press comes here before it takes the
   // keyboard, so that the field's blur finds the keeping begun.
+  //
+  // The press waits no longer than PRESS_WAIT_MS: past it, nothing goes into the note and the
+  // presses after it go on, while the keeping goes on and keeps the comment when it answers. A
+  // keeping the field began is told of by the field, should it fail, and the press then says
+  // only that nothing was noted.
   async function commentAsSeen(): Promise<string> {
+    if (!changed(typed)) {
+      return highlight.comment;
+    }
+    if (sending.current?.text !== typed.text) {
+      void keep("press");
+    }
     const sent = sending.current;
-    const outcome = !changed(typed)
-      ? { kept: true as const, comment: highlight.comment }
-      : sent?.text === typed.text
-        ? await sent.outcome
-        : await keep("press");
+    if (sent === undefined) {
+      throw new Error(UNKEPT);
+    }
+    const outcome = await withinPressWait(sent.outcome);
+    if (outcome === undefined) {
+      throw new Error(STILL_KEEPING);
+    }
     if (!outcome.kept) {
-      throw new Error(outcome.reason);
+      throw sent.teller === "field" ? new ToldElsewhere(outcome.reason) : new Error(outcome.reason);
     }
     return outcome.comment;
   }

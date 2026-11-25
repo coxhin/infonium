@@ -14,13 +14,18 @@ export type PressedExcerpt = () => Promise<Excerpt>;
 // because the item they lie in could not be told. The control is drawn and pressed from it.
 export type Taking = { excerpts: PressedExcerpt[]; leftOut: number };
 
+// A failure the reader was told of where it happened, as a comment's field tells of a keeping
+// it began: the control then shows only that nothing was noted, and announces nothing.
+export class ToldElsewhere extends Error {}
+
 // A failure says how many of the excerpts, counted from the first, the note took before it,
-// and which note that was, so that a press after it puts in only the rest.
+// and which note that was, so that a press after it puts in only the rest; and why, unless the
+// reader was told why elsewhere.
 type Noting =
   | { state: "idle" }
   | { state: "writing" }
   | { state: "noted"; noted: Noted; leftOut: number }
-  | { state: "failed"; reason: string; taken: number; noted: Noted | undefined };
+  | { state: "failed"; reason: string | undefined; taken: number; noted: Noted | undefined };
 
 // A statement infonium wrote, with one cited passage for each of its citations whose item can
 // be told.
@@ -52,14 +57,15 @@ function leftOutNote(leftOut: number): string {
   return leftOut === 0 ? "" : `；${leftOut} 处引文说不出出自哪一篇，没有带上`;
 }
 
-// Why the note took no more of the excerpts, and how far it had come.
+// Why the note took no more of the excerpts, unless the reader was told why elsewhere, and
+// how far it had come.
 class StoppedPartWay extends Error {
   constructor(
-    message: string,
+    readonly reason: string | undefined,
     readonly taken: number,
     readonly noted: Noted | undefined,
   ) {
-    super(message);
+    super(reason);
   }
 }
 
@@ -77,7 +83,8 @@ async function noteFrom(
     try {
       last = await putExcerpt(await excerpt);
     } catch (error) {
-      throw new StoppedPartWay(reasonOf(error), taken + index, last);
+      const reason = error instanceof ToldElsewhere ? undefined : reasonOf(error);
+      throw new StoppedPartWay(reason, taken + index, last);
     }
   }
   if (last === undefined) {
@@ -89,11 +96,12 @@ async function noteFrom(
 // What a failure says: of an excerpt in several, how many the note took and that the rest were
 // not taken.
 function failureNote(noting: Extract<Noting, { state: "failed" }>, count: number): string {
+  const why = noting.reason === undefined ? "" : `：${noting.reason}`;
   if (noting.taken === 0 || noting.noted === undefined) {
-    return `没有记下：${noting.reason}`;
+    return `没有记下${why}`;
   }
   const rest = count - noting.taken;
-  return `《${noting.noted.title}》记下了前 ${noting.taken} 句，其余 ${rest} 句没有记下：${noting.reason}`;
+  return `《${noting.noted.title}》记下了前 ${noting.taken} 句，其余 ${rest} 句没有记下${why}`;
 }
 
 function pressText(noting: Noting, rest: number): string {
@@ -171,11 +179,13 @@ export function NoteDown({
     } catch (error) {
       const failed =
         error instanceof StoppedPartWay
-          ? { reason: error.message, taken: error.taken, noted: error.noted }
+          ? { reason: error.reason, taken: error.taken, noted: error.noted }
           : { reason: reasonOf(error), taken, noted: undefined };
       const next = { state: "failed" as const, ...failed };
       setNoting(next);
-      announce(failureNote(next, excerpts.length));
+      if (next.reason !== undefined) {
+        announce(failureNote(next, excerpts.length));
+      }
     }
   }
 
