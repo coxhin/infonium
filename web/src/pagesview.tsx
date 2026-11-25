@@ -7,7 +7,7 @@ import { PageViewer, type PageMarks } from "./pages";
 import { PageText } from "./pagelines";
 import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
-import { pageTextsOf } from "./pagetranslation";
+import { pageTextsOf } from "./pagetexts";
 import { SEGMENT_GAP } from "./translated";
 import type { ViewContext } from "./views";
 

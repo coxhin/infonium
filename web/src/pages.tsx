@@ -21,7 +21,8 @@ import {
 } from "./pagemarking";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import type { Drawn } from "./pagedrawing";
-import { NO_PAGE_TEXTS, PageTranslation, type PageTexts } from "./pagetranslation";
+import { NO_PAGE_TEXTS, type PageTexts } from "./pagetexts";
+import { PageTranslation } from "./pagetranslation";
 import { scrollerOf, uncoveredTop } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
