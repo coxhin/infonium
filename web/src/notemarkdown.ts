@@ -12,7 +12,8 @@ const INLINE_MARKS = /[\\`*_[\]~]/g;
 const HEADING_START = /^#{1,6}(?=[ \t]|$)/;
 const ITEM_START = /^[-+*](?=[ \t]|$)/;
 const NUMBERED_START = /^(\d{1,9})([.)])(?=[ \t]|$)/;
-const UNDERLINE = /^(?:=+|-[-\s]*)$/;
+// An underline may end in spaces, as a line does before a line break, which ends in two.
+const UNDERLINE = /^(?:=+[ \t]*|-[-\s]*)$/;
 // A line that a table's row or its delimiter row could start with, which would make the lines
 // around it a table.
 const TABLE_ROW_START = /^\|/;
