@@ -85,6 +85,8 @@ type FlowPrint = { size: number; pitch: number };
 export type Flow = {
   key: string;
   texts: AreaText[];
+  // The keys of its areas that are pieces the engine cut out of a line of another of them.
+  pieces: ReadonlySet<string>;
   room: Box;
   tails: Box[];
   // How far from its top, and from its foot, the page shows something drawn, as far as it was
@@ -255,6 +257,7 @@ function verticalReachOf(
 // below that by as far as the flow may go beyond its foot.
 function reachOf(
   texts: AreaText[],
+  blocks: ReadonlySet<number>,
   sides: Column,
   lines: PageLine[],
   rooms: Box[],
@@ -289,14 +292,10 @@ function reachOf(
   // there under the lines, or above another block's lines that begin within the room; it may go
   // beyond that foot only where it reaches it.
   const roomFoot = footOf(last.area.room);
-  const blocks = new Set(texts.map((text) => text.blockNumber));
   const ownLines = texts.flatMap((text) => text.area.lines);
-  // The lines of other blocks, but for those the engine boxed over a line of the flow's own,
-  // as a piece it cut out of the line.
   const otherLines = lines
     .filter((line) => !blocks.has(line.blockNumber))
-    .map((line) => line.box)
-    .filter((other) => ownLines.every((own) => overlap(own, other) === 0));
+    .map((line) => line.box);
   const linesUnder = otherLines.filter(
     (other) => overlapsAcross(other, across) && other.top > firstLines.top,
   );
@@ -347,36 +346,106 @@ function reachOf(
 
 function flowOf(
   texts: AreaText[],
+  pieces: ReadonlySet<AreaText>,
   column: Column | undefined,
   lines: PageLine[],
   rooms: Box[],
   body: BodyPrint,
   facts: PageFacts,
 ): Flow {
-  const [first] = texts;
+  const whole = texts.filter((text) => !pieces.has(text));
+  const [first] = whole;
   if (first === undefined) {
-    throw new Error("A flow holds at least one area.");
+    throw new Error("A flow holds at least one area that is no piece.");
   }
   const vertical = first.area.vertical;
-  const print = flowPrintOf(texts, vertical, body);
+  const print = flowPrintOf(whole, vertical, body);
+  const blocks = new Set(texts.map((text) => text.blockNumber));
   const reach = vertical
     ? verticalReachOf(first, [...lines.map((line) => line.box), ...rooms], print, facts)
-    : reachOf(texts, column ?? sidesOf(first.area.room), lines, rooms, print, facts);
+    : reachOf(whole, blocks, column ?? sidesOf(first.area.room), lines, rooms, print, facts);
+  // A piece adds no room: the gap before it is none, and the gap after it is the one before
+  // the area it was cut from.
+  const gaps: number[] = [];
+  const weights: number[] = [];
+  let before: AreaText | undefined;
+  for (const text of texts) {
+    if (pieces.has(text) || before === undefined) {
+      gaps.push(0);
+      weights.push(0);
+    } else {
+      gaps.push(Math.max(0, text.area.room.top - footOf(before.area.room)));
+      weights.push(sharesBefore(text, before));
+    }
+    before = pieces.has(text) ? (before ?? undefined) : text;
+  }
   return {
     key: first.key,
     texts,
+    pieces: new Set([...pieces].filter((text) => texts.includes(text)).map((text) => text.key)),
     ...reach,
     vertical,
-    gaps: texts.map((text, index) => {
-      const before = texts[index - 1];
-      return before === undefined ? 0 : Math.max(0, text.area.room.top - footOf(before.area.room));
-    }),
-    weights: texts.map((text, index) => {
-      const before = texts[index - 1];
-      return before === undefined ? 0 : sharesBefore(text, before);
-    }),
+    gaps,
+    weights,
     print,
   };
+}
+
+// A part of its line box an area's line must lie within a line of another area to be a piece
+// of it.
+const PIECE_PART = 0.5;
+
+// The pieces the engine cut out of a line and read apart, as "43rd" from the line of a footnote:
+// each area whose every line lies for the most part within a line of another, larger area, by
+// the area it was cut from.
+export function piecesOf(texts: AreaText[]): Map<AreaText, AreaText> {
+  const sizeOf = (text: AreaText) => text.area.box.width * text.area.box.height;
+  const pieces = new Map<AreaText, AreaText>();
+  for (const text of texts) {
+    const from = texts.find(
+      (other) =>
+        other !== text &&
+        !other.area.vertical &&
+        sizeOf(other) > sizeOf(text) &&
+        text.area.lines.every((line) =>
+          other.area.lines.some(
+            (host) => overlap(line, host) > PIECE_PART * line.width * line.height,
+          ),
+        ),
+    );
+    if (from !== undefined) {
+      pieces.set(text, from);
+    }
+  }
+  // A piece of a piece is a piece of the area its own was cut from.
+  pieces.forEach((from, text) => {
+    let host = from;
+    while (pieces.has(host)) {
+      host = pieces.get(host) ?? host;
+    }
+    pieces.set(text, host);
+  });
+  return pieces;
+}
+
+// A piece stands in the flow of the area it was cut from as a block of its own: before the
+// areas of that area's block where its own block comes earlier in the document, after them
+// otherwise.
+function withPieces(texts: AreaText[], pieces: Map<AreaText, AreaText>): AreaText[] {
+  let placed = [...texts];
+  pieces.forEach((from, piece) => {
+    const ofBlock = placed
+      .map((text, index) => (text.blockNumber === from.blockNumber ? index : -1))
+      .filter((index) => index !== -1);
+    const firstIndex = ofBlock[0];
+    const lastIndex = ofBlock.at(-1);
+    if (firstIndex === undefined || lastIndex === undefined) {
+      return;
+    }
+    const at = piece.blockNumber < from.blockNumber ? firstIndex : lastIndex + 1;
+    placed = [...placed.slice(0, at), piece, ...placed.slice(at)];
+  });
+  return placed;
 }
 
 // The flows of a page's translation, from its areas, the page's columns and the lines of all
@@ -390,9 +459,10 @@ export function flowsOf(
   body: BodyPrint,
   facts: PageFacts,
 ): Flow[] {
+  const pieces = piecesOf(texts);
   const alone: { texts: AreaText[]; column: Column | undefined }[] = [];
   const byColumn = new Map<Column, AreaText[]>();
-  for (const text of texts) {
+  for (const text of texts.filter((each) => !pieces.has(each))) {
     const column = text.area.vertical ? undefined : columnOf(text.area.room, columns);
     if (column === undefined) {
       alone.push({ texts: [text], column: undefined });
@@ -424,8 +494,10 @@ export function flowsOf(
     }
   });
   return runs.map((run) => {
-    const rooms = texts.filter((text) => !run.texts.includes(text)).map((text) => text.area.room);
-    return flowOf(run.texts, run.column, lines, rooms, body, facts);
+    const own = new Map([...pieces].filter(([, from]) => run.texts.includes(from)));
+    const placed = withPieces(run.texts, own);
+    const rooms = texts.filter((text) => !placed.includes(text)).map((text) => text.area.room);
+    return flowOf(placed, new Set(own.keys()), run.column, lines, rooms, body, facts);
   });
 }
 

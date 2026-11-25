@@ -272,7 +272,9 @@ function TranslatedArea({
   const gap = acrossWidth(flow, flow.gaps[index] ?? 0, shape);
   const style = {
     "--size": cqw(size),
-    marginInlineStart: area.vertical ? undefined : cqw(area.room.left - flow.room.left),
+    // A piece cut out of a line takes the flow's sides.
+    marginInlineStart:
+      area.vertical || flow.pieces.has(text.key) ? undefined : cqw(area.room.left - flow.room.left),
     marginBlockStart: `calc(${cqw(gap)} + var(--share) * ${flow.weights[index] ?? 0})`,
     lineHeight: `calc(var(--leading) * ${ratio})`,
     color: colours?.ink,
