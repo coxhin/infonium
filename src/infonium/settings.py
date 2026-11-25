@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import PositiveInt, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infonium.language_model import GlmReasoning, WireApi
@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     glm_base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
     glm_api_key: SecretStr | None = None
     glm_reasoning_efforts: dict[str, GlmReasoning] = {"glm-5.3": "low", "glm-5.3-flash": "medium"}
+    # The most requests sent to GLM's endpoint in a minute, of all its models together: its
+    # limit is the account's. At 8, about 4 requests of glm-5.3-flash, which take about 28 s
+    # each, are under way at once; 8 at once were refused (code 1302) on 2026-11-25.
+    glm_requests_per_minute: PositiveInt = 8
     pdf_engine: Path = Path("mineru")
     browser: Path = Path("google-chrome")
     speech_base_url: str = "http://127.0.0.1:8750/v1"
