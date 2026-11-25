@@ -16,7 +16,6 @@
 .page-translation .flow {
   position: absolute;
   display: flow-root;
-  overflow: hidden;
   font-size: var(--body);
   /* The source's letters reach a little past the boxes of their lines; the paper is laid a
      little past the flow to cover them, without taking room from the text. */
@@ -57,7 +56,12 @@
   font-size: 0.9em;
 }
 
-/* Text cut at its foot ends in a mark, over the paper of its flow. */
+/* A flow that fits may end a little below its foot, and its letters stand there over the edge
+   of its paper; a flow that does not fit is cut at its foot and ends in a mark, over its paper. */
+.page-translation .flow[data-cut] {
+  overflow: hidden;
+}
+
 .page-translation .flow[data-cut]::after {
   content: "…▾";
   position: absolute;
