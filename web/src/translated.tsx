@@ -9,6 +9,7 @@ import "./translated.css";
 // never in the one a source block carries, so that nothing takes one for the other.
 export const TRANSLATION_ATTRIBUTE = "data-translation";
 export const POINTED_CLASS = "pointed";
+export const SEGMENT_CLASS = "segment";
 // Segments of one block follow each other as sentences of one paragraph do.
 export const SEGMENT_GAP = " ";
 // The control to translate a block again stands in the narrow margin beside the block, where
@@ -26,7 +27,7 @@ export function overlaps(first: TextRange, second: TextRange): boolean {
 
 function SegmentText({ segment, pointed }: { segment: Segment; pointed: boolean }) {
   return (
-    <span className={pointed ? `segment ${POINTED_CLASS}` : "segment"}>
+    <span className={pointed ? `${SEGMENT_CLASS} ${POINTED_CLASS}` : SEGMENT_CLASS}>
       <MarkedText text={segment.text} marks={segment.marks} />
     </span>
   );

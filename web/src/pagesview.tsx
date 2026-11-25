@@ -1,25 +1,42 @@
 import { useMemo } from "react";
-import { layoutOf, placedOf, type AreaText } from "./areas";
+import { layoutOf, placedOf, translatedText, type AreaText } from "./areas";
 import { useArrivalPosition } from "./arrival";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
 import { PageViewer, type PageMarks } from "./pages";
 import { PageText } from "./pagelines";
+import { placedPieces, type Glow, type TranslatedGlow } from "./pageglow";
 import { markedBlocksOf, pageMarksOf } from "./pagemarking";
 import { pagePlaces, placesOf } from "./places";
+import { translatedStretch } from "./sentences";
 import { SEGMENT_GAP } from "./translated";
-import type { ViewContext } from "./views";
+import type { Pointed, ViewContext } from "./views";
 
 const NO_PAGES: PagePlace[] = [];
 
 // Where each block's translation is set is worked out once for each translation of it.
 const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 
+// Each act of pointing is numbered, so that its passage glows anew.
+const pointings = new WeakMap<Pointed, number>();
+let pointingCount = 0;
+
+function numberOf(pointed: Pointed): number {
+  let number = pointings.get(pointed);
+  if (number === undefined) {
+    pointingCount += 1;
+    number = pointingCount;
+    pointings.set(pointed, number);
+  }
+  return number;
+}
+
 // A PDF as its pages. With a translation on show, each translated block is set over the lines
 // it stands for, and in 对照 the source stands beside each page, or under each area where
 // there is no room for two. The reader's highlights are drawn on the lines they cover, and the
-// reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
-// above it all. The pages open where the reader stood in the file as it arrived, if they did.
+// reader selects by dragging over the lines. A passage pointed at is turned to and glows for a
+// moment: its words above it all, and the sentences of the translation that stand for them.
+// The pages open where the reader stood in the file as it arrived, if they did.
 export function PagesView({
   entry,
   itemDocument,
@@ -86,6 +103,36 @@ export function PagesView({
     });
     return onPages;
   }, [shown, translation.blocks, itemDocument, layout]);
+  // The passage pointed at, as it glows: its words on the source's lines, and where a
+  // translation is on show, the sentences of each block's translation that stand for them.
+  const glow = useMemo<Glow | undefined>(() => {
+    if (pointed === undefined) {
+      return undefined;
+    }
+    const translated: TranslatedGlow[] = [];
+    for (const anchor of overlays === undefined ? [] : pointed.anchors) {
+      const block = itemDocument.blocks[anchor.block_number];
+      const translatedBlock = translation.blocks.get(anchor.block_number);
+      const areas = translatedBlock === undefined ? undefined : placedKept.get(translatedBlock);
+      if (block !== undefined && translatedBlock !== undefined && areas !== undefined) {
+        const whole = translatedText(translatedBlock, SEGMENT_GAP).text;
+        translated.push({
+          blockNumber: anchor.block_number,
+          stretch: translatedStretch(block.text, whole, anchor),
+          pieces: placedPieces(whole, areas),
+        });
+      }
+    }
+    return {
+      key: numberOf(pointed),
+      spans: pointed.anchors.map((anchor) => ({
+        blockNumber: anchor.block_number,
+        start: anchor.start,
+        end: anchor.end,
+      })),
+      translated,
+    };
+  }, [pointed, overlays, itemDocument, translation.blocks]);
   const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
   const opening = useArrivalPosition(entry.id);
   return (
@@ -97,6 +144,7 @@ export function PagesView({
         source={sourceLink(entry.id)}
         pointed={boxes}
         pointedBlocks={pointedBlocks}
+        glow={glow}
         inView={onShow}
         overlays={overlays}
         pairing={setting === "both"}

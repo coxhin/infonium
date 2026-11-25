@@ -6,7 +6,8 @@ import { SelectionActions } from "./selectionactions";
 import { NO_MARKING, type Marking, type Selected } from "./marking";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
-import { checkAnchor, hideAnchor } from "./reader";
+import { endGlow } from "./glowing";
+import { checkAnchor } from "./reader";
 import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
 import { SettingSwitch, useSetting } from "./setting";
 import { SidePanel, useLosing } from "./side";
@@ -127,7 +128,7 @@ export function ReadItem({
       setPlayed(timePlaces(anchors.flatMap((anchor) => placesOf(itemDocument.blocks, anchor))));
     },
     hide() {
-      hideAnchor();
+      endGlow();
       setPointed(undefined);
     },
   };

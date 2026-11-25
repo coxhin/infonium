@@ -19,6 +19,7 @@ import {
   type MarkState,
   type PageMark,
 } from "./pagemarking";
+import { glowsOn, PageGlow, useTranslatedGlow, type Glow } from "./pageglow";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import { PageTranslation, type Drawn } from "./pagetranslation";
 import { scrollerOf, uncoveredTop } from "./scrolling";
@@ -138,10 +139,9 @@ export type PageMarks = {
 
 const NO_MARKS: PageMark[] = [];
 
-// The outline of the lines pointed at. On a page that shows the translation it lies under the
-// translation: an area that holds the cited block's translation is marked itself, and covers the
-// outline until it is pressed to show the source under it; where the block has no area there,
-// the outline is what the page shows of it.
+// The lines pointed at, which the pages turn to; the reader sees the passage glow instead
+// (pageglow.tsx). On a page that shows the translation they lie under the translation: where
+// an area holds the cited block's translation, the pages turn to it.
 function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   return boxes.map((box, index) => (
     <div
@@ -169,6 +169,7 @@ function Page({
   marks,
   markedBlocks,
   drawing,
+  glow,
 }: {
   file: PDFDocumentProxy;
   number: number;
@@ -181,6 +182,7 @@ function Page({
   marks: PageMark[];
   markedBlocks: ReadonlyMap<number, MarkState>;
   drawing: SelectionDrawing;
+  glow: Glow | undefined;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -285,10 +287,10 @@ function Page({
   // The lines of the page are read off its drawing when it arrives; the highlights are drawn
   // again whenever the lines on this page are cut anew, as when the drawing of another page a
   // block of this one runs over arrives.
-  // A page that holds highlights is read as its drawing arrives; any other on the first press
-  // on it. Reading takes some milliseconds a page, so it waits for a moment the browser is
-  // idle, as while the pages scroll every frame counts.
-  const holdsMarks = marks.length > 0;
+  // A page that holds highlights, or a passage pointed at, is read as its drawing arrives; any
+  // other on the first press on it. Reading takes some milliseconds a page, so it waits for a
+  // moment the browser is idle, as while the pages scroll every frame counts.
+  const holdsMarks = marks.length > 0 || glowsOn(glow, text, number);
   useEffect(() => {
     text.drawnOn(number, drawn?.canvas);
     if (!holdsMarks) {
@@ -318,6 +320,9 @@ function Page({
         )}
         {paired && <SelectionLayer drawing={drawing} page={number} under={false} />}
         <Boxes boxes={boxes} under={false} />
+        {paired && (
+          <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={false} />
+        )}
       </div>
       <div
         className="page"
@@ -350,6 +355,7 @@ function Page({
           />
         )}
         <Boxes boxes={boxes} under={overlay !== undefined} />
+        <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={translated} />
       </div>
     </div>
   );
@@ -368,6 +374,7 @@ function Pages({
   file,
   pointed,
   pointedBlocks,
+  glow,
   inView,
   overlays,
   pairing,
@@ -378,6 +385,7 @@ function Pages({
   file: PDFDocumentProxy;
   pointed: PagePlace[];
   pointedBlocks: ReadonlySet<number>;
+  glow: Glow | undefined;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
@@ -388,6 +396,7 @@ function Pages({
   const viewer = useRef<HTMLDivElement>(null);
   const [drawing] = useState(() => new SelectionDrawing());
   usePageSelecting(viewer, drawing, marks.selecting, inView);
+  useTranslatedGlow(viewer, glow, inView);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
   // The outline turned to under the translation before the area over it was set: the area is
@@ -514,6 +523,7 @@ function Pages({
           marks={marks.onPages.get(number) ?? NO_MARKS}
           markedBlocks={marks.blocks}
           drawing={drawing}
+          glow={glow}
           overlay={
             overlays === undefined
               ? undefined
@@ -529,10 +539,10 @@ function Pages({
   );
 }
 
-// Shows a PDF page by page, outlines the boxes that were pointed at, draws the reader's
-// highlights, lets the reader select by dragging over the lines, and sets a translation over
-// the pages where one is given, by page; with the source beside each page, or under each area,
-// where pairing is asked for. It opens at the position given, if one is, and tells where the
+// Shows a PDF page by page, turns to the boxes that were pointed at and makes the passage glow
+// there, draws the reader's highlights, lets the reader select by dragging over the lines, and
+// sets a translation over the pages where one is given, by page; with the source beside each
+// page, or under each area, where pairing is asked for. It opens at the position given, if one is, and tells where the
 // reader stands as they scroll, if asked to. The reader is drawn again whenever a view hands a
 // selection over, as at every frame of a scroll while one is held; the pages only when what
 // they are given changes.
@@ -540,6 +550,7 @@ export const PageViewer = memo(function PageViewer({
   source,
   pointed,
   pointedBlocks,
+  glow,
   inView,
   overlays,
   pairing,
@@ -549,9 +560,11 @@ export const PageViewer = memo(function PageViewer({
 }: {
   source: string;
   pointed: PagePlace[];
-  // The blocks the passage pointed at runs through, whose translation is marked where it is
-  // set.
+  // The blocks the passage pointed at runs through, whose translation's areas the pages turn
+  // to.
   pointedBlocks: ReadonlySet<number>;
+  // The passage pointed at, as it glows.
+  glow: Glow | undefined;
   inView: boolean;
   overlays: Map<number, AreaText[]> | undefined;
   pairing: boolean;
@@ -569,6 +582,7 @@ export const PageViewer = memo(function PageViewer({
           file={file.value}
           pointed={pointed}
           pointedBlocks={pointedBlocks}
+          glow={glow}
           inView={inView}
           overlays={overlays}
           pairing={pairing}

@@ -32,6 +32,7 @@ export function ArrivedPages({ itemId }: { itemId: string }) {
         source={sourceLink(itemId)}
         pointed={NO_PLACES}
         pointedBlocks={NO_BLOCKS}
+        glow={undefined}
         inView
         overlays={undefined}
         pairing={false}

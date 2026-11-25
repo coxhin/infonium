@@ -297,11 +297,6 @@ main > .status {
   vertical-align: top;
 }
 
-::highlight(anchor) {
-  background-color: var(--found);
-  color: inherit;
-}
-
 /* Source: the pages of a paged file, or the player of a recording */
 
 .views {
@@ -346,13 +341,11 @@ main > .status {
   height: 100%;
 }
 
-/* A page is light whatever the theme, so its marks keep one colour. */
+/* The lines of a passage pointed at, which the pages turn to; what the reader sees of the
+   passage is its words glowing for a moment (pageglow.css). */
 .page-box {
   position: absolute;
   pointer-events: none;
-  background: rgb(255 208 64 / 0.38);
-  outline: 2px solid #a8481f;
-  border-radius: 2px;
 }
 
 .page .status {

@@ -32,12 +32,6 @@
   margin-top: 0;
 }
 
-.translated .segment.pointed,
-.translated table.pointed {
-  background: var(--found);
-  color: var(--ink);
-}
-
 /* The control to translate a block again stands in the margin to the left of the block, in
    the reader's padding, so it never lies over words. Where a pointer hovers, it shows while
    the block or its stretch of margin is hovered, or while it has the focus, and takes no click

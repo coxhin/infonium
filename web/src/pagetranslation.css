@@ -89,26 +89,12 @@
   outline-offset: 1px;
 }
 
-/* On the source's page the outline of a passage pointed at stands above all. On a page that
-   shows the translation it lies under it: an area that holds the cited block's translation is
-   marked whole and covers the outline until it is pressed to show the source; where the block
-   has no area, the outline is on show. */
-.page .page-box {
-  z-index: 3;
-}
-
+/* The translation lies above the source's lines and what is drawn on them, but for a
+   passage pointed at: its words glow above the source's lines, and on a page that shows the
+   translation, under it, where the sentences of the translation that stand for them glow
+   (pageglow.css). */
 .page-translation {
   z-index: 1;
-}
-
-.page .page-box.under {
-  z-index: 0;
-}
-
-.page-translation .area.pointed {
-  background-image: linear-gradient(rgb(255 208 64 / 0.38), rgb(255 208 64 / 0.38));
-  outline: 2px solid #a8481f;
-  outline-offset: 1px;
 }
 
 .page-pair {
