@@ -18,11 +18,13 @@ const UNDERLINE = /^(?:=+[ \t]*|-[-\s]*)$/;
 // around it a table.
 const TABLE_ROW_START = /^\|/;
 const TABLE_DELIMITER = /^(?=.*\|)\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-// An address as the note's Markdown reader (GFM) takes one to link by itself: one with its
-// protocol, or one that starts with www.
-const WEB_ADDRESS = /(?:[hH][tT][tT][pP][sS]?:\/\/|www\.)[^\s<>`　-〿＀-￯]+/g;
+// An address as the note's Markdown reader takes one to link by itself, by marked's GFM rule
+// (its inline rule url, which marked 17 writes as a protocol and :// or www., then the host, then
+// anything up to a space or <): one with its protocol, or one that starts with www. A closing
+// quotation mark as printed, or Chinese punctuation, ends it here, where marked goes on.
+const WEB_ADDRESS = /(?:[hH][tT][tT][pP][sS]?:\/\/|www\.)[^\s<>`’”　-〿＀-￯]+/g;
 const WWW = "www.";
-// The protocol that reader gives an address that starts with www.
+// The protocol that rule gives an address that starts with www.
 const WWW_PROTOCOL = "http://";
 const WEB_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
 // The names of this machine, as the browser's reader of addresses writes them: loopback and
@@ -39,11 +41,13 @@ const THIS_MACHINE = [
   /^\[::ffff:(?:7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)\]$/i,
   /^[^.[]+$/,
 ];
-// What ends an address and is not part of it, as that reader tells it: these marks, and a
-// closing bracket that opened before the address. Closing quotes as they are printed end it
-// too, as their straight forms do.
-const ADDRESS_END_MARK = /[?!.,:;*_'"~’”]$/;
+// What ends an address and is not part of it, as marked's _backpedal rule tells it: these
+// marks, and a closing bracket that opened before the address.
+const ADDRESS_END_MARK = /[?!.,:;*_'"~]$/;
 const OPENING_OF: Record<string, string> = { ")": "(", "]": "[" };
+// What ends an address marked links by itself, before it takes its own end off: white space,
+// or a <, which infonium always writes as &lt;, so that in what it writes only white space does.
+const BARE_ADDRESS_END = /\s/;
 const LEADING_SPACE = /^[ \t]+/;
 const TRAILING_SPACE = /[ \t]+$/;
 // A line of nothing but white space of any kind ends a paragraph, as an empty one does: the
@@ -102,6 +106,12 @@ export function isWebAddress(address: string): boolean {
   );
 }
 
+// Where an address leads: an address that starts with www. leads to it by http, as marked
+// links it.
+export function addressTarget(address: string): string {
+  return address.startsWith(WWW) ? `${WWW_PROTOCOL}${address}` : address;
+}
+
 function countOf(text: string, character: string): number {
   return text.split(character).length - 1;
 }
@@ -121,26 +131,53 @@ function addressOf(found: string): string {
   }
 }
 
-// An address in a statement or a comment, which Markdown would take as a link by itself, is
-// written as a link to it, so that nothing in it is escaped and it comes back the same, and so
-// that the reader links what infonium meant and no more. An address the editor would not link
-// is left as text, which the note's schema reads back without its escapes.
-function linkedAddresses(text: string): string {
-  let written = "";
+// A piece of text: words, or a web address with where it leads.
+export type AddressPiece = { text: string; target: string | undefined };
+
+// A text cut into its words and the web addresses in it, by the one rule infonium links them
+// by, when it writes a note's Markdown and when it reads back an address Markdown linked by
+// itself. An address that is no web address, as one of this machine, stays words.
+export function addressPieces(text: string): AddressPiece[] {
+  const pieces: AddressPiece[] = [];
   let from = 0;
+  // Where the words that an address left as words takes with it end: marked reads such an
+  // address on to the next white space, past what ends it here, so no link may stand in them.
+  let wordsUntil = 0;
   for (const found of text.matchAll(WEB_ADDRESS)) {
-    const address = addressOf(found[0]);
-    const target = address.startsWith(WWW) ? `${WWW_PROTOCOL}${address}` : address;
-    if (!isWebAddress(target)) {
+    if (found.index < wordsUntil) {
       continue;
     }
-    const at = found.index;
-    written += `${inlineText(text.slice(from, at))}[${inlineText(address)}](${target
-      .replace(/\(/g, "%28")
-      .replace(/\)/g, "%29")})`;
-    from = at + address.length;
+    const address = addressOf(found[0]);
+    const target = addressTarget(address);
+    if (!isWebAddress(target)) {
+      const end = text.slice(found.index).search(BARE_ADDRESS_END);
+      wordsUntil = end < 0 ? text.length : found.index + end;
+      continue;
+    }
+    if (found.index > from) {
+      pieces.push({ text: text.slice(from, found.index), target: undefined });
+    }
+    pieces.push({ text: address, target });
+    from = found.index + address.length;
   }
-  return written + inlineText(text.slice(from));
+  if (from < text.length) {
+    pieces.push({ text: text.slice(from), target: undefined });
+  }
+  return pieces;
+}
+
+// An address in a statement, a comment or a quotation, which Markdown would take as a link by
+// itself, is written as a link to it, so that nothing in it is escaped and it comes back the
+// same, and so that the reader links what infonium meant and no more. An address the editor
+// would not link is left as text, which the note's schema reads back without its escapes.
+function linkedAddresses(text: string): string {
+  return addressPieces(text)
+    .map(({ text: words, target }) =>
+      target === undefined
+        ? inlineText(words)
+        : `[${inlineText(words)}](${target.replace(/\(/g, "%28").replace(/\)/g, "%29")})`,
+    )
+    .join("");
 }
 
 export function paragraph(text: string): string {
@@ -176,7 +213,7 @@ function commentMarkdown(comment: string): string {
 
 // The words of a passage, a paragraph for each block it runs through, as a quotation; then a
 // link to it, called after its source; then what the reader noted on it, if anything. A line
-// break within a block is kept as one.
+// break within a block is kept as one, and an address in it is written as a statement's is.
 export function quoteMarkdown(
   quotes: string[],
   source: string,
@@ -187,7 +224,7 @@ export function quoteMarkdown(
     .map((quote) =>
       quote
         .split("\n")
-        .map((line) => `> ${paragraphLine(inlineText(line))}`)
+        .map((line) => `> ${paragraphLine(linkedAddresses(line))}`)
         .join(HARD_BREAK),
     )
     .join("\n>\n");

@@ -15,7 +15,14 @@ import {
 } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
 import { PASSAGE_LINK } from "./client";
-import { inlineText, isWebAddress, paragraphLine, passageLink } from "./notemarkdown";
+import {
+  addressPieces,
+  addressTarget,
+  inlineText,
+  isWebAddress,
+  paragraphLine,
+  passageLink,
+} from "./notemarkdown";
 
 // What a note is written in: the editor's kinds of text, read from Markdown and written back to
 // it, and the links that lead to the note's passages, drawn as chips.
@@ -130,9 +137,10 @@ function writtenAddress(linked: string): string {
 const WebLink = Link.extend({
   parseMarkdown(token, helpers) {
     const bare = !LINK_OPENINGS.has(String(token.raw ?? "").charAt(0));
-    const address = bare
-      ? writtenAddress(String(token.href ?? ""))
-      : String(token.href ?? "");
+    // A link written to www. and more leads there by http, as one marked linked by itself does.
+    const address = addressTarget(
+      bare ? writtenAddress(String(token.href ?? "")) : String(token.href ?? ""),
+    );
     if (address.startsWith(PASSAGE_LINK)) {
       return helpers.createNode(PASSAGE_NODE, {
         id: address.slice(PASSAGE_LINK.length),
@@ -147,11 +155,32 @@ const WebLink = Link.extend({
     if (!isWebAddress(address)) {
       return content;
     }
-    return helpers.applyMark("link", content, { href: address, title: token.title || null });
+    if (words === undefined) {
+      return helpers.applyMark("link", content, { href: address, title: token.title || null });
+    }
+    // marked links an address by itself further than infonium does, past a closing quotation
+    // mark as printed or Chinese punctuation: what it linked is cut by infonium's own rule, as
+    // when infonium writes it, so that it shows the same before and after it is written again.
+    return addressPieces(words).flatMap(({ text, target }) => {
+      const pieceContent = helpers.parseInline([{ type: "text", raw: text, text }]);
+      return target === undefined
+        ? pieceContent
+        : pieceContent.map((node) => ({
+            ...node,
+            marks: [...(node.marks ?? []), { type: "link", attrs: { href: target, title: null } }],
+          }));
+    });
   },
   addAttributes() {
     return {
       ...this.parent?.(),
+      href: {
+        default: null,
+        parseHTML: (element) => {
+          const href = element.getAttribute("href");
+          return href === null ? null : addressTarget(href);
+        },
+      },
       target: { default: LINK_TARGET, parseHTML: () => LINK_TARGET },
       rel: { default: LINK_REL, parseHTML: () => LINK_REL },
     };
@@ -302,9 +331,13 @@ export function noteExtensions(noteHands: Hands): AnyExtension[] {
       autolink: true,
       linkOnPaste: true,
       markdownLinks: true,
-      defaultProtocol: "https",
-      isAllowedUri: isWebAddress,
-      shouldAutoLink: isWebAddress,
+      // An address typed as www. and more is linked as it is typed, by http, as marked's GFM rule
+      // links it when the note is read (see WEB_ADDRESS in notemarkdown.ts). The link's address
+      // is checked in that form too, and every href that reaches a link is turned into it, so
+      // that no link leads to www. as a place in the app.
+      defaultProtocol: "http",
+      isAllowedUri: (address) => isWebAddress(addressTarget(address)),
+      shouldAutoLink: (address) => isWebAddress(addressTarget(address)),
       HTMLAttributes: { target: LINK_TARGET, rel: LINK_REL, class: null },
     }),
     PassageLink,

@@ -259,7 +259,8 @@ The blocks of every document the library holds are indexed in the library's file
 - A note of 50 passages in 20 items of 2,000 blocks each opened in 157.5 ms the first time and in 8.0 ms once those documents were read. infonium keeps the 64 documents read last.
 - A screen keyboard was tried only as a window of 390 by 420 pixels, and the editor was not tried with a screen reader.
 - A comment written from right to left stands aligned to the left in a note, as every paragraph of a note does, though on its highlight it stands to the right.
-- An address with Chinese text right after it, with no space between, takes that text into its link: `https://example.com/page中的说法。` links `https://example.com/page中的说法`. A Chinese full stop, comma or bracket ends it.
+- An address with Chinese text right after it, with no space between, takes that text into its link: `https://example.com/page中的说法。` links `https://example.com/page中的说法`. A Chinese full stop, comma or bracket ends it, and so does a closing quotation mark, ” or ’.
+- Text joined to an address of this machine, with no space between, stays text, a web address in it included: `http://localhost/x”和www.example.com` links nothing.
 
 ### Reading a source again
 
