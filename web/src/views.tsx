@@ -9,7 +9,7 @@ import type { Setting } from "./setting";
 import type { TranslationState } from "./translation";
 import { WebpageView } from "./webpage";
 
-const PDF_MEDIA_TYPE = "application/pdf";
+export const PDF_MEDIA_TYPE = "application/pdf";
 const HTML_MEDIA_TYPE = "text/html";
 
 // One act of pointing at a passage: made anew at every click, so that pointing at the same

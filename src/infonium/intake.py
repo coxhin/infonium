@@ -35,16 +35,20 @@ from infonium.document import (
 )
 from infonium.library import (
     FIRST_READING,
+    FirstUnderway,
     Item,
+    KeptSource,
     LibraryStore,
     Link,
     Origin,
     Read,
     Reading,
     Upload,
+    arrival_of,
     is_underway,
     item_identity,
     item_with,
+    reading_arrived,
     reading_begun,
     reading_failed,
     reading_settled,
@@ -71,6 +75,8 @@ PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
 PAGE_OPENINGS = (b"<!doctype html", b"<html")
 # The kinds of file that hold a recording: sound alone, or sound with a picture.
 RECORDING_MEDIA_TYPES = ("audio/", "video/")
+# The kinds of source a reader can be shown as they arrived, before anything is read from them.
+SHOWN_AS_ARRIVED = frozenset({PDF_MEDIA_TYPE})
 OPENING_BYTES = 1024
 # What a reader is told who asks to read again an upload that no reading has read.
 NOTHING_KEPT = (
@@ -274,10 +280,15 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
     return copy_readout(kept)
 
 
-def link_readout(url: str, directory: Path, engines: Engines) -> Readout:
+def link_readout(
+    url: str, directory: Path, engines: Engines, on_arrival: Callable[[Source], None]
+) -> Readout:
+    # A file fetched from the address is handed to on_arrival before it is read; the recording
+    # a media page leads to is not.
     if media.is_media_page(url):
         return media_page_readout(url, directory, engines)
     source = fetched(url, directory)
+    on_arrival(source)
     # An address may lead on to a media page, as a short link does.
     if media.is_media_page(source.reference):
         return media_page_readout(source.reference, directory, engines)
@@ -325,9 +336,10 @@ class Intake:
         self.store = store
         self.engines = engines
         self.pool = ThreadPoolExecutor(max_workers=readers, thread_name_prefix="reader")
-        # A change to an item's reading, and to the waiting copy of its upload, is made by
-        # one thread at a time. So an item that is being read is not taken for reading a
-        # second time, and a copy is not taken away from under a reading.
+        # A change to an item's reading, to the waiting copy of its upload, and to the files kept
+        # of sources as they arrived, is made by one thread at a time. So an item that is being
+        # read is not taken for reading a second time, a copy is not taken away from under a
+        # reading, and a file is not taken away while a reading or a document comes to name it.
         self.turn = Lock()
 
     def begin_link(self, owner: str, url: str) -> Item:
@@ -375,8 +387,44 @@ class Intake:
                 arrived.replace(self.store.upload(item_id))
                 item = self.started(owner, item_id, origin)
         if not underway:
-            self.read_in_background(owner, item_id)
+            # The reading starts whether or not the file is kept as it arrived.
+            try:
+                self.keep_arrival(owner, item_id, uploaded(self.store.upload(item_id), origin.name))
+            finally:
+                self.read_in_background(owner, item_id)
         return item
+
+    def keep_arrival(self, owner: str, item_id: str, source: Source) -> None:
+        # The source of an item that holds no document yet, where a reader can be shown it as it
+        # is, is kept as it arrived while it is read, in place of one kept before. A reading of
+        # an item that holds a document, or one that ended meanwhile, keeps nothing.
+        if source.media_type not in SHOWN_AS_ARRIVED or not self.is_first(owner, item_id):
+            return
+        staged = self.store.staged_snapshot(source.file)
+        arrival = KeptSource(snapshot=staged.name, media_type=source.media_type)
+        with self.turn:
+            with self.store.library(owner) as library:
+                item = library.item(item_id)
+                first = isinstance(item.reading.attempt, FirstUnderway)
+                if first:
+                    self.store.keep_snapshot(staged)
+                    library.keep_item(item_with(item, reading_arrived(item.reading, arrival)))
+            if first:
+                self.drop_arrival(item.reading, [arrival.snapshot])
+            else:
+                staged.file.unlink()
+
+    def is_first(self, owner: str, item_id: str) -> bool:
+        # Whether a reading of an item that holds no document yet is under way.
+        with self.store.library(owner) as library:
+            return isinstance(library.item(item_id).reading.attempt, FirstUnderway)
+
+    def drop_arrival(self, earlier: Reading, kept: list[str]) -> None:
+        # The file a reading kept of its source as it arrived is released once a change of the
+        # reading keeps it no longer.
+        for arrival in arrival_of(earlier):
+            if arrival.snapshot not in kept:
+                self.store.release_arrival(arrival)
 
     def underway(self, owner: str, item_id: str) -> list[Item]:
         # The item when a reading of it is under way, and nothing otherwise.
@@ -418,9 +466,18 @@ class Intake:
         with TemporaryDirectory(dir=self.store.work) as directory:
             match item.origin:
                 case Link(url=url):
-                    readout = link_readout(url, Path(directory), self.engines)
+                    readout = link_readout(
+                        url,
+                        Path(directory),
+                        self.engines,
+                        partial(self.keep_arrival, owner, item_id),
+                    )
                 case Upload(name=name):
+                    # An upload is kept as it arrived when its reading was asked for; this is
+                    # for a reading begun again after the service stopped before that.
                     source = uploaded(self.store.upload(item_id), name)
+                    if not arrival_of(item.reading):
+                        self.keep_arrival(owner, item_id, source)
                     readout = readout_of(source, Path(directory), self.engines)
             staged = self.store.staged_snapshot(readout.file)
         document = document_of(
@@ -434,13 +491,16 @@ class Intake:
         # its file as they are, and keeps no other file beside it.
         with self.turn:
             with self.store.library(owner) as library:
-                settled = reading_settled(item.reading, readout.extracted.title, document.id)
-                if library.keep_document(document, datetime.now(UTC)):
+                current = library.item(item_id)
+                settled = reading_settled(current.reading, readout.extracted.title, document.id)
+                new_document = library.keep_document(document, datetime.now(UTC))
+                if new_document:
                     self.store.keep_snapshot(staged)
                 else:
                     staged.file.unlink()
-                library.keep_item(item_with(item, settled))
-            self.drop_upload(item)
+                library.keep_item(item_with(current, settled))
+            self.drop_upload(current)
+            self.drop_arrival(current.reading, [staged.name] if new_document else [])
 
     def record(self, owner: str, item_id: str, finished: Future[None]) -> None:
         error = None if finished.cancelled() else finished.exception()
@@ -458,6 +518,9 @@ class Intake:
                 library.keep_item(changed)
             if not is_underway(changed.reading):
                 self.drop_upload(changed)
+            self.drop_arrival(
+                item.reading, [arrival.snapshot for arrival in arrival_of(changed.reading)]
+            )
         return changed
 
     def drop_upload(self, item: Item) -> None:

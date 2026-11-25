@@ -40,6 +40,7 @@ READING_STARTS = 3
 CUT_OFF = "the reading was cut off {starts} times by the service stopping"
 NOT_UNDERWAY = "no reading of the item is under way"
 ALREADY_UNDERWAY = "a reading of the item is under way already"
+NO_FIRST_READING = "no first reading of the item is under way"
 CONNECT = "connect"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 # Several threads write to the library's file: the readings, and the work other modules do in
@@ -142,10 +143,24 @@ class AttemptKind(StrEnum):
     SETTLED = "settled"
 
 
+class KeptSource(BaseModel):
+    snapshot: str
+    media_type: MediaType
+
+
 class Underway(Tagged):
     # The attempt waits its turn or runs; starts counts the times it began to run.
     kind: Literal[AttemptKind.UNDERWAY] = AttemptKind.UNDERWAY
     starts: Annotated[int, Field(ge=0)]
+
+
+class FirstUnderway(Tagged):
+    # An attempt at reading an item that holds no document yet, under way as one of an item
+    # that holds one is. Once its source has arrived as a kind a reader can be shown as it is,
+    # the file of the source is kept as it arrived until the attempt ends.
+    kind: Literal[AttemptKind.UNDERWAY] = AttemptKind.UNDERWAY
+    starts: Annotated[int, Field(ge=0)]
+    arrival: KeptSource | None = None
 
 
 class Failed(Tagged):
@@ -165,7 +180,7 @@ class ReadingKind(StrEnum):
 class Unread(Tagged):
     # Nothing has been read from the item's source yet.
     kind: Literal[ReadingKind.UNREAD] = ReadingKind.UNREAD
-    attempt: Annotated[Underway | Failed, Field(discriminator="kind")]
+    attempt: Annotated[FirstUnderway | Failed, Field(discriminator="kind")]
 
 
 class Read(Tagged):
@@ -178,54 +193,78 @@ class Read(Tagged):
 
 
 # What has come of reading an item's source into a document, and how the latest attempt at it
-# stands. The four functions that follow are every change a reading goes through, and each
+# stands. The five functions that follow are every change a reading goes through, and each
 # refuses a reading it does not apply to.
 Reading = Annotated[Unread | Read, Field(discriminator="kind")]
 
-FIRST_READING = Unread(attempt=Underway(starts=0))
+FIRST_READING = Unread(attempt=FirstUnderway(starts=0))
 
 
 def is_underway(reading: Reading) -> bool:
-    return isinstance(reading.attempt, Underway)
-
-
-def reading_with(reading: Reading, attempt: Underway | Failed) -> Reading:
-    match reading:
-        case Read(title=title, document=document):
-            return Read(title=title, document=document, attempt=attempt)
-        case _:
-            return Unread(attempt=attempt)
+    return isinstance(reading.attempt, Underway | FirstUnderway)
 
 
 def reading_started(reading: Reading) -> Reading:
     # A new attempt joins the readings that wait their turn.
-    if is_underway(reading):
-        raise ValueError(ALREADY_UNDERWAY)
-    return reading_with(reading, Underway(starts=0))
+    match reading:
+        case _ if is_underway(reading):
+            raise ValueError(ALREADY_UNDERWAY)
+        case Read(title=title, document=document):
+            return Read(title=title, document=document, attempt=Underway(starts=0))
+        case _:
+            return FIRST_READING
 
 
 def reading_begun(reading: Reading) -> Reading:
     # The attempt begins to run, or begins again after the service's stopping cut it off; one
     # that has begun as often as a reading may is given up instead.
-    match reading.attempt:
-        case Underway(starts=starts) if starts < READING_STARTS:
-            return reading_with(reading, Underway(starts=starts + 1))
-        case Underway():
-            return reading_with(reading, Failed(reason=CUT_OFF.format(starts=READING_STARTS)))
+    match reading:
+        case Read(title=title, document=document, attempt=Underway(starts=starts)) if (
+            starts < READING_STARTS
+        ):
+            return Read(title=title, document=document, attempt=Underway(starts=starts + 1))
+        case Unread(attempt=FirstUnderway(starts=starts, arrival=arrival)) if (
+            starts < READING_STARTS
+        ):
+            return Unread(attempt=FirstUnderway(starts=starts + 1, arrival=arrival))
         case _:
-            raise ValueError(NOT_UNDERWAY)
+            return reading_failed(reading, CUT_OFF.format(starts=READING_STARTS))
+
+
+def reading_arrived(reading: Reading, arrival: KeptSource) -> Reading:
+    # The source of an item that holds no document yet has arrived, and is kept as it arrived
+    # while it is read.
+    match reading:
+        case Unread(attempt=FirstUnderway(starts=starts)):
+            return Unread(attempt=FirstUnderway(starts=starts, arrival=arrival))
+        case _:
+            raise ValueError(NO_FIRST_READING)
 
 
 def reading_failed(reading: Reading, reason: str) -> Reading:
-    if not is_underway(reading):
-        raise ValueError(NOT_UNDERWAY)
-    return reading_with(reading, Failed(reason=reason))
+    failed = Failed(reason=reason)
+    match reading:
+        case _ if not is_underway(reading):
+            raise ValueError(NOT_UNDERWAY)
+        case Read(title=title, document=document):
+            return Read(title=title, document=document, attempt=failed)
+        case _:
+            return Unread(attempt=failed)
 
 
 def reading_settled(reading: Reading, title: str, document: str) -> Reading:
     if not is_underway(reading):
         raise ValueError(NOT_UNDERWAY)
     return Read(title=title, document=document, attempt=Settled())
+
+
+def arrival_of(reading: Reading) -> list[KeptSource]:
+    # The file kept of the source as it arrived for the attempt under way, if one is.
+    match reading:
+        case Unread(attempt=FirstUnderway(arrival=KeptSource() as arrival)):
+            return [arrival]
+        case _:
+            return []
 
 
 class Item(BaseModel):
@@ -251,11 +290,6 @@ class Holding(BaseModel):
     # The document the library keeps for an item, and what the item is called by it.
     title: str
     document: Document
-
-
-class KeptSource(BaseModel):
-    snapshot: str
-    media_type: MediaType
 
 
 class StagedSnapshot(BaseModel):
@@ -290,6 +324,14 @@ kept_title = sqlalchemy.func.json_extract(
 )
 SNAPSHOT_PATH = field_path((Document, "snapshot"))
 MEDIA_TYPE_PATH = field_path((Document, "media_type"))
+document_snapshot = sqlalchemy.func.json_extract(document_table.c.body, SNAPSHOT_PATH)
+document_media_type = sqlalchemy.func.json_extract(document_table.c.body, MEDIA_TYPE_PATH)
+arrival_snapshot = sqlalchemy.func.json_extract(
+    item_table.c.body,
+    field_path(
+        (Item, "reading"), (Unread, "attempt"), (FirstUnderway, "arrival"), (KeptSource, "snapshot")
+    ),
+)
 
 
 def item_identity(owner: str, distinction: str) -> str:
@@ -538,18 +580,22 @@ class Library:
         return Document.model_validate_json(body)
 
     def kept_source(self, item_id: str) -> KeptSource:
-        source = self.connection.execute(
-            sqlalchemy.select(
-                sqlalchemy.func.json_extract(document_table.c.body, SNAPSHOT_PATH),
-                sqlalchemy.func.json_extract(document_table.c.body, MEDIA_TYPE_PATH),
-            )
-            .select_from(item_table)
-            .join(document_table, document_table.c.id == kept_document_id)
-            .where(item_table.c.owner == self.owner, item_table.c.id == item_id)
-        ).one_or_none()
-        if source is None:
-            raise NotInLibrary(f"item {item_id} has no document in the library")
-        return KeptSource(snapshot=source[0], media_type=source[1])
+        # The file of the item's source beside the document it holds, or, while it holds none,
+        # the one its reading keeps as it arrived.
+        reading = self.item(item_id).reading
+        match reading:
+            case Read(document=document_id):
+                snapshot, media_type = self.connection.execute(
+                    sqlalchemy.select(document_snapshot, document_media_type).where(
+                        document_table.c.owner == self.owner, document_table.c.id == document_id
+                    )
+                ).one()
+                return KeptSource(snapshot=snapshot, media_type=media_type)
+            case _:
+                arrival = arrival_of(reading)
+                if not arrival:
+                    raise NotInLibrary(f"item {item_id} keeps no file of its source")
+                return arrival[0]
 
     def kept_digests(self, document_id: str) -> list[Digest]:
         bodies = self.connection.execute(
@@ -633,6 +679,19 @@ class LibraryStore:
         kept = self.snapshot(staged.name)
         kept.parent.mkdir(parents=True, exist_ok=True)
         staged.file.replace(kept)
+
+    def release_arrival(self, arrival: KeptSource) -> None:
+        # A file a reading kept of its source as it arrived goes once the reading has let it
+        # go, unless a document of anyone's, or another reading under way, keeps the same bytes.
+        # Its caller keeps every other change to the files and to what names them waiting
+        # meanwhile.
+        held = sqlalchemy.select(
+            sqlalchemy.exists().where(document_snapshot == arrival.snapshot)
+            | sqlalchemy.exists().where(arrival_snapshot == arrival.snapshot)
+        )
+        with self.engine.begin() as connection:
+            if not connection.execute(held).scalar_one():
+                self.snapshot(arrival.snapshot).unlink()
 
     def upload(self, item_id: str) -> Path:
         # Where an upload waits, under the id of its item, while its reading is under way.
