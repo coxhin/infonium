@@ -1,13 +1,15 @@
 import json
+import time
 from collections.abc import Callable
 from http import HTTPStatus
+from itertools import pairwise
 from typing import Any
 
 import httpx2
 import pytest
 from pydantic import SecretStr
 
-from infonium import api
+from infonium import api, model_connection
 from infonium.digest import DraftDigest
 from infonium.language_model import FORM_TOLD, JSON_OBJECT, reply_schema
 from infonium.library import LOCAL_OWNER
@@ -28,10 +30,12 @@ from tests.model_standin import (
     MODEL_KEY,
     RESPONSES_PATH,
     STANDIN_MODEL,
+    TOO_OFTEN,
     TRANSLATION_MODEL,
     Asked,
     Call,
     Rejection,
+    Responder,
 )
 from tests.model_standin import Reply as StreamedReply
 from tests.service import App, digest_reply
@@ -66,6 +70,14 @@ REFUSED_PARAGRAPH = SEVERAL_REQUESTS_PARAGRAPHS - 1
 REFUSED_REQUEST = Rejection(
     status=HTTPStatus.BAD_REQUEST, body='{"error": {"message": "the request is refused"}}'
 )
+# A pace of GLM's endpoint quick enough for a test, and how much earlier than its turn a
+# request may arrive at the stand-in, for the time the connection takes.
+PACED_REQUESTS = 600
+EARLY_ARRIVAL = 0.03
+# How long GLM's endpoint refuses every request, and the first pause after a refusal: the
+# pauses, doubling, outlast the refusals before a request has been tried three times.
+BUSY_SECONDS = 1.8
+REFUSAL_PAUSE = 0.3
 
 
 def glm_model() -> str:
@@ -493,4 +505,69 @@ def test_glm_answering_about_the_library_is_held_to_json_but_in_the_first_reques
     assert formats == [None, {"type": JSON_OBJECT}], (
         f"a GLM reply that searched first was asked with the forms {formats}, where the first "
         "request, which may search, holds it to nothing and the next to JSON"
+    )
+
+
+# The pace of GLM's endpoint.
+
+
+def timed(arrivals: list[float], answer: Responder) -> Responder:
+    # Keeps when each request arrived, and answers it as the responder given does.
+    def respond(asked: Asked) -> StreamedReply | Rejection:
+        arrivals.append(time.monotonic())
+        return answer(asked)
+
+    return respond
+
+
+def busy_for(seconds: float, answer: Responder) -> Responder:
+    # GLM's endpoint refuses every request for being asked too often until the time given has
+    # passed since the first, then answers as the responder given does.
+    arrivals: list[float] = []
+
+    def respond(asked: Asked) -> StreamedReply | Rejection:
+        arrivals.append(time.monotonic())
+        return TOO_OFTEN if arrivals[-1] - arrivals[0] < seconds else answer(asked)
+
+    return respond
+
+
+def test_the_requests_of_glm_translations_by_both_its_models_keep_the_pace_set_for_its_endpoint(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_glm_key(monkeypatch)
+    monkeypatch.setattr(api.settings, "glm_requests_per_minute", PACED_REQUESTS)
+    arrivals: list[float] = []
+    app.model.reset(timed(arrivals, translating()))
+    models = (glm_model(), glm_flash())
+    documents = [kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS)) for _ in models]
+    for document, model in zip(documents, models, strict=True):
+        asked_with(app, document.item_id, model)
+    for document, model in zip(documents, models, strict=True):
+        view = settled(app, document.item_id)
+        assert view["progress"]["kind"] == "translated", (
+            f"a paced translation by {model} did not end translated: {view['progress']}"
+        )
+    interval = 60 / PACED_REQUESTS
+    spacing = [later - earlier for earlier, later in pairwise(arrivals)]
+    assert len(arrivals) > 2 and min(spacing) >= interval - EARLY_ARRIVAL, (
+        f"the requests of two GLM translations came {spacing} s apart, at a pace of "
+        f"{PACED_REQUESTS} a minute"
+    )
+
+
+def test_a_glm_translation_that_the_endpoint_refuses_for_a_while_is_translated_after_its_pauses(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Unpaced, a request made at once again and again, with the client's own short wait,
+    # spends its tries within the time the endpoint refuses, and the translation stops.
+    with_glm_key(monkeypatch)
+    monkeypatch.setattr(model_connection, "FIRST_PAUSE_SECONDS", REFUSAL_PAUSE)
+    app.model.reset(busy_for(BUSY_SECONDS, translating()))
+    document = kept(app, long_paragraphs(SEVERAL_REQUESTS_PARAGRAPHS))
+    asked_with(app, document.item_id, glm_flash())
+    view = settled(app, document.item_id)
+    assert view["progress"]["kind"] == "translated" and models_of(view) == {glm_flash()}, (
+        f"a GLM translation refused for {BUSY_SECONDS} s was not translated once the endpoint "
+        f"answered: {view['progress']}"
     )

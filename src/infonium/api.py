@@ -80,7 +80,7 @@ from infonium.library_conversation import (
     library_shelf,
     library_turns,
 )
-from infonium.model_connection import Ending
+from infonium.model_connection import Ending, Pace
 from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
 from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
@@ -191,7 +191,14 @@ def glm_endpoint(name: str) -> GlmEndpoint:
         base_url=settings.glm_base_url,
         api_key=settings.glm_api_key,
         reasoning_efforts=settings.glm_reasoning_efforts,
+        pace=glm_pace(),
     )
+
+
+@cache
+def glm_pace() -> Pace:
+    # One pace for every request to GLM's endpoint, of translations, digests and answers alike.
+    return Pace(requests_per_minute=settings.glm_requests_per_minute)
 
 
 @cache

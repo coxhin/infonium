@@ -37,9 +37,15 @@ from openai.types.responses import (
 )
 from openai.types.responses.response import IncompleteDetails
 from openai.types.shared import ReasoningEffort
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
-from infonium.model_connection import Ending, endable_http_client
+from infonium.model_connection import (
+    Ending,
+    Pace,
+    endable_http_client,
+    endable_paced_http_client,
+    paced_http_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -762,11 +768,15 @@ def endable_openai_model(name: str, wire_api: WireApi) -> LanguageModel:
 
 class GlmEndpoint(BaseModel):
     # Where GLM's models are reached, with GLM's own key alone: never with the address or the
-    # key that a client of the openai package finds by itself. And how much each model is
-    # asked to reason, by name; a model not named reasons as much as the endpoint has it.
+    # key that a client of the openai package finds by itself. How much each model is asked
+    # to reason, by name; a model not named reasons as much as the endpoint has it. And the
+    # pace that every request to the endpoint keeps, of whichever model.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     base_url: str
     api_key: SecretStr
     reasoning_efforts: dict[str, GlmReasoning]
+    pace: Pace
 
     def reasoning_effort(self, name: str) -> GlmReasoning | Omit:
         return self.reasoning_efforts.get(name, omit)
@@ -778,6 +788,7 @@ def glm_model(name: str, endpoint: GlmEndpoint) -> LanguageModel:
         api_key=endpoint.api_key.get_secret_value(),
         timeout=MODEL_TIMEOUT_SECONDS,
         max_retries=MODEL_RETRIES,
+        http_client=paced_http_client(endpoint.pace),
     )
     return GlmLanguageModel(
         client=client, name=name, reasoning_effort=endpoint.reasoning_effort(name)
@@ -792,7 +803,7 @@ def endable_glm_model(name: str, endpoint: GlmEndpoint) -> LanguageModel:
         api_key=endpoint.api_key.get_secret_value(),
         timeout=MODEL_TIMEOUT_SECONDS,
         max_retries=0,
-        http_client=endable_http_client(),
+        http_client=endable_paced_http_client(endpoint.pace),
     )
     return GlmLanguageModel(
         client=client, name=name, reasoning_effort=endpoint.reasoning_effort(name)

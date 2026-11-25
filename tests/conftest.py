@@ -49,6 +49,8 @@ MARKED_PROGRAMS = {
 # The variables by which a client of the openai package finds its endpoint, and those that
 # would send its connections through a proxy.
 MODEL_ADDRESS = {"OPENAI_BASE_URL": MODEL_BASE_URL, "OPENAI_API_KEY": MODEL_KEY}
+# So many requests to GLM's endpoint a minute that its pace holds no test back.
+UNHURRIED_GLM_REQUESTS = 600_000
 PROXY_VARIABLES = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -176,6 +178,7 @@ def start_app(
     made_translator = api.translator.__wrapped__
     made_language_model = api.language_model.__wrapped__
     made_answering_model = api.answering_model.__wrapped__
+    made_glm_pace = api.glm_pace.__wrapped__
 
     def start(
         wire_api: WireApi = WireApi.RESPONSES,
@@ -200,12 +203,15 @@ def start_app(
         # providers, on the test's library, speaking the wire API given. The default model of
         # translations has a name of its own, so that the stand-in tells its requests from
         # those of the model that writes digests. GLM's endpoint is the stand-in's, reached
-        # with no key until a test gives one.
+        # with no key until a test gives one, and its pace, made anew too, is too quick to
+        # hold a test back until a test sets it.
         monkeypatch.setattr(api.settings, "wire_api", wire_api)
         monkeypatch.setattr(api.settings, "model", STANDIN_MODEL)
         monkeypatch.setattr(api.settings, "translation_model", TRANSLATION_MODEL)
         monkeypatch.setattr(api.settings, "glm_base_url", GLM_BASE_URL)
         monkeypatch.setattr(api.settings, "glm_api_key", None)
+        monkeypatch.setattr(api.settings, "glm_requests_per_minute", UNHURRIED_GLM_REQUESTS)
+        monkeypatch.setattr(api, "glm_pace", cache(made_glm_pace))
         monkeypatch.setattr(api, "language_model", cache(made_language_model))
         monkeypatch.setattr(api, "answering_model", cache(made_answering_model))
         monkeypatch.setattr(api.settings, "language", language)

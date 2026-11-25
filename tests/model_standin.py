@@ -483,6 +483,13 @@ def reply_frames(asked: Asked, reply: Reply) -> list[Frame]:
             return wire_frames(asked, reply)
 
 
+# What GLM's endpoint answers a request it refuses for being asked too often.
+TOO_OFTEN = Rejection(
+    status=HTTPStatus.TOO_MANY_REQUESTS,
+    body=json.dumps({"error": {"code": "1302", "message": "Rate limit reached for requests"}}),
+)
+
+
 def refused_reply(asked: Asked) -> Rejection:
     return Rejection(status=HTTPStatus.INTERNAL_SERVER_ERROR, body=NO_REPLY)
 
