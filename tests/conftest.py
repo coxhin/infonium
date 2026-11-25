@@ -11,7 +11,7 @@ from hypothesis import settings
 from pydantic import SecretStr
 
 from infonium import api, embedding, intake, search, speech
-from infonium.language_model import LanguageModel, WireApi, endable_openai_model, openai_model
+from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
 from tests import pdf_engine_standin
@@ -23,6 +23,7 @@ from tests.embedding_standin import (
     embedding_standin,
 )
 from tests.model_standin import (
+    GLM_BASE_URL,
     MODEL_BASE_URL,
     MODEL_KEY,
     STANDIN_MODEL,
@@ -48,6 +49,8 @@ MARKED_PROGRAMS = {
 # The variables by which a client of the openai package finds its endpoint, and those that
 # would send its connections through a proxy.
 MODEL_ADDRESS = {"OPENAI_BASE_URL": MODEL_BASE_URL, "OPENAI_API_KEY": MODEL_KEY}
+# So many requests to GLM's endpoint a minute that its pace holds no test back.
+UNHURRIED_GLM_REQUESTS = 600_000
 PROXY_VARIABLES = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -170,22 +173,18 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
-    # The service's own provider of its translator, called anew for each start.
+    # The service's own providers of its translator and of its models, called anew for each
+    # start.
     made_translator = api.translator.__wrapped__
+    made_language_model = api.language_model.__wrapped__
+    made_answering_model = api.answering_model.__wrapped__
+    made_glm_pace = api.glm_pace.__wrapped__
 
     def start(
         wire_api: WireApi = WireApi.RESPONSES,
         embedding_model: str = EMBEDDING_MODEL,
         language: str = api.settings.language,
     ) -> App:
-        @cache
-        def language_model() -> LanguageModel:
-            return openai_model(name=STANDIN_MODEL, wire_api=wire_api)
-
-        @cache
-        def answering_model() -> LanguageModel:
-            return endable_openai_model(name=STANDIN_MODEL, wire_api=wire_api)
-
         store = LibraryStore(tmp_path / "data")
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
@@ -199,17 +198,22 @@ def start_app(
             ),
         )
         monkeypatch.setattr(api, "block_index", lambda: index)
-        monkeypatch.setattr(api, "language_model", language_model)
-        monkeypatch.setattr(api, "answering_model", answering_model)
 
-        @cache
-        def translation_model() -> LanguageModel:
-            return openai_model(name=TRANSLATION_MODEL, wire_api=wire_api)
-
-        # The translator is made anew for each start by the service's own provider, on the
-        # test's library and models; its translating model has a name of its own, so that the
-        # stand-in tells its requests from those of the model that writes digests.
-        monkeypatch.setattr(api, "translation_model", translation_model)
+        # The translator and the models are made anew for each start by the service's own
+        # providers, on the test's library, speaking the wire API given. The default model of
+        # translations has a name of its own, so that the stand-in tells its requests from
+        # those of the model that writes digests. GLM's endpoint is the stand-in's, reached
+        # with no key until a test gives one, and its pace, made anew too, is too quick to
+        # hold a test back until a test sets it.
+        monkeypatch.setattr(api.settings, "wire_api", wire_api)
+        monkeypatch.setattr(api.settings, "model", STANDIN_MODEL)
+        monkeypatch.setattr(api.settings, "translation_model", TRANSLATION_MODEL)
+        monkeypatch.setattr(api.settings, "glm_base_url", GLM_BASE_URL)
+        monkeypatch.setattr(api.settings, "glm_api_key", None)
+        monkeypatch.setattr(api.settings, "glm_requests_per_minute", UNHURRIED_GLM_REQUESTS)
+        monkeypatch.setattr(api, "glm_pace", cache(made_glm_pace))
+        monkeypatch.setattr(api, "language_model", cache(made_language_model))
+        monkeypatch.setattr(api, "answering_model", cache(made_answering_model))
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)
@@ -219,8 +223,10 @@ def start_app(
         return started[-1]
 
     yield start
-    # A request the stand-in holds is let go, so that the index's work ends with the service.
+    # A request the stand-in holds is let go, so that the index's work ends with the service,
+    # and so is a fetch the stand-in site holds, so that its reading ends.
     embedder.reset()
+    site.let_go()
     for app in started:
         if app.running:
             app.client.__exit__(None, None, None)

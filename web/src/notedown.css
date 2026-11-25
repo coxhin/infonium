@@ -1,0 +1,84 @@
+/* The control that puts an excerpt into a note. It is quiet until what it belongs to is under
+   the pointer or holds the keyboard, and always on show where there is no pointer to hover;
+   whether on show or not, it keeps its room, so that showing it never moves a line under it,
+   and stays reachable from the keyboard. Once it has something to say, it stays. */
+.notedown {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
+  font-size: 0.75rem;
+  line-height: 1.4rem;
+  color: var(--muted);
+}
+
+.notedown button {
+  font-size: 0.75rem;
+  line-height: 1.3rem;
+  padding: 0 0.45rem;
+  border-radius: 0.7rem;
+}
+
+.notedown-press {
+  color: var(--muted);
+  background: none;
+}
+
+.notedown-press[aria-disabled="true"] {
+  cursor: default;
+}
+
+.notedown-press:hover:not([aria-disabled="true"]) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+  opacity: 0;
+}
+
+:is(:hover, :focus-within) > .notedown[data-state="idle"] .notedown-press {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .notedown[data-state="idle"] .notedown-press:not(:focus-visible) {
+    opacity: 1;
+  }
+}
+
+.notedown-said.failed {
+  color: var(--failure);
+}
+
+.notedown-show {
+  margin-left: 0.3rem;
+  color: var(--accent);
+}
+
+/* A statement keeps a gutter at its right, the width of the mark that stands for its control,
+   so that the mark is never laid in the text's lines; what the mark says after a press follows
+   the statement's words. */
+.note-gutter {
+  position: relative;
+  padding-right: 1.7rem;
+}
+
+.notedown[data-shape="mark"] {
+  display: contents;
+}
+
+.notedown[data-shape="mark"] .notedown-press {
+  position: absolute;
+  right: 0;
+  bottom: 0.1rem;
+  width: 1.4rem;
+  padding: 0;
+  text-align: center;
+}
+
+.notedown[data-shape="mark"] .notedown-said {
+  margin-left: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}

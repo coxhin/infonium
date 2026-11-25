@@ -13,6 +13,7 @@ import pytest
 from pydantic import BaseModel
 
 from infonium.document import Block, Document, Paragraph, document_of
+from infonium.language_model import FORM_TOLD, JSON_OBJECT
 from infonium.library import LOCAL_OWNER, Item, LibraryStore, Link, Read, Settled, item_identity
 from tests.model_standin import TRANSLATION_MODEL, Asked, Rejection, Reply, Responder
 from tests.service import SETTLE_SECONDS, SITE, App, digest_reply
@@ -22,6 +23,9 @@ from tests.service import SETTLE_SECONDS, SITE, App, digest_reply
 # for passages numbered across the blocks they belong to, under a heading of their own, and
 # is answered with each block's passages by their numbers.
 SURVEY_FORM = "DocumentSurvey"
+# Where a request to GLM's endpoint, which holds a reply to JSON alone, names the form it asks
+# for: in its instructions.
+TOLD_FORM_NAME = re.compile(re.escape(FORM_TOLD.split("{name}")[0]) + r"(\w+)")
 PASSAGES_HEADING = "Passages to translate:"
 BLOCK_HEADING = re.compile(r"^Block (\d+):$")
 PASSAGE_LINE = re.compile(r"^\[(\d+)\] (.*)$")
@@ -76,10 +80,15 @@ class Passage(BaseModel):
 
 
 def form_name(asked: Asked) -> str:
-    # The name of the form of reply a request asks for, in either wire API.
+    # The name of the form of reply a request asks for, in either wire API, or in the
+    # instructions of a request that asks for JSON alone.
     if "text" in asked.body:
         return str(asked.body["text"]["format"]["name"])
-    return str(asked.body.get("response_format", {}).get("json_schema", {}).get("name", ""))
+    response_format = asked.body.get("response_format", {})
+    if response_format.get("type") == JSON_OBJECT:
+        told = TOLD_FORM_NAME.search(asked.text())
+        return told[1] if told else ""
+    return str(response_format.get("json_schema", {}).get("name", ""))
 
 
 def is_survey(asked: Asked) -> bool:

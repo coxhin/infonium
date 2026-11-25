@@ -15,11 +15,24 @@ export type Digest = Schemas["DigestView"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
+export type ModelsOffered = Schemas["ModelsView"];
 export type TranslatedBlock = Schemas["TranslatedBlock"];
 export type Segment = Schemas["Segment"];
 export type PageBlocks = Schemas["PageBlocks"];
 export type Conversation = Schemas["Conversation"];
 export type Turn = Schemas["Turn"];
+export type Passage = Schemas["Passage"];
+export type Standing = Schemas["Found"] | Schemas["Lost"];
+export type Revision = Schemas["Revision"];
+export type ItemRevisions = Schemas["ItemRevisions"];
+export type Highlight = Schemas["HighlightView"];
+export type ItemHighlights = Schemas["ItemHighlights"];
+export type NoteEntry = Schemas["NoteEntry"];
+export type Note = Schemas["NoteView"];
+export type NoteDraft = Schemas["NoteDraft"];
+export type LinkedPassage = Schemas["LinkedPassage"];
+// The anchors of a passage: one at least, of one document, in the order of its blocks.
+export type Anchors = [Anchor, ...Anchor[]];
 // What happens while a question is answered. The protocol lists these as the items of a
 // stream, which the generated types leave out, so the kinds are named here.
 export type ChatEvent =
@@ -43,6 +56,19 @@ export function sourceLink(itemId: string): string {
 // Where the web page an item was read from is served, inert, for a frame to show.
 export function pageLink(itemId: string): string {
   return PAGE_PATH.replace(ITEM_PLACE, itemId);
+}
+
+// How the target of a link in a note's Markdown begins when it leads to one of the note's
+// passages; the passage's id follows.
+export const PASSAGE_LINK = "passage:";
+
+// The anchors of a passage the service gave, which holds one at least.
+export function anchorsOf(passage: Passage): Anchors {
+  const [first, ...rest] = passage.anchors;
+  if (first === undefined) {
+    throw new Error("这段文字没有位置");
+  }
+  return [first, ...rest];
 }
 
 function refusalText(refusal: Refusal | undefined): string {
@@ -72,6 +98,20 @@ async function settled<Data>(
     throw new Refused(refusalText(error), response.status);
   }
   return data;
+}
+
+// The statuses a gateway answers with when the service behind it does not answer. The service
+// itself answers 502 only where a model call failed, which a request that calls no model never
+// meets.
+const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+const UNANSWERED = "连不上服务";
+
+// Why a request that calls no model failed, as the reader is told it: a service that did not
+// answer is said as such rather than by the gateway's bare refusal.
+export function requestReason(error: unknown): string {
+  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
+    ? UNANSWERED
+    : reasonOf(error);
 }
 
 // A request that answers with nothing when it succeeds.
@@ -159,21 +199,34 @@ export function readDocument(itemId: string): Promise<ItemDocument> {
   );
 }
 
-export function rewriteDigest(itemId: string): Promise<Digest> {
+// The model an operation asks, as the reader chose it; none, the service's default.
+function chosen(model: string | undefined) {
+  return model === undefined ? {} : { model };
+}
+
+export function readModels(): Promise<ModelsOffered> {
+  return settled(api.GET("/api/models"));
+}
+
+export function rewriteDigest(itemId: string, model: string | undefined): Promise<Digest> {
   return settled(
-    api.POST("/api/items/{item_id}/digest", { params: { path: { item_id: itemId } } }),
+    api.POST("/api/items/{item_id}/digest", {
+      params: { path: { item_id: itemId }, query: chosen(model) },
+    }),
   );
 }
 
 // Writing a digest takes a model call, so views that ask for the same item's digest while one
-// request is under way share that request.
+// request is under way share that request. A digest kept is given whatever model is chosen.
 const digestsUnderWay = new Map<string, Promise<Digest>>();
 
-export function ensureDigest(itemId: string): Promise<Digest> {
+export function ensureDigest(itemId: string, model: string | undefined): Promise<Digest> {
   const underWay =
     digestsUnderWay.get(itemId) ??
     settled(
-      api.PUT("/api/items/{item_id}/digest", { params: { path: { item_id: itemId } } }),
+      api.PUT("/api/items/{item_id}/digest", {
+        params: { path: { item_id: itemId }, query: chosen(model) },
+      }),
     ).finally(() => digestsUnderWay.delete(itemId));
   digestsUnderWay.set(itemId, underWay);
   return underWay;
@@ -185,23 +238,32 @@ export function readTranslation(itemId: string): Promise<Translation> {
   );
 }
 
-// Starts the translation unless it is under way, done or unneeded.
-export function ensureTranslation(itemId: string): Promise<Translation> {
+// Starts the translation with the model unless it is under way, done or unneeded; one that
+// stopped goes on with it.
+export function ensureTranslation(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
-    api.PUT("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+    api.PUT("/api/items/{item_id}/translation", {
+      params: { path: { item_id: itemId }, query: chosen(model) },
+    }),
   );
 }
 
-export function translateAnew(itemId: string): Promise<Translation> {
+export function translateAnew(itemId: string, model: string | undefined): Promise<Translation> {
   return settled(
-    api.POST("/api/items/{item_id}/translation", { params: { path: { item_id: itemId } } }),
+    api.POST("/api/items/{item_id}/translation", {
+      params: { path: { item_id: itemId }, query: chosen(model) },
+    }),
   );
 }
 
-export function retranslateBlock(itemId: string, blockNumber: number): Promise<TranslatedBlock> {
+export function retranslateBlock(
+  itemId: string,
+  blockNumber: number,
+  model: string | undefined,
+): Promise<TranslatedBlock> {
   return settled(
     api.POST("/api/items/{item_id}/translation/blocks/{block_number}", {
-      params: { path: { item_id: itemId, block_number: blockNumber } },
+      params: { path: { item_id: itemId, block_number: blockNumber }, query: chosen(model) },
     }),
   );
 }
@@ -218,10 +280,14 @@ export function readItemConversation(itemId: string): Promise<Conversation> {
   );
 }
 
-export function askAboutItem(itemId: string, text: string): AsyncGenerator<ChatEvent> {
+export function askAboutItem(
+  itemId: string,
+  text: string,
+  model: string | undefined,
+): AsyncGenerator<ChatEvent> {
   return eventLines(
     api.POST("/api/items/{item_id}/conversation", {
-      params: { path: { item_id: itemId } },
+      params: { path: { item_id: itemId }, query: chosen(model) },
       body: { text },
       parseAs: "stream",
     }),
@@ -238,10 +304,132 @@ export function readLibraryConversation(): Promise<Conversation> {
   return settled(api.GET("/api/conversation"));
 }
 
-export function askAboutLibrary(text: string): AsyncGenerator<ChatEvent> {
-  return eventLines(api.POST("/api/conversation", { body: { text }, parseAs: "stream" }));
+export function askAboutLibrary(text: string, model: string | undefined): AsyncGenerator<ChatEvent> {
+  return eventLines(
+    api.POST("/api/conversation", {
+      params: { query: chosen(model) },
+      body: { text },
+      parseAs: "stream",
+    }),
+  );
 }
 
 export function forgetLibraryConversation(): Promise<void> {
   return done(api.DELETE("/api/conversation"));
+}
+
+// Starts a new reading of the item's source; the document it holds stays until that has given
+// another.
+export function readAgain(itemId: string): Promise<ItemEntry> {
+  return settled(
+    api.POST("/api/items/{item_id}/reading", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function readRevisions(itemId: string): Promise<ItemRevisions> {
+  return settled(
+    api.GET("/api/items/{item_id}/revisions", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function readRevisionDocument(itemId: string, revision: number): Promise<ItemDocument> {
+  return settled(
+    api.GET("/api/items/{item_id}/revisions/{number}/document", {
+      params: { path: { item_id: itemId, number: revision } },
+    }),
+  );
+}
+
+// Where a passage of any revision of the item stands in the document the item holds now.
+export function readStanding(itemId: string, passage: Passage): Promise<Standing> {
+  return settled(
+    api.POST("/api/items/{item_id}/standing", {
+      params: { path: { item_id: itemId } },
+      body: passage,
+    }),
+  );
+}
+
+export function readHighlights(itemId: string): Promise<Highlight[]> {
+  return settled(
+    api.GET("/api/items/{item_id}/highlights", { params: { path: { item_id: itemId } } }),
+  );
+}
+
+export function makeHighlight(
+  itemId: string,
+  passage: Passage,
+  comment: string,
+): Promise<Highlight> {
+  return settled(
+    api.POST("/api/items/{item_id}/highlights", {
+      params: { path: { item_id: itemId } },
+      body: { passage, comment },
+    }),
+  );
+}
+
+export function commentHighlight(
+  itemId: string,
+  highlightId: string,
+  text: string,
+): Promise<Highlight> {
+  return settled(
+    api.PUT("/api/items/{item_id}/highlights/{highlight_id}/comment", {
+      params: { path: { item_id: itemId, highlight_id: highlightId } },
+      body: { text },
+    }),
+  );
+}
+
+export function removeHighlight(itemId: string, highlightId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/items/{item_id}/highlights/{highlight_id}", {
+      params: { path: { item_id: itemId, highlight_id: highlightId } },
+    }),
+  );
+}
+
+// Every item that has highlights, with them.
+export function readLibraryHighlights(): Promise<ItemHighlights[]> {
+  return settled(api.GET("/api/highlights"));
+}
+
+// The requests about notes tell a request that reached no service from a refusal, as a reader
+// is told the two apart: the text is kept once the service is back, and not after it refused.
+export function listNotes(): Promise<NoteEntry[]> {
+  return settled(reached(api.GET("/api/notes")));
+}
+
+// Keeps a new note. One made as the page is left is sent so that the request outlives the page,
+// as rewriteNote's is.
+export function writeNote(draft: NoteDraft, leaving = false): Promise<Note> {
+  return settled(reached(api.POST("/api/notes", { body: draft, keepalive: leaving })));
+}
+
+export function readNote(noteId: string): Promise<Note> {
+  return settled(
+    reached(api.GET("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
+}
+
+// Puts the draft in place of what the note held, unless the note holds an edition as late as
+// the draft's. A draft sent as the page is left is sent so that the request outlives the page;
+// the browser refuses such a request above 64 KiB.
+export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): Promise<Note> {
+  return settled(
+    reached(
+      api.PUT("/api/notes/{note_id}", {
+        params: { path: { note_id: noteId } },
+        body: draft,
+        keepalive: leaving,
+      }),
+    ),
+  );
+}
+
+export function removeNote(noteId: string): Promise<void> {
+  return done(
+    reached(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
 }

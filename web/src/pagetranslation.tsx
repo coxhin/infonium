@@ -1,11 +1,22 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { AreaText, Box } from "./areas";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
+import { percent, type AreaText, type Box } from "./areas";
 import { MarkedText } from "./blocks";
+import { useSelectedBlock, type MarkState, type SelectionDrawing } from "./pagemarking";
 import "./pagetranslation.css";
 
 // Text is made smaller to fit its area, but never below this part of the source's size.
 export const FLOOR = 0.6;
 const FITTING_STEPS = 7;
+// How long a press waits, in milliseconds, to be told from the first of a double press.
+const DOUBLE_PRESS = 250;
 // Colours are read from a grid of this many points across an area of the drawn page, each
 // channel to this many levels; a colour this far from the paper's is ink.
 const SAMPLES = 24;
@@ -99,10 +110,6 @@ function brightnessOf(colour: string): number {
   return (colour.match(/\d+/g) ?? []).reduce((sum, channel) => sum + Number(channel), 0);
 }
 
-function percent(fraction: number): string {
-  return `${fraction * 100}%`;
-}
-
 type Rgb = [number, number, number];
 
 function distance(first: Rgb, second: Rgb): number {
@@ -188,18 +195,25 @@ function TranslatedArea({
   width,
   pointed,
   onMarked,
+  marked,
+  drawing,
 }: {
   text: AreaText;
   shape: number;
   colours: Colours | undefined;
   revealing: boolean;
   width: number;
-  // Whether the area holds the translation of the block a passage pointed at lies in: it is
-  // then marked whole, as the text view marks the translated block.
+  // Whether the area holds the translation of a block a passage pointed at runs through: it
+  // is then marked whole, as the text view marks the translated block.
   pointed: boolean;
   onMarked: (area: HTMLElement) => void;
+  // How the strongest of the highlights that run through the area's block is drawn, if any
+  // does; and the selection, which the area is drawn in where it takes text of its block.
+  marked: MarkState | undefined;
+  drawing: SelectionDrawing;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const selected = useSelectedBlock(drawing, text.blockNumber);
   useEffect(() => {
     if (pointed && element.current !== null) {
       onMarked(element.current);
@@ -207,6 +221,28 @@ function TranslatedArea({
   }, [pointed, onMarked]);
   const [fit, setFit] = useState<{ ratio: number; cut: boolean }>({ ratio: 1, cut: false });
   const [open, setOpen] = useState(false);
+  // A press turns the area once it is plain that it selected nothing: a drag that selects its
+  // text ends in a click too, and a double click begins with one.
+  const turning = useRef<number>(undefined);
+  useEffect(() => () => window.clearTimeout(turning.current), []);
+  const pressed = (event: MouseEvent) => {
+    window.clearTimeout(turning.current);
+    if (event.detail > 1) {
+      return;
+    }
+    turning.current = window.setTimeout(() => {
+      const selection = getSelection();
+      const selects =
+        selection !== null &&
+        !selection.isCollapsed &&
+        element.current !== null &&
+        selection.containsNode(element.current, true) &&
+        selection.toString().trim() !== "";
+      if (!selects) {
+        setOpen((before) => !before);
+      }
+    }, DOUBLE_PRESS);
+  };
   const { area, piece } = text;
   // The size of the text as a part of the page's width.
   const size = area.vertical ? area.typeset.size : area.typeset.size * shape;
@@ -272,9 +308,16 @@ function TranslatedArea({
   return (
     <div
       ref={element}
-      className={["area", area.vertical ? "vertical" : "", pointed ? "pointed" : ""]
+      className={[
+        "area",
+        area.vertical ? "vertical" : "",
+        pointed ? "pointed" : "",
+        marked !== undefined ? "marked" : "",
+        selected ? "selected" : "",
+      ]
         .filter(Boolean)
         .join(" ")}
+      data-mark={marked}
       style={style}
       data-fit={fit.ratio.toFixed(2)}
       data-cut={fit.cut ? "" : undefined}
@@ -285,7 +328,7 @@ function TranslatedArea({
       role={pressable ? "button" : undefined}
       aria-pressed={pressable ? open : undefined}
       aria-label={revealing ? "按下看这一段的原文" : undefined}
-      onClick={pressable ? () => setOpen(!open) : undefined}
+      onClick={pressable ? pressed : undefined}
       onKeyDown={
         pressable
           ? (event) => {
@@ -312,17 +355,21 @@ export function PageTranslation({
   drawn,
   revealing,
   width,
-  pointedBlock,
+  pointedBlocks,
   onMarked,
+  markedBlocks,
+  drawing,
 }: {
   texts: AreaText[];
   shape: number;
   drawn: Drawn;
   revealing: boolean;
   width: number;
-  pointedBlock: number | undefined;
+  pointedBlocks: ReadonlySet<number>;
   // Told of each area that comes to be marked.
   onMarked: (area: HTMLElement) => void;
+  markedBlocks: ReadonlyMap<number, MarkState>;
+  drawing: SelectionDrawing;
 }) {
   const [read, setRead] = useState<ReadonlyMap<string, Colours>>(new Map());
   useEffect(() => {
@@ -350,8 +397,10 @@ export function PageTranslation({
           colours={colours.get(text.key)}
           revealing={revealing}
           width={width}
-          pointed={text.blockNumber === pointedBlock}
+          pointed={pointedBlocks.has(text.blockNumber)}
           onMarked={onMarked}
+          marked={markedBlocks.get(text.blockNumber)}
+          drawing={drawing}
         />
       ))}
     </div>

@@ -1,6 +1,6 @@
 # infonium
 
-infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links.
+infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links. You mark passages and write notes that link back to them, and both outlive a second reading of their source.
 
 ## What it reads
 
@@ -15,7 +15,7 @@ A PDF opens as its pages, with the text read from them one tab away. A web artic
 
 ## What it does with a source
 
-A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记), which stays empty until notes are built.
+A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记). Under its tabs, 摘要和对话的模型 chooses the model that writes a digest, answers a question and translates one block again (↻), among the same models as 翻译模型 below. A digest that is kept stays when another model is chosen, until it is written again (重新生成).
 
 ### Translation
 
@@ -29,9 +29,33 @@ A switch above the reader shows the source (原文), its translation (译文), o
 
 Every source can also be read as text, each block in translation or followed by its translation. A formula is set as a formula and is never translated. One block can be translated again, by the model that writes digests.
 
+Beside the switch, 翻译模型 chooses the model a translation is made with: the translating model of the settings, the model that writes digests, or one of GLM's models, reached at GLM's endpoint with GLM's key. Like the switch, the choice keeps its place from one source to the next. It applies to a translation that starts, goes on after it stopped, or starts again (全部重新翻译); a translation under way keeps its model, also after a restart. The line above the text names the model that translates or translated the source. A GLM model is offered without GLM's key set, but cannot be chosen.
+
 ### The chat
 
 The chat answers a question about the open source, or about the whole library (整个库). An answer appears as it is written. Each of its statements carries citations that open the quoted passage, in whichever source it lies.
+
+### The notebook
+
+The notebook holds your highlights (高亮) and your notes (笔记). It can be opened with a source on show or with none.
+
+A highlight is a passage you marked, with a comment if you wrote one. Select words in a source and choose 高亮, 批注 (mark and comment) or 记到笔记 (put the passage into a note). A passage may run over several paragraphs. You can select in every view:
+
+| View | How a passage is selected |
+| --- | --- |
+| The text of any source, and a recording's lines | By selecting its words. With only a translation on show, the selection marks the whole sentences or paragraphs it touches. |
+| A PDF's pages | By dragging over the lines. Over a translation set on the page, by selecting its text, which marks the whole blocks it touches. |
+| A web article's own page | By selecting its words in the page. |
+
+A highlight is drawn in every view of its source. Pressing one opens it in the notebook, and pressing its words in the notebook shows the passage in the source. With no source open, the notebook lists the highlights of every source.
+
+A note is formatted text that belongs to the library, not to one source. A link in a note may lead to a passage of any source, and pressing it opens the passage. A statement of a digest, a statement or a whole answer of the chat, a highlight and a selection can each be put into the note being written (记到笔记), with their citations as such links. A highlight goes in with its comment, written as plain text after the quotation and its link; a comment still being typed is kept first. A web address in a statement, a comment or a quotation becomes a link in the note: one that starts with http://, https:// or www., without the punctuation that ends the sentence after it or a bracket that closes before it. An address of this machine stays text. Beside a statement the control is the ✎ that shows when the statement is pointed at. A note is kept by itself a moment after you stop typing, and a new note is kept once something is written in it. The note open in a tab is open again when the tab is loaded again.
+
+### Reading a source again
+
+The reader's head offers to read a source again (重新读取): a link is fetched again, and an upload is read again from the file infonium keeps. A reading that gives other text than the readings before it is kept as a new revision, and every earlier revision stays. The head lists the revisions, and an earlier one opens as its text.
+
+Your highlights, the passages your notes link to and the citations of earlier answers are looked for in the new reading. A passage that is found is shown where it stands now; where its words differ a little, the notebook says so. A passage the new reading no longer holds is said to be lost, with the revision it was marked in, and opens in that revision.
 
 ## Run it
 
@@ -67,8 +91,13 @@ Settings are environment variables, read from `.env` by `make dev`.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | none | Key for the endpoint that serves the model |
 | `OPENAI_BASE_URL` | OpenAI | Endpoint, when the model is served elsewhere |
-| `INFONIUM_MODEL` | `gpt-6.1-terra` | Model that writes digests and answers questions, and translates one block again |
-| `INFONIUM_TRANSLATION_MODEL` | `gpt-6-luna` | Model that translates a document |
+| `INFONIUM_MODEL` | `gpt-6.1-terra` | Model that writes digests and answers questions, and translates one block again, unless the reader chooses another under 摘要和对话的模型 |
+| `INFONIUM_TRANSLATION_MODEL` | `gpt-6-luna` | Model that translates a document unless the reader chooses another under 翻译模型 |
+| `INFONIUM_GLM_API_KEY` | none | Key for GLM's endpoint, which serves GLM's models; without it they cannot be chosen |
+| `INFONIUM_GLM_BASE_URL` | `https://open.bigmodel.cn/api/coding/paas/v4` | GLM's endpoint; the default is that of GLM's Coding Plan |
+| `INFONIUM_GLM_MODELS` | `["glm-5.3", "glm-5.3-flash"]` | GLM's models the reader may choose, as a JSON list |
+| `INFONIUM_GLM_REASONING_EFFORTS` | `{"glm-5.3": "low", "glm-5.3-flash": "medium"}` | How much each of GLM's models is asked to reason, by name, as a JSON object: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; a model not named reasons as much as GLM's endpoint has it by default |
+| `INFONIUM_GLM_REQUESTS_PER_MINUTE` | `8` | The most requests sent to GLM's endpoint in a minute, by all of GLM's models together |
 | `INFONIUM_WIRE_API` | `chat_completions` | API the endpoint speaks: `chat_completions` or `responses` |
 | `INFONIUM_LANGUAGE` | `简体中文` | Language of digests and translations |
 | `INFONIUM_DATA_DIR` | `data` | Where the library and the snapshots of its sources are stored |
@@ -91,7 +120,25 @@ The reader resolves an anchor to that range and highlights it. In a PDF it also 
 
 infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF file, or the sound of a recording. The reader shows the snapshot, so a citation still leads to its passage after the source has changed or gone.
 
-A document is translated into the language of digests by a model of its own. infonium first shows that model passages from across the document. The model says which language the document is in and, if it needs translating, lists the names and terms that recur, each with the one translation to use. In a technical document, a term of art that the source writes in English stays in English, as people of the field say it: the name of a model, a method, a component, a tool, a format or a measure, in the singular and with no translation in brackets after it. The general vocabulary of science and computing, which has a settled word in the reader's language, is translated, and so is everything in a source that is not technical. The list gives a term that stays in English as itself, so that requests write it alike. infonium then translates the document a few blocks a request, eight requests at a time, and keeps each block as it comes; each request carries the listed terms that its passages use. A link, a style or a formula of a passage goes to the model as a pair of tags around its words and comes back as a mark on the words that translate them. A formula is not translated: infonium puts its own text back between its tags, whatever the reply holds there, since a model that copies LaTeX alters it. A reply is kept only if it answers each block with exactly that block's passages, holds no remnant of a tag, and keeps every formula's tags with no word of the sentence inside them. The sentences of a recording are also checked against their neighbours: an answer out of proportion with its source, or the same answer to different sentences, is not kept. A reply that fails any of these is asked for again, up to three times. A table is translated cell by cell into the same grid, and a recording sentence by sentence along its stretches of time. Listings and formulas stay as written.
+Highlights and notes are kept in the library's file. Each holds passages, and a passage is an anchor for each block it runs through, all in one document. A highlight is one passage with a comment of up to 10,000 characters; marking the same passage again gives the same highlight. A note is a title of up to 200 characters and up to 500,000 characters of Markdown. A link in the Markdown whose address is `passage:` and an id names one of the passages kept beside the note, each with the source it lies in. A note belongs to the library, not to one source, and its links may lead into any source. A highlight put into a note leaves its comment there as a copy in the note's Markdown: changing the comment afterwards leaves the note as it is, and editing the note leaves the comment.
+
+A document's identity follows from its item, the program that read it, and its blocks with their places. A reading that gives the same blocks gives the same document and adds no revision; one that gives a document the item held before returns the item to that revision, under its number. Any other reading is kept as the next revision, numbered from 1 in the order the revisions were first read. Every revision is kept with its document and its snapshot. A highlight and a note's passage stay anchored in the revision they were marked in.
+
+Where a passage stands in the document its item holds now is worked out each time it is shown, and never stored. A passage is looked for by its letters: its characters as a citation's quote is compared, without white space, block after block, so that neither spaces nor the places where blocks are cut decide what is found. A passage of 40 letters or more, each character of a script written without spaces counting 3, is found by its letters alone where each revision holds it exactly once. Any other passage must have both of its sides borne out. A side is borne out by the 10 letters right beside it, which must stand beside the place again with one letter read otherwise at most and no digit changed, or by the edge of its block: the passage began or ended fewer than 10 letters from that edge, the letters between stand as they were, and the place lies as far from the edge of its own block. At least one side must be borne out by letters. Footnote marks are left out of these letters, and new blocks of up to 16 letters, such as the link to edit a heading that a later reading of a wiki puts after it, are passed over.
+
+In a table, a place may run across no more edges of cells and rows than the passage was marked across, and a cell is told by the letters of its own row. A passage that began and ended at the edge of a word is found only where it does so again, and a number is never found inside a longer number. Where the new revision does not hold the passage's very letters so placed, the passage is looked for among letters a little unlike them: four in five of its letters must stand after the fewest changes, no digit may change, the letters found must not have stood elsewhere in the revision the passage was marked in, and its sides must be borne out as above. For a passage of 40 letters or more that its revision held once, one side is enough, borne out by letters or by the document's edge, where its own first and last 10 letters stand at the ends of the place; no such place is taken outside the passage's own place while that still stands between the blocks that stood before and after it. A passage over several blocks between which new blocks came to stand is found block by block, with at most 2 new blocks of up to 16 letters between two of its blocks. A passage found as its very letters, spaced as they were, is shown as it is; one found as letters a little unlike, or with two of its words now glued together, is shown with the words 文字与标记时略有不同.
+
+Where the revision a passage was marked in held other copies of it, or the new revision holds its letters in several places, the letters around each place are compared with those that stood around the marked copy, 32 on each side and up to 256 where those are the same, and the passage is found only at a place that they tell from every other. Where nothing tells the places apart, the passage is lost. Every rule leans the same way: a passage shown at a wrong place is worse than a passage said to be lost, which still opens in the revision it was marked in.
+
+In the text of a source and in a recording's lines, highlights are drawn through the browser's registry of highlights, over the words, and nothing is written into the page. A selection becomes a passage from its two ends, by the same walk over each block's text that resolves a citation. With only a translation on show, it takes whole every sentence or paragraph it touches; with both on show, an end that lies in a translation takes the whole of that sentence or paragraph. On a PDF's pages, highlights and selections follow the document's line boxes. Each line is cut at the gaps between its words, read off the page as it is drawn: a page that holds highlights is read when it is drawn, any other at the first press on it. A line whose gaps cannot be read is cut by the widths of its characters, and a line of a script written without spaces into equal shares. A table, a figure and a box that stands for several lines are taken whole. Where the engine broke a scan's line inside a word, the break is moved, by 15 characters at most, only where both lines it bounds then hold as many words as their print shows. In the kept page of a web article, the characters an element shows are matched with its block's text, apart from white space, case and the shapes of quotation marks and dashes, and that one correspondence places a citation's passage, draws the highlights and turns a selection into a passage. Text the page holds but does not show is left out of it.
+
+A note is written in an editor built on [TipTap](https://tiptap.dev/), fetched when a note is first opened, which writes Markdown. A note is handed to infonium 800 ms after the last key, and at once when the reader leaves it, the item or the page. Each writing carries an edition, one after the edition infonium last showed, and infonium takes a writing only when its edition is later than the one it holds. A reader whose note was written elsewhere meanwhile is told so, and nothing more is sent until they choose: to replace that writing with their own (用这里的替换那边的), to keep their own as a new note (另存为新笔记), or to drop their own and read in the other (放弃这里的，读入那边的).
+
+A document is translated into the language of digests by a model of its own, the one the reader chooses. infonium first shows that model passages from across the document. The model says which language the document is in and, if it needs translating, lists the names and terms that recur, each with the one translation to use. In a technical document, a term of art that the source writes in English stays in English, as people of the field say it: the name of a model, a method, a component, a tool, a format or a measure, in the singular. At its first use in the document the reader's word for it follows in brackets, as a Chinese translation gives a gloss, Fresnel lens（菲涅尔透镜）, and nowhere after. The requests are made apart and at once, so infonium finds the block of each listed term's first use in the source and names that passage to the request that holds it; a term the survey did not list is given its word where a request first uses it, so it may be given it again in a later request. The general vocabulary of science and computing, which has a settled word in the reader's language, is translated, and so is everything in a source that is not technical. The list gives a term that stays in English as itself, so that requests write it alike. infonium then translates the document a few blocks a request, eight requests at a time, and keeps each block as it comes; each request carries the listed terms that its passages use. A link, a style or a formula of a passage goes to the model as a pair of tags around its words and comes back as a mark on the words that translate them. A formula is not translated: infonium puts its own text back between its tags, whatever the reply holds there, since a model that copies LaTeX alters it. A reply is kept only if it answers each block with exactly that block's passages, holds no remnant of a tag, and keeps every formula's tags with no word of the sentence inside them. The sentences of a recording are also checked against their neighbours: an answer out of proportion with its source, or the same answer to different sentences, is not kept. A reply that fails any of these is asked for again, up to three times. A table is translated cell by cell into the same grid, and a recording sentence by sentence along its stretches of time. Listings and formulas stay as written.
+
+GLM's endpoint speaks the Chat Completions API and holds a reply to JSON, but not to a schema. infonium tells a GLM model the form of the reply after its instructions, by its name and its JSON schema, and holds the reply to that form as it reads it, as it does every reply. A GLM model always reasons, as much as `INFONIUM_GLM_REASONING_EFFORTS` asks of it. Where a reply may call tools, as one about the library does, the first request of the reply leaves the model to the form it is told, and every later request holds it to JSON: held to JSON, glm-5.3-flash called no tool in three tries of three, and left free after its searches it answered in prose two times in three. Digests and translations are told to punctuate as the reader's language is written, since glm-5.3-flash reasoning at length wrote commas and colons of Latin script between Chinese words.
+
+GLM's endpoint limits how often an account may ask, over all its models, and refuses a request beyond that with 429 (code 1302). So every request to it, of translations, digests and answers alike, keeps one pace: it is sent at least 60 / `INFONIUM_GLM_REQUESTS_PER_MINUTE` seconds after the one before, the openai client's own second try among them. After a refusal with 429 no request is sent for 5 seconds; the pause doubles, up to a minute, while requests sent after it began are refused too, and is over with the first that is not. A request that waits for its turn is not sent if its reader leaves meanwhile.
 
 The reader draws a PDF's translation itself, over the page. A block's lines that follow one another in one column are one area. The area is filled with the colour of the paper around the lines, and the translation is set in it at the size of the source's text, told from the height of its lines, in the colour of their ink. A formula is set from its LaTeX by [KaTeX](https://katex.org/), here as in the text.
 
@@ -171,6 +218,12 @@ The blocks of every document the library holds are indexed in the library's file
 - With a translation on show, a citation marks the translated block, or the lines of a recording, that hold the quote, not the quoted words themselves.
 - The switch keeps its place from one source to the next, so a source opened while it stands on 译文 or 对照 is translated without another word from the reader.
 - If infonium is killed during a translation, the requests in flight are made again when it starts; blocks already kept are not. A document whose item is read again meanwhile is not translated further.
+- A translation that goes on with another model keeps the blocks translated before; only 全部重新翻译 makes them all with the model chosen.
+- How much a GLM model reasons decides most of what a request costs. Translating 13 blocks of 3,800 characters in one request, two runs a setting: glm-5.3-flash took 8 to 10 seconds and 1,100 to 1,270 output tokens at `none`, `minimal` and `low`, 11 to 14 seconds and 1,320 to 1,540 at `medium`, and 20 to 40 seconds and 2,600 to 4,800 at `high`, `xhigh`, `max` and by default; glm-5.3 took 9 to 15 seconds and 990 to 1,550 at `none` to `medium`, 40 to 151 seconds and 4,500 to 16,900 at `high`, `xhigh` and `max`, and 91 to 100 seconds and 10,500 to 11,100 by default. The translations themselves take about 1,000 of those tokens. glm-5.3 kept to the request's list of terms at every setting; glm-5.3-flash kept a term of art in English where the list translated it in every run below `medium`, in one of two at `medium`, and in none above.
+- On a made-up article of 41 blocks and 13,300 characters, asked to reason little, glm-5.3-flash translated the whole in 11 to 14 seconds and glm-5.3 in 20, four requests at once, with no request refused and every link and style kept. glm-5.3-flash with the endpoint's default took 75 to 128 seconds on a technical article of 9 blocks.
+- A term's word in brackets at its first use is the model's to give, and a name kept as written may be given its sound in Chinese, as in Quillmoor（奎尔摩尔）.
+- GLM does not say how many requests an account may make: its Coding Plan's limit depends on the plan and changes with the load. On 2026-11-25 eight requests of glm-5.3-flash sent at once were refused with code 1302, where four at once had been answered the day before; at 8 requests a minute about four of them, of about 28 seconds each, are under way at once. A refusal still spends one of a request's three tries, so a translation refused for minutes on end stops. While a translation by a GLM model runs, a question asked of a GLM model waits for its turn among the translation's requests, with no precedence over them.
+- The endpoint of GLM's Coding Plan, the default, is meant for the coding tools the plan names: Zhipu's FAQ says that called from elsewhere the plan's quota does not apply, and that a request may then be refused (error 1113) or charged to the account's balance. GLM's general endpoint, `https://open.bigmodel.cn/api/paas/v4`, is paid by use.
 
 ### The chat
 
@@ -188,6 +241,64 @@ The blocks of every document the library holds are indexed in the library's file
 - While the embedding engine is away, nothing on the page says that the library is being searched by words alone.
 - A digest written before infonium counted the citations it could not find shows a statement that lost all of them as 无出处, like one that was given none.
 
+### Highlights
+
+- In the text, a press opens a highlight 250 ms later, so that a double click selects a word instead. A slow double click, its presses 300 ms apart or more, opens the highlight and selects the word as well.
+- In the text, a highlight made with only a translation on show, or with an end in a translation, covers each piece of the source it touches whole: a sentence of a recording, a paragraph of anything else, and a table for one of its cells.
+- The notebook was tried in Chrome only. Pressing a highlight in the text opens it only in a browser that tells the words under a point, Chrome from 128 on. Selecting in the text by keyboard needs the browser's caret browsing (F7 in Chrome).
+- In a narrow window, when a selection ends at the window's foot, its actions stand above its last line and cover the line before it.
+- On a scan, the ends of a highlight on the pages are read off the print where the reading engine's line breaks agree with it. Where the engine broke a line inside a word, a highlight may be drawn up to a word away from its words: 7 of 42 random highlights on seven test scans.
+- On the lines whose gaps could be measured, of five scans and three PDFs with a text layer, a word's edge lies a median 0.03 to 0.06 of a character from the print. It lies more than two characters off at no edge of the three PDFs with a text layer, at 1.8% of edges at most on four of the scans, and at 13.7% on the fifth, whose blocks the engine split into lines of even length.
+- A line whose print is not dark on light paper, such as light text on a dark page or grey text, is cut by the widths of its characters, which on scans puts a word's edge a median 0.9 to 2.6 characters off.
+- A highlight on a page not yet read is first drawn by the widths of its characters, and moves once the page is read: in the case watched, 2 seconds later and by about two characters.
+- In the one PDF tried whose text layer runs downwards, the engine's line places do not match its columns, and highlights are drawn away from their words.
+- On a PDF's pages, select-all (Ctrl+A) hands over every block of the document, and 高亮 then marks all of it.
+- In the kept page (原件), a highlight in a block that has no element of its own there is not drawn, and the line above the page says how many such highlights there are. Where an element shows a translation, or the highlight's words are not found in it, the element is tinted whole.
+- In the kept page, words the page holds but does not show, such as text for screen readers, are never part of a highlight, and words it shows struck out inside a highlight are marked with it.
+- A link in the kept page opens only on a press that moved 4 pixels or less, or by Enter. A drag that starts on a link selects its words, unless it starts on the left half of the link's first character, where the browser begins no selection. No link can be dragged out of the page, and links the page made unselectable can be selected.
+- A highlight in the kept page keeps its light green on a dark page and in the dark theme.
+- Marking by touch was tried only in emulation, not on a phone or with a pen. On a PDF's pages, a finger held still for 450 ms marks the whole block it rests on and does not select words. In the kept page, touch was not tried.
+- A comment typed and not yet kept survives turning to another item, but is lost when the page is loaded again.
+- A page open in a second tab shows a highlight made, changed or removed in the first once that tab is turned to, not before.
+- In 对照 in the text, a highlight is drawn on the source's words, not on the translation beside them.
+- A passage that runs through a formula is quoted in the notebook and in a note with the formula's LaTeX.
+- 500 highlights on one item added 60 to 85 ms to opening it in Chrome, and about 0.5 seconds with the processor slowed four times.
+- The notebook was not tried with a screen reader.
+
+### Notes
+
+- Editing a note changes what the editor cannot show: a table is dropped, a picture keeps only its alt text, and HTML becomes marks or text. When the note is opened, it says which of these, or footnotes, it holds.
+- The first writing of a note puts some Markdown in another form of the same meaning, and from then on it stays as written: a `*` bullet becomes `-`, `_x_` becomes `*x*`, an underlined heading one marked by `#`, an indented listing a fenced one, a mark inside a word is escaped (`snake\_case`), and a bare address becomes a link.
+- A link to a passage inside bold or italic loses that mark when the note is edited.
+- Two writers saving the same note at the same moment, one of them as its page is hidden or closed, can lose the other's last change, and neither is told.
+- When a writing reached infonium but its answer was lost, the note says it was written elsewhere though nothing was lost; 用这里的替换那边的 sets it right.
+- A writing of more than 64 KiB cannot be sent as the page closes. The browser asks first; a reader who leaves all the same may lose what was typed last.
+- When infonium refuses a passage of a writing, such as one pasted from elsewhere that its source does not hold, every link new in that writing stands as plain words, and the note names the refused one.
+- The editor is fetched when a note is first opened: 481.54 kB of script, 153.01 kB gzipped.
+- A note of 50 passages in 20 items of 2,000 blocks each opened in 157.5 ms the first time and in 8.0 ms once those documents were read. infonium keeps the 64 documents read last.
+- A screen keyboard was tried only as a window of 390 by 420 pixels, and the editor was not tried with a screen reader.
+- A comment written from right to left stands aligned to the left in a note, as every paragraph of a note does, though on its highlight it stands to the right.
+- An address with Chinese text right after it, with no space between, takes that text into its link: `https://example.com/page中的说法。` links `https://example.com/page中的说法`. A Chinese full stop, comma or bracket ends it, and so does a closing quotation mark, ” or ’.
+- Text joined to an address of this machine, with no space between, stays text, a web address in it included: `http://localhost/x”和www.example.com` links nothing.
+- An address typed or pasted into a note is linked by the editor's own rule, not by the one above: a Chinese full stop or comma right after it is taken into the link (`见 www.example.net/x， 完` links `http://www.example.net/x，`, and `https://example.com/x。` keeps its `。`); an address glued to the word before it, as `参考www.example.org`, becomes a link only once the note is loaded again; and a paste that runs across a closing quotation mark, as `“https://example.com/q”和www.example.com/a*b。`, becomes one link.
+
+### Reading a source again
+
+- A passage whose words still stand may be said to be lost: most often a passage of few words whose neighbours changed, a cell of a changed table, or text that a recognition repeats. Of 100 passages of each of three Wikipedia articles read in two revisions, 2, 2 and 0 were. Of 100 passages of each of two PDFs of many scripts, read from their text layer and again as pictures, 7 and 18 were. Of 2,400 passages of twelve documents read again with their blocks cut and joined, 50 were; with misreadings added, 86; with 15% of their blocks also rewritten or removed, 97. Of 600 passages of each of four pairs made from the Rust and 東京都 Wikipedia articles, with blocks removed, rewritten and copied, 23 to 26 were.
+- None of the passages above was shown at a place that does not hold its words. A wrong place is still met now and then in documents made up to say the same rows, sentences and formulas again and again with small changes: in 4 of 11 runs of the test that mixes such documents, one passage was found away from its own place, such as a cell of a removed row found in another row, or a passage across two blocks found a little unlike itself on a neighbouring sentence of the same form. Where identical rows or sentences stand side by side and one is removed, a passage of the removed one is shown in one that stayed.
+- In the same made-up documents, a sentence that every section says, in a block of its own, is often lost when the section beside it was removed or rewritten, though its own block stands word for word.
+- Where a paragraph was rewritten or removed and a new paragraph that says the same but for one word was put elsewhere, a mark on part of the first is often shown on the second, with the words that say it differs a little: in a test made for it, 72 of 166 and 55 of 146 passages whose paragraph was rewritten, and 83 of 180 and 77 of 176 whose paragraph was removed.
+- A passage of 40 letters or more that each revision holds once is found wherever it stands: where its own paragraph was removed and the same words stand in another, it is shown there.
+- A passage is lost where a digit of it other than a footnote mark's changed, however little else did, and where more than one letter in five changed: of 100 passages of a PDF in Hebrew, Georgian, Armenian, Amharic and Khmer, read again as pictures, 41 were lost because the recognition wrote other text.
+- The notebook works out where each highlight stands each time it lists them. After a second reading of a made-up page of 2,001 blocks and about a million characters, a list of 50 highlights took 0.25 to 0.36 seconds, one of 300 took 1.3 seconds and one of 500 took 2.1 seconds. A highlight of a single common word costs more: with ten of them among the 50, the list took 0.7 seconds. One passage took 0.9 seconds at most, on a megabyte of text that says one row of a table ten thousand times.
+- A passage that its document says more than 2,000 times is lost, once anything in the document changed, when its own copy comes after the 2,000th.
+- Every revision is kept with its document and its snapshot, and none is ever removed.
+- Where a new paragraph of a few words came to stand inside a passage that runs over several paragraphs, the passage is found with the new paragraph inside it.
+- A passage that begins with a combining mark set after white space is lost even in a reading that changed nothing: 15 of 3,988 such made-up passages.
+- An earlier revision is shown as its text only, without its pages, its kept page, its player or a translation, and nothing can be marked in it.
+- An upload whose reading never succeeded cannot be read again; it has to be uploaded again.
+- In a library kept before revisions, an item's earlier readings are numbered in the order they were last read, not first read.
+
 ### Finding passages in the library
 
 - A block is found by its words at the first search after its reading settles, and by its meaning once it has a vector. The blocks read last get theirs first: a page read behind 9,500 waiting blocks had them within 3 seconds.
@@ -204,7 +315,7 @@ The blocks of every document the library holds are indexed in the library's file
 ### In general
 
 - The reason shown when a call of the model or of an engine fails gives the address the call went to and what was answered.
-- An address is fetched for up to ten minutes and up to 2 GiB. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
+- An address is fetched for up to ten minutes and up to 2 GiB, and given up once its server sends nothing for 20 seconds. A video or podcast page is fetched for up to an hour, and its recording may run up to four hours and hold up to 2 GiB. What goes beyond is not read.
 - The browser is given none of infonium's settings or keys, only `PATH`, the locale, the time zone and a home of its own.
 - The other programs infonium starts are given none of them either, nor any variable named like a key, a token, a password or a secret: FFmpeg only `PATH`; the fetcher of video and podcast pages `PATH`, the locale, the proxies and yt-dlp's `YTDLP_` settings; MinerU `PATH`, the locale, the proxies, `HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH`, its own `MINERU_` settings, the GPU's `CUDA_` settings and the `HF_`, `HUGGINGFACE_` and `MODELSCOPE_` settings of the hubs it fetches its models from. Only `file` is given all of infonium's environment: when infonium loads yt-dlp, once each time infonium starts and each time `--reload` restarts it, Python runs `file` on its own executable, and `file` reads that executable and its magic database and nothing else.
 - infonium serves one person on one machine. It has no accounts and no authentication, so keep its ports off the network.
@@ -219,7 +330,7 @@ make protocol    # regenerate protocol/openapi.json and web/src/protocol.d.ts
 
 The HTTP protocol is defined by the models in `src/infonium`. `protocol/openapi.json` and `web/src/protocol.d.ts` are generated from them and never edited by hand.
 
-`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes two to three minutes. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
+`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes about four minutes. Three tests of where a passage stands after a second reading are marked as failing at times, each with the limit it stands for. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
 
 ```bash
 uv run pytest -m chrome    # Chrome or Chromium, by INFONIUM_BROWSER

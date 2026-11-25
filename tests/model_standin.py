@@ -24,11 +24,21 @@ from tests.unix_server import unix_server
 MODEL_HOST = "model.test"
 MODEL_BASE_URL = f"http://{MODEL_HOST}/v1"
 MODEL_KEY = "stand-in-key"
+# GLM's endpoint, which the stand-in answers too, at an address of its own.
+GLM_BASE_URL = f"http://{MODEL_HOST}/glm/v4"
+GLM_KEY = "stand-in-glm-key"
 STANDIN_MODEL = "stand-in-model"
 TRANSLATION_MODEL = "stand-in-translation-model"
 CHAT_PATH = "/v1/chat/completions"
 RESPONSES_PATH = "/v1/responses"
-WIRE_PATHS = {CHAT_PATH: WireApi.CHAT_COMPLETIONS, RESPONSES_PATH: WireApi.RESPONSES}
+GLM_CHAT_PATH = "/glm/v4/chat/completions"
+WIRE_PATHS = {
+    CHAT_PATH: WireApi.CHAT_COMPLETIONS,
+    RESPONSES_PATH: WireApi.RESPONSES,
+    GLM_CHAT_PATH: WireApi.CHAT_COMPLETIONS,
+}
+AUTHORIZATION = b"authorization"
+BEARER = "Bearer "
 INPUT_TOKENS = 100
 OUTPUT_TOKENS = 50
 GATE_POLL_SECONDS = 0.01
@@ -90,9 +100,11 @@ class Rejection(BaseModel):
 
 
 class Asked(BaseModel):
-    # One request as the endpoint received it, counted from 0 since the test began.
+    # One request as the endpoint received it, counted from 0 since the test began, and the
+    # key it was sent with.
     number: int
     path: str
+    key: str
     body: dict[str, Any]
 
     @property
@@ -471,6 +483,13 @@ def reply_frames(asked: Asked, reply: Reply) -> list[Frame]:
             return wire_frames(asked, reply)
 
 
+# What GLM's endpoint answers a request it refuses for being asked too often.
+TOO_OFTEN = Rejection(
+    status=HTTPStatus.TOO_MANY_REQUESTS,
+    body=json.dumps({"error": {"code": "1302", "message": "Rate limit reached for requests"}}),
+)
+
+
 def refused_reply(asked: Asked) -> Rejection:
     return Rejection(status=HTTPStatus.INTERNAL_SERVER_ERROR, body=NO_REPLY)
 
@@ -501,8 +520,14 @@ class ModelStandin:
             body += message.get("body", b"")
             if not message.get("more_body"):
                 break
+        authorization = dict(scope["headers"]).get(AUTHORIZATION, b"").decode()
         with self.lock:
-            asked = Asked(number=len(self.served), path=scope["path"], body=json.loads(body))
+            asked = Asked(
+                number=len(self.served),
+                path=scope["path"],
+                key=authorization.removeprefix(BEARER),
+                body=json.loads(body),
+            )
             served = Served(asked=asked, ended=threading.Event())
             self.served.append(served)
             responder = self.responder

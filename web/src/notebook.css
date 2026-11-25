@@ -1,0 +1,317 @@
+/* The notebook keeps its two parts' switch above them, on a ruled edge, as the chat keeps its
+   scope; each part scrolls under it. */
+.notebook {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.notebook .parts {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.notebook .parts button {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 1rem;
+}
+
+.notebook .parts button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.notebook-part {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.notebook-part[hidden] {
+  display: none;
+}
+
+.highlight-list {
+  padding: 0.4rem 1.2rem 3rem;
+}
+
+.highlight-list:focus {
+  outline: none;
+}
+
+.highlight-list > .status {
+  margin: 1rem 0;
+}
+
+.highlights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* An entry: the marked words as a quotation, then what stands under them. Its colours are the
+   source's: the words carry the colour a highlight is marked in, the opened entry the colour
+   the source draws the opened highlight in, and a comment the line the source underlines a
+   commented highlight with; the passage on show is the colour of what is pointed at. An entry
+   far down the list is laid out only when it comes near the view; that also clips what it
+   paints to its box, so the box leaves room for a focus ring at its right edge. */
+.highlight {
+  position: relative;
+  padding: 0.7rem 0.25rem 0.7rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  margin-left: -0.8rem;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 7rem;
+}
+
+.highlight[data-opened="true"] {
+  border-left-color: var(--opened);
+}
+
+.highlight .words {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.1rem 0.5rem;
+  text-align: start;
+  border: 0;
+  border-left: 3px solid var(--marked);
+  border-radius: 0;
+  background: var(--marked);
+  line-height: 1.6;
+}
+
+.highlight[data-opened="true"] .words {
+  border-left-color: var(--opened);
+  background: var(--opened);
+}
+
+.highlight button.words:hover {
+  border-left-color: var(--marked-twice);
+  background: var(--marked-twice);
+}
+
+.highlight button.words[aria-pressed="true"] {
+  border-left-color: var(--found);
+  background: var(--found);
+}
+
+.highlight .words-text {
+  white-space: pre-line;
+}
+
+/* Words the document on show has lost are shown as they were marked, faded: the source does
+   not draw them. */
+.highlight[data-standing="lost"] .words {
+  color: var(--muted);
+  border-left-color: var(--line);
+  background: none;
+}
+
+.highlight .cut-toggle {
+  margin: 0.15rem 0 0 0.5rem;
+}
+
+.highlight .moved,
+.highlight .lost-here {
+  margin: 0.25rem 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight .moved {
+  width: fit-content;
+  border-bottom: 1px dotted var(--muted);
+}
+
+.highlight .lost-here button {
+  margin-left: 0.3rem;
+  color: var(--accent);
+}
+
+.highlight .comment-text,
+.highlight .comment-field {
+  margin: 0.4rem 0 0 0.5rem;
+}
+
+.highlight .comment-text {
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--marked-line);
+  font-size: 0.92rem;
+}
+
+.highlight .comment-words {
+  white-space: pre-wrap;
+}
+
+.highlight .comment-text .cut-toggle {
+  margin-left: 0;
+}
+
+.highlight .at-bound {
+  display: block;
+  color: var(--failure);
+}
+
+.highlight .comment-field textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 3.2rem;
+  max-height: 40vh;
+  font: inherit;
+  font-size: 0.92rem;
+  color: inherit;
+  line-height: 1.5;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+}
+
+/* The ring is drawn inside the field, which is as wide as the list leaves it. */
+.highlight .comment-field textarea:focus-visible {
+  outline-offset: -2px;
+}
+
+.highlight .comment-field textarea:read-only {
+  color: var(--muted);
+}
+
+.highlight .comment-field small,
+.highlight .keeping {
+  display: block;
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight .comment-field .status {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+}
+
+/* The entry's foot: the comment's control at the start, the other actions at the end. */
+.highlight .entry-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.5rem;
+  margin: 0.3rem 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight .entry-foot button {
+  font-size: 0.75rem;
+  line-height: 1.3rem;
+  padding: 0 0.45rem;
+  border-radius: 0.7rem;
+  background: none;
+  color: var(--muted);
+}
+
+.highlight .entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.3rem 0.5rem;
+  margin-left: auto;
+}
+
+/* The removal and the note control stay quiet until the entry is under the pointer or holds
+   the keyboard, keeping their room in the foot meanwhile. */
+.highlight .entry-actions > button {
+  opacity: 0;
+}
+
+.highlight:is(:hover, :focus-within) .entry-actions > button,
+.highlight:is(:hover, :focus-within) .notedown[data-state="idle"] .notedown-press {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .highlight .entry-actions > button {
+    opacity: 1;
+  }
+}
+
+.highlight .confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.highlight .confirm button {
+  font-size: 0.75rem;
+  padding: 0 0.5rem;
+}
+
+.highlight .confirm .danger {
+  color: var(--failure);
+  border-color: var(--failure);
+}
+
+.highlight .entry-actions .status {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: right;
+}
+
+/* Every item's highlights, under what each item is called. */
+.highlight-list section + section {
+  margin-top: 1.4rem;
+}
+
+.highlight-list h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.8rem 0 0.2rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.highlight-list h3 a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.highlight-list h3 a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.highlight-list h3 small {
+  flex: none;
+  font-weight: normal;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Said only when the list could not be read again; empty, it takes no room but stays a live
+   region, so that what it comes to say is heard. */
+.highlight-list .behind {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight-list .behind:empty {
+  margin: 0;
+}
+
+/* Said on an entry the reader marked again from the source. */
+.highlight .marked-again {
+  margin: 0.25rem 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--marked-line);
+}

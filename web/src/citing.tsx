@@ -1,41 +1,150 @@
-import { useEffect, useState } from "react";
-import type { Anchor, Statement } from "./client";
+import { useEffect, useRef, useState } from "react";
+import {
+  anchorsOf,
+  readRevisions,
+  readStanding,
+  type Anchor,
+  type Anchors,
+  type Standing,
+  type Statement,
+} from "./client";
+import { itemLink, linkNow, revisionLink, useLink } from "./links";
 import { reasonOf } from "./loading";
+import { revisionTold } from "./revisionwords";
 import type { Seat, Unshown } from "./seat";
 import "./citing.css";
 
-// How citations reach the source: showing an anchor's passage there, which fails at once when
-// the source does not hold it, and taking the passage off show again.
-export type Pointer = { show: (anchor: Anchor) => void; hide: () => void };
+// How citations reach the source: showing a passage there, by its anchors, which fails at once
+// when the source does not hold it, and taking the passage off show again.
+export type Pointer = { show: (anchors: Anchors) => void; hide: () => void };
 
-// Said for a passage of an item that was read again since it was cited: the item now shows
-// another document, which does not hold it.
-const READ_AGAIN = "这一篇后来重新读取过，这段引文出自之前读到的版本，现在找不到了。";
+// Said while the service is asked where a passage of another revision stands now.
+const ASKING = "这段文字出自这一篇的另一次读取，正在查找它在现在的版本里的位置…";
+// Said, quietly, while a passage of another revision is shown where it stands now in words
+// that differ a little from those it was cited or marked in.
+const CHANGED_WORDS = "这段文字出自这一篇的另一次读取，现在的版本里措辞略有不同，显示的是现在的样子。";
+const UNNUMBERED = "这一篇较早的一次读取";
 
-// What the column last pointed at. A passage pointed at, or lost, belongs to the life of the
-// reader it was pointed at in. A passage that opens an item waits for that item's reader, and
-// is shown through it once it is on show; it is given up when the reader selects an item that
-// is neither the one it was pressed in nor the one it opens.
+// How the column offers to show a passage that the document the item holds now has lost: in
+// the revision it is of.
+export type Opening = { label: string; open: () => void };
+
+// Where a passage awaited stands in the document the item holds now, as the service said, and
+// what is said quietly of it there.
+type KnownPlace = { at: Anchors; said: string | undefined };
+
+// What the column last pointed at. A passage pointed at, asked about, or lost belongs to the
+// life of the reader it was pointed at in. A passage that opens an item waits for that item's
+// reader, opened by the link it names (or, where it names none, the link the window is at),
+// and is shown through it once it is on show; where it is known already where the passage
+// stands there, it is shown there. It is given up when the reader selects an item that is
+// neither the one it was pressed in nor the one it opens.
 type Pointing =
   | { state: "nowhere" }
-  | { state: "shown"; anchor: Anchor; item: string | undefined; life: number | undefined }
-  | { state: "lost"; reason: string; item: string | undefined; life: number | undefined }
-  | { state: "awaiting"; anchor: Anchor; itemId: string; from: string | undefined };
+  | {
+      state: "shown";
+      anchors: Anchors;
+      said: string | undefined;
+      item: string | undefined;
+      life: number | undefined;
+    }
+  | { state: "asking"; anchors: Anchors; item: string | undefined; life: number | undefined }
+  | {
+      state: "lost";
+      reason: string;
+      opening: Opening | undefined;
+      item: string | undefined;
+      life: number | undefined;
+    }
+  | {
+      state: "awaiting";
+      anchors: Anchors;
+      standing: KnownPlace | undefined;
+      itemId: string;
+      link: string | undefined;
+      from: string | undefined;
+    };
 
 const NOWHERE: Pointing = { state: "nowhere" };
 
-// The one way the column points at passages, shared by the digest and the chat, so that one
-// chip at most is pressed and one reason at most is said.
+// The one way the column points at passages, shared by the digest, the chat and the notebook,
+// so that one passage at most is pressed and one reason at most is said. A passage is given by
+// its anchors: a citation's one, or one for each block a marked passage runs through. A
+// passage of the document on show is shown in it; a passage of another revision of the item is
+// shown where it stands in the document the item holds now, once the service has said where.
 export type Citing = {
-  point: (anchor: Anchor) => void;
-  // The passage is shown by opening its item at it; its chip is pressed once the item's
-  // reader is on show and shows it.
-  awaitOpening: (anchor: Anchor, itemId: string) => void;
+  point: (anchors: Anchors) => void;
+  // The passage is shown by opening its item at it; it is pressed once the item's reader is
+  // on show and shows it.
+  awaitOpening: (anchors: Anchors, itemId: string) => void;
+  // The passage is shown in the revision of that number of its item, which is opened for it:
+  // the passage is awaited and the link changed at once, so that no reader on show before it
+  // is taken for the one opened.
+  openInRevision: (anchors: Anchors, itemId: string, revision: number) => void;
   fail: (reason: string) => void;
   hide: () => void;
+  // Whether the passage on show begins with this anchor: one of the same place in the same
+  // document, since a panel drawn again while the reader returns to what the item holds now
+  // holds the same citations in other objects.
   isPressed: (anchor: Anchor) => boolean;
+  // Whether the passage being asked about begins with this anchor.
+  isAsking: (anchor: Anchor) => boolean;
   lost: string | undefined;
+  // Beside a lost passage, the way to show it in the revision it is of, where there is one.
+  opening: Opening | undefined;
+  // What is said quietly of the passage on show or asked about.
+  said: string | undefined;
 };
+
+// Where a passage of another revision stands in the document the item holds now, as the
+// column tells it: found at these anchors, lost from a revision named so, or not known.
+type Answer =
+  | { kind: "found"; at: Anchors; exact: boolean }
+  | { kind: "lost"; told: string; revision: number | undefined }
+  | { kind: "failed"; reason: string };
+
+// The revision a lost passage is of, as a sentence names it, and its number where the
+// service tells it.
+async function lostFrom(itemId: string, anchors: Anchors): Promise<Answer> {
+  try {
+    const { revisions } = await readRevisions(itemId);
+    const revision = revisions.find((held) => held.document === anchors[0].document_id);
+    return revision === undefined
+      ? { kind: "lost", told: UNNUMBERED, revision: undefined }
+      : { kind: "lost", told: revisionTold(revision), revision: revision.number };
+  } catch (error) {
+    return {
+      kind: "lost",
+      told: `${UNNUMBERED}（读不到是第几次：${reasonOf(error)}）`,
+      revision: undefined,
+    };
+  }
+}
+
+async function answerOf(itemId: string, anchors: Anchors): Promise<Answer> {
+  let standing: Standing;
+  try {
+    standing = await readStanding(itemId, { anchors });
+  } catch (error) {
+    return { kind: "failed", reason: reasonOf(error) };
+  }
+  return standing.kind === "found"
+    ? { kind: "found", at: anchorsOf(standing.passage), exact: standing.exact }
+    : lostFrom(itemId, anchors);
+}
+
+function samePassage(one: Anchors, other: Anchors): boolean {
+  return (
+    one.length === other.length &&
+    one.every(
+      (anchor, index) =>
+        anchor.document_id === other[index]?.document_id &&
+        anchor.block_number === other[index].block_number &&
+        anchor.start === other[index].start &&
+        anchor.end === other[index].end,
+    )
+  );
+}
 
 // What is on show of a pointing: nothing of one that belongs to an item or a reader gone.
 function onShow(
@@ -48,8 +157,20 @@ function onShow(
     case "awaiting":
       return pointing;
     case "shown":
+    case "asking":
     case "lost":
       return pointing.item === selected && pointing.life === life ? pointing : NOWHERE;
+  }
+}
+
+function saidOf(pointing: Pointing): string | undefined {
+  switch (pointing.state) {
+    case "shown":
+      return pointing.said;
+    case "asking":
+      return ASKING;
+    default:
+      return undefined;
   }
 }
 
@@ -60,58 +181,206 @@ export function useCiting(
   unshown: Unshown | undefined,
 ): Citing {
   const [pointing, setPointing] = useState<Pointing>(NOWHERE);
+  // The pointing as last set, for an answer that arrives later to see whether it is still the
+  // one awaited.
+  const latest = useRef<Pointing>(NOWHERE);
   const life = seat?.life;
+  const link = useLink();
 
-  function point(anchor: Anchor) {
-    if (seat !== undefined && anchor.document_id !== seat.documentId) {
-      pointer.hide();
-      setPointing({ state: "lost", reason: READ_AGAIN, item: selected, life });
-      return;
-    }
+  function settle(next: Pointing) {
+    latest.current = next;
+    setPointing(next);
+  }
+
+  function show(anchors: Anchors, at: Anchors, said: string | undefined) {
     try {
-      pointer.show(anchor);
-      setPointing({ state: "shown", anchor, item: selected, life });
+      pointer.show(at);
+      settle({ state: "shown", anchors, said, item: selected, life });
     } catch (error) {
       pointer.hide();
-      setPointing({ state: "lost", reason: reasonOf(error), item: selected, life });
+      settle({ state: "lost", reason: reasonOf(error), opening: undefined, item: selected, life });
     }
   }
 
-  // A passage that waits for its item is shown once the item's reader is on show, or said to
-  // be lost when the item cannot be shown; it is dropped when the reader turns to another
-  // item. What was pointed at in a reader that has gone is dropped.
+  function awaitOpening(anchors: Anchors, itemId: string) {
+    settle({
+      state: "awaiting",
+      anchors,
+      standing: undefined,
+      itemId,
+      link: undefined,
+      from: selected,
+    });
+  }
+
+  // Awaits the passage in the reader the link opens, and opens it.
+  function openAt(
+    anchors: Anchors,
+    itemId: string,
+    link: string,
+    standing: KnownPlace | undefined,
+  ) {
+    settle({ state: "awaiting", anchors, standing, itemId, link, from: selected });
+    location.hash = link;
+  }
+
+  function openInRevision(anchors: Anchors, itemId: string, revision: number) {
+    openAt(anchors, itemId, revisionLink(itemId, revision), undefined);
+  }
+
+  // An earlier revision is on show: the reader returns to what the item holds now, and shows
+  // the passage there once it is on show.
+  function returnTo(on: Seat, anchors: Anchors, standing: KnownPlace) {
+    openAt(anchors, on.itemId, itemLink(on.itemId), standing);
+  }
+
+  function openingOf(itemId: string, anchors: Anchors, revision: number): Opening {
+    return {
+      label: `打开第 ${revision} 次读取的版本，看这段文字`,
+      open: () => openInRevision(anchors, itemId, revision),
+    };
+  }
+
+  function ask(on: Seat, anchors: Anchors) {
+    pointer.hide();
+    const asking: Pointing = { state: "asking", anchors, item: selected, life };
+    settle(asking);
+    void answerOf(on.itemId, anchors).then((answer) => {
+      if (latest.current !== asking) {
+        return;
+      }
+      switch (answer.kind) {
+        case "found": {
+          const said = answer.exact ? undefined : CHANGED_WORDS;
+          if (on.documentId === on.holding) {
+            show(anchors, answer.at, said);
+          } else {
+            returnTo(on, anchors, { at: answer.at, said });
+          }
+          return;
+        }
+        case "lost":
+          settle({
+            state: "lost",
+            reason: `这段文字出自${answer.told}的版本，现在这一篇里找不到了。`,
+            opening:
+              answer.revision === undefined
+                ? undefined
+                : openingOf(on.itemId, anchors, answer.revision),
+            item: selected,
+            life,
+          });
+          return;
+        case "failed":
+          settle({
+            state: "lost",
+            reason: `查不到这段文字在现在的版本里的位置：${answer.reason}`,
+            opening: undefined,
+            item: selected,
+            life,
+          });
+          return;
+      }
+    });
+  }
+
+  function point(anchors: Anchors) {
+    const documentId = anchors[0].document_id;
+    if (seat === undefined || documentId === seat.documentId) {
+      show(anchors, anchors, undefined);
+    } else if (documentId === seat.holding) {
+      returnTo(seat, anchors, { at: anchors, said: undefined });
+    } else {
+      // A second press while the answer is on its way waits for that answer.
+      const before = latest.current;
+      if (
+        before.state !== "asking" ||
+        before.life !== life ||
+        !samePassage(before.anchors, anchors)
+      ) {
+        ask(seat, anchors);
+      }
+    }
+  }
+
+  // A passage that waits for its item is shown once the item's reader is on show as the link it
+  // waits for opens it, or said to be lost when the item cannot be shown; it is dropped when
+  // the reader turns to another item, or the window leaves the link it waits for before that
+  // link's reader is on show. What was pointed at in a reader that has gone is dropped.
   useEffect(() => {
     if (pointing.state === "awaiting") {
-      if (selected !== pointing.itemId && selected !== pointing.from) {
-        setPointing(NOWHERE);
-      } else if (seat?.itemId === pointing.itemId) {
-        point(pointing.anchor);
+      if (
+        (selected !== pointing.itemId && selected !== pointing.from) ||
+        (pointing.link !== undefined && linkNow() !== pointing.link)
+      ) {
+        settle(NOWHERE);
+      } else if (seat?.itemId === pointing.itemId && seat.link === (pointing.link ?? linkNow())) {
+        if (pointing.standing === undefined) {
+          point(pointing.anchors);
+        } else {
+          show(pointing.anchors, pointing.standing.at, pointing.standing.said);
+        }
       } else if (seat === undefined && unshown?.itemId === pointing.itemId) {
-        setPointing({ state: "lost", reason: unshown.reason, item: selected, life: undefined });
+        settle({
+          state: "lost",
+          reason: unshown.reason,
+          opening: undefined,
+          item: selected,
+          life: undefined,
+        });
       }
     } else if (onShow(pointing, selected, life) !== pointing) {
-      setPointing(NOWHERE);
+      settle(NOWHERE);
     }
-  }, [selected, life, pointing, unshown]);
+  }, [selected, life, pointing, unshown, link]);
 
   const current = onShow(pointing, selected, life);
   return {
     point,
-    awaitOpening(anchor, itemId) {
-      setPointing({ state: "awaiting", anchor, itemId, from: selected });
-    },
+    awaitOpening,
+    openInRevision,
     fail(reason) {
-      setPointing({ state: "lost", reason, item: selected, life });
+      settle({ state: "lost", reason, opening: undefined, item: selected, life });
     },
     hide() {
       pointer.hide();
-      setPointing(NOWHERE);
+      settle(NOWHERE);
     },
     isPressed(anchor) {
-      return current.state === "shown" && current.anchor === anchor;
+      return current.state === "shown" && samePassage([current.anchors[0]], [anchor]);
+    },
+    isAsking(anchor) {
+      return current.state === "asking" && samePassage([current.anchors[0]], [anchor]);
     },
     lost: current.state === "lost" ? current.reason : undefined,
+    opening: current.state === "lost" ? current.opening : undefined,
+    said: saidOf(current),
   };
+}
+
+// What the column says of the passage it points at: why it is not shown, with the way to show
+// it in its own revision where there is one, or quietly how it is shown.
+export function CitingNote({ citing }: { citing: Citing }) {
+  if (citing.lost !== undefined) {
+    const { opening } = citing;
+    return (
+      <div className="lost status failed" role="alert">
+        {citing.lost}
+        {opening !== undefined && (
+          <button className="opening" onClick={opening.open}>
+            {opening.label}
+          </button>
+        )}
+      </div>
+    );
+  }
+  // The quiet line stays in the page while it says nothing, so that what it comes to say is
+  // read out.
+  return (
+    <p className="lost status said" role="status">
+      {citing.said}
+    </p>
+  );
 }
 
 // What a statement's chips do not tell: that citations the model gave it were not found in
@@ -153,7 +422,9 @@ export function LostCitations({
   return null;
 }
 
-// A statement's citations as numbered chips, each titled with its quote.
+// A statement's citations as numbered chips, each titled with its quote. A chip whose passage
+// is being looked for in the document the item holds now is drawn as waiting, never as on
+// show.
 export function Citations({
   anchors,
   citing,
@@ -165,15 +436,19 @@ export function Citations({
   titleOf: (anchor: Anchor) => string;
   onPoint: (anchor: Anchor) => void;
 }) {
-  return anchors.map((anchor, anchorIndex) => (
-    <button
-      key={anchorIndex}
-      className="citation"
-      title={titleOf(anchor)}
-      aria-pressed={citing.isPressed(anchor)}
-      onClick={() => onPoint(anchor)}
-    >
-      {anchorIndex + 1}
-    </button>
-  ));
+  return anchors.map((anchor, anchorIndex) => {
+    const asking = citing.isAsking(anchor);
+    return (
+      <button
+        key={anchorIndex}
+        className={asking ? "citation asking" : "citation"}
+        title={asking ? `${titleOf(anchor)}\n（正在查找它现在的位置）` : titleOf(anchor)}
+        aria-pressed={citing.isPressed(anchor)}
+        aria-busy={asking}
+        onClick={() => onPoint(anchor)}
+      >
+        {anchorIndex + 1}
+      </button>
+    );
+  });
 }

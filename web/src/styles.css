@@ -9,6 +9,25 @@
   --on-accent: light-dark(#ffffff, #17181a);
   --found: light-dark(#ffe08a, #6e5a14);
   --failure: light-dark(#b3261e, #f2a59f);
+  /* The reader's highlights, one colour in every view: a green, apart from the yellow of a
+     passage pointed at and from the blue a browser gives a selection. In order: a highlight's
+     own words; what is marked whole for a highlight that covers part of it, as a translated
+     segment is; words two highlights share; the highlight open in the notebook; and the line
+     under a highlight that has a comment. */
+  --marked: light-dark(#cdeccb, #1f4a2a);
+  --marked-quietly: light-dark(#e3f4e1, #1a3a22);
+  --marked-twice: light-dark(#a6dba2, #2a6338);
+  --opened: light-dark(#86cf80, #2f6f3d);
+  --marked-line: light-dark(#2f7d32, #8fd694);
+  /* Marks on the pages of a PDF, which are light whatever the theme: one colour for both,
+     multiplied into the paper, so that on white they come to the light colours of --marked,
+     --opened, --marked-twice and --marked-line. */
+  --page-mark: rgb(155 217 151 / 0.5);
+  --page-mark-opened: rgb(104 195 96 / 0.8);
+  --page-mark-twice: rgb(107 195 100 / 0.6);
+  --page-mark-edge: rgb(47 125 50);
+  --page-area-mark: rgb(155 217 151 / 0.25);
+  --page-selection: rgb(80 140 255 / 0.36);
   font-family:
     system-ui,
     -apple-system,
@@ -315,6 +334,10 @@ main > .status {
   max-width: 62rem;
   background: #ffffff;
   box-shadow: 0 0 0 1px var(--line);
+  /* What is drawn on a page is layered within the page alone: its highlights, a selection and
+     a citation's outline stay under the reader's head, a drawer, a menu and the actions on a
+     selection, which lie over the page as it scrolls. */
+  isolation: isolate;
 }
 
 .page canvas {
@@ -326,6 +349,7 @@ main > .status {
 /* A page is light whatever the theme, so its marks keep one colour. */
 .page-box {
   position: absolute;
+  pointer-events: none;
   background: rgb(255 208 64 / 0.38);
   outline: 2px solid #a8481f;
   border-radius: 2px;

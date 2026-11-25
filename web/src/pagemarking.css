@@ -1,0 +1,86 @@
+/* The reader's highlights and a growing selection on the pages of a PDF. A page is light
+   whatever the theme, so the colours multiply into its paper: print under them stays as dark
+   as it is printed. Above the page they lie under a pointed passage's outline; on a page that
+   shows the translation they lie under it, seen where no area covers the lines or where an
+   area lets the source through. */
+
+.page-marks,
+.page-selection {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.page-marks.under,
+.page-selection.under {
+  z-index: 0;
+}
+
+.page-marks > .page-mark,
+.page-selection > div {
+  position: absolute;
+  mix-blend-mode: multiply;
+}
+
+.page-mark {
+  background: var(--page-mark);
+}
+
+/* A highlight that holds a comment is underlined. */
+.page-mark[data-state="commented"] {
+  box-shadow: inset 0 -2px 0 var(--page-mark-edge);
+}
+
+/* A stretch more than one highlight holds is drawn once, a shade deeper, however many hold it,
+   so that the print under it stays as readable as under one. */
+.page-mark[data-twice] {
+  background: var(--page-mark-twice);
+}
+
+.page-mark[data-state="opened"] {
+  background: var(--page-mark-opened);
+  outline: 2px solid var(--page-mark-edge);
+}
+
+.page-selection > div {
+  background: var(--page-selection);
+}
+
+/* A press on the source's lines begins a selection by boxes, which the browser's own would
+   hide; the text of a translation set over the pages is the browser's to select. */
+.pages {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pages .page-translation .area {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.page-translation .area.marked {
+  background-image: linear-gradient(var(--page-area-mark), var(--page-area-mark));
+}
+
+/* An area holds lines up to the next area's paper, which would cover a line under its foot:
+   a commented highlight's area is told by a bar at its side. */
+.page-translation .area.marked[data-mark="commented"] {
+  box-shadow:
+    0 0 0 max(2px, 0.2em) var(--paper, transparent),
+    inset 3px 0 0 var(--page-mark-edge);
+}
+
+.page-translation .area.marked[data-mark="opened"] {
+  background-image: linear-gradient(var(--page-mark), var(--page-mark));
+  outline: 2px solid var(--page-mark-edge);
+}
+
+.page-translation .area.selected {
+  background-image: linear-gradient(var(--page-selection), var(--page-selection));
+}
+
+/* A passage pointed at stays marked above a highlight or a selection of its block. */
+.page-translation .area.pointed:is(.marked, .selected) {
+  background-image: linear-gradient(rgb(255 208 64 / 0.38), rgb(255 208 64 / 0.38));
+}

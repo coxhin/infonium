@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { Anchor, Turn } from "./client";
+import type { Anchor, Anchors, Turn } from "./client";
 import { Citations, LostCitations, type Citing } from "./citing";
 import {
   canAsk,
@@ -18,6 +18,7 @@ import {
   type Place,
   type Scope,
 } from "./conversations";
+import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import type { Seat } from "./seat";
 import "./chat.css";
 
@@ -37,7 +38,7 @@ const FOLLOWING_SLACK = 24;
 
 // Where a cited passage is: in the document on show, which the reader shows, or in another
 // item, which is then opened at it.
-export type Opener = (itemId: string, anchor: Anchor) => void;
+export type Opener = (itemId: string, anchors: Anchors) => void;
 
 function Spent({ answer }: { answer: Turn["answer"] }) {
   return (
@@ -50,13 +51,13 @@ function Spent({ answer }: { answer: Turn["answer"] }) {
 
 function Answer({
   turn,
-  kind,
+  scope,
   citing,
   seat,
   onOpen,
 }: {
   turn: Turn;
-  kind: ScopeKind;
+  scope: Scope;
   citing: Citing;
   seat: Seat | undefined;
   onOpen: Opener;
@@ -64,6 +65,10 @@ function Answer({
   const { answer } = turn;
   const sourceOf = (anchor: Anchor) =>
     answer.sources.find((source) => source.document === anchor.document_id);
+  // The item a citation lies in: the conversation's own, or, in the library's, the item of the
+  // source that holds the citation's document.
+  const itemOf = (anchor: Anchor) =>
+    scope.kind === "item" ? scope.itemId : sourceOf(anchor)?.item;
 
   function titleOf(anchor: Anchor): string {
     const source = sourceOf(anchor);
@@ -81,18 +86,18 @@ function Answer({
       seat !== undefined &&
       (anchor.document_id === seat.documentId || source?.item === seat.itemId)
     ) {
-      citing.point(anchor);
+      citing.point([anchor]);
     } else if (source === undefined) {
       citing.fail("回答没有说这段引文出自哪一篇");
     } else {
-      onOpen(source.item, anchor);
+      onOpen(source.item, [anchor]);
     }
   }
 
   return (
     <div className="answer">
       {answer.statements.map((statement, statementIndex) => (
-        <p key={statementIndex}>
+        <p key={statementIndex} className={NOTE_GUTTER}>
           {statement.text}
           <Citations
             anchors={statement.anchors}
@@ -101,9 +106,14 @@ function Answer({
             onPoint={point}
           />
           <LostCitations statement={statement} citesAll={false} />
+          <NoteDown
+            taking={statementTaking([statement], itemOf)}
+            label="记到笔记：这句回答"
+            shape="mark"
+          />
         </p>
       ))}
-      {kind === "library" && answer.sources.length > 0 && (
+      {scope.kind === "library" && answer.sources.length > 0 && (
         <p className="sources">
           出处：
           {answer.sources.map((source) => (
@@ -113,7 +123,10 @@ function Answer({
           ))}
         </p>
       )}
-      <Spent answer={answer} />
+      <div className="answer-foot">
+        <Spent answer={answer} />
+        <NoteDown taking={statementTaking(answer.statements, itemOf)} label="记到笔记：整个回答" />
+      </div>
     </div>
   );
 }
@@ -137,7 +150,7 @@ function Draft({ pending }: { pending: Pending }) {
         </p>
       )}
       {pending.statements.map((statement, statementIndex) => (
-        <p key={statementIndex}>{statement}</p>
+        <p key={statementIndex} className={NOTE_GUTTER}>{statement}</p>
       ))}
       <p className="writing">{writingNote(pending)}</p>
     </div>
@@ -416,7 +429,7 @@ function ChatScope({
         onRetry={() => conversations.read(scope)}
       >
         {(turn) => (
-          <Answer turn={turn} kind={scope.kind} citing={citing} seat={seat} onOpen={onOpen} />
+          <Answer turn={turn} scope={scope} citing={citing} seat={seat} onOpen={onOpen} />
         )}
       </Thread>
       {/* An answer that has arrived is told to a screen reader once, not as it grows. */}
@@ -444,6 +457,7 @@ function ChatScope({
 // The chat about the item on show or about the whole library. With no item on show, only the
 // library can be asked, whatever was chosen.
 export function ChatPanel({
+  model,
   itemId,
   seat,
   scope,
@@ -452,6 +466,8 @@ export function ChatPanel({
   citing,
   onOpen,
 }: {
+  // The model a question is asked of when it is sent; none: the service's default.
+  model: string | undefined;
   itemId: string | undefined;
   seat: Seat | undefined;
   scope: ScopeKind;
@@ -460,7 +476,7 @@ export function ChatPanel({
   citing: Citing;
   onOpen: Opener;
 }) {
-  const conversations = useConversations();
+  const conversations = useConversations(model);
   const kind: ScopeKind = itemId === undefined ? "library" : scope;
 
   return (

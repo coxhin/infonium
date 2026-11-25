@@ -9,15 +9,19 @@ import {
   useState,
   type RefObject,
 } from "react";
-import type { Anchor } from "./client";
+import type { Anchors } from "./client";
 import { ChatPanel, type ScopeKind } from "./chat";
-import { useCiting, type Pointer } from "./citing";
+import { CitingNote, useCiting, type Pointer } from "./citing";
 import { DigestPanel } from "./digest";
+import { Announcer } from "./announce";
+import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
+import { NotebookPanel, useNotebookAsked } from "./notebook";
 import type { Seat, Unshown } from "./seat";
 import "./side.css";
 
-// What the reader tells of itself: its item and the document it shows.
-type Shown = { itemId: string; documentId: string };
+// What the reader tells of itself: its item, the document it shows, the document the item
+// holds now, and the link it was opened by.
+type Shown = { itemId: string; documentId: string; holding: string; link: string };
 
 type Seating = {
   seat: (shown: Shown) => Seat;
@@ -70,11 +74,11 @@ export function useSeating(): {
   );
   const pointer = useMemo<Pointer>(
     () => ({
-      show(anchor) {
+      show(anchors) {
         if (current.current === undefined) {
           throw new Error(NOT_ON_SHOW);
         }
-        current.current.show(anchor);
+        current.current.show(anchors);
       },
       hide() {
         current.current?.hide();
@@ -117,10 +121,14 @@ export function useLosing(): (reason: string) => void {
 export function SidePanel({
   itemId,
   documentId,
+  holding,
+  link,
   pointer,
 }: {
   itemId: string;
   documentId: string;
+  holding: string;
+  link: string;
   pointer: Pointer;
 }) {
   const seating = useSeatingContext();
@@ -129,16 +137,16 @@ export function SidePanel({
     seating.pointer.current = pointer;
   });
   useLayoutEffect(() => {
-    const seat = seating.seat({ itemId, documentId });
+    const seat = seating.seat({ itemId, documentId, holding, link });
     return () => seating.unseat(seat);
-  }, [itemId, documentId]);
+  }, [itemId, documentId, holding, link]);
   return null;
 }
 
 type Tab = "digest" | "chat" | "notes";
 const TAB_NAMES: Record<Tab, string> = { digest: "摘要", chat: "对话", notes: "笔记" };
 // The tabs that are about one item, which cannot be chosen while none is open.
-const ITEM_TABS: ReadonlySet<Tab> = new Set(["digest", "notes"]);
+const ITEM_TABS: ReadonlySet<Tab> = new Set(["digest"]);
 
 function tabId(tab: Tab): string {
   return `side-tab-${tab}`;
@@ -163,11 +171,12 @@ export function SideColumn({
   onOpen: (itemId: string) => void;
 }) {
   const seating = useSeatingContext();
-  // What the reader chose. With no item open, the library's chat is on show without being
-  // chosen, so that an item opened from the list shows what was chosen before.
+  // What the reader chose. With no item open, the library's chat is on show in place of a tab
+  // about one item without being chosen, so that an item opened from the list shows what was
+  // chosen before.
   const [chosen, setChosen] = useState<Tab>("digest");
   const [chosenScope, setChosenScope] = useState<ScopeKind>("item");
-  const tab: Tab = selected === undefined ? "chat" : chosen;
+  const tab: Tab = selected === undefined && ITEM_TABS.has(chosen) ? "chat" : chosen;
   // Until the reader shows the selected item, the column points at nothing.
   const seat = seated?.itemId === selected ? seated : undefined;
   const citing = useCiting(pointer, selected, seat, unshown);
@@ -175,16 +184,21 @@ export function SideColumn({
     seating.lose.current = citing.fail;
   });
 
+  // Opens an item at a passage, which is shown once the item's reader is on show.
+  function openAt(itemId: string, anchors: Anchors) {
+    citing.awaitOpening(anchors, itemId);
+    onOpen(itemId);
+  }
+
   // A citation that opens another item leaves the reader in the conversation it was pressed
   // in: only the library's can cite another item. A citation into the selected item, whose
   // reader is not on show yet, changes nothing of what is on show.
-  function openAt(itemId: string, anchor: Anchor) {
+  function openFromChat(itemId: string, anchors: Anchors) {
     if (itemId !== selected) {
       setChosen("chat");
       setChosenScope("library");
     }
-    citing.awaitOpening(anchor, itemId);
-    onOpen(itemId);
+    openAt(itemId, anchors);
   }
 
   // Where the app is one column, the column is a drawer at the foot of the window, which folds
@@ -196,6 +210,12 @@ export function SideColumn({
     setChosen(name);
   }
 
+  // The notebook asked for from elsewhere comes on show, unfolded.
+  useNotebookAsked(() => {
+    setChosen("notes");
+    setFolded(false);
+  });
+
   // A digest may take a model call to write, so it is asked for only once its tab is shown,
   // and then kept while the item stays open.
   const [digestShown, setDigestShown] = useState<string>();
@@ -205,6 +225,9 @@ export function SideColumn({
       setDigestShown(seat.itemId);
     }
   }, [seat?.itemId, tab]);
+
+  // The model the column's work is asked of: digests, answers, and a block translated again.
+  const answeringChoice = useModelChoice("answering");
 
   return (
     <aside className="side" data-folded={folded}>
@@ -226,11 +249,14 @@ export function SideColumn({
       <button className="fold" aria-expanded={!folded} onClick={() => setFolded(!folded)}>
         {folded ? "展开" : "收起"}
       </button>
-      {citing.lost !== undefined && (
-        <p className="lost status failed" role="alert">
-          {citing.lost}
-        </p>
-      )}
+      <div className="side-model">
+        <ModelChoiceSelect
+          choice={answeringChoice}
+          label="摘要和对话的模型"
+          title="生成摘要、回答问题和单段重译（↻）时用这个模型；已有的摘要不会重写"
+        />
+      </div>
+      <CitingNote citing={citing} />
       <div
         id={panelId("digest")}
         role="tabpanel"
@@ -239,7 +265,12 @@ export function SideColumn({
         hidden={tab !== "digest"}
       >
         {digestWanted ? (
-          <DigestPanel key={seat.itemId} itemId={seat.itemId} citing={citing} />
+          <DigestPanel
+            key={seat.holding}
+            itemId={seat.itemId}
+            model={answeringChoice.chosen}
+            citing={citing}
+          />
         ) : (
           <p className="status">原文打开后，这里显示它的摘要。</p>
         )}
@@ -252,24 +283,32 @@ export function SideColumn({
         hidden={tab !== "chat"}
       >
         <ChatPanel
+          model={answeringChoice.chosen}
           itemId={selected}
           seat={seat}
           scope={chosenScope}
           onScope={setChosenScope}
           shown={tab === "chat"}
           citing={citing}
-          onOpen={openAt}
+          onOpen={openFromChat}
         />
       </div>
       <div
         id={panelId("notes")}
         role="tabpanel"
         aria-labelledby={tabId("notes")}
-        className="panel scrolled"
+        className="panel"
         hidden={tab !== "notes"}
       >
-        <p className="status">笔记本会在以后的版本里加入。</p>
+        <NotebookPanel
+          selected={selected}
+          seat={seat}
+          shown={tab === "notes"}
+          citing={citing}
+          onOpen={openAt}
+        />
       </div>
+      <Announcer />
     </aside>
   );
 }

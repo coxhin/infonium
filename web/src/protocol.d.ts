@@ -23,6 +23,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/highlights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library Highlights */
+        get: operations["library_highlights_api_highlights_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items": {
         parameters: {
             query?: never;
@@ -129,6 +146,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/highlights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Highlights */
+        get: operations["item_highlights_api_items__item_id__highlights_get"];
+        put?: never;
+        /** Make Highlight */
+        post: operations["make_highlight_api_items__item_id__highlights_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/highlights/{highlight_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Highlight */
+        delete: operations["remove_highlight_api_items__item_id__highlights__highlight_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/highlights/{highlight_id}/comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Comment Highlight */
+        put: operations["comment_highlight_api_items__item_id__highlights__highlight_id__comment_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/page": {
         parameters: {
             query?: never;
@@ -163,6 +232,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/reading": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Again */
+        post: operations["read_again_api_items__item_id__reading_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Revisions */
+        get: operations["item_revisions_api_items__item_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/revisions/{number}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Revision Document */
+        get: operations["revision_document_api_items__item_id__revisions__number__document_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/source": {
         parameters: {
             query?: never;
@@ -174,6 +294,23 @@ export interface paths {
         get: operations["item_source_api_items__item_id__source_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/standing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Passage Standing */
+        post: operations["passage_standing_api_items__item_id__standing_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -211,6 +348,60 @@ export interface paths {
         /** Retranslate Block */
         post: operations["retranslate_block_api_items__item_id__translation_blocks__block_number__post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models Offered */
+        get: operations["models_offered_api_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notes */
+        get: operations["list_notes_api_notes_get"];
+        put?: never;
+        /** Write Note */
+        post: operations["write_note_api_notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Note */
+        get: operations["read_note_api_notes__note_id__get"];
+        /** Rewrite Note */
+        put: operations["rewrite_note_api_notes__note_id__put"];
+        post?: never;
+        /** Remove Note */
+        delete: operations["remove_note_api_notes__note_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -295,6 +486,11 @@ export interface components {
              * @default []
              */
             places: (components["schemas"]["PagePlace"] | components["schemas"]["TimePlace"])[];
+            /** Text */
+            text: string;
+        };
+        /** Comment */
+        Comment: {
             /** Text */
             text: string;
         };
@@ -383,6 +579,17 @@ export interface components {
              */
             start: number;
         };
+        /** Found */
+        Found: {
+            /** Exact */
+            exact: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "found";
+            passage: components["schemas"]["Passage"];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -407,6 +614,37 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** HighlightDraft */
+        HighlightDraft: {
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
+            passage: components["schemas"]["Passage"];
+        };
+        /** HighlightView */
+        HighlightView: {
+            /** Comment */
+            comment: string;
+            /** Id */
+            id: string;
+            /** Item */
+            item: string;
+            /**
+             * Made
+             * Format: date-time
+             */
+            made: string;
+            passage: components["schemas"]["Passage"];
+            /**
+             * Revision
+             * @description The place of a revision among the revisions of its item, counted from 1 in the order they were first read.
+             */
+            revision: number;
+            /** Standing */
+            standing: components["schemas"]["Found"] | components["schemas"]["Lost"];
+        };
         /** ItemEntry */
         ItemEntry: {
             /** Id */
@@ -415,6 +653,25 @@ export interface components {
             origin: components["schemas"]["Link"] | components["schemas"]["Upload"];
             /** Reading */
             reading: components["schemas"]["Unread"] | components["schemas"]["Read"];
+        };
+        /** ItemHighlights */
+        ItemHighlights: {
+            /** Highlights */
+            highlights: components["schemas"]["HighlightView"][];
+            /** Item */
+            item: string;
+            /** Title */
+            title: string;
+        };
+        /** ItemRevisions */
+        ItemRevisions: {
+            /**
+             * Current
+             * @description The place of a revision among the revisions of its item, counted from 1 in the order they were first read.
+             */
+            current: number;
+            /** Revisions */
+            revisions: components["schemas"]["Revision"][];
         };
         /** Link */
         Link: {
@@ -454,6 +711,23 @@ export interface components {
             /** Target */
             target: string;
         };
+        /** LinkedPassage */
+        LinkedPassage: {
+            /** Id */
+            id: string;
+            /** Item */
+            item: string;
+            passage: components["schemas"]["Passage"];
+            /**
+             * Revision
+             * @description The place of a revision among the revisions of its item, counted from 1 in the order they were first read.
+             */
+            revision: number;
+            /** Standing */
+            standing: components["schemas"]["Found"] | components["schemas"]["Lost"];
+            /** Title */
+            title: string;
+        };
         /** ListItem */
         ListItem: {
             /** Continues */
@@ -481,6 +755,98 @@ export interface components {
             position: number;
             /** Text */
             text: string;
+        };
+        /** Lost */
+        Lost: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lost";
+        };
+        /** ModelView */
+        ModelView: {
+            /** Name */
+            name: string;
+            /** Ready */
+            ready: boolean;
+        };
+        /** ModelsView */
+        ModelsView: {
+            /** Answering */
+            answering: string;
+            /** Models */
+            models: components["schemas"]["ModelView"][];
+            /** Translation */
+            translation: string;
+        };
+        /** NoteDraft */
+        NoteDraft: {
+            /**
+             * Edition
+             * @description Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.
+             */
+            edition: number;
+            /** Markdown */
+            markdown: string;
+            /** Passages */
+            passages: components["schemas"]["NotePassage"][];
+            /** Title */
+            title: string;
+        };
+        /** NoteEntry */
+        NoteEntry: {
+            /**
+             * Changed
+             * Format: date-time
+             */
+            changed: string;
+            /** Id */
+            id: string;
+            /** Items */
+            items: string[];
+            /**
+             * Made
+             * Format: date-time
+             */
+            made: string;
+            /** Title */
+            title: string;
+        };
+        /** NotePassage */
+        NotePassage: {
+            /**
+             * Id
+             * @description What a note's Markdown calls one of the note's passages by: a link whose target is 'passage:' followed by this id leads to the passage. The writer of the note chooses it.
+             */
+            id: string;
+            passage: components["schemas"]["Passage"];
+        };
+        /** NoteView */
+        NoteView: {
+            /**
+             * Changed
+             * Format: date-time
+             */
+            changed: string;
+            /**
+             * Edition
+             * @description Which writing of a note a draft is, or the note holds. A writer reads a note at one edition and sends its next drafts at the editions after it; a draft is taken only of a later edition than the note holds.
+             */
+            edition: number;
+            /** Id */
+            id: string;
+            /**
+             * Made
+             * Format: date-time
+             */
+            made: string;
+            /** Markdown */
+            markdown: string;
+            /** Passages */
+            passages: components["schemas"]["LinkedPassage"][];
+            /** Title */
+            title: string;
         };
         /** PageBlocks */
         PageBlocks: {
@@ -565,6 +931,11 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** Passage */
+        Passage: {
+            /** Anchors */
+            anchors: components["schemas"]["Anchor"][];
+        };
         /** Question */
         Question: {
             /** Text */
@@ -600,6 +971,21 @@ export interface components {
             kind: "read";
             /** Title */
             title: string;
+        };
+        /** Revision */
+        Revision: {
+            /** Document */
+            document: string;
+            /**
+             * Number
+             * @description The place of a revision among the revisions of its item, counted from 1 in the order they were first read.
+             */
+            number: number;
+            /**
+             * Read
+             * Format: date-time
+             */
+            read: string;
         };
         /** Searched */
         Searched: {
@@ -662,6 +1048,8 @@ export interface components {
              * @enum {string}
              */
             kind: "stopped";
+            /** Model */
+            model: string;
             /** Reason */
             reason: string;
             /** Total */
@@ -775,6 +1163,8 @@ export interface components {
              * @enum {string}
              */
             kind: "translating";
+            /** Model */
+            model: string;
             /** Total */
             total: number;
             /** Translated */
@@ -903,7 +1293,10 @@ export interface operations {
     };
     ask_about_library_api_conversation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -941,6 +1334,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
         };
     };
     forget_library_conversation_api_conversation_delete: {
@@ -966,6 +1368,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    library_highlights_api_highlights_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemHighlights"][];
                 };
             };
         };
@@ -1147,7 +1569,10 @@ export interface operations {
     };
     ask_about_item_api_items__item_id__conversation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1194,6 +1619,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };
@@ -1247,7 +1681,10 @@ export interface operations {
     };
     ensure_digest_api_items__item_id__digest_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1285,6 +1722,15 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1296,7 +1742,10 @@ export interface operations {
     };
     rewrite_digest_api_items__item_id__digest_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1334,6 +1783,15 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1361,6 +1819,183 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_highlights_api_items__item_id__highlights_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HighlightView"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_highlight_api_items__item_id__highlights_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HighlightDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HighlightView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_highlight_api_items__item_id__highlights__highlight_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+                highlight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    comment_highlight_api_items__item_id__highlights__highlight_id__comment_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+                highlight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Comment"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HighlightView"];
                 };
             };
             /** @description Not Found */
@@ -1463,6 +2098,137 @@ export interface operations {
             };
         };
     };
+    read_again_api_items__item_id__reading_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemEntry"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    item_revisions_api_items__item_id__revisions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemRevisions"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revision_document_api_items__item_id__revisions__number__document_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+                /** @description The place of a revision among the revisions of its item, counted from 1 in the order they were first read. */
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     item_source_api_items__item_id__source_get: {
         parameters: {
             query?: never;
@@ -1483,6 +2249,59 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    passage_standing_api_items__item_id__standing_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Passage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Found"] | components["schemas"]["Lost"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1543,7 +2362,10 @@ export interface operations {
     };
     ensure_translation_api_items__item_id__translation_put: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1583,7 +2405,10 @@ export interface operations {
     };
     translate_anew_api_items__item_id__translation_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1623,7 +2448,10 @@ export interface operations {
     };
     retranslate_block_api_items__item_id__translation_blocks__block_number__post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
+                model?: string | null;
+            };
             header?: never;
             path: {
                 item_id: string;
@@ -1677,6 +2505,246 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    models_offered_api_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelsView"];
+                };
+            };
+        };
+    };
+    list_notes_api_notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteEntry"][];
+                };
+            };
+        };
+    };
+    write_note_api_notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_note_api_notes__note_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rewrite_note_api_notes__note_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Precondition Failed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_note_api_notes__note_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

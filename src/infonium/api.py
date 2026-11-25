@@ -10,9 +10,9 @@ from typing import Annotated, Any
 from urllib.parse import urldefrag, urlsplit
 
 import openai
-from fastapi import Depends, FastAPI, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, HttpUrl
 
 from infonium.asking import UnusableTranslation
 from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE, PAGE_ATTRIBUTE
@@ -40,7 +40,8 @@ from infonium.digest import (
 from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
-from infonium.intake import Engines, Intake
+from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
+from infonium.intake import Engines, Intake, NothingToReadAgain
 from infonium.item_conversation import (
     ITEM_BUSY,
     ItemConversation,
@@ -50,10 +51,13 @@ from infonium.item_conversation import (
 )
 from infonium.language_model import (
     MODEL_FAILURES,
+    GlmEndpoint,
     LanguageModel,
     UnmeteredCompletion,
     UnstructuredCompletion,
+    endable_glm_model,
     endable_openai_model,
+    glm_model,
     openai_model,
 )
 from infonium.library import (
@@ -65,6 +69,7 @@ from infonium.library import (
     NotInLibrary,
     Origin,
     OwnerTransaction,
+    Read,
     Reading,
 )
 from infonium.library_conversation import (
@@ -75,8 +80,12 @@ from infonium.library_conversation import (
     library_shelf,
     library_turns,
 )
-from infonium.model_connection import Ending
+from infonium.model_connection import Ending, Pace
+from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
+from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
+from infonium.refinding import standing_in
+from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
@@ -113,8 +122,16 @@ ORIGIN = "origin"
 HOST = "host"
 OTHER_SITE = "only infonium's own page may change the library"
 NAMELESS_UPLOAD = "an uploaded file needs a name"
-UNBUILT = "this part of infonium is not built yet"
 OPENAI_LOGGER = "openai"
+NO_GLM_KEY = (
+    "{model} is reached at GLM's endpoint with GLM's key, and INFONIUM_GLM_API_KEY is not set"
+)
+NOT_OFFERED = "no model is offered by the name {model}; the models are {models}"
+CHOSEN_MODEL = (
+    "The model to ask, one of those GET /api/models offers; without one, the default of the"
+    " operation"
+)
+NAMES_BETWEEN = ", "
 # What an ASGI server's message says of itself, and the message that the connection is gone.
 MESSAGE_TYPE = "type"
 DISCONNECT = "http.disconnect"
@@ -153,15 +170,52 @@ def block_index() -> BlockIndex:
     )
 
 
-@cache
-def language_model() -> LanguageModel:
-    return openai_model(name=settings.model, wire_api=settings.wire_api)
+class UnreachableModel(Exception):
+    # infonium lacks what it needs to reach the model's endpoint.
+    pass
+
+
+def offered_models() -> list[str]:
+    # The models a reader may choose, for a translation and for digests and answers, in the
+    # order a reader is offered them: the one that translates unless the reader chooses
+    # another, the one that writes digests and answers unless the reader chooses another,
+    # then GLM's.
+    return list(dict.fromkeys([settings.translation_model, settings.model, *settings.glm_models]))
+
+
+def glm_endpoint(name: str) -> GlmEndpoint:
+    # GLM's endpoint, for one of its models, which cannot be reached without GLM's key.
+    if settings.glm_api_key is None:
+        raise UnreachableModel(NO_GLM_KEY.format(model=name))
+    return GlmEndpoint(
+        base_url=settings.glm_base_url,
+        api_key=settings.glm_api_key,
+        reasoning_efforts=settings.glm_reasoning_efforts,
+        pace=glm_pace(),
+    )
 
 
 @cache
-def answering_model() -> LanguageModel:
-    # The model that writes digests, over connections that a reader who leaves cuts.
-    return endable_openai_model(name=settings.model, wire_api=settings.wire_api)
+def glm_pace() -> Pace:
+    # One pace for every request to GLM's endpoint, of translations, digests and answers alike.
+    return Pace(requests_per_minute=settings.glm_requests_per_minute)
+
+
+@cache
+def language_model(name: str) -> LanguageModel:
+    # A model at the endpoint that serves it: one of GLM's at GLM's endpoint, any other at
+    # the endpoint that a client of the openai package finds by itself.
+    if name in settings.glm_models:
+        return glm_model(name=name, endpoint=glm_endpoint(name))
+    return openai_model(name=name, wire_api=settings.wire_api)
+
+
+@cache
+def answering_model(name: str) -> LanguageModel:
+    # The same model, over connections that a reader who leaves cuts.
+    if name in settings.glm_models:
+        return endable_glm_model(name=name, endpoint=glm_endpoint(name))
+    return endable_openai_model(name=name, wire_api=settings.wire_api)
 
 
 @cache
@@ -170,18 +224,8 @@ def answering() -> Answering:
 
 
 @cache
-def translation_model() -> LanguageModel:
-    return openai_model(name=settings.translation_model, wire_api=settings.wire_api)
-
-
-@cache
 def translator() -> Translator:
-    return Translator(
-        store=library_store(),
-        language=settings.language,
-        translating=translation_model,
-        retranslating=language_model,
-    )
+    return Translator(store=library_store(), language=settings.language, models=language_model)
 
 
 @asynccontextmanager
@@ -256,6 +300,43 @@ class TranslationView(BaseModel):
     blocks_to_translate: list[BlockNumber]
 
 
+def offered_model(name: str) -> str:
+    offered = offered_models()
+    if name not in offered:
+        raise ValueError(NOT_OFFERED.format(model=name, models=NAMES_BETWEEN.join(offered)))
+    return name
+
+
+# The model a reader chose for what an operation asks of a model; none, the default.
+ChosenModel = Annotated[
+    Annotated[str, AfterValidator(offered_model)] | None, Query(description=CHOSEN_MODEL)
+]
+
+
+def translating_with(model: str | None) -> str:
+    return settings.translation_model if model is None else model
+
+
+def answering_with(model: str | None) -> str:
+    return settings.model if model is None else model
+
+
+class ModelView(BaseModel):
+    # A model a reader may choose, and whether infonium has what it needs to reach it: one
+    # of GLM's needs GLM's key.
+    name: str
+    ready: bool
+
+
+class ModelsView(BaseModel):
+    # The models a reader may choose, in the order a reader is offered them, and those asked
+    # where the reader chooses none: the one that translates a document, and the one that
+    # writes digests, answers questions and translates one block again.
+    models: list[ModelView]
+    translation: str
+    answering: str
+
+
 class PageBlocks(BaseModel):
     # Where the blocks of an item's document stand in the web page it was read from, as the
     # page is served at the item's page address.
@@ -314,6 +395,67 @@ class PageBlocks(BaseModel):
     )
 
 
+class ItemRevisions(BaseModel):
+    # The revisions of an item's source, oldest first, and the number of the one that holds
+    # the document the item shows now, which is the latest reading and may be a document read
+    # before.
+    current: RevisionNumber
+    revisions: list[Revision]
+
+
+class HighlightView(BaseModel):
+    # A passage a reader marked in an item's source, with what the reader noted on it. The
+    # passage is as it was marked, in the revision of that number; the standing says where it
+    # lies in the document the item holds now, or that this document does not hold it.
+    id: str
+    item: str
+    revision: RevisionNumber
+    passage: Passage
+    standing: Standing
+    comment: str
+    made: AwareDatetime
+
+
+class ItemHighlights(BaseModel):
+    # The highlights of one item, with what the item is called.
+    item: str
+    title: str
+    highlights: list[HighlightView]
+
+
+class NoteEntry(BaseModel):
+    # A note as a list of notes shows it: what it is called, when it was first written and
+    # last changed, and the items its passages lie in.
+    id: str
+    title: str
+    made: AwareDatetime
+    changed: AwareDatetime
+    items: list[str]
+
+
+class LinkedPassage(BaseModel):
+    # A passage a note links to, under the id the note's Markdown names it by: the item it
+    # lies in and what that item is called now, the passage as it was linked, in the revision
+    # of that number, and where it stands in the document the item holds now.
+    id: str
+    item: str
+    title: str
+    revision: RevisionNumber
+    passage: Passage
+    standing: Standing
+
+
+class NoteView(BaseModel):
+    # The edition is that of the draft the note holds.
+    id: str
+    edition: Edition
+    title: str
+    markdown: str
+    passages: list[LinkedPassage]
+    made: AwareDatetime
+    changed: AwareDatetime
+
+
 def refusal(status: HTTPStatus, detail: str) -> Response:
     return Response(
         content=Failure(detail=detail).model_dump_json(), status_code=status, media_type=JSON
@@ -335,6 +477,10 @@ app.add_exception_handler(UnmeteredCompletion, explained(HTTPStatus.BAD_GATEWAY)
 app.add_exception_handler(ConversationBusy, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(UnusableTranslation, explained(HTTPStatus.BAD_GATEWAY))
 app.add_exception_handler(TranslationNotAsked, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(PassageNotHeld, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
+app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -342,8 +488,17 @@ SERVED_PAGE: dict[int | str, dict[str, Any]] = {
     HTTPStatus.OK: {"content": {HTML_MEDIA_TYPE: {"schema": {"type": "string"}}}}
 }
 UPSTREAM_FAILED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_GATEWAY: {"model": Failure}}
+UNREACHABLE: dict[int | str, dict[str, Any]] = {HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}}
 ANSWERING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 NOT_ASKED: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# A passage that its own document does not hold as it was given: a block it names is not
+# there, or the words at a range are not its quote.
+NOT_HELD: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# An upload whose reading never succeeded, of which nothing is kept to read again.
+NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# A draft of a note that holds its edition or a later one already: the note holds a later
+# writing than the one the draft was written from.
+STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 
 
@@ -397,6 +552,15 @@ async def ended_on_leaving(request: Request, ending: Ending) -> None:
     ending.end()
 
 
+def chosen_answerer(model: ChosenModel = None) -> LanguageModel:
+    # The model that answers a question, made before a line of the answer is sent, so that
+    # one that cannot be reached is refused as the request.
+    return answering_model(answering_with(model))
+
+
+Answerer = Annotated[LanguageModel, Depends(chosen_answerer)]
+
+
 async def answer_ending(request: Request) -> AsyncIterator[Ending]:
     # A reader who leaves in the middle of an answer ends it at once, whatever the model is
     # doing: the thread that writes the lines waits in a read of the model's reply, and only
@@ -437,8 +601,7 @@ def digest_view(digest: Digest) -> DigestView:
     )
 
 
-def written_digest(holding: Holding, owner: str) -> Digest:
-    model = language_model()
+def written_digest(holding: Holding, owner: str, model: LanguageModel) -> Digest:
     completion = model.structured(
         instructions=digest_instructions(settings.language),
         prompt=numbered_blocks(holding.title, holding.document),
@@ -492,6 +655,52 @@ def item_document(item_id: str, owner: Owner) -> DocumentView:
     return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
 
 
+@app.post("/api/items/{item_id}/reading", responses=NOT_IN_LIBRARY | NOTHING_KEPT)
+def read_again(item_id: str, owner: Owner) -> ItemEntry:
+    # Starts a new reading of the item's source: a link is fetched again, and an upload is
+    # read again from the file the library keeps of it. Where a reading of the item is under
+    # way already, that one goes on and no other starts. The document the item holds stays
+    # until the new reading has given another. An upload whose reading never succeeded has no
+    # file kept to read again, and is refused as a conflict.
+    return entry_of(intake().begin_again(owner, item_id))
+
+
+@app.get("/api/items/{item_id}/revisions", responses=NOT_IN_LIBRARY)
+def item_revisions(item_id: str, owner: Owner) -> ItemRevisions:
+    # An item without a document has no revisions.
+    with library_store().transaction(owner) as transaction:
+        match Library(transaction).item(item_id).reading:
+            case Read(document=document_id):
+                revisions = Revisions(transaction)
+                return ItemRevisions(
+                    current=revisions.of_document(document_id).number,
+                    revisions=revisions.of_item(item_id),
+                )
+            case _:
+                raise NotInLibrary(f"item {item_id} has no document in the library")
+
+
+@app.get("/api/items/{item_id}/revisions/{number}/document", responses=NOT_IN_LIBRARY)
+def revision_document(item_id: str, number: RevisionNumber, owner: Owner) -> DocumentView:
+    # The document of one revision of the item, the one it holds now or an earlier one.
+    with library_store().transaction(owner) as transaction:
+        revision = Revisions(transaction).numbered(item_id, number)
+        document = Library(transaction).owned_document(revision.document)
+    return DocumentView(id=document.id, media_type=document.media_type, blocks=document.blocks)
+
+
+@app.post("/api/items/{item_id}/standing", responses=NOT_IN_LIBRARY | NOT_HELD)
+def passage_standing(item_id: str, passage: Passage, owner: Owner) -> Standing:
+    # Where a passage of any revision of the item stands in the document the item holds now.
+    # A passage of a document that is no revision of the item is not in the library.
+    with library_store().library(owner) as library:
+        holding = library.holding(item_id)
+        marked_in = library.owned_document(passage.document_id)
+    if marked_in.item_id != item_id:
+        raise NotInLibrary(f"document {marked_in.id} is no revision of item {item_id}")
+    return standing_in(held_passage(passage, marked_in), marked_in, holding.document)
+
+
 @app.get("/api/items/{item_id}/source", responses=NOT_IN_LIBRARY, response_class=FileResponse)
 def item_source(item_id: str, owner: Owner) -> FileResponse:
     store = library_store()
@@ -502,19 +711,22 @@ def item_source(item_id: str, owner: Owner) -> FileResponse:
     )
 
 
-@app.post("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED)
-def rewrite_digest(item_id: str, owner: Owner) -> DigestView:
+@app.post("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
+def rewrite_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
     with library_store().library(owner) as library:
         holding = library.holding(item_id)
-    return digest_view(written_digest(holding, owner))
+    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
 
 
-@app.put("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED)
-def ensure_digest(item_id: str, owner: Owner) -> DigestView:
+@app.put("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
+def ensure_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
+    # The digest kept, whatever model wrote it, or one written by the model chosen.
     with library_store().library(owner) as library:
         holding = library.holding(item_id)
         kept = library.kept_digests(holding.document.id)
-    return digest_view(kept[0] if kept else written_digest(holding, owner))
+    if kept:
+        return digest_view(kept[0])
+    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
 
 
 @app.get("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
@@ -524,28 +736,46 @@ def item_translation(item_id: str, owner: Owner) -> TranslationView:
     return translation_view(translator().standing(owner, item_id))
 
 
+@app.get("/api/models")
+def models_offered() -> ModelsView:
+    return ModelsView(
+        models=[
+            ModelView(
+                name=name,
+                ready=name not in settings.glm_models or settings.glm_api_key is not None,
+            )
+            for name in offered_models()
+        ],
+        translation=settings.translation_model,
+        answering=settings.model,
+    )
+
+
 @app.put("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def ensure_translation(item_id: str, owner: Owner) -> TranslationView:
-    # Starts the translation unless it is under way, done or unneeded. One that stopped goes
-    # on from the blocks it has.
-    return translation_view(translator().ensure(owner, item_id))
+def ensure_translation(item_id: str, owner: Owner, model: ChosenModel = None) -> TranslationView:
+    # Starts the translation with the model chosen unless it is under way, done or unneeded.
+    # One that stopped goes on from the blocks it has, with that model.
+    return translation_view(translator().ensure(owner, item_id, translating_with(model)))
 
 
 @app.post("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)
-def translate_anew(item_id: str, owner: Owner) -> TranslationView:
-    # Starts the translation from its first block, in place of what was translated before.
-    return translation_view(translator().anew(owner, item_id))
+def translate_anew(item_id: str, owner: Owner, model: ChosenModel = None) -> TranslationView:
+    # Starts the translation from its first block with the model chosen, in place of what
+    # was translated before.
+    return translation_view(translator().anew(owner, item_id, translating_with(model)))
 
 
 @app.post(
     "/api/items/{item_id}/translation/blocks/{block_number}",
-    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED,
+    responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | NOT_ASKED | UNREACHABLE,
 )
-def retranslate_block(item_id: str, block_number: BlockNumber, owner: Owner) -> TranslatedBlock:
-    # Translates one block again with the model that writes digests, and keeps the result in
-    # place of the block's earlier translation. A translation that was never asked for, or
-    # that is not needed, has no block to translate again.
-    return translator().retranslated(owner, item_id, block_number)
+def retranslate_block(
+    item_id: str, block_number: BlockNumber, owner: Owner, model: ChosenModel = None
+) -> TranslatedBlock:
+    # Translates one block again with the model chosen for digests and answers, and keeps the
+    # result in place of the block's earlier translation. A translation that was never asked
+    # for, or that is not needed, has no block to translate again.
+    return translator().retranslated(owner, item_id, block_number, answering_with(model))
 
 
 @cache
@@ -617,20 +847,20 @@ def item_conversation(item_id: str, owner: Owner) -> Conversation:
         return Conversation(turns=item_turns(transaction, item_id).turns())
 
 
-@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING)
+@app.post("/api/items/{item_id}/conversation", responses=NOT_IN_LIBRARY | ANSWERING | UNREACHABLE)
 def ask_about_item(
     item_id: str,
     question: Question,
     owner: Owner,
     questioned: QuestionedItem,
     ending: AnswerEnding,
+    answerer: Answerer,
 ) -> Iterator[ChatEvent]:
-    # Answers a question about the item's document, after the questions asked of it before.
-    # What happens on the way is sent as it happens, each event a line of JSON.
+    # Answers a question about the item's document, after the questions asked of it before,
+    # with the model chosen. What happens on the way is sent as it happens, each event a line
+    # of JSON.
     yield from told(
-        answer_progress(
-            answering_model(), questioned.holding, questioned.turns, question.text, ending
-        ),
+        answer_progress(answerer, questioned.holding, questioned.turns, question.text, ending),
         owner,
         lambda transaction: item_turns(transaction, item_id),
     )
@@ -670,16 +900,20 @@ def library_conversation(owner: Owner) -> Conversation:
         return Conversation(turns=library_turns(transaction).turns())
 
 
-@app.post("/api/conversation", responses=ANSWERING)
+@app.post("/api/conversation", responses=ANSWERING | UNREACHABLE)
 def ask_about_library(
-    question: Question, owner: Owner, turns: QuestionedLibrary, ending: AnswerEnding
+    question: Question,
+    owner: Owner,
+    turns: QuestionedLibrary,
+    ending: AnswerEnding,
+    answerer: Answerer,
 ) -> Iterator[ChatEvent]:
     # Answers a question about everything the library holds, after the questions asked of
-    # the library before, and sends its events the same way. The model searches and reads
-    # the library's blocks with tools that change nothing.
+    # the library before, with the model chosen, and sends its events the same way. The
+    # model searches and reads the library's blocks with tools that change nothing.
     shelf = library_shelf(library_store(), block_index(), owner)
     yield from told(
-        library_answer_progress(answering_model(), shelf, turns, question.text, ending),
+        library_answer_progress(answerer, shelf, turns, question.text, ending),
         owner,
         library_turns,
     )
@@ -693,3 +927,140 @@ def forget_library_conversation(owner: Owner) -> None:
         library_store().transaction(owner) as transaction,
     ):
         library_turns(transaction).forget()
+
+
+def highlight_view(shown: ShownHighlight) -> HighlightView:
+    highlight = shown.highlight
+    return HighlightView(
+        id=highlight.id,
+        item=highlight.item_id,
+        revision=shown.marked.revision,
+        passage=highlight.passage,
+        standing=shown.marked.standing,
+        comment=highlight.comment,
+        made=highlight.made,
+    )
+
+
+def note_view(shown: ShownNote) -> NoteView:
+    return NoteView(
+        id=shown.text.id,
+        edition=shown.text.edition,
+        title=shown.text.title,
+        markdown=shown.text.markdown,
+        passages=[
+            LinkedPassage(
+                id=linked.note_passage.id,
+                item=linked.item_id,
+                title=linked.title,
+                revision=linked.marked.revision,
+                passage=linked.note_passage.passage,
+                standing=linked.marked.standing,
+            )
+            for linked in shown.passages
+        ],
+        made=shown.text.made,
+        changed=shown.text.changed,
+    )
+
+
+@app.get("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY)
+def item_highlights(item_id: str, owner: Owner) -> list[HighlightView]:
+    # The highlights of an item: first those that stand in the document it holds now, in the
+    # order of that document, then those it has lost, in the order they were made.
+    with library_store().transaction(owner) as transaction:
+        return [highlight_view(shown) for shown in Highlights(transaction).of_item(item_id)]
+
+
+@app.post("/api/items/{item_id}/highlights", responses=NOT_IN_LIBRARY | NOT_HELD)
+def make_highlight(item_id: str, draft: HighlightDraft, owner: Owner) -> HighlightView:
+    # Marks a passage of a revision of the item. The passage is refused unless its document
+    # is a revision of the item and holds it as given.
+    with library_store().transaction(owner) as transaction:
+        shown = Highlights(transaction).mark(item_id, draft, datetime.now(UTC))
+    return highlight_view(shown)
+
+
+@app.put("/api/items/{item_id}/highlights/{highlight_id}/comment", responses=NOT_IN_LIBRARY)
+def comment_highlight(
+    item_id: str, highlight_id: str, comment: Comment, owner: Owner
+) -> HighlightView:
+    # Puts what the reader notes on a highlight in place of what was noted before.
+    with library_store().transaction(owner) as transaction:
+        shown = Highlights(transaction).keep_comment(item_id, highlight_id, comment)
+    return highlight_view(shown)
+
+
+@app.delete(
+    "/api/items/{item_id}/highlights/{highlight_id}",
+    responses=NOT_IN_LIBRARY,
+    status_code=HTTPStatus.NO_CONTENT,
+)
+def remove_highlight(item_id: str, highlight_id: str, owner: Owner) -> None:
+    with library_store().transaction(owner) as transaction:
+        Highlights(transaction).remove(item_id, highlight_id)
+
+
+@app.get("/api/highlights")
+def library_highlights(owner: Owner) -> list[ItemHighlights]:
+    # Every item of the library that has highlights, with them, the item marked last first;
+    # an item's highlights are in the order its own list gives them.
+    with library_store().transaction(owner) as transaction:
+        marked = Highlights(transaction).of_library()
+    return [
+        ItemHighlights(
+            item=item.item_id,
+            title=item.title,
+            highlights=[highlight_view(shown) for shown in item.highlights],
+        )
+        for item in marked
+    ]
+
+
+@app.get("/api/notes")
+def list_notes(owner: Owner) -> list[NoteEntry]:
+    # The notes of the library, the one changed last first.
+    with library_store().transaction(owner) as transaction:
+        listed = Notes(transaction).listed()
+    return [
+        NoteEntry(
+            id=note.text.id,
+            title=note.text.title,
+            made=note.text.made,
+            changed=note.text.changed,
+            items=note.items,
+        )
+        for note in listed
+    ]
+
+
+@app.post("/api/notes", responses=NOT_IN_LIBRARY | NOT_HELD)
+def write_note(draft: NoteDraft, owner: Owner) -> NoteView:
+    # Keeps a new note. A passage is refused unless its document is in the library and holds
+    # it as given.
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).write(draft, datetime.now(UTC))
+    return note_view(shown)
+
+
+@app.get("/api/notes/{note_id}", responses=NOT_IN_LIBRARY)
+def read_note(note_id: str, owner: Owner) -> NoteView:
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).shown(note_id)
+    return note_view(shown)
+
+
+@app.put("/api/notes/{note_id}", responses=NOT_IN_LIBRARY | NOT_HELD | STALE)
+def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
+    # Puts the draft in place of what the note held: its title, its Markdown and its passages.
+    # A draft is taken only of a later edition than the note holds; one that is not is
+    # refused, once the note is found, before its passages are looked at.
+    with library_store().transaction(owner) as transaction:
+        shown = Notes(transaction).rewrite(note_id, draft, datetime.now(UTC))
+    return note_view(shown)
+
+
+@app.delete("/api/notes/{note_id}", responses=NOT_IN_LIBRARY, status_code=HTTPStatus.NO_CONTENT)
+def remove_note(note_id: str, owner: Owner) -> None:
+    with library_store().transaction(owner) as transaction:
+        Notes(transaction).remove(note_id)

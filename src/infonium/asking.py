@@ -5,13 +5,14 @@ from itertools import accumulate
 from pydantic import BaseModel
 
 from infonium.document import BlockNumber, Document
-from infonium.glossary import Term
+from infonium.glossary import Term, first_uses, occurring_terms
 from infonium.language_model import (
     MODEL_FAILURES,
     LanguageModel,
 )
 from infonium.reasons import failure_reason
 from infonium.rendition import (
+    FirstUse,
     PassageBlock,
     Passages,
     Wording,
@@ -24,6 +25,7 @@ from infonium.translation import (
     block_wordings,
     is_cut_into_segments,
     translated_block,
+    translated_numbers,
 )
 
 # Asking a model for blocks of a document in another language: the requests, their
@@ -51,11 +53,19 @@ class UnusableTranslation(Exception):
 
 class Work(BaseModel):
     # Blocks of a document to translate, by their numbers, with the title the document goes
-    # by and its terms.
+    # by, its terms, and the block in which the document first uses each term kept as it is
+    # written, by the term's source.
     document: Document
     title: str
     terms: list[Term]
+    first_uses: dict[str, BlockNumber]
     numbers: list[BlockNumber]
+
+
+def document_first_uses(document: Document, terms: list[Term]) -> dict[str, BlockNumber]:
+    # The first of the blocks that are translated to use each term kept as it is written.
+    texts = {number: document.blocks[number].text for number in translated_numbers(document)}
+    return first_uses(terms, texts)
 
 
 # What becomes of what a request brought: the blocks it translated, and the tokens it took.
@@ -63,6 +73,26 @@ class Work(BaseModel):
 Keeper = Callable[[list[TranslatedBlock], int, int], bool]
 # Whether the blocks are still to be asked for, asked before each request.
 GoesOn = Callable[[], bool]
+
+
+def request_first_uses(work: Work, wordings: list[list[Wording]]) -> list[FirstUse]:
+    # The passages, by their numbers in the request, in which the document first uses a term
+    # kept as it is written: the first passage of the term's first block that uses it, or
+    # the block's first passage where none does by itself.
+    terms = {term.source: term for term in work.terms}
+    firsts = [1 + before for before in [0, *accumulate(len(block) for block in wordings)]]
+    uses: list[FirstUse] = []
+    for source, block_number in work.first_uses.items():
+        if block_number not in work.numbers:
+            continue
+        at = work.numbers.index(block_number)
+        using = [
+            firsts[at] + offset
+            for offset, wording in enumerate(wordings[at])
+            if occurring_terms([terms[source]], [wording.text])
+        ]
+        uses.append(FirstUse(source=source, passage=using[0] if using else firsts[at]))
+    return uses
 
 
 def passages_of(work: Work, wordings: list[list[Wording]]) -> Passages:
@@ -74,6 +104,7 @@ def passages_of(work: Work, wordings: list[list[Wording]]) -> Passages:
     return Passages(
         title=work.title,
         terms=work.terms,
+        first_uses=request_first_uses(work, wordings),
         before=before[len(before) - CONTEXT_CHARACTERS :] if before else "",
         blocks=[
             PassageBlock(wordings=block, in_segments=is_cut_into_segments(blocks[number]))

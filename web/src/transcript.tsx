@@ -5,7 +5,13 @@ import type { Anchor, Block, Segment, TimePlace, TranslatedBlock } from "./clien
 import type { Clock } from "./player";
 import { inView, scrollerOf } from "./scrolling";
 import type { Setting } from "./setting";
-import { AgainControl, overlaps, POINTED_CLASS, type TextRange } from "./translated";
+import {
+  AgainControl,
+  MARK_ATTRIBUTE,
+  overlaps,
+  POINTED_CLASS,
+  type TextRange,
+} from "./translated";
 import type { Again } from "./translation";
 import "./transcript.css";
 
@@ -14,6 +20,12 @@ import "./transcript.css";
 // a source block's number is carried by.
 export const LINES_ATTRIBUTE = "data-lines";
 const LINE_ATTRIBUTE = "data-line";
+// A line carries the range of its block's text it stands for, in code points, and holds the
+// words said there and their translation in elements of their own.
+export const LINE_START_ATTRIBUTE = "data-start";
+export const LINE_END_ATTRIBUTE = "data-end";
+export const SAID_CLASS = "said";
+export const SPOKEN_CLASS = "spoken-translation";
 const SECONDS_IN_MINUTE = 60;
 // What a reader does that scrolls the transcript's scroller: a wheel or a finger over it, a
 // key that scrolls, or a press on its scroll bar. A scroll that follows one of these is the
@@ -170,20 +182,24 @@ const BlockLines = memo(function BlockLines({
             key={index}
             className={classes.join(" ")}
             aria-current={spoken === index ? "true" : undefined}
-            {...{ [LINE_ATTRIBUTE]: first + index }}
+            {...{
+              [LINE_ATTRIBUTE]: first + index,
+              [LINE_START_ATTRIBUTE]: line.start,
+              [LINE_END_ATTRIBUTE]: line.end,
+            }}
           >
             <button
               className="moment"
               disabled={line.place === undefined}
               aria-label={line.place && `从 ${clockTime(line.place.moment)} 播放`}
               onClick={() => line.place && onPlay(line.place)}
-            >
-              {line.place ? clockTime(line.place.moment) : ""}
-            </button>
+              // The time is drawn by the stylesheet, so that a selection copies none of it.
+              {...{ [MARK_ATTRIBUTE]: line.place ? clockTime(line.place.moment) : "" }}
+            />
             <div className="words" onClick={() => play(line.place)}>
-              {showsWords && <p className="said">{line.words}</p>}
+              {showsWords && <p className={SAID_CLASS}>{line.words}</p>}
               {line.translation !== undefined && (
-                <p className="spoken-translation">
+                <p className={SPOKEN_CLASS}>
                   <MarkedText text={line.translation.text} marks={line.translation.marks} />
                 </p>
               )}
@@ -220,7 +236,8 @@ export function Transcript({
   translations: ReadonlyMap<number, TranslatedBlock>;
   setting: Setting;
   again: ReadonlyMap<number, Again>;
-  pointed: Anchor | undefined;
+  // The anchors of the passage pointed at, by the number of the block each lies in.
+  pointed: ReadonlyMap<number, Anchor>;
   played: TimePlace[];
   // The blocks a translation that stopped has left in their source.
   leftOut: ReadonlySet<number>;
@@ -315,10 +332,7 @@ export function Transcript({
     <div className="transcript" ref={transcript}>
       {groups.map(({ number, lines, first }) => {
         const here = spoken !== undefined && spoken >= first && spoken < first + lines.length;
-        const isPointed =
-          pointed !== undefined &&
-          pointed.document_id === documentId &&
-          pointed.block_number === number;
+        const pointedHere = pointed.get(number);
         return (
           <BlockLines
             key={number}
@@ -330,7 +344,7 @@ export function Transcript({
             translated={translations.has(number)}
             missing={leftOut.has(number)}
             again={again.get(number)}
-            pointed={isPointed ? pointed : undefined}
+            pointed={pointedHere?.document_id === documentId ? pointedHere : undefined}
             onAgain={onAgain}
             onPlay={onPlay}
           />

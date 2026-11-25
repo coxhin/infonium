@@ -1,8 +1,11 @@
+import logging
 import socket
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from threading import Lock
+from http import HTTPStatus
+from threading import Condition, Lock
 from typing import Any
 
 import httpx2
@@ -21,12 +24,26 @@ STEP_SEPARATOR = "."
 CONNECTION = "return_value"
 SOCKET_INFO = "socket"
 REQUEST_HOOK = "request"
+RESPONSE_HOOK = "response"
 REPLY_ENDED = "the reply was ended before this request was sent"
 # A request that may be cut is sent on a connection of its own, kept for no later request,
 # so that its connection is known while the endpoint has yet to answer and a cut ends that
 # request alone. The library speaks HTTP/1.1 only unless it is told otherwise, so one
 # connection carries one request.
 OWN_CONNECTIONS = httpx2.Limits(max_keepalive_connections=0)
+SECONDS_PER_MINUTE = 60.0
+# How long the requests to an endpoint wait after it refused one for being asked too often:
+# the first pause, and the longest it grows to while requests sent after a pause began are
+# refused too.
+FIRST_PAUSE_SECONDS = 5.0
+LONGEST_PAUSE_SECONDS = 60.0
+# How often a request waiting for its turn looks whether its reply has ended.
+TURN_CHECK_SECONDS = 1.0
+# Where a request keeps how many pauses its pace had begun when the request was sent.
+PAUSES_BEGUN = "infonium.pauses_begun"
+PAUSED = "%s refused a request for being asked too often: its requests wait %.0f s"
+
+logger = logging.getLogger(__name__)
 
 
 class ReplyEnded(Exception):
@@ -88,6 +105,63 @@ def traced_request(request: httpx2.Request) -> None:
     request.extensions[TRACE] = ending.traced
 
 
+class Pace:
+    # Spaces the requests to one endpoint, sent by every client that shares the pace: each is
+    # sent at least an interval after the one before, so that no more than so many are sent
+    # in a minute, the client's own retries among them. When the endpoint refuses a request for
+    # being asked too often, no request is sent before a pause has passed. The pause doubles,
+    # up to the longest, while requests sent after it began are refused too, and is over with
+    # the first of them that is not. An answer to a request sent before the last pause began
+    # tells nothing of the endpoint since.
+    def __init__(self, requests_per_minute: int) -> None:
+        self.interval = SECONDS_PER_MINUTE / requests_per_minute
+        # Held while the pace is read or changed, and let go while a request waits.
+        self.turn = Condition()
+        self.next_turn = time.monotonic()
+        self.pause = 0.0
+        self.pauses = 0
+
+    def wait_turn(self, request: httpx2.Request) -> None:
+        # A request whose reply ends while it waits is not sent.
+        ending = REPLY_ENDING.get()
+        with self.turn:
+            while (now := time.monotonic()) < self.next_turn:
+                if ending.ended:
+                    raise ReplyEnded(REPLY_ENDED)
+                self.turn.wait(min(self.next_turn - now, TURN_CHECK_SECONDS))
+            self.next_turn = now + self.interval
+            request.extensions[PAUSES_BEGUN] = self.pauses
+
+    def heard(self, response: httpx2.Response) -> None:
+        refused = response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+        with self.turn:
+            news = response.request.extensions[PAUSES_BEGUN] == self.pauses
+            if news and refused:
+                doubled = min(2 * self.pause, LONGEST_PAUSE_SECONDS)
+                self.pause = doubled if self.pause else FIRST_PAUSE_SECONDS
+                self.pauses += 1
+                self.next_turn = max(self.next_turn, time.monotonic() + self.pause)
+                logger.warning(PAUSED, response.request.url.host, self.pause)
+            elif news:
+                self.pause = 0.0
+
+
 def endable_http_client() -> httpx2.Client:
     # The HTTP client of a model whose replies an Ending can cut.
     return DefaultHttpxClient(limits=OWN_CONNECTIONS, event_hooks={REQUEST_HOOK: [traced_request]})
+
+
+def paced_http_client(pace: Pace) -> httpx2.Client:
+    # The HTTP client of a model of an endpoint whose requests the pace spaces.
+    return DefaultHttpxClient(
+        event_hooks={REQUEST_HOOK: [pace.wait_turn], RESPONSE_HOOK: [pace.heard]}
+    )
+
+
+def endable_paced_http_client(pace: Pace) -> httpx2.Client:
+    # The same, whose replies an Ending can cut; a request waits for its turn before it is
+    # traced, so that one whose reply ended meanwhile is not sent.
+    return DefaultHttpxClient(
+        limits=OWN_CONNECTIONS,
+        event_hooks={REQUEST_HOOK: [pace.wait_turn, traced_request], RESPONSE_HOOK: [pace.heard]},
+    )

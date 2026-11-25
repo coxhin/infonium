@@ -1,0 +1,19 @@
+/* A text cut after a few lines; the line count is set on the element. */
+.cut-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cut-text[data-whole="true"] {
+  display: block;
+}
+
+.cut-toggle {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.75rem;
+  color: var(--accent);
+}

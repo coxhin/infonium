@@ -51,6 +51,15 @@
   width: 2rem;
 }
 
+/* A control's mark (MARK_ATTRIBUTE in translated.tsx: the translate-again button's, a recording
+   line's time) is drawn here, not written into the page, so a selection copies none of it. The
+   rule names its two controls, since a translated page's areas carry the attribute too, as a
+   highlight's state. */
+.again[data-mark]::before,
+.line .moment[data-mark]::before {
+  content: attr(data-mark);
+}
+
 .again {
   position: absolute;
   top: 0.15rem;
