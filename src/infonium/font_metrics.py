@@ -36,15 +36,15 @@ DEEPEST_LETTER = -0.5
 FIGURES_PER_SIZE = 1000
 # A font that a PDF embeds in part is named with a tag of six capitals and a plus sign before
 # its own name. PDFium gives some names with the tag and some without.
-SUBSET_TAG = re.compile(r"^[A-Z]{6}\+")
+SUBSET_TAG = re.compile(rb"^[A-Z]{6}\+")
 # The kinds of font that say how far their letters reach in thousandths of their size: all
 # but a font drawn by the PDF's own procedures, whose figures are in units of its own. A
 # composite font is described by the font it is made from, which is one of these.
 FIGURED_FONTS = frozenset(
     {Name.Type1, Name.MMType1, Name.TrueType, Name.CIDFontType0, Name.CIDFontType2}
 )
-# pikepdf writes a name as the file does, after a solidus.
-NAME_SOLIDUS = "/"
+# pikepdf gives the bytes of a name with the solidus that begins it in the file.
+NAME_SOLIDUS = b"/"
 
 
 class FontMetrics(BaseModel):
@@ -54,8 +54,14 @@ class FontMetrics(BaseModel):
     descent: int
 
 
-def unsubset(name: str) -> str:
-    return SUBSET_TAG.sub("", name)
+def unsubset(name: bytes) -> bytes:
+    return SUBSET_TAG.sub(b"", name)
+
+
+def bare_name(name: Name) -> bytes:
+    # A name as the file writes it, in bytes, which need be text in no encoding: a Japanese
+    # font may be named in Shift JIS.
+    return bytes(name).removeprefix(NAME_SOLIDUS)
 
 
 def uneven(reaches: list[LetterReach]) -> bool:
@@ -65,7 +71,7 @@ def uneven(reaches: list[LetterReach]) -> bool:
     return max(tops) - min(tops) > EVEN or max(bottoms) - min(bottoms) > EVEN
 
 
-def text_letters(reaches: list[LetterReach]) -> bool:
+def like_text(reaches: list[LetterReach]) -> bool:
     # Whether a font's letters stand on the baseline as letters of text do.
     bottom = min(reach.ink_bottom for reach in reaches)
     return DEEPEST_LETTER <= bottom <= 0 < max(reach.ink_top for reach in reaches)
@@ -80,9 +86,9 @@ def measured_metrics(reaches: list[LetterReach]) -> FontMetrics:
     )
 
 
-def described_fonts(document: pikepdf.Pdf) -> Iterator[tuple[str, pikepdf.Dictionary]]:
+def described_fonts(document: pikepdf.Pdf) -> Iterator[tuple[bytes, pikepdf.Dictionary]]:
     # Each font of a file that says how far its letters reach in thousandths of its size, by
-    # its name without a tag, with the dictionary that says it.
+    # the name the file gives it, with the dictionary that says it.
     for font in document.objects:
         if isinstance(font, pikepdf.Dictionary):
             kind = font.get(Name.Subtype)
@@ -94,29 +100,32 @@ def described_fonts(document: pikepdf.Pdf) -> Iterator[tuple[str, pikepdf.Dictio
                 and isinstance(name, Name)
                 and isinstance(descriptor, pikepdf.Dictionary)
             ):
-                yield unsubset(str(name).removeprefix(NAME_SOLIDUS)), descriptor
+                yield bare_name(name), descriptor
 
 
 def measured_file(file: Path, copy: Path) -> Path:
     # A file whose fonts each set their letters of text in boxes of one height: the file
     # itself where they do, and otherwise a copy, written where it is asked for, in which each
     # font that does not says how far its letters reach as they show it.
-    measured = {
-        unsubset(name): [*reaches.values()]
-        for name, reaches in letter_reaches(file, MEASURED_LETTERS).items()
+    reaches = {
+        name: [*letters.values()]
+        for name, letters in letter_reaches(file, MEASURED_LETTERS).items()
     }
     mended = {
-        name: measured_metrics(reaches)
-        for name, reaches in measured.items()
-        if uneven(reaches) and text_letters(reaches)
+        name: measured_metrics(letters)
+        for name, letters in reaches.items()
+        if uneven(letters) and like_text(letters)
     }
     if not mended:
         return file
     with pikepdf.open(file) as document:
+        # A font is known by the name PDFium gives it: by the file's own where PDFium gives
+        # that, so that subsets of one font are told apart where PDFium tells them apart, and
+        # otherwise by that name without its tag.
         described = [
-            (descriptor, mended[name])
+            (descriptor, mended[known])
             for name, descriptor in described_fonts(document)
-            if name in mended
+            if (known := name if name in reaches else unsubset(name)) in mended
         ]
         if not described:
             return file

@@ -28,9 +28,6 @@ UNFLATTENED = "PDFium could not draw the annotations of a page into its content"
 # How far a letter reaches is told to a thousandth of the size it is drawn at, so that a
 # letter drawn alike at several sizes is counted as one.
 REACH_DIGITS = 3
-# A font's name is read as UTF-8; a name written otherwise is read with stand-ins for what does
-# not read, and then names no font that the file holds.
-FONT_NAME_ENCODING = "utf-8"
 
 
 class StoredPage(BaseModel):
@@ -170,14 +167,6 @@ def stored_file(file: Path) -> StoredFile:
         )
 
 
-def font_name(font: object) -> str:
-    # The name a file gives a font that PDFium holds.
-    length = raw.FPDFFont_GetBaseFontName(font, None, 0)
-    name = ctypes.create_string_buffer(length)
-    raw.FPDFFont_GetBaseFontName(font, name, length)
-    return name.value.decode(FONT_NAME_ENCODING, "replace")
-
-
 def draws_by_program(font: object) -> bool:
     # Whether a font draws its letters by a program, as every font does but one that the PDF
     # draws by procedures of its own, for which PDFium holds none. A font that the file names
@@ -187,14 +176,16 @@ def draws_by_program(font: object) -> bool:
     return size.value > 0
 
 
-def letter_reaches(file: Path, letters: frozenset[str]) -> dict[str, dict[str, LetterReach]]:
-    # For each font that a file draws any of these letters in, by the name the file gives it,
-    # how far each of those letters reaches as the file most often draws it. A letter is
-    # measured where it stands at exactly no angle, as only there is it placed by its box when
-    # the text layer is read, and where it is drawn at some size. A font that the file draws
-    # by procedures of its own (Type 3) is not measured: it is not told how far its letters
-    # reach in thousandths of its size, and a font of another kind may go by its name.
-    seen: dict[str, dict[str, Counter[LetterReach]]] = {}
+def letter_reaches(file: Path, letters: frozenset[str]) -> dict[bytes, dict[str, LetterReach]]:
+    # For each font that a file draws any of these letters in, by the name PDFium gives it, in
+    # the bytes the file writes it in, how far each of those letters reaches as the file most
+    # often draws it. PDFium gives a font the name the file gives it, without the tag of a
+    # subset for some kinds of font. A letter is measured where it stands at exactly no angle,
+    # as only there is it placed by its box when the text layer is read, and where it is drawn
+    # at some size. A font that the file draws by procedures of its own (Type 3) is not
+    # measured: it is not told how far its letters reach in thousandths of its size, and a
+    # font of another kind may go by its name.
+    seen: dict[bytes, dict[str, Counter[LetterReach]]] = {}
     ink_left, ink_right, ink_bottom, ink_top, x, y = (ctypes.c_double() for _ in range(6))
     box = raw.FS_RECTF()
     matrix = raw.FS_MATRIX()
@@ -223,7 +214,10 @@ def letter_reaches(file: Path, letters: frozenset[str]) -> dict[str, dict[str, L
                     box_top=round((box.top - y.value) / size, REACH_DIGITS),
                     box_bottom=round((box.bottom - y.value) / size, REACH_DIGITS),
                 )
-                by_letter = seen.setdefault(font_name(font), {})
+                length = raw.FPDFFont_GetBaseFontName(font, None, 0)
+                name = ctypes.create_string_buffer(length)
+                raw.FPDFFont_GetBaseFontName(font, name, length)
+                by_letter = seen.setdefault(name.value, {})
                 by_letter.setdefault(letter, Counter())[reach] += 1
     return {
         name: {letter: counted.most_common(1)[0][0] for letter, counted in by_letter.items()}
