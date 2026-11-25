@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ensureDigest, rewriteDigest, type Digest } from "./client";
-import { Citations, LostCitations, type Citing } from "./citing";
+import { Citations, citationNumbers, LostCitations, type Citing } from "./citing";
 import { useLoaded } from "./loading";
 import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import "./digest.css";
@@ -14,6 +14,10 @@ function DigestBody({
   digest: Digest;
   citing: Citing;
 }) {
+  const numberOf = useMemo(
+    () => citationNumbers(digest.sections.flatMap((section) => section.statements)),
+    [digest],
+  );
   return (
     <>
       {digest.sections.map((section, sectionIndex) => (
@@ -25,6 +29,7 @@ function DigestBody({
                 {statement.text}
                 <Citations
                   anchors={statement.anchors}
+                  numberOf={numberOf}
                   citing={citing}
                   titleOf={(anchor) => anchor.quote}
                   onPoint={(anchor) => citing.point([anchor])}

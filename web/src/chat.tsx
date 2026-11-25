@@ -1,13 +1,14 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
 import type { Anchor, Anchors, Turn } from "./client";
-import { Citations, LostCitations, type Citing } from "./citing";
+import { Citations, citationNumbers, LostCitations, type Citing } from "./citing";
 import {
   canAsk,
   scopeKey,
@@ -63,6 +64,7 @@ function Answer({
   onOpen: Opener;
 }) {
   const { answer } = turn;
+  const numberOf = useMemo(() => citationNumbers(answer.statements), [answer]);
   const sourceOf = (anchor: Anchor) =>
     answer.sources.find((source) => source.document === anchor.document_id);
   // The item a citation lies in: the conversation's own, or, in the library's, the item of the
@@ -101,6 +103,7 @@ function Answer({
           {statement.text}
           <Citations
             anchors={statement.anchors}
+            numberOf={numberOf}
             citing={citing}
             titleOf={titleOf}
             onPoint={point}

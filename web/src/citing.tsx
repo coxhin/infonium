@@ -422,16 +422,38 @@ export function LostCitations({
   return null;
 }
 
+function passageKey(anchor: Anchor): string {
+  return `${anchor.document_id}:${anchor.block_number}:${anchor.start}-${anchor.end}`;
+}
+
+// The number each passage a digest or an answer cites goes by: counted from 1 through the
+// whole of it, in the order the passages are first cited, so that a passage cited again keeps
+// its number and no two passages share one.
+export type CitationNumbers = (anchor: Anchor) => number;
+
+export function citationNumbers(statements: Statement[]): CitationNumbers {
+  const numbers = new Map<string, number>();
+  for (const anchor of statements.flatMap((statement) => statement.anchors)) {
+    const key = passageKey(anchor);
+    if (!numbers.has(key)) {
+      numbers.set(key, numbers.size + 1);
+    }
+  }
+  return (anchor) => numbers.get(passageKey(anchor)) ?? numbers.size + 1;
+}
+
 // A statement's citations as numbered chips, each titled with its quote. A chip whose passage
 // is being looked for in the document the item holds now is drawn as waiting, never as on
 // show.
 export function Citations({
   anchors,
+  numberOf,
   citing,
   titleOf,
   onPoint,
 }: {
   anchors: Anchor[];
+  numberOf: CitationNumbers;
   citing: Citing;
   titleOf: (anchor: Anchor) => string;
   onPoint: (anchor: Anchor) => void;
@@ -447,7 +469,7 @@ export function Citations({
         aria-busy={asking}
         onClick={() => onPoint(anchor)}
       >
-        {anchorIndex + 1}
+        {numberOf(anchor)}
       </button>
     );
   });
