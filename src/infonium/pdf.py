@@ -32,6 +32,7 @@ from infonium.document import (
     joined,
     tabled,
 )
+from infonium.font_metrics import measured_file
 from infonium.mineru import (
     Box,
     CodeBody,
@@ -57,6 +58,9 @@ from infonium.pdfium import WHOLE_TURN, Quarters, StoredFile, stored_file, uprig
 EXTRACTOR = "pdf/1"
 # The file in the folder that the engine is given when the PDF turns a page.
 UPRIGHT_COPY = "upright.pdf"
+# The file in the folder that the engine is given when a font of the PDF says its letters
+# reach less far than they do.
+MEASURED_COPY = "measured.pdf"
 # The language model that recognises the words of a page read as a picture writes them the
 # way Markdown is written, where a dollar sign would open a formula: after a backslash.
 DOLLAR = "$"
@@ -696,10 +700,12 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear. The engine is given the file
-    # with no page turned, and what it finds is placed on the pages as the file shows them.
+    # with no page turned and with fonts that say how far their letters reach, and what it
+    # finds is placed on the pages as the file shows them.
     upright = upright_file(file, folder / UPRIGHT_COPY)
     stored = stored_file(upright.file)
-    to_parse = FileToParse(file=upright.file, engine=engine, folder=folder)
+    measured = measured_file(upright.file, folder / MEASURED_COPY)
+    to_parse = FileToParse(file=measured, engine=engine, folder=folder)
     parsed = parsed_pages(to_parse, len(stored.pages))
     blocks = pdf_blocks(parsed, stored, upright.turned)
     if not blocks:

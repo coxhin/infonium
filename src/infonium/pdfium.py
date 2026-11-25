@@ -1,10 +1,11 @@
+import ctypes
 import math
 import threading
 from collections import Counter
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pypdfium2 import PdfDocument, PdfiumError, PdfTextPage, raw
 
 from infonium.document import WORD_GAP
@@ -24,6 +25,9 @@ Quarters = Annotated[int, Field(ge=0, lt=WHOLE_TURN)]
 # cosine of a quarter turn, worked out, does not.
 CLOCKWISE = {1: (0, -1, 1, 0), 2: (-1, 0, 0, -1), 3: (0, 1, -1, 0)}
 UNFLATTENED = "PDFium could not draw the annotations of a page into its content"
+# How far a letter reaches is told to a thousandth of the size it is drawn at, so that a
+# letter drawn alike at several sizes is counted as one.
+REACH_DIGITS = 3
 
 
 class StoredPage(BaseModel):
@@ -44,6 +48,17 @@ class UprightFile(BaseModel):
     # the file it was made from shows the page turned from the way it stands here.
     file: Path
     turned: list[Quarters]
+
+
+class LetterReach(BaseModel):
+    # How far a letter drawn in a font reaches above its baseline and below it, as parts of
+    # the size it is drawn at: the outline of its ink, and the box PDFium says it stands in.
+    model_config = ConfigDict(frozen=True)
+
+    ink_top: float
+    ink_bottom: float
+    box_top: float
+    box_bottom: float
 
 
 def own_angles(layer: PdfTextPage) -> list[float]:
@@ -150,3 +165,61 @@ def stored_file(file: Path) -> StoredFile:
             title=WORD_GAP.join(document.get_metadata_value(TITLE_ENTRY).split()),
             pages=pages,
         )
+
+
+def draws_by_program(font: object) -> bool:
+    # Whether a font draws its letters by a program, as every font does but one that the PDF
+    # draws by procedures of its own, for which PDFium holds none. A font that the file names
+    # without holding it is drawn by the program PDFium puts in its place.
+    size = ctypes.c_size_t()
+    raw.FPDFFont_GetFontData(font, None, 0, size)
+    return size.value > 0
+
+
+def letter_reaches(file: Path, letters: frozenset[str]) -> dict[bytes, dict[str, LetterReach]]:
+    # For each font that a file draws any of these letters in, by the name PDFium gives it, in
+    # the bytes the file writes it in, how far each of those letters reaches as the file most
+    # often draws it. PDFium gives a font the name the file gives it, without the tag of a
+    # subset for some kinds of font. A letter is measured where it stands at exactly no angle,
+    # as only there is it placed by its box when the text layer is read, and where it is drawn
+    # at some size. A font that the file draws by procedures of its own (Type 3) is not
+    # measured: it is not told how far its letters reach in thousandths of its size, and a
+    # font of another kind may go by its name.
+    seen: dict[bytes, dict[str, Counter[LetterReach]]] = {}
+    ink_left, ink_right, ink_bottom, ink_top, x, y = (ctypes.c_double() for _ in range(6))
+    box = raw.FS_RECTF()
+    matrix = raw.FS_MATRIX()
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
+        for page in document:
+            layer = page.get_textpage()
+            for index in range(layer.count_chars()):
+                letter = chr(raw.FPDFText_GetUnicode(layer, index))
+                if letter not in letters or raw.FPDFText_GetCharAngle(layer, index) != 0:
+                    continue
+                font = raw.FPDFTextObj_GetFont(raw.FPDFText_GetTextObject(layer, index))
+                if not draws_by_program(font):
+                    continue
+                # The size of the font as the page shows it: the page may draw the text
+                # scaled, as a figure placed smaller than it was made.
+                raw.FPDFText_GetMatrix(layer, index, matrix)
+                size = raw.FPDFText_GetFontSize(layer, index) * abs(matrix.d)
+                if not size:
+                    continue
+                raw.FPDFText_GetCharBox(layer, index, ink_left, ink_right, ink_bottom, ink_top)
+                raw.FPDFText_GetLooseCharBox(layer, index, box)
+                raw.FPDFText_GetCharOrigin(layer, index, x, y)
+                reach = LetterReach(
+                    ink_top=round((ink_top.value - y.value) / size, REACH_DIGITS),
+                    ink_bottom=round((ink_bottom.value - y.value) / size, REACH_DIGITS),
+                    box_top=round((box.top - y.value) / size, REACH_DIGITS),
+                    box_bottom=round((box.bottom - y.value) / size, REACH_DIGITS),
+                )
+                length = raw.FPDFFont_GetBaseFontName(font, None, 0)
+                name = ctypes.create_string_buffer(length)
+                raw.FPDFFont_GetBaseFontName(font, name, length)
+                by_letter = seen.setdefault(name.value, {})
+                by_letter.setdefault(letter, Counter())[reach] += 1
+    return {
+        name: {letter: counted.most_common(1)[0][0] for letter, counted in by_letter.items()}
+        for name, by_letter in seen.items()
+    }
