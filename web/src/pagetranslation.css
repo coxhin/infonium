@@ -118,6 +118,13 @@
   content: none;
 }
 
+/* A cut flow shown whole may run past the foot of its page: the page lies over the pages that
+   follow while it does. */
+.page:has(> .page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible)),
+.page:has(> .page-translation.revealing .flow[data-cut]:focus-visible:not([data-open])) {
+  z-index: 1;
+}
+
 /* Where the source is to be seen under the translation, a flow pressed lets it through. */
 .page-translation.revealing :is(.flow, .paper)[data-open] {
   opacity: 0;
