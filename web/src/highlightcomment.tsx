@@ -36,9 +36,14 @@ type Sending = { text: string; outcome: Promise<Kept> };
 // kept; it rejects, saying why, when that cannot be kept.
 export type SettleComment = () => Promise<string>;
 
+// What the reader typed into a field: its text, and the comment the field showed when the typing
+// began. A field holds no typing until its text differs from that comment, and an untouched
+// field shows the comment as the highlights' store holds it, which another tab may change.
+type Typed = { text: string; openedWith: string };
+
 // What was typed into a comment and not kept, by highlight: the field comes back with it when
 // the entry is drawn anew, as when its item is opened again. A reload loses it.
-const unkept = new Map<string, string>();
+const unkept = new Map<string, Typed>();
 
 // Whether a comment was being typed when its entry was last drawn away.
 export function typingUnkept(highlightId: string): boolean {
@@ -63,7 +68,8 @@ export function CommentField({
   // Holds how to settle the comment while the field is open, and nothing while it is closed.
   settler: RefObject<SettleComment | null>;
 }) {
-  const [draft, setDraft] = useState(() => unkept.get(highlight.id) ?? highlight.comment);
+  const [typed, setTyped] = useState<Typed | undefined>(() => unkept.get(highlight.id));
+  const shown = typed?.text ?? highlight.comment;
   const [keeping, setKeeping] = useState<Keeping>({ state: "idle" });
   const field = useRef<HTMLTextAreaElement>(null);
   const cut = useCut(highlight.comment);
@@ -76,12 +82,12 @@ export function CommentField({
   const sending = useRef<Sending | undefined>(undefined);
 
   useEffect(() => {
-    if (editing && draft !== highlight.comment) {
-      unkept.set(highlight.id, draft);
+    if (editing && typed !== undefined) {
+      unkept.set(highlight.id, typed);
     } else {
       unkept.delete(highlight.id);
     }
-  }, [editing, draft, highlight.comment]);
+  }, [editing, typed]);
 
   // A field that opens starts from the comment as it stands, and takes the keyboard without
   // scrolling the page: in the one-column layout the drawer stands over the reader, and the
@@ -94,7 +100,7 @@ export function CommentField({
       settled.current = false;
       sending.current = undefined;
       setKeeping({ state: "idle" });
-      setDraft(highlight.comment);
+      setTyped(undefined);
       opened.focus({ preventScroll: true });
       opened.setSelectionRange(highlight.comment.length, highlight.comment.length);
     } else if (!editing && returnFocus.current) {
@@ -132,12 +138,12 @@ export function CommentField({
 
   function keep(): Promise<Kept> {
     settled.current = true;
-    if (draft === highlight.comment) {
+    if (typed === undefined) {
       setKeeping({ state: "idle" });
       close();
-      return Promise.resolve({ kept: true, comment: draft });
+      return Promise.resolve({ kept: true, comment: highlight.comment });
     }
-    const sent: Sending = { text: draft, outcome: send(draft) };
+    const sent: Sending = { text: typed.text, outcome: send(typed.text) };
     sending.current = sent;
     void sent.outcome.then(({ kept }) => {
       if (!kept && sending.current === sent) {
@@ -147,15 +153,15 @@ export function CommentField({
     return sent.outcome;
   }
 
-  // A keeping of the very text in the field, under way or done, is awaited, not sent again; a
-  // change is kept first; a field that holds the comment as it stands is left as it is.
+  // An untouched field gives the comment as it stands and is left as it is; a keeping of the
+  // very text typed, under way or done, is awaited, not sent again; other typing is kept first.
   async function settle(): Promise<string> {
     const sent = sending.current;
     const outcome =
-      sent?.text === draft
-        ? await sent.outcome
-        : draft === highlight.comment
-          ? { kept: true as const, comment: draft }
+      typed === undefined
+        ? { kept: true as const, comment: highlight.comment }
+        : sent?.text === typed.text
+          ? await sent.outcome
           : await keep();
     if (!outcome.kept) {
       throw new Error(outcome.reason);
@@ -176,7 +182,7 @@ export function CommentField({
 
   function giveUp() {
     settled.current = true;
-    setDraft(highlight.comment);
+    setTyped(undefined);
     setKeeping({ state: "idle" });
     close();
   }
@@ -219,9 +225,13 @@ export function CommentField({
         placeholder="写下你的批注…"
         rows={3}
         maxLength={COMMENT_CHARACTERS}
-        value={draft}
+        value={shown}
         readOnly={keeping.state === "keeping"}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          const openedWith = typed?.openedWith ?? highlight.comment;
+          const text = event.target.value;
+          setTyped(text === openedWith ? undefined : { text, openedWith });
+        }}
         onKeyDown={keyed}
         onBlur={() => settled.current || void keep()}
       />
@@ -232,7 +242,7 @@ export function CommentField({
         </p>
       )}
       <small id={`comment-keys-${highlight.id}`}>
-        {draft.length >= COMMENT_CHARACTERS && <span className="at-bound">{AT_BOUND}</span>}
+        {shown.length >= COMMENT_CHARACTERS && <span className="at-bound">{AT_BOUND}</span>}
         离开输入框或 Ctrl+Enter 保存 · Esc 放弃修改
       </small>
     </div>
