@@ -28,6 +28,10 @@ MEASURED_LETTERS = frozenset(string.ascii_letters)
 # fonts tried that say how far their letters reach, they lay within 0.015 of it; in the
 # paper's XCharter, a quarter apart.
 EVEN = 0.1
+# Letters of text stand on the baseline, and reach below it by no more than this part of
+# their size. A font that draws its codes for letters as other shapes reaches further, as a
+# mathematical font does whose large operators hang below the line, and is left as it is.
+DEEPEST_LETTER = -0.5
 # What a font says of its letters is in thousandths of its size.
 FIGURES_PER_SIZE = 1000
 # A font that a PDF embeds in part is named with a tag of six capitals and a plus sign before
@@ -61,6 +65,12 @@ def uneven(reaches: list[LetterReach]) -> bool:
     return max(tops) - min(tops) > EVEN or max(bottoms) - min(bottoms) > EVEN
 
 
+def text_letters(reaches: list[LetterReach]) -> bool:
+    # Whether a font's letters stand on the baseline as letters of text do.
+    bottom = min(reach.ink_bottom for reach in reaches)
+    return DEEPEST_LETTER <= bottom <= 0 < max(reach.ink_top for reach in reaches)
+
+
 def measured_metrics(reaches: list[LetterReach]) -> FontMetrics:
     # What a font is to say of its letters for them to stand in one box: from the top of the
     # highest of their ink to the bottom of the lowest.
@@ -88,13 +98,17 @@ def described_fonts(document: pikepdf.Pdf) -> Iterator[tuple[str, pikepdf.Dictio
 
 
 def measured_file(file: Path, copy: Path) -> Path:
-    # A file whose fonts each set their letters in boxes of one height: the file itself where
-    # they do, and otherwise a copy, written where it is asked for, in which each font that
-    # does not says how far its letters reach as they show it.
-    mended = {
-        unsubset(name): measured_metrics([*reaches.values()])
+    # A file whose fonts each set their letters of text in boxes of one height: the file
+    # itself where they do, and otherwise a copy, written where it is asked for, in which each
+    # font that does not says how far its letters reach as they show it.
+    measured = {
+        unsubset(name): [*reaches.values()]
         for name, reaches in letter_reaches(file, MEASURED_LETTERS).items()
-        if uneven([*reaches.values()])
+    }
+    mended = {
+        name: measured_metrics(reaches)
+        for name, reaches in measured.items()
+        if uneven(reaches) and text_letters(reaches)
     }
     if not mended:
         return file

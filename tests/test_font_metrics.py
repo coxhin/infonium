@@ -10,8 +10,15 @@ from hypothesis import strategies as st
 from pikepdf import Name
 
 from infonium import pdf
-from infonium.font_metrics import FIGURES_PER_SIZE, MEASURED_LETTERS, measured_file, unsubset
-from infonium.pdfium import letter_reaches, stored_file
+from infonium.font_metrics import (
+    DEEPEST_LETTER,
+    FIGURES_PER_SIZE,
+    MEASURED_LETTERS,
+    measured_file,
+    text_letters,
+    unsubset,
+)
+from infonium.pdfium import LetterReach, letter_reaches, stored_file
 from tests.pdf_engine_standin import PDF_DATA
 from tests.test_pdf import REFERENCE, SAMPLES, as_stored, differences
 
@@ -33,6 +40,12 @@ ONE_HEIGHT = 0.02
 BEYOND_SAID = 20
 COPY = "measured.pdf"
 MISSTATED = "misstated.pdf"
+# A page that a font of the PDF's own procedures writes on: each letter a filled box as high,
+# in thousandths of the font's size, as the letter it stands for, in a font that says its
+# letters reach a tenth of its size above the baseline and not below it.
+BOX_LETTERS = {"a": 500, "l": 750}
+BOX_WORD = "all"
+BOX_PAGE = f"BT /Boxes 24 Tf 72 700 Td ({BOX_WORD}) Tj ET"
 
 
 def sample_file(sample: str) -> Path:
@@ -57,6 +70,60 @@ def misstated(file: Path, ascent: int, descent: int, chosen: set[int], copy: Pat
                 descriptor[Name.Descent] = descent
         document.save(copy)
     return copy
+
+
+def boxes_file(path: Path) -> Path:
+    with pikepdf.new() as document:
+        procedures = {
+            f"/{letter}": pikepdf.Stream(
+                document, f"500 0 0 0 400 {top} d1 0 0 400 {top} re f".encode()
+            )
+            for letter, top in BOX_LETTERS.items()
+        }
+        codes = sorted(ord(letter) for letter in BOX_LETTERS)
+        font = pikepdf.Dictionary(
+            Type=Name.Font,
+            Subtype=Name.Type3,
+            BaseFont=Name("/Boxes"),
+            FontBBox=[0, 0, 500, max(BOX_LETTERS.values())],
+            FontMatrix=[0.001, 0, 0, 0.001, 0, 0],
+            CharProcs=pikepdf.Dictionary(procedures),
+            Encoding=pikepdf.Dictionary(
+                Type=Name.Encoding,
+                Differences=[
+                    code
+                    for letter in sorted(BOX_LETTERS)
+                    for code in (ord(letter), Name(f"/{letter}"))
+                ],
+            ),
+            FirstChar=codes[0],
+            LastChar=codes[-1],
+            Widths=[500] * (codes[-1] - codes[0] + 1),
+            FontDescriptor=document.make_indirect(
+                pikepdf.Dictionary(
+                    Type=Name.FontDescriptor,
+                    FontName=Name("/Boxes"),
+                    Flags=32,
+                    FontBBox=[0, 0, 500, max(BOX_LETTERS.values())],
+                    ItalicAngle=0,
+                    Ascent=100,
+                    Descent=0,
+                    CapHeight=max(BOX_LETTERS.values()),
+                    StemV=80,
+                )
+            ),
+        )
+        page = pikepdf.Dictionary(
+            Type=Name.Page,
+            MediaBox=[0, 0, 612, 792],
+            Resources=pikepdf.Dictionary(
+                Font=pikepdf.Dictionary(Boxes=document.make_indirect(font))
+            ),
+            Contents=pikepdf.Stream(document, BOX_PAGE.encode()),
+        )
+        document.pages.append(pikepdf.Page(page))
+        document.save(path)
+    return path
 
 
 def figures_of(file: Path) -> dict[str, tuple[float, float]]:
@@ -162,4 +229,36 @@ def test_a_pdf_whose_fonts_say_their_letters_reach_less_far_reads_as_the_referen
     assert read == expected, (
         f"{sample}, with fonts that say their letters reach as XCharter says, is read otherwise "
         f"than {REFERENCE} read it: {differences(expected, read)}"
+    )
+
+
+def test_a_pdf_whose_letters_a_font_of_its_own_procedures_draws_is_handed_as_it_is(
+    tmp_path: Path,
+) -> None:
+    file = boxes_file(tmp_path / "boxes.pdf")
+    assert BOX_WORD in stored_file(file).pages[0].text, "the page made for the test shows no word"
+    measured = letter_reaches(file, MEASURED_LETTERS)
+    assert not measured, f"letters of a font the PDF draws itself were measured: {measured}"
+    assert measured_file(file, tmp_path / COPY) == file, (
+        "a PDF whose only font is drawn by its own procedures was handed as a copy"
+    )
+
+
+reach_parts = st.floats(-1.5, 1.5, allow_nan=False)
+
+
+@given(reaches=st.lists(st.tuples(reach_parts, reach_parts), min_size=1, max_size=8))
+def test_letters_of_text_stand_on_the_baseline_and_hang_no_further_below_than_half_their_size(
+    reaches: list[tuple[float, float]],
+) -> None:
+    letters = [
+        LetterReach(ink_top=top, ink_bottom=bottom, box_top=top, box_bottom=bottom)
+        for top, bottom in reaches
+    ]
+    lowest = min(bottom for _, bottom in reaches)
+    highest = max(top for top, _ in reaches)
+    stand = DEEPEST_LETTER <= lowest <= 0 < highest
+    assert text_letters(letters) == stand, (
+        f"letters reaching {highest} above the baseline and {lowest} below it were "
+        f"{'not ' if stand else ''}taken for letters of text"
     )

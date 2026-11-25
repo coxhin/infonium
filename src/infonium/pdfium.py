@@ -170,20 +170,30 @@ def stored_file(file: Path) -> StoredFile:
         )
 
 
-def font_name(layer: PdfTextPage, index: int) -> str:
-    # The name a file gives the font that a character of a page is drawn in.
-    font = raw.FPDFTextObj_GetFont(raw.FPDFText_GetTextObject(layer, index))
+def font_name(font: object) -> str:
+    # The name a file gives a font that PDFium holds.
     length = raw.FPDFFont_GetBaseFontName(font, None, 0)
     name = ctypes.create_string_buffer(length)
     raw.FPDFFont_GetBaseFontName(font, name, length)
     return name.value.decode(FONT_NAME_ENCODING, "replace")
 
 
+def draws_by_program(font: object) -> bool:
+    # Whether a font draws its letters by a program, as every font does but one that the PDF
+    # draws by procedures of its own, for which PDFium holds none. A font that the file names
+    # without holding it is drawn by the program PDFium puts in its place.
+    size = ctypes.c_size_t()
+    raw.FPDFFont_GetFontData(font, None, 0, size)
+    return size.value > 0
+
+
 def letter_reaches(file: Path, letters: frozenset[str]) -> dict[str, dict[str, LetterReach]]:
     # For each font that a file draws any of these letters in, by the name the file gives it,
     # how far each of those letters reaches as the file most often draws it. A letter is
     # measured where it stands at exactly no angle, as only there is it placed by its box when
-    # the text layer is read, and where it is drawn at some size.
+    # the text layer is read, and where it is drawn at some size. A font that the file draws
+    # by procedures of its own (Type 3) is not measured: it is not told how far its letters
+    # reach in thousandths of its size, and a font of another kind may go by its name.
     seen: dict[str, dict[str, Counter[LetterReach]]] = {}
     ink_left, ink_right, ink_bottom, ink_top, x, y = (ctypes.c_double() for _ in range(6))
     box = raw.FS_RECTF()
@@ -194,6 +204,9 @@ def letter_reaches(file: Path, letters: frozenset[str]) -> dict[str, dict[str, L
             for index in range(layer.count_chars()):
                 letter = chr(raw.FPDFText_GetUnicode(layer, index))
                 if letter not in letters or raw.FPDFText_GetCharAngle(layer, index) != 0:
+                    continue
+                font = raw.FPDFTextObj_GetFont(raw.FPDFText_GetTextObject(layer, index))
+                if not draws_by_program(font):
                     continue
                 # The size of the font as the page shows it: the page may draw the text
                 # scaled, as a figure placed smaller than it was made.
@@ -210,7 +223,7 @@ def letter_reaches(file: Path, letters: frozenset[str]) -> dict[str, dict[str, L
                     box_top=round((box.top - y.value) / size, REACH_DIGITS),
                     box_bottom=round((box.bottom - y.value) / size, REACH_DIGITS),
                 )
-                by_letter = seen.setdefault(font_name(layer, index), {})
+                by_letter = seen.setdefault(font_name(font), {})
                 by_letter.setdefault(letter, Counter())[reach] += 1
     return {
         name: {letter: counted.most_common(1)[0][0] for letter, counted in by_letter.items()}
