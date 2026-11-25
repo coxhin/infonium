@@ -11,7 +11,7 @@ infonium digests what you read, watch and listen to into a summary and takeaways
 | Video or podcast page, such as YouTube, Bilibili, TED, Apple Podcasts and SoundCloud | pasting its address | the page's own captions, or speech recognition when it has none |
 | Audio or video file | uploading the file or pasting its address | speech recognition |
 
-A PDF opens as its pages, with the text read from them one tab away. A web article opens as its text, with the page it was read from one tab away. A recording opens as a player above its transcript.
+A PDF opens as its pages, with the text read from them one tab away. A web article opens as its text, with the page it was read from one tab away. A recording opens as a player above its transcript. A PDF read for the first time shows its pages as soon as the file has arrived, while its text is still being read; the text, highlights, translation and questions come when the reading ends, and the pages then open where the reader stood.
 
 ## What it does with a source
 
@@ -118,7 +118,7 @@ The model reads the numbered blocks and must back every statement with a quote f
 
 The reader resolves an anchor to that range and highlights it. In a PDF it also outlines the places of the range on the page. In a recording it plays from the place where the range is spoken.
 
-infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF file, or the sound of a recording. The reader shows the snapshot, so a citation still leads to its passage after the source has changed or gone.
+infonium keeps a snapshot of every source it reads: the HTML of a page, the PDF file, or the sound of a recording. The reader shows the snapshot, so a citation still leads to its passage after the source has changed or gone. A PDF's snapshot is kept as soon as the file arrives, for its first reading to show; a reading that fails removes it, unless a document read from the same bytes keeps it.
 
 Highlights and notes are kept in the library's file. Each holds passages, and a passage is an anchor for each block it runs through, all in one document. A highlight is one passage with a comment of up to 10,000 characters; marking the same passage again gives the same highlight. A note is a title of up to 200 characters and up to 500,000 characters of Markdown. A link in the Markdown whose address is `passage:` and an id names one of the passages kept beside the note, each with the source it lies in. A note belongs to the library, not to one source, and its links may lead into any source. A highlight put into a note leaves its comment there as a copy in the note's Markdown: changing the comment afterwards leaves the note as it is, and editing the note leaves the comment.
 

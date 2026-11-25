@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { layoutOf, placedOf, type AreaText } from "./areas";
+import { useArrivalPosition } from "./arrival";
 import { sourceLink, type PagePlace, type TranslatedBlock } from "./client";
 import { NO_MARKING } from "./marking";
 import { PageViewer, type PageMarks } from "./pages";
@@ -18,7 +19,7 @@ const placedKept = new WeakMap<TranslatedBlock, AreaText[]>();
 // it stands for, and in 对照 the source stands beside each page, or under each area where
 // there is no room for two. The reader's highlights are drawn on the lines they cover, and the
 // reader selects by dragging over the lines. The boxes of a passage pointed at are outlined
-// above it all.
+// above it all. The pages open where the reader stood in the file as it arrived, if they did.
 export function PagesView({
   entry,
   itemDocument,
@@ -86,6 +87,7 @@ export function PagesView({
     return onPages;
   }, [shown, translation.blocks, itemDocument, layout]);
   const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
+  const opening = useArrivalPosition(entry.id);
   return (
     <>
       {shown && hasTables && (
@@ -99,6 +101,8 @@ export function PagesView({
         overlays={overlays}
         pairing={setting === "both"}
         marks={marks}
+        opening={opening}
+        onTurned={undefined}
       />
     </>
   );

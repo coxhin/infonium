@@ -410,6 +410,38 @@
         "title": "Figure",
         "type": "object"
       },
+      "FirstUnderway": {
+        "properties": {
+          "arrival": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeptSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "underway",
+            "default": "underway",
+            "title": "Kind",
+            "type": "string"
+          },
+          "starts": {
+            "minimum": 0.0,
+            "title": "Starts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "starts",
+          "arrival"
+        ],
+        "title": "FirstUnderway",
+        "type": "object"
+      },
       "FormulaMark": {
         "properties": {
           "end": {
@@ -727,6 +759,25 @@
           "revisions"
         ],
         "title": "ItemRevisions",
+        "type": "object"
+      },
+      "KeptSource": {
+        "properties": {
+          "media_type": {
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "snapshot": {
+            "title": "Snapshot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot",
+          "media_type"
+        ],
+        "title": "KeptSource",
         "type": "object"
       },
       "Link": {
@@ -2057,13 +2108,13 @@
             "discriminator": {
               "mapping": {
                 "failed": "#/components/schemas/Failed",
-                "underway": "#/components/schemas/Underway"
+                "underway": "#/components/schemas/FirstUnderway"
               },
               "propertyName": "kind"
             },
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Underway"
+                "$ref": "#/components/schemas/FirstUnderway"
               },
               {
                 "$ref": "#/components/schemas/Failed"
