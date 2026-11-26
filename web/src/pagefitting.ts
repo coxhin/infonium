@@ -14,8 +14,9 @@ import { stretches } from "./justification";
 const SETTING = "data-setting";
 const MEASURING_LINES = "data-measuring-lines";
 // A page whose width keeps changing, as while the reader zooms, keeps its setting, which scales
-// with it, and is set again once its width has stood still this long, in milliseconds.
-const WIDTH_SETTLES = 300;
+// with it, and is set again once its width has stood still this long, in milliseconds. A page
+// made wider is drawn again sharper then too.
+export const WIDTH_SETTLES = 300;
 
 function areasIn(flow: HTMLElement): NodeListOf<HTMLElement> {
   return flow.querySelectorAll<HTMLElement>(":scope > .area");

@@ -39,6 +39,7 @@ import {
 } from "./pagelinks";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import type { Drawn } from "./pagedrawing";
+import { WIDTH_SETTLES } from "./pagefitting";
 import { NO_PAGE_TEXTS, type PageTexts } from "./pagetexts";
 import { PageTranslation } from "./pagetranslation";
 import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
@@ -61,10 +62,9 @@ const MOST_FLOOR_PIXELS = 4_000_000;
 // The most pixels a page is drawn at however large it is shown, as pdf.js's own viewer bounds
 // it: a page zoomed further is drawn this large and stretched.
 const MOST_PIXELS = 2 ** 25;
-// A page shown this much wider than it was drawn for is drawn again, once its width has stood
-// still this many milliseconds, as through a zoom.
+// A page shown this much wider than it was drawn for, as through a zoom, is drawn again once
+// its width has settled.
 const BLURRED_WIDTH = 1.1;
-const SETTLED_WIDTH = 300;
 const BOX_CLASS = "page-box";
 const UNDER_CLASS = "under";
 // The longest a page's lines wait to be read off its drawing for the browser to be idle, in
@@ -190,7 +190,7 @@ function useSharpening(
     if (!near || drawnWidth.current === 0 || width <= drawnWidth.current * BLURRED_WIDTH) {
       return;
     }
-    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), SETTLED_WIDTH);
+    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), WIDTH_SETTLES);
     return () => window.clearTimeout(waiting);
   }, [near, width]);
   return { sharpened, drawnWidth };
@@ -609,7 +609,7 @@ function Pages({
 // Shows a PDF page by page, turns to the boxes that were pointed at and makes the passage glow
 // there, draws the reader's highlights, lets the reader select by dragging over the lines, and
 // sets a translation over the pages where one is given, by page; with the source beside each
-// page, or under each area, where pairing is asked for. A link of a page leads where it leads,
+// page, or under each flow, where pairing is asked for. A link of a page leads where it leads,
 // with a way back from a place of the document. It opens at the position given, if one is,
 // and tells where the reader stands as they scroll, if asked to; it tells the links of each
 // page as they are read, if asked to. The reader is drawn again whenever a view hands a

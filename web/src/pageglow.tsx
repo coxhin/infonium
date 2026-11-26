@@ -49,7 +49,7 @@ export function glowsOn(glow: Glow | undefined, text: PageText, page: number): b
 }
 
 // The passage's words on one page's lines, glowing for a moment: over the source, and under
-// a translation set over the page, where only lines no area covers show it. Drawn again when
+// a translation set over the page, where only lines no flow covers show it. Drawn again when
 // the page's lines are cut anew, without starting the glow again.
 export const PageGlow = memo(function PageGlow({
   glow,

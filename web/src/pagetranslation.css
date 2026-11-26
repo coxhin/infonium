@@ -99,9 +99,12 @@
 }
 
 /* Pressed or focused, a cut flow is shown whole: it grows below its room, over the page, at a
-   size that can be read. */
-.page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible),
-.page-translation.revealing .flow[data-cut]:focus-visible:not([data-open]) {
+   size that can be read. A link it holds that takes the keyboard's focus shows it whole too, so
+   that the link is seen where the flow's foot would cut it off. */
+.page-translation:not(.revealing)
+  .flow[data-cut]:is([data-open], :focus-visible, :has(:focus-visible)),
+.page-translation.revealing
+  .flow[data-cut]:is(:focus-visible, :has(:focus-visible)):not([data-open]) {
   z-index: 2;
   height: auto !important;
   overflow: visible;
@@ -110,15 +113,15 @@
 }
 
 .page-translation:not(.revealing, [data-setting])
-  .flow[data-cut]:is([data-open], :focus-visible)
+  .flow[data-cut]:is([data-open], :focus-visible, :has(:focus-visible))
   .area,
 .page-translation.revealing:not([data-setting])
-  .flow[data-cut]:focus-visible:not([data-open])
+  .flow[data-cut]:is(:focus-visible, :has(:focus-visible)):not([data-open])
   .area {
   font-size: max(calc(var(--size) * var(--step)), 12px);
 }
 
-.page-translation .flow[data-cut]:is([data-open], :focus-visible)::after {
+.page-translation .flow[data-cut]:is([data-open], :focus-visible, :has(:focus-visible))::after {
   content: none;
 }
 
@@ -130,7 +133,9 @@
 }
 
 .page:has(> .page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible)),
-.page:has(> .page-translation.revealing .flow[data-cut]:focus-visible:not([data-open])) {
+.page:has(> .page-translation:not(.revealing) .flow[data-cut] :focus-visible),
+.page:has(> .page-translation.revealing .flow[data-cut]:focus-visible:not([data-open])),
+.page:has(> .page-translation.revealing .flow[data-cut]:not([data-open]) :focus-visible) {
   z-index: 1;
 }
 

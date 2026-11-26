@@ -33,7 +33,7 @@ Beside the switch, 翻译模型 chooses the model a translation is made with: th
 
 ### Zoom
 
-Beside the views, − 100% + makes what the reader shows smaller or larger, apart from the rest of the window: a PDF's pages by their width, and the text as a whole. The two keep a zoom each, from one source to the next; pressing the percentage returns to 100%. Pinching on a touchpad over the pages or the text zooms them as far as the fingers go, and so does holding Ctrl while turning the wheel, a notch by about a fifth; the pages zoom around the place under the pointer. Pages zoomed wider than the column scroll sideways inside it, and are drawn again at their new size once the zoom stands still, so that their print stays sharp.
+Beside the views, − 100% + makes what the reader shows smaller or larger, apart from the rest of the window: a PDF's pages by their width, and the text as a whole. The two keep a zoom each, from one source to the next; pressing the percentage returns to 100%. Pinching on a touchpad over the pages or the text zooms them as far as the fingers go, and so does holding Ctrl while turning the wheel, a notch by about a fifth; the pages zoom around the place under the pointer. Pages zoomed wider than the column scroll sideways inside it, and are drawn again at their new size once the zoom stands still, so that their print stays sharp; a translation over them is then set again for their new width, as on a page made narrower or wider.
 
 ### Links in a PDF
 

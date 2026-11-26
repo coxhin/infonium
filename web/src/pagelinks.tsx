@@ -209,7 +209,7 @@ export function followedPlace(pressed: EventTarget | null): Place | undefined {
 }
 
 // The links of one page, over the page and the reader's marks: on a page that shows the
-// translation they lie under it, and only those no area covers can be pressed.
+// translation they lie under it, and only those no flow covers can be pressed.
 export function LinksLayer({
   links,
   under,
@@ -266,7 +266,7 @@ const TRANSLATED_LINK = ".page-translation a[href]";
 // Presses on the links of the pages: a press on a link follows it alone, so no selection
 // begins there and no highlight under it opens; a link of a translation that names a place of
 // the document turns the pages there, and one to the web opens in a tab of its own without
-// turning the area it stands in, whether pressed or reached by the keyboard. A click that ends
+// turning the flow it stands in, whether pressed or reached by the keyboard. A click that ends
 // a drag follows nothing, and a place of the document opens in no other tab.
 export function useLinkPresses(
   viewer: RefObject<HTMLElement | null>,
@@ -298,7 +298,7 @@ export function useLinkPresses(
       }
     };
     // Enter on a link of a translation follows it by the click it fires; neither it nor a space
-    // reaches the area the link stands in, which they would open or close.
+    // reaches the flow the link stands in, which they would turn.
     const keyed = (event: KeyboardEvent) => {
       if ((event.key === "Enter" || event.key === " ") && within(event, TRANSLATED_LINK)) {
         event.stopPropagation();
