@@ -33,8 +33,8 @@ const STYLE_KEY = "infonium.digestStyle";
 const INSTRUCTIONS_KEY = "infonium.customInstructions";
 
 // How a style's digest stands in the panel beyond what is kept: being written, or not written
-// the last time it was asked for, and why.
-type Writing = { state: "writing" } | { state: "failed"; reason: string };
+// the last time it was asked for, and why, with what was asked.
+type Writing = { state: "writing" } | { state: "failed"; reason: string; asked: ChosenStyle };
 
 // The service offers the same styles until it starts again, so they are asked for once; a
 // failure is asked again the next time.
@@ -187,12 +187,15 @@ function InstructionsBox({
 }
 
 // What the custom digest on show was written by, and the way to change it and write it again.
+// After a writing that failed, the box opens with the instructions it sent.
 function KeptInstructions({
   instructions,
+  failedInstructions,
   disabled,
   onWrite,
 }: {
   instructions: string;
+  failedInstructions: string | undefined;
   disabled: boolean;
   onWrite: (instructions: string) => void;
 }) {
@@ -200,7 +203,7 @@ function KeptInstructions({
   if (editing) {
     return (
       <InstructionsBox
-        prefilled={instructions}
+        prefilled={failedInstructions ?? instructions}
         disabled={disabled}
         onWrite={(changed) => {
           setEditing(false);
@@ -240,6 +243,10 @@ function StylePane({
 }) {
   const style = offer.id;
   const busy = writing?.state === "writing";
+  const failedInstructions =
+    writing?.state === "failed" && writing.asked.style === CUSTOM
+      ? writing.asked.instructions
+      : undefined;
   const writeCustom = (instructions: string) => {
     localStorage.setItem(INSTRUCTIONS_KEY, instructions);
     onWrite({ style: CUSTOM, instructions });
@@ -263,7 +270,7 @@ function StylePane({
           <p className="description">{offer.description}</p>
           {style === CUSTOM ? (
             <InstructionsBox
-              prefilled={localStorage.getItem(INSTRUCTIONS_KEY) ?? ""}
+              prefilled={failedInstructions ?? localStorage.getItem(INSTRUCTIONS_KEY) ?? ""}
               disabled={busy}
               onWrite={writeCustom}
               onCancel={undefined}
@@ -279,6 +286,7 @@ function StylePane({
           {digest.instructions !== null && (
             <KeptInstructions
               instructions={digest.instructions}
+              failedInstructions={failedInstructions}
               disabled={busy}
               onWrite={writeCustom}
             />
@@ -334,7 +342,11 @@ function Digests({
       },
       (error: unknown) =>
         setWritings((before) =>
-          new Map(before).set(style, { state: "failed", reason: reasonOf(error) }),
+          new Map(before).set(style, {
+            state: "failed",
+            reason: reasonOf(error),
+            asked: writing.asked,
+          }),
         ),
     );
   }
