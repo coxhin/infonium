@@ -1,6 +1,6 @@
 # infonium
 
-infonium digests what you read, watch and listen to into a summary and takeaways in your language. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links. You mark passages and write notes that link back to them, and both outlive a second reading of their source.
+infonium digests what you read, watch and listen to in your language, in the style you choose: a summary with takeaways, a guide, a brief, a paper's reading, an outline, questions and answers, or a digest you describe yourself. Every statement links back to the passage of the source that supports it. One click takes you to the sentence in the article, the lines on the PDF page, or the moment in the recording. It also translates a source into your language in the source's own form, and answers questions about one source or about everything you have read, with the same links. You mark passages and write notes that link back to them, and both outlive a second reading of their source.
 
 ## What it reads
 
@@ -16,6 +16,34 @@ A PDF opens as its pages, with the text read from them one tab away. A web artic
 ## What it does with a source
 
 A column beside the reader holds three tabs: the digest (摘要), a chat (对话), and a notebook (笔记). The citations of a digest are numbered from 1 through the whole digest, and those of an answer through the answer, in the order their passages are first cited; a passage cited again keeps its number. Under its tabs, 摘要和对话的模型 chooses the model that writes a digest, answers a question and translates one block again (↻), among the same models as 翻译模型 below. A digest that is kept stays when another model is chosen, until it is written again (重新生成).
+
+### Digests
+
+Nothing is written about a source until you ask for it. Under 摘要 you choose a style, and the model chosen under 摘要和对话的模型 writes the source's digest in it. With no digest written, the tab lists the styles with what each holds, and pressing one writes it; 自定义 opens a box for your own description first. Once a digest is written, a row of every style stands above the one on show, and a dot marks each style written. A style written already is shown again without asking the model; one not written yet shows what it holds and 生成. A source keeps one digest of each style, and writing a style again (重新生成) replaces only that style's digest. The tab opens on the style you chose last, where the source has it, and otherwise on the one written last; the browser remembers the style chosen last and the custom description written last, as it remembers the models chosen.
+
+| Style | What its digest holds | Drawn from |
+| --- | --- | --- |
+| 概述与要点 | A summary of three to five sentences, then five to ten takeaways: the key claims, findings, numbers, definitions, recommendations and caveats. | infonium's first digest. Every digest kept before there were styles is one of these. |
+| 导读 | One paragraph on what the source is, who wrote or speaks in it, its main argument or findings and where it ends up; then three to six key topics in the order the source takes them up, each opening with the topic's name in bold. | The source guide of Gemini Notebook (NotebookLM until 2026-07-16), which holds a summary and key topics. |
+| 简报 | The bottom line in one sentence a reader could stop after, why it matters, three to six key facts, and, where the source gives them, its caveats (yes, but) and what comes next. | Axios's Smart Brevity, whose items run "What's new", "Why it matters", "The big picture", "Yes, but" and "What's next", and BLUF, bottom line up front. |
+| 论文精读 | The work in one sentence, then its problem and motivation, its method, its results with the numbers, datasets, baselines and measures it reports, and the limitations it states itself. Of a source that is no paper, the parts that apply. | S. Keshav's "How to Read a Paper", whose first pass answers five Cs, and Fabric's `summarize_paper` pattern ([github.com/danielmiessler/fabric](https://github.com/danielmiessler/fabric)). |
+| 章节速览 | Three to ten sections that follow the source's own order, each titled by its heading, or, in a recording or a text without headings, by its topic, with one to four points each. A citation opens the passage, and in a recording the moment it is said. | The 章节速览 of 通义听悟 (Alibaba Tingwu), whose summaries of a recording are 全文摘要, 章节速览, 发言总结 and 问答回顾. |
+| 问答 | Four to eight questions a reader of the source would ask, from the broadest to the most specific, each answered from the source in a short paragraph. Only questions the source answers are asked. | The FAQ among Gemini Notebook's reports (briefing doc, study guide, FAQ, timeline and "create your own"), and Tingwu's 问答回顾. |
+| 自定义 | The digest you describe, in up to 2,000 characters: its structure, its length, its tone and what it dwells on. | Gemini Notebook's "create your own" report. |
+
+Every style keeps the same rules:
+
+- Each statement rests on one to three quotes of the source, and states only what the source says, with no outside knowledge and no opinion of the model's.
+- Each statement says one thing, and no two statements of a digest say the same thing.
+- A statement says directly what the source says, not "the article says"; it names who holds a view, the author, a speaker or a party, only where that matters: for an opinion, a disputed claim, or one of several voices.
+- The names, numbers, dates and units of the source are kept, and the one or two words a reader skimming the digest most needs, a key term, a name or a number, are set in bold.
+- A section is a list, its statements one under another, or a paragraph, its statements run on; each statement is followed by its citations, and its ✎ puts it into a note.
+- Within a style's ranges a source gets as many statements as its length and substance carry, and a section that the source gives nothing for is left out.
+- The digest is written in the language of digests, `INFONIUM_LANGUAGE`, and punctuated as that language is written.
+
+The rules against repetition come from Fabric's `summarize` and `extract_wisdom` patterns. Those on names and numbers come from Adams et al. 2023, "From Sparse to Dense: GPT-4 Summarization with Chain of Density Prompting": its readers preferred summaries about as dense in names and numbers as those people write.
+
+A custom digest follows your description in its structure, length, tone and focus, and holds to the rules above whatever the description says: its statements still cite the source and say only what it says, in the language of digests and its punctuation. The description is shown above the digest, with 修改要求 to change it and write the digest again. The box is filled with the description of the source's custom digest, or else with the one you wrote last in this browser, and counts its characters against the limit.
 
 ### Translation
 
@@ -65,6 +93,8 @@ The reader's head offers to read a source again (重新读取): a link is fetche
 
 Your highlights, the passages your notes link to and the citations of earlier answers are looked for in the new reading. A passage that is found is shown where it stands now; where its words differ a little, the notebook says so. A passage the new reading no longer holds is said to be lost, with the revision it was marked in, and opens in that revision.
 
+A digest belongs to the reading it was written from. A source read again into other text has no digest until you choose a style for it again; one read again into the text it held before has the digests of that text.
+
 ## Run it
 
 You need [uv](https://docs.astral.sh/uv/), Node.js 22 or later, [pnpm](https://pnpm.io/), and an API key for an OpenAI-compatible model.
@@ -75,7 +105,7 @@ make install
 make dev
 ```
 
-Open <http://localhost:5173>. Paste an address or upload a file. The source opens in the reader and its digest appears beside it. Click a numbered citation to jump to the quoted passage. Switch to 译文 to read the source in your language, and ask about it under 对话.
+Open <http://localhost:5173>. Paste an address or upload a file. The source opens in the reader; under 摘要 beside it, choose a style, and its digest is written there. Click a numbered citation to jump to the quoted passage. Switch to 译文 to read the source in your language, and ask about it under 对话.
 
 The API listens on port 8710 and the UI on 5173. When one is taken, pass another: `make dev API_PORT=8720 UI_PORT=5180`.
 
@@ -123,6 +153,8 @@ Settings are environment variables, read from `.env` by `make dev`.
 A source is read into a document: an ordered list of blocks such as headings, paragraphs and tables. Every block of a recording, and every block of a PDF but a figure, also knows its places in the source. In a PDF, a place is a box on a page that holds part of the block, usually one line. In a recording, a place is the stretch of time in which part of the block is spoken.
 
 The model reads the numbered blocks and must back every statement with a quote from one of them. infonium then looks each quote up in the document and keeps only the citations it finds there, as anchors: a block plus a character range.
+
+A digest's instructions are the same for every style but for one part. They explain the blocks, the language and its punctuation, the citing and the writing rules of [Digests](#digests), and then give the style's recipe: which sections to write, in which form, with how many statements and what each holds. A custom digest has the reader's description in place of a recipe, given as it was written, under the rules. The recipes are data, kept in `src/infonium/recipe.py`, each with its name and the description a reader is offered. The model's draft gives each section its title, its form and its statements. A document's digests are kept in the library's file, one of each style, with the custom description of a custom one. A library kept before there were styles opens with each of its digests as a 概述与要点, every section a list.
 
 The reader resolves an anchor to that range, brings it into view and makes it glow for 1.4 seconds, fading over half a second more. In a PDF's pages the glow lies on the words of the range, cut out of the lines that hold them. Where only a block's translation is on show, in the text or set over a page, the glow lies on the sentences of the translation that stand for the sentences the range runs through: a block's translation is given whole, so the sentences of the block and of its translation are paired in their order, one for one where the two have as many and by their lengths where they do not. In a recording it plays from the place where the range is spoken.
 
@@ -228,6 +260,19 @@ The blocks of every document the library holds are indexed in the library's file
 - A WAV file of Vorbis sound, or of AAC sound without ADTS frame headers, is refused, since FFmpeg reads only part of such sound. FFmpeg writes both kinds when told to keep the sound of an Ogg or M4A file in a WAV. An M4A, an Ogg or an uncompressed WAV of the same recording is read.
 - Speech is recognised in pieces of up to 16 seconds. A citation in a recognised recording plays from the start of the piece that holds the quote. A word at the edge of a piece is lost now and then, and each piece is punctuated by itself.
 - The default speech model is less accurate in Chinese than in English.
+
+### Digests
+
+- A digest of gpt-6.1-terra took 41 to 116 seconds, 77 at the median, over 64 digests written through the relay infonium was tried with, which took 20 seconds to begin each answer. One of glm-5.3-flash took 12 to 43 seconds.
+- Every style sends the whole document with nearly the same instructions, so a digest's input depends on the source rather than the style: about 2,400 tokens for a news article of 33 blocks, 8,300 for a paper of 114 blocks, 11,300 for a Wikipedia article of 199 blocks and 13,500 for a radio transcript of 211 blocks. Its output was 1,000 to 3,600 tokens, the most for 章节速览.
+- The model does not set a word in bold in every statement: with the rules as they stand, 11% of the statements of 12 digests of gpt-6.1-terra had none, and 13% of those of 6 digests of glm-5.3-flash. 导读 says in its first sentence what kind of source it is, and may set that word in bold.
+- A section now and then holds one statement more than its style allows: four caveats in two of the eight briefs of gpt-6.1-terra, and an answer of four statements in a 问答 of glm-5.3-flash.
+- A section's title is the model's words for it in the language of digests, so titles vary from one digest to the next: 核心结论 or 底线 for the bottom line of a 简报, and 但是, 不过 or 需要注意 for its caveats.
+- A citation is lost now and then, as in the chat: 8 beside 523 found in the 24 digests of one round.
+- 论文精读 of a source that is no paper fills its method and results with what comes nearest: the plans of a news story became its method.
+- A word in bold that begins or ends with a mark or a symbol, such as 42% or a term in quotation marks, goes into a note as plain words, since Markdown would not hold it bold wherever it stands.
+- Two pages that write the same style of one source at once ask the model twice, and the digest written last is kept; the views of one page share one writing.
+- The style chosen last and the custom description written last are remembered by the browser they were chosen in: another browser starts without them.
 
 ### Translation
 
