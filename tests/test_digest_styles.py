@@ -567,6 +567,31 @@ def test_custom_instructions_of_two_thousand_characters_are_accepted(
     )
 
 
+@pytest.mark.parametrize("style", BUILT_IN)
+def test_instructions_given_as_null_with_a_built_in_style_are_taken_as_none(
+    app: App, style: Style
+) -> None:
+    # A digest of a built-in style is answered with instructions null, so a body that gives
+    # them back as null asks for the style as a body without them does: the lead's ruling on
+    # R7, written by the lead.
+    app.model.reset(drafting(ledger_draft("回传")))
+    source = kept_ledger(app)
+    written_digest(app, source.item, {"style": style})
+    told_without = instructions_of(last_asked(app, f"a write of {style}"))
+    digest = written_digest(app, source.item, {"style": style, "instructions": None})
+    assert len(app.model.asked()) == 2, f"a write of {style} with instructions null asked no model"
+    assert instructions_of(last_asked(app, f"a write of {style}")) == told_without, (
+        f"a write of {style} with instructions null tells the model otherwise than one without"
+    )
+    assert (digest["style"], digest["instructions"]) == (style, None), (
+        f"a write of {style} with instructions null is answered as of style {digest['style']}, "
+        f"with instructions {digest['instructions']!r}"
+    )
+    assert kept_digests(app, source.item) == [digest], (
+        f"the {style} digest written with instructions null is not the one kept of its item"
+    )
+
+
 # R8: every section carries the form drafted.
 
 
