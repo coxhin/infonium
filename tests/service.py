@@ -98,6 +98,10 @@ class Site:
         # Pages whose first fetch is held until the test lets it go, so that a reading stays
         # under way as long as a test needs; later fetches are answered at once.
         self.held: dict[str, Event] = {}
+        # Pictures a test makes up, served under /picture/ by their names, each as the kind
+        # given; and the last request heard for each path.
+        self.pictures: dict[str, tuple[bytes, str]] = {}
+        self.requests: dict[str, httpx.Request] = {}
 
     def let_go(self) -> None:
         for held in self.held.values():
@@ -106,6 +110,7 @@ class Site:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.hits[path] += 1
+        self.requests[path] = request
         match path.split("/")[1:]:
             case ["reader"]:
                 return httpx.Response(200, headers={"content-type": "text/html"}, content=READER)
@@ -121,6 +126,9 @@ class Site:
                 return httpx.Response(
                     200, headers={"content-type": "text/html"}, content=self.pages[name]
                 )
+            case ["picture", name] if name in self.pictures:
+                content, kind = self.pictures[name]
+                return httpx.Response(200, headers={"content-type": kind}, content=content)
             case ["counted", name]:
                 time.sleep(0.3)
                 return httpx.Response(200, html=article(f"Counted {name}").decode())

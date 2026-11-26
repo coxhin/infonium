@@ -16,7 +16,7 @@ import filetype
 import httpx
 from pydantic import BaseModel
 
-from infonium import browser, captions, guard, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, media, pdf, recording, speech, webpage, webpictures
 from infonium.document import (
     BROKEN_OFF_SOURCE,
     HTML_MEDIA_TYPE,
@@ -64,7 +64,8 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0 Safari/537.36 infonium/0.1"
 )
-# The longest silence a server is allowed while a source is fetched from it.
+# The longest silence a server is allowed while a source, or a picture of a page, is fetched
+# from it.
 FETCH_TIMEOUT_SECONDS = 20.0
 # The longest a fetch may take in all, and the most it may bring.
 FETCH_LIMIT_SECONDS = 600.0
@@ -234,10 +235,18 @@ def page_copy(asked: str, file: Path, served: str) -> PageCopy:
     return copy
 
 
-def copy_readout(copy: PageCopy) -> Readout:
+def with_pictures(extracted: Extracted, page: str, directory: Path) -> Extracted:
+    # The pictures of a page's figures are asked for as the page was, by the same user agent
+    # and after as long a silence of their server.
+    return webpictures.with_pictures(extracted, page, directory, USER_AGENT, FETCH_TIMEOUT_SECONDS)
+
+
+def copy_readout(copy: PageCopy, directory: Path) -> Readout:
     return Readout(
         extractor=webpage.EXTRACTOR,
-        extracted=webpage.extracted_text(copy.text, copy.served),
+        extracted=with_pictures(
+            webpage.extracted_text(copy.text, copy.served), copy.served, directory
+        ),
         file=copy.file,
         media_type=HTML_MEDIA_TYPE,
     )
@@ -252,7 +261,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
     # changes are the reason.
     plain = page_copy(url, source.file, source.reference)
     if plain.words >= LITTLE_TEXT_WORDS:
-        return copy_readout(plain)
+        return copy_readout(plain, directory)
     try:
         rendered = browser.rendered_page(source.reference, directory, engines.browser)
         if len(rendered.broken_off) > 1:
@@ -270,7 +279,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
         logger.warning(
             "rendering %s failed: %s; its plain reading is kept", source.reference, failure
         )
-        return copy_readout(plain)
+        return copy_readout(plain, directory)
     kept = built if built.words > plain.words else plain
     if rendered.broken_off_by_network:
         if not kept.text.blocks:
@@ -280,7 +289,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
             "hold only part of the page",
             source.reference,
         )
-    return copy_readout(kept)
+    return copy_readout(kept, directory)
 
 
 def link_readout(
@@ -310,7 +319,11 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     if source.media_type == HTML_MEDIA_TYPE:
         return Readout(
             extractor=webpage.EXTRACTOR,
-            extracted=webpage.extract_page(source.file.read_bytes(), source.reference),
+            extracted=with_pictures(
+                webpage.extract_page(source.file.read_bytes(), source.reference),
+                source.reference,
+                directory,
+            ),
             file=source.file,
             media_type=source.media_type,
         )

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from hypothesis import settings
 from pydantic import SecretStr
 
-from infonium import api, embedding, intake, search, speech
+from infonium import api, embedding, intake, search, speech, webpictures
 from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
@@ -163,6 +163,8 @@ def start_app(
     # language given.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
+    # The pictures of a page are asked of the stand-in site too, whatever host they name.
+    monkeypatch.setattr(webpictures, "public_transport", lambda: httpx.MockTransport(site.answer))
     monkeypatch.setattr(intake, "FETCH_LIMIT_SECONDS", LOWERED_FETCH_SECONDS)
     monkeypatch.setattr(intake, "FETCH_LIMIT_BYTES", LOWERED_FETCH_BYTES)
     engines = intake.Engines(

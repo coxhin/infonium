@@ -3,12 +3,13 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from PIL import Image
 
-from infonium import pdf
+from infonium import pdf, webpictures
 from infonium.document import Block, Extracted, ExtractedPicture, Figure, Paragraph
-from tests.service import App, as_owner, new_owner, stand
+from tests.service import FILLER, SITE, App, as_owner, new_owner, stand
 
 # The pictures a reading keeps with its document, and how they are served: a stand-in for the
 # PDF extractor hands pictures over as MinerU's reading does, each the drawing of a region of
@@ -19,13 +20,17 @@ PDF_FILE = b"%PDF-1.7\n% a stand-in for a paper about a valley\n"
 WORDS = "Rainfall by month in the valley, as the station measured it."
 OTHER_WORDS = "Rainfall by month in the valley, as the station measured it again."
 WEBP = "image/webp"
+PNG = "image/png"
 PICTURE_PATH = "/api/documents/{document}/pictures/{name}"
 NO_PICTURE = "0" * 64
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400"/></svg>'
 
 
-def drawing(colour: tuple[int, int, int], width: int = 320, height: int = 200) -> bytes:
+def drawing(
+    colour: tuple[int, int, int], width: int = 320, height: int = 200, kind: str = "WEBP"
+) -> bytes:
     with BytesIO() as drawn:
-        Image.new("RGB", (width, height), colour).save(drawn, "WEBP")
+        Image.new("RGB", (width, height), colour).save(drawn, kind)
         return drawn.getvalue()
 
 
@@ -189,3 +194,69 @@ def test_a_reading_that_gives_a_document_kept_already_gives_only_its_figures_wit
         "a picture given to a document kept already was not served"
     )
     assert app.left_in(app.store.work) == [], "a reading left a picture in the work folder"
+
+
+def pictured_page(*sources: str) -> bytes:
+    figures = "".join(
+        f"<figure><img src='{source}' alt='Rainfall, picture {number}'></figure>"
+        for number, source in enumerate(sources)
+    )
+    return (
+        "<html><head><title>Valley rainfall</title></head><body><article>"
+        f"<h1>Valley rainfall</h1><p>{WORDS}</p>{figures}{FILLER}</article></body></html>"
+    ).encode()
+
+
+def test_a_page_read_from_its_address_keeps_the_pictures_of_its_figures_once_each(
+    app: App,
+) -> None:
+    rain = drawing((40, 90, 200), kind="PNG")
+    # A drawing in SVG under a name a picture of a kind kept would have, which its bytes belie.
+    app.site.pictures |= {"rain.png": (rain, PNG), "chart.png": (SVG, "image/svg+xml")}
+    sources = [f"{SITE}/picture/{name}" for name in ("rain.png", "chart.png", "gone.png")]
+    item = app.read_page("rainfall", pictured_page(*sources, sources[0]))
+    document = document_of(app, item)
+    assert pictures_of(document) == [name_of(rain), None, None, name_of(rain)], (
+        "the figures of a page do not carry the pictures downloaded for them"
+    )
+    assert app.site.hits["/picture/rain.png"] == 1, "a picture shown twice was fetched twice"
+    asked = app.site.requests["/picture/rain.png"]
+    assert asked.headers["referer"] == f"{SITE}/page/rainfall", (
+        "a picture of the page's own origin was not asked for with the page as its referrer"
+    )
+    served = picture_answer(app, document["id"], name_of(rain))
+    assert (served.content, served.headers["content-type"]) == (rain, PNG), (
+        "a page's picture was not served as it was downloaded"
+    )
+    assert app.left_in(app.store.work) == [], "a reading left a picture in the work folder"
+
+
+def test_an_uploaded_page_keeps_its_pictures_asked_for_without_a_referrer(app: App) -> None:
+    rain = drawing((40, 90, 200), kind="PNG")
+    app.site.pictures["rain.png"] = (rain, PNG)
+    entry = app.settled(
+        app.upload("rainfall.html", pictured_page(f"{SITE}/picture/rain.png")).json()["id"]
+    )
+    assert stand(entry) == "read/settled", f"the uploaded page was not read: {entry['reading']}"
+    assert pictures_of(document_of(app, entry["id"])) == [name_of(rain)], (
+        "the figure of an uploaded page does not carry its picture"
+    )
+    assert "referer" not in app.site.requests["/picture/rain.png"].headers, (
+        "a picture of an uploaded page was asked for with a referrer"
+    )
+
+
+def test_a_page_whose_pictures_all_fail_is_read_with_its_figures_at_their_sources(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(request: httpx.Request) -> httpx.Response:
+        raise RuntimeError(f"nothing answers {request.url}")
+
+    monkeypatch.setattr(webpictures, "public_transport", lambda: httpx.MockTransport(failing))
+    sources = [f"{SITE}/picture/{number}.png" for number in range(3)]
+    item = app.read_page("unpictured", pictured_page(*sources))
+    document = document_of(app, item)
+    assert pictures_of(document) == [None, None, None], "a figure was given a picture"
+    assert [block["source"] for block in document["blocks"] if block["kind"] == "figure"] == (
+        sources
+    ), "a figure whose picture failed lost its source"
