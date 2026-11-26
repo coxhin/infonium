@@ -50,7 +50,7 @@ export function PageTranslation({
   shape,
   drawn,
   revealing,
-  width,
+  settledWidth,
   pointed,
   onMarked,
   markedBlocks,
@@ -61,7 +61,8 @@ export function PageTranslation({
   shape: number;
   drawn: Drawn;
   revealing: boolean;
-  width: number;
+  // The page's width as it last settled: a change of it sets the page again.
+  settledWidth: number;
   // The lines of the page a passage pointed at runs through.
   pointed: PagePlace[];
   // Told of the area that holds the first line pointed at, each time it is set.
@@ -102,7 +103,7 @@ export function PageTranslation({
       : texts.areas.find((text) => text.area.lines.some((line) => overlap(line, first) > 0))?.key;
   }, [pointed, texts.areas]);
 
-  const fitting = usePageFitting(root, flows, leadings, shape, width);
+  const fitting = usePageFitting(root, flows, leadings, shape, settledWidth);
   const current = fitting?.flows === flows ? fitting : undefined;
   // What is open is kept by the areas, so that a flow stays open when a block arrives in it or
   // joins it to another: a flow is open while any of its areas is.

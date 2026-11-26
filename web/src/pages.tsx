@@ -61,11 +61,11 @@ const MOST_FLOOR_PIXELS = 4_000_000;
 // The most pixels a page is drawn at however large it is shown, as pdf.js's own viewer bounds
 // it: a page zoomed further is drawn this large and stretched.
 const MOST_PIXELS = 2 ** 25;
-// A page shown this much wider than it was drawn for, as through a zoom, is drawn again once
-// its width has settled.
-const BLURRED_WIDTH = 1.1;
-// A page's width settles once it has stood still this long, in milliseconds: then a page made
-// wider is drawn again sharper, and its translation set again.
+// A page whose settled width asks for a drawing this much sharper than the one it has, as
+// through a zoom, is drawn again.
+const BLURRED = 1.1;
+// A page's width settles once it has stood still this long, in milliseconds: then a page zoomed
+// in past the drawing it has is drawn again sharper, and its translation set again.
 const WIDTH_SETTLES = 300;
 const BOX_CLASS = "page-box";
 const UNDER_CLASS = "under";
@@ -178,33 +178,47 @@ function giveUp(drawnCanvas: HTMLCanvasElement | null | undefined): void {
   }
 }
 
-// The width a page last settled at, once it stood still for a moment; the first is taken at
-// once.
+// The width a page last settled at, once it stood still for a moment. The first width it is
+// given is taken at once; a page hidden, which is given none, keeps the width it last settled
+// at, so that a zoom begun as it shows again waits as any other.
 function useSettled(width: number): number {
   const [settled, setSettled] = useState(width);
   useEffect(() => {
+    if (width === 0) {
+      return;
+    }
+    setSettled((before) => (before === 0 ? width : before));
     const settling = window.setTimeout(() => setSettled(width), WIDTH_SETTLES);
     return () => window.clearTimeout(settling);
   }, [width]);
-  return settled === 0 ? width : settled;
+  return settled;
 }
 
+// The scale a page was last drawn at, and its printed size, which the drawing sets and a page
+// that has gone far forgets.
+type DrawnAt = { scale: number; width: number; height: number };
+
 // How many times a page was drawn again to be sharp at a width it was made wider to, as by a
-// zoom, and the width it was last drawn for, which the drawing sets and a page that has gone
-// far forgets. A page that settles more than a tenth wider than it was drawn for is drawn
-// again; a page made narrower keeps its sharper drawing.
+// zoom. A page whose settled width asks for a scale more than a tenth larger than it was drawn
+// at is drawn again; a page made narrower keeps its sharper drawing, and one still drawn at
+// the floor, as at a small zoom, is not drawn again at the same scale.
 function useSharpening(
   near: boolean,
   settledWidth: number,
-): { sharpened: number; drawnWidth: { current: number } } {
-  const drawnWidth = useRef(0);
+): { sharpened: number; drawnAt: { current: DrawnAt | undefined } } {
+  const drawnAt = useRef<DrawnAt>(undefined);
   const [sharpened, setSharpened] = useState(0);
   useEffect(() => {
-    if (near && drawnWidth.current > 0 && settledWidth > drawnWidth.current * BLURRED_WIDTH) {
+    const at = drawnAt.current;
+    if (
+      near &&
+      at !== undefined &&
+      sharpnessOf(settledWidth, at.width, at.height) > at.scale * BLURRED
+    ) {
       setSharpened((count) => count + 1);
     }
   }, [near, settledWidth]);
-  return { sharpened, drawnWidth };
+  return { sharpened, drawnAt };
 }
 
 function Page({
@@ -249,7 +263,7 @@ function Page({
   // Whether the page is near what is on show now, as the drawing's cleanup must know.
   const nearNow = useRef(false);
   const settledWidth = useSettled(width);
-  const { sharpened, drawnWidth } = useSharpening(near, settledWidth);
+  const { sharpened, drawnAt } = useSharpening(near, settledWidth);
   // The page's links are read once it comes near, and told to whoever sets a translation over
   // the pages, which carries those it can.
   const links = usePageLinks(file, number, near);
@@ -298,10 +312,9 @@ function Page({
       drawnPage = page;
       setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
-      drawnWidth.current = frame.current.clientWidth;
-      const viewport = page.getViewport({
-        scale: sharpnessOf(frame.current.clientWidth, natural.width, natural.height),
-      });
+      const scale = sharpnessOf(frame.current.clientWidth, natural.width, natural.height);
+      drawnAt.current = { scale, width: natural.width, height: natural.height };
+      const viewport = page.getViewport({ scale });
       // A page drawn again to be sharper is drawn aside, and shown once it is whole, so that it
       // never shows blank meanwhile.
       const into = target.width > 0 && sharpened > 0 ? document.createElement("canvas") : target;
@@ -342,7 +355,7 @@ function Page({
         setDrawn(undefined);
         giveUp(canvas.current);
         giveUp(copy.current);
-        drawnWidth.current = 0;
+        drawnAt.current = undefined;
       }
       const release = () => {
         void drawnPage?.cleanup();
@@ -437,7 +450,7 @@ function Page({
             shape={shape}
             drawn={drawn}
             revealing={overlay.revealing}
-            width={settledWidth}
+            settledWidth={settledWidth}
             pointed={boxes}
             onMarked={onMarked}
             markedBlocks={markedBlocks}
