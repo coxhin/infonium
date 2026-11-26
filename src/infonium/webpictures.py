@@ -39,8 +39,9 @@ PICTURE_LIMIT_BYTES = 25 * 1024**2
 PAGE_PICTURES_LIMIT_BYTES = 300 * 1024**2
 # The longest one picture may take, and all the pictures of one page together, each counted
 # from when it begins; a picture not done by then keeps its source. A silent server is given
-# up sooner, after the silence a page's fetch allows. Every wait on a connection ends by then,
-# but for the making of a connection, which egress gives 15 seconds at most.
+# up sooner, after the silence a page's fetch allows. Every wait on a connection ends by then
+# but two that egress makes before there is one: looking up its host's name, which takes as
+# long as this machine's resolver takes, and making it, which egress gives 15 seconds.
 PICTURE_LIMIT_SECONDS = 60.0
 PAGE_PICTURES_LIMIT_SECONDS = 120.0
 # How many pictures are downloaded at a time: as many connections as a browser opens to one

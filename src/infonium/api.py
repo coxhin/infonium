@@ -722,8 +722,8 @@ def item_source(item_id: str, owner: Owner) -> FileResponse:
 )
 def document_picture(document_id: str, name: str, owner: Owner) -> FileResponse:
     # A picture the library keeps of a figure of one of the owner's documents, any revision of
-    # an item, by the name the figure gives it. The library keeps one copy of a picture for
-    # every document that names it, and serves it only to one who holds such a document.
+    # an item, by the name the figure gives it. The library keeps one copy of a picture,
+    # however many documents name it, and serves it only to one who holds such a document.
     store = library_store()
     with store.library(owner) as library:
         picture = library.kept_picture(document_id, name)
