@@ -1,13 +1,16 @@
 import gzip
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
+import pikepdf
 import pypdfium2
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from pikepdf import Name
+from PIL import Image, ImageStat
 
 from infonium import pdf
 from infonium.document import (
@@ -15,17 +18,33 @@ from infonium.document import (
     Extracted,
     Figure,
     FormulaMark,
+    ListItem,
     PagePlace,
     Paragraph,
     Table,
     put_together,
 )
-from infonium.mineru import Line, ParsedPage, RegionType, SpanType, Text, TextSpan, UnparsedFile
-from tests.pdf_engine_standin import PDF_DATA
+from infonium.mineru import (
+    BACKEND_KEY,
+    READ_AS_PICTURES_KEY,
+    VERSION_KEY,
+    Box,
+    EngineVersion,
+    HybridBackend,
+    Line,
+    ParsedPage,
+    RegionType,
+    SpanType,
+    Text,
+    TextSpan,
+    UnparsedFile,
+)
+from tests.pdf_engine_standin import DRAWN, PDF_DATA
 
 # The samples were drawn for infonium; the reference is what commit 6facef0 read from them,
-# which a fresh run of the engine gave again on 2026-11-21. It is what was read then, not what
-# is right: in turned_digital a heading reads "accou nt", a known limit of turned pages.
+# which a fresh run of the engine gave again on 2026-11-21, with a figure where each picture
+# and chart stands, as infonium reads them since. It is what was read then, not what is right:
+# in turned_digital a heading reads "accou nt", a known limit of turned pages.
 SAMPLES = sorted(sample.stem for sample in (PDF_DATA / "samples").glob("*.pdf"))
 REFERENCE = json.loads((PDF_DATA / "handed.json").read_text("utf-8"))["made_by"]
 # The ligatures that begin with an f, by their letters, for the rules by which the reader puts
@@ -88,13 +107,22 @@ def test_a_pdf_reads_as_the_reference_from_the_engines_stored_results(
 ) -> None:
     extracted = reading_of(sample, standin_pdf_engine(sample), tmp_path)
     pages = page_count(sample)
-    unplaced = [number for number, block in enumerate(extracted.blocks) if not block.places]
+    figures = {number for number, block in enumerate(extracted.blocks) if isinstance(block, Figure)}
+    unplaced = [
+        number
+        for number, block in enumerate(extracted.blocks)
+        if not block.places and number not in figures
+    ]
     places = [place for block in extracted.blocks for place in block.places]
     on_pages = [place.page for place in places if isinstance(place, PagePlace)]
     off_pages = set(on_pages) - set(range(pages))
+    pictured = [picture.block for picture in extracted.pictures]
     assert not unplaced, f"blocks {unplaced} of {sample} were read without a place in the file"
     assert len(on_pages) == len(places), f"blocks of {sample} were placed elsewhere than on pages"
     assert not off_pages, f"{sample} has {pages} pages, and places were put on pages {off_pages}"
+    assert sorted(pictured) == sorted(figures), (
+        f"the figures {sorted(figures)} of {sample} have the pictures {pictured}, not one each"
+    )
     expected = json.loads((PDF_DATA / "readings" / f"{sample}.json").read_text("utf-8"))
     read = as_stored(extracted)
     assert read == expected, (
@@ -352,4 +380,308 @@ def test_a_display_formula_is_a_paragraph_one_formula_mark_covers_whole(
     ], f"a display formula is not a paragraph one formula mark covers whole: {block.marks}"
     assert unspaced(block.text) == unspaced(DISPLAY_FORMULA), (
         f"the display formula's paragraph holds more than its LaTeX: {block.text!r}"
+    )
+
+
+# The pages a test draws are US Letter, in points, and so is each page as the engine is given
+# it. The engine's boxes are measured from a page's top left corner, a PDF's from its bottom
+# left. A test draws in red and blue, and writes with Helvetica, which every PDF reader holds,
+# as the font F1.
+LETTER = (612.0, 792.0)
+RED = "1 0 0 rg"
+BLUE = "0 0 1 rg"
+FONT = "F1"
+# What draws a page as it is shown onto the page stored on its side, a quarter turn
+# anticlockwise, for the file to show it turned back a quarter clockwise.
+STORED_TURNED = f"0 1 -1 0 {LETTER[1]:g} 0 cm"
+# The engine and its version, as its results name them.
+[HYBRID] = get_args(HybridBackend)
+[ENGINE_VERSION] = get_args(EngineVersion)
+# The colours of those fills as a picture holds them. A colour of a picture is a fill's where
+# each of its channels stands this near the fill's, as WebP keeps a colour only nearly.
+FILL_COLOURS = {"red": (255, 0, 0), "blue": (0, 0, 255)}
+NEAR = 60
+# The sides of a picture, each a quarter of it deep, as parts of its width and height.
+PICTURE_SIDES = {
+    "top": (0.0, 0.0, 1.0, 0.25),
+    "bottom": (0.0, 0.75, 1.0, 1.0),
+    "left": (0.0, 0.0, 0.25, 1.0),
+    "right": (0.75, 0.0, 1.0, 1.0),
+}
+
+
+def filled(fill: str, box: Box) -> str:
+    # Fills an engine's box of a page with a colour, in a PDF's own measure.
+    left, top, right, bottom = box
+    return f"{fill} {left:g} {LETTER[1] - bottom:g} {right - left:g} {bottom - top:g} re f"
+
+
+def written(words: str, box: Box) -> str:
+    left, _, _, bottom = box
+    return f"BT /{FONT} 10 Tf {left:g} {LETTER[1] - bottom:g} Td ({words}) Tj ET"
+
+
+def drawn_pdf(file: Path, pages: list[tuple[tuple[float, float], int, str]]) -> Path:
+    # A PDF of pages a test draws: each stored so many points wide and high, shown turned
+    # clockwise by so many quarters, and drawn by the content given.
+    with pikepdf.new() as document:
+        font = document.make_indirect(
+            pikepdf.Dictionary(Type=Name.Font, Subtype=Name.Type1, BaseFont=Name.Helvetica)
+        )
+        for (width, height), quarters, content in pages:
+            page = pikepdf.Dictionary(
+                Type=Name.Page,
+                MediaBox=[0, 0, width, height],
+                Rotate=90 * quarters,
+                Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary({f"/{FONT}": font})),
+                Contents=pikepdf.Stream(document, content.encode()),
+            )
+            document.pages.append(pikepdf.Page(page))
+        document.save(file)
+    return file
+
+
+def words_region(kind: RegionType, box: Box, words: str) -> dict[str, Any]:
+    # A region of words as the engine writes one, in a line as wide as the region.
+    line = {"bbox": list(box), "spans": [{"type": SpanType.TEXT, "content": words}]}
+    return {"type": kind, "bbox": list(box), "lines": [line]}
+
+
+def text_region(index: int, box: Box, words: str) -> dict[str, Any]:
+    return {**words_region(RegionType.TEXT, box, words), "index": index}
+
+
+def group(kind: RegionType, members: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"type": kind, "blocks": members}
+
+
+def body(kind: RegionType, box: Box) -> dict[str, Any]:
+    return {"type": kind, "bbox": list(box)}
+
+
+def drawn_reading(
+    file: Path,
+    regions: list[dict[str, Any]],
+    standin_pdf_engine: Callable[..., Path],
+    folder: Path,
+) -> Extracted:
+    # A PDF a test drew, read from the engine's results it writes for its one page: the page
+    # read from its text layer, holding these regions.
+    page = {
+        "page_idx": 0,
+        "page_size": list(LETTER),
+        "preproc_blocks": regions,
+        "para_blocks": [],
+        "discarded_blocks": [],
+    }
+    results = {
+        BACKEND_KEY: HYBRID,
+        VERSION_KEY: ENGINE_VERSION,
+        READ_AS_PICTURES_KEY: False,
+        "pdf_info": [page],
+    }
+    stored = folder / "drawn.json.gz"
+    stored.write_bytes(gzip.compress(json.dumps({"middle": results}).encode()))
+    return pdf.extract_pdf(file, file.stem, standin_pdf_engine(DRAWN, stored), folder)
+
+
+def picture_of(extracted: Extracted, block: int) -> Image.Image:
+    [picture] = [picture for picture in extracted.pictures if picture.block == block]
+    image = Image.open(picture.file)
+    assert image.format == "WEBP" and picture.media_type == "image/webp", (
+        f"the picture of block {block} is {image.format}, said to be {picture.media_type}"
+    )
+    assert image.size == (picture.width, picture.height), (
+        f"the picture of block {block} is {image.size}, said to be {picture.width, picture.height}"
+    )
+    return image.convert("RGB")
+
+
+def fill_of(colour: Sequence[float]) -> str | None:
+    # The fill whose colour a colour stands near in each channel, if any.
+    return next(
+        (
+            name
+            for name, filled_in in FILL_COLOURS.items()
+            if all(
+                abs(channel - own) < NEAR for channel, own in zip(colour, filled_in, strict=True)
+            )
+        ),
+        None,
+    )
+
+
+def side_fills(image: Image.Image) -> dict[str, str | None]:
+    # The fill of each side of a picture, by the mean of its colours.
+    fills = {}
+    for side, (left, top, right, bottom) in PICTURE_SIDES.items():
+        edges = (left * image.width, top * image.height, right * image.width, bottom * image.height)
+        left_edge, top_edge, right_edge, bottom_edge = (round(edge) for edge in edges)
+        part = image.crop((left_edge, top_edge, right_edge, bottom_edge))
+        fills[side] = fill_of(ImageStat.Stat(part).mean)
+    return fills
+
+
+# Where a test's page holds a picture, a frame around it and a line of words, in the engine's
+# points.
+PICTURE = (100.0, 100.0, 300.0, 250.0)
+FRAME = (80.0, 80.0, 320.0, 270.0)
+OPENING = (72.0, 600.0, 540.0, 612.0)
+
+
+def test_pictures_and_charts_are_figures_where_the_engine_puts_them_with_pictures_of_their_size(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # A caption stands before its picture and a note after its chart, and a picture drawn
+    # between two items of a list leaves the list going on after it.
+    regions = [
+        text_region(0, (72.0, 72.0, 540.0, 84.0), "Two pictures of the harbour follow."),
+        group(
+            RegionType.IMAGE,
+            [
+                words_region(
+                    RegionType.IMAGE_CAPTION,
+                    (72.0, 96.0, 540.0, 108.0),
+                    "Figure 1. The harbour by day.",
+                ),
+                body(RegionType.IMAGE_BODY, (72.0, 120.0, 312.0, 300.0)),
+            ],
+        ),
+        group(
+            RegionType.CHART,
+            [
+                body(RegionType.CHART_BODY, (72.0, 320.0, 372.0, 470.0)),
+                words_region(
+                    RegionType.CHART_FOOTNOTE,
+                    (72.0, 476.0, 540.0, 488.0),
+                    "Source: the harbour office.",
+                ),
+            ],
+        ),
+        text_region(3, (72.0, 500.0, 540.0, 512.0), "• Ferries leave from the north quay."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, (72.0, 520.0, 192.0, 640.0))]),
+        text_region(5, (72.0, 650.0, 540.0, 662.0), "• Buses leave from the square."),
+    ]
+    file = drawn_pdf(tmp_path / "harbour.pdf", [(LETTER, 0, "")])
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    read = [(block.kind, block.text) for block in extracted.blocks]
+    assert read == [
+        ("paragraph", "Two pictures of the harbour follow."),
+        ("paragraph", "Figure 1. The harbour by day."),
+        ("figure", ""),
+        ("figure", ""),
+        ("paragraph", "Source: the harbour office."),
+        ("list_item", "Ferries leave from the north quay."),
+        ("figure", ""),
+        ("list_item", "Buses leave from the square."),
+    ], f"the picture, the chart and their words were read out of the engine's order: {read}"
+    items = [block.position for block in extracted.blocks if isinstance(block, ListItem)]
+    assert items == [1, 2], f"a picture between two items of a list ended it: {items}"
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert sizes == {2: (480, 360), 3: (600, 300), 6: (240, 240)}, (
+        f"the figures were not given pictures of their regions at 144 dpi: {sizes}"
+    )
+    for number in sizes:
+        picture_of(extracted, number)
+
+
+def test_a_figures_picture_shows_what_is_drawn_in_its_region_and_nothing_around_it(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    drawing = " ".join(
+        [filled(BLUE, FRAME), filled(RED, PICTURE), written("A red picture.", OPENING)]
+    )
+    file = drawn_pdf(tmp_path / "red.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "A red picture."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    image = picture_of(extracted, 1)
+    extrema = ImageStat.Stat(image).extrema
+    off_red = [
+        max(abs(lowest - own), abs(highest - own))
+        for (lowest, highest), own in zip(extrema, FILL_COLOURS["red"], strict=True)
+    ]
+    assert image.size == (400, 300) and max(off_red) < NEAR, (
+        f"the picture of a red region in a blue frame, {image.size}, holds pixels as far from "
+        f"red as {off_red} in its channels"
+    )
+
+
+def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    icon = (400.0, 100.0, 430.0, 130.0)
+    drawing = " ".join([filled(RED, PICTURE), filled(BLUE, icon)])
+    file = drawn_pdf(tmp_path / "icon.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "An icon and a picture."),
+        group(
+            RegionType.IMAGE,
+            [
+                body(RegionType.IMAGE_BODY, icon),
+                words_region(RegionType.IMAGE_CAPTION, (400.0, 134.0, 540.0, 146.0), "An icon."),
+            ],
+        ),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    read = [(block.kind, block.text) for block in extracted.blocks]
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert read == [
+        ("paragraph", "An icon and a picture."),
+        ("paragraph", "An icon."),
+        ("figure", ""),
+    ], f"an icon of 60 by 60 pixels was kept as a figure, or its caption was lost: {read}"
+    assert sizes == {2: (400, 300)}, f"the picture is not the one of its figure: {sizes}"
+    assert set(side_fills(picture_of(extracted, 2)).values()) == {"red"}, (
+        "the figure left after the icon was given another region's picture"
+    )
+
+
+def test_a_picture_on_a_page_the_file_stores_turned_is_its_region_as_the_reader_sees_it(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # The page is stored on its side and shown upright, so the engine is given it upright
+    # and finds the picture where the reader sees it: red above, blue below.
+    top, middle, bottom = PICTURE[1], (PICTURE[1] + PICTURE[3]) / 2, PICTURE[3]
+    upper = (PICTURE[0], top, PICTURE[2], middle)
+    lower = (PICTURE[0], middle, PICTURE[2], bottom)
+    shown = " ".join([filled(RED, upper), filled(BLUE, lower)])
+    stored = f"q {STORED_TURNED} {shown} Q"
+    file = drawn_pdf(tmp_path / "stored.pdf", [((LETTER[1], LETTER[0]), 1, stored)])
+    regions = [
+        text_region(0, OPENING, "A page stored on its side."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    image = picture_of(extracted, 1)
+    sides = side_fills(image)
+    assert image.size == (400, 300) and (sides["top"], sides["bottom"]) == ("red", "blue"), (
+        f"the picture of a page stored turned, {image.size}, is not red above blue: {sides}"
+    )
+
+
+def test_a_picture_on_a_page_the_file_only_shows_turned_is_its_region_turned_with_the_page(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # The page is stored upright, with words that stand so, and shown turned a quarter
+    # clockwise. The engine is given it as it is stored, red above blue; the reader sees the
+    # picture turned with the page, red to the right of blue.
+    top, middle, bottom = PICTURE[1], (PICTURE[1] + PICTURE[3]) / 2, PICTURE[3]
+    upper = (PICTURE[0], top, PICTURE[2], middle)
+    lower = (PICTURE[0], middle, PICTURE[2], bottom)
+    words = "Words that stand as the page is stored."
+    stored = " ".join([filled(RED, upper), filled(BLUE, lower), written(words, OPENING)])
+    file = drawn_pdf(tmp_path / "shown.pdf", [(LETTER, 1, stored)])
+    regions = [
+        text_region(0, OPENING, words),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    image = picture_of(extracted, 1)
+    sides = side_fills(image)
+    assert image.size == (300, 400) and (sides["left"], sides["right"]) == ("blue", "red"), (
+        f"the picture of a page shown turned, {image.size}, is not blue left of red: {sides}"
     )

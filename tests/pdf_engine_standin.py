@@ -12,7 +12,9 @@ from pathlib import Path
 # trailer, which PDFium draws anew each time it saves a file. Otherwise it says why it
 # refuses and leaves, and the reader takes that line for the engine's reason.
 # A sample may be named with the results to write in place of the stored ones, after a colon:
-# the engine's results for that sample as a test changed them.
+# the engine's results for that sample as a test changed them. A test that draws a PDF of its
+# own names DRAWN in place of a sample, with the results it wrote for that PDF: no reference
+# was made of such a file, so those are written whatever file is handed.
 # usage: pdf_engine_standin.py SAMPLE[:RESULTS] -p FILE -o FOLDER OPTION...
 PDF_DATA = Path(__file__).resolve().parent / "fixtures" / "pdf"
 TRAILER_REACH = 4096
@@ -21,6 +23,7 @@ RESULTS = {"middle": "{stem}_middle.json", "model": "{stem}_model.json"}
 OUTPUT_FOLDER = "hybrid_auto"
 REFUSED = 3
 RESULTS_SEPARATOR = ":"
+DRAWN = "drawn"
 
 
 def unnamed_digest(file: Path) -> str:
@@ -44,7 +47,7 @@ def main() -> int:
         called = handed["options"]
         print(f"the engine is called with {options}, and the reference called it with {called}")
         return REFUSED
-    if unnamed_digest(file) != handed["samples"][sample]:
+    if sample != DRAWN and unnamed_digest(file) != handed["samples"][sample]:
         print(f"the file handed to the engine for {sample} is not the one the reference handed it")
         return REFUSED
     stored = Path(changed) if changed else PDF_DATA / "engine" / f"{sample}.json.gz"

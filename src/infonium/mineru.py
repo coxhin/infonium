@@ -208,7 +208,9 @@ class OwnParagraph(BaseModel):
 
 
 class PictureBody(BaseModel):
+    # A picture or a chart, by the box of the page it is drawn in.
     type: Literal[RegionType.IMAGE_BODY, RegionType.CHART_BODY]
+    bbox: Box
 
 
 class TableBody(BaseModel):
