@@ -1,8 +1,9 @@
 import errno
+import shutil
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import httpx
 import pytest
@@ -310,3 +311,49 @@ def test_a_reading_that_fails_once_its_pictures_are_staged_leaves_none_in_the_wo
         "a reading whose disk filled failed for another reason"
     )
     assert app.left_in(app.store.work) == [], "a reading that failed left what it staged"
+
+
+def filling_partway(copied: list[Path], whole: int) -> Any:
+    # A copy into a file that writes the bytes of the first copies whole, and of the next some
+    # bytes, then finds the disk full, as a write does.
+    copy = shutil.copyfileobj
+
+    def copying(source: IO[bytes], destination: IO[bytes], *arguments: Any) -> None:
+        copied.append(Path(destination.name))
+        if len(copied) > whole:
+            destination.write(source.read(100))
+            raise OSError(errno.ENOSPC, "No space left on device")
+        copy(source, destination, *arguments)
+
+    return copying
+
+
+def test_a_reading_whose_copy_fills_the_disk_partway_leaves_none_of_it_in_the_work_folder(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The snapshot and the first picture are copied whole, the second picture partway.
+    pictures = {"rain.png": drawing((40, 90, 200), kind="PNG")}
+    pictures["snow.png"] = drawing((220, 220, 230), kind="PNG")
+    app.site.pictures |= {name: (content, PNG) for name, content in pictures.items()}
+    copied: list[Path] = []
+    monkeypatch.setattr(shutil, "copyfileobj", filling_partway(copied, whole=2))
+    app.site.pages["partway"] = pictured_page(*(f"{SITE}/picture/{name}" for name in pictures))
+    entry = app.settled(app.link(f"{SITE}/page/partway").json()["id"])
+    assert stand(entry) == "unread/failed", f"a reading whose disk filled did not fail: {entry}"
+    assert [file.parent for file in copied] == [app.store.work] * 3, (
+        "the disk did not fill while a picture was copied into the work folder: a test's fault"
+    )
+    assert app.left_in(app.store.work) == [], "a copy that failed partway was left behind"
+
+
+def test_an_upload_whose_copy_fills_the_disk_partway_leaves_none_of_it_in_the_work_folder(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    copied: list[Path] = []
+    monkeypatch.setattr(shutil, "copyfileobj", filling_partway(copied, whole=0))
+    with pytest.raises(OSError, match="No space left on device"):
+        app.upload(PDF_NAME, PDF_FILE)
+    assert [file.parent for file in copied] == [app.store.work], (
+        "the disk did not fill while the upload was copied into the work folder: a test's fault"
+    )
+    assert app.left_in(app.store.work) == [], "an upload's copy that failed partway was left"
