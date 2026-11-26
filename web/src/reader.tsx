@@ -134,7 +134,13 @@ export function Reader({
         <>
           {/* The source blocks stay in the page, out of sight, so that citations resolve. */}
           {blocks.map((block, number) => (
-            <SourceBlock key={number} block={block} number={number} hidden />
+            <SourceBlock
+              key={number}
+              block={block}
+              documentId={itemDocument.id}
+              number={number}
+              hidden
+            />
           ))}
           <Transcript
             documentId={itemDocument.id}
@@ -155,6 +161,7 @@ export function Reader({
           <Row
             key={number}
             block={block}
+            documentId={itemDocument.id}
             number={number}
             setting={setting}
             translated={translations?.get(number)}

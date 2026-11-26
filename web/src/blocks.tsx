@@ -1,6 +1,6 @@
 import { createElement, Fragment, type CSSProperties, type ReactNode } from "react";
 import { cellTexts, cutAtMarks, STYLE_ELEMENTS } from "./blocktext";
-import type { Block, Mark } from "./client";
+import { pictureLink, type Block, type Mark } from "./client";
 import { Formula } from "./formula";
 
 const BULLET = "•";
@@ -86,19 +86,65 @@ function TableForm({
   );
 }
 
+// A figure's picture: the one the library keeps of it, where it keeps one, drawn at its size
+// so that the text does not move when it arrives; or else the picture at its address on the
+// web, asked for without a referrer. A figure with neither has no picture to draw, and one
+// that has no words either is not drawn at all.
+function FigureForm({
+  block,
+  documentId,
+  text,
+  content,
+  marking,
+  hidden,
+}: {
+  block: Block & { kind: "figure" };
+  documentId: string;
+  text: string;
+  content: ReactNode;
+  marking: Marking;
+  hidden: boolean;
+}) {
+  const picture = block.picture;
+  const drawn =
+    picture !== null ? (
+      <img
+        src={pictureLink(documentId, picture.name)}
+        width={picture.width}
+        height={picture.height}
+        alt=""
+        loading="lazy"
+      />
+    ) : block.source !== "" ? (
+      <img src={block.source} alt="" loading="lazy" referrerPolicy="no-referrer" />
+    ) : null;
+  if (drawn === null && text === "") {
+    return null;
+  }
+  return (
+    <figure hidden={hidden}>
+      {drawn}
+      {text !== "" && <figcaption {...marking}>{content}</figcaption>}
+    </figure>
+  );
+}
+
 // A block's form around words: a heading at its level, a list item with its marker and depth,
 // a quotation, a table, a figure with its picture. The words are the block's own or their
 // translation, so a source and its translation share one form. The text is what a table is
 // split from by the block's separators and what tells a figure whether it has words; the
-// content is how those words are drawn. A form that is hidden keeps its words in the page.
+// content is how those words are drawn. The document is the one the block is of, whose
+// pictures a figure is drawn with. A form that is hidden keeps its words in the page.
 export function BlockForm({
   block,
+  documentId,
   text,
   content,
   marking,
   hidden = false,
 }: {
   block: Block;
+  documentId: string;
   text: string;
   content: ReactNode;
   marking: Marking;
@@ -141,21 +187,27 @@ export function BlockForm({
       return <TableForm block={block} text={text} marking={marking} hidden={hidden} />;
     case "figure":
       return (
-        <figure hidden={hidden}>
-          <img src={block.source} alt="" loading="lazy" referrerPolicy="no-referrer" />
-          {text !== "" && <figcaption {...marking}>{content}</figcaption>}
-        </figure>
+        <FigureForm
+          block={block}
+          documentId={documentId}
+          text={text}
+          content={content}
+          marking={marking}
+          hidden={hidden}
+        />
       );
   }
 }
 
-// A block in the words it was written in.
+// A block of a document in the words it was written in.
 export function SourceBlock({
   block,
+  documentId,
   number,
   hidden,
 }: {
   block: Block;
+  documentId: string;
   number: number;
   hidden: boolean;
 }) {
@@ -163,6 +215,7 @@ export function SourceBlock({
   return (
     <BlockForm
       block={block}
+      documentId={documentId}
       text={block.text}
       content={<MarkedText text={block.text} marks={marks} />}
       marking={numbered(number)}

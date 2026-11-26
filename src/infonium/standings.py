@@ -16,8 +16,9 @@ DOCUMENTS_KEPT = 64
 
 class ParsedDocuments:
     # Documents as parsed from the library, kept by owner and document id, the one used least
-    # recently leaving first. A kept document cannot go stale: nothing of it changes under its
-    # id, its snapshot name included, since the library keeps a document as it was first kept.
+    # recently leaving first. A kept document cannot go stale for what a standing reads of it:
+    # nothing of it changes under its id, its snapshot name included, since the library keeps a
+    # document as it was first kept, but the pictures a later reading gives its figures.
     # refinding.standing_in keeps a cache of its own, also by document id: what its search
     # prepares of a document's blocks, not the document.
     def __init__(self, room: int) -> None:
