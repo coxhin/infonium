@@ -38,7 +38,7 @@ from tests.model_standin import (
     Responder,
 )
 from tests.model_standin import Reply as StreamedReply
-from tests.service import App, digest_reply
+from tests.service import OVERVIEW, App, digest_reply
 from tests.translation_standin import (
     TITLE,
     asks_passages,
@@ -128,6 +128,10 @@ def digest_path(item_id: str) -> str:
     return f"/api/items/{item_id}/digest"
 
 
+def digests_path(item_id: str) -> str:
+    return f"/api/items/{item_id}/digests"
+
+
 def conversation_path(item_id: str) -> str:
     return f"/api/items/{item_id}/conversation"
 
@@ -175,8 +179,9 @@ OPERATIONS: dict[str, Callable[[App, str, dict[str, str]], httpx2.Response]] = {
     "translation POST": lambda app, item, query: app.client.post(
         translation_path(item), params=query
     ),
-    "digest PUT": lambda app, item, query: app.client.put(digest_path(item), params=query),
-    "digest POST": lambda app, item, query: app.client.post(digest_path(item), params=query),
+    "digest POST": lambda app, item, query: app.client.post(
+        digest_path(item), params=query, json=OVERVIEW
+    ),
     "block again": lambda app, item, query: app.client.post(block_path(item, 0), params=query),
     "item question": lambda app, item, query: app.client.post(
         conversation_path(item), params=query, json={"text": QUESTION}
@@ -208,9 +213,7 @@ def test_a_model_that_is_not_offered_is_refused_and_nothing_is_asked(
     )
 
 
-@pytest.mark.parametrize(
-    "operation", ["digest PUT", "digest POST", "item question", "library question"]
-)
+@pytest.mark.parametrize("operation", ["digest POST", "item question", "library question"])
 def test_a_glm_model_without_glms_key_is_refused_before_anything_is_sent(
     app: App, operation: str
 ) -> None:
@@ -429,17 +432,21 @@ def test_a_digest_is_written_by_the_model_chosen_and_kept_whatever_is_chosen_lat
 ) -> None:
     app.model.reset(answering)
     document = kept(app, long_paragraphs(3))
-    written = app.client.put(digest_path(document.item_id), params={"model": TRANSLATION_MODEL})
+    written = app.client.post(
+        digest_path(document.item_id), params={"model": TRANSLATION_MODEL}, json=OVERVIEW
+    )
     assert written.status_code == HTTPStatus.OK, f"a digest was not written: {written.text}"
     [asked] = app.model.asked()
     assert asked.body["model"] == written.json()["model"] == TRANSLATION_MODEL, (
         f"a digest asked of {TRANSLATION_MODEL} was written by {asked.body['model']}"
     )
-    kept_digest = app.client.put(digest_path(document.item_id), params={"model": STANDIN_MODEL})
-    assert kept_digest.json() == written.json() and len(app.model.asked()) == 1, (
-        "a digest kept was written again because another model was chosen"
+    kept_digests = app.client.get(digests_path(document.item_id))
+    assert kept_digests.json() == [written.json()] and len(app.model.asked()) == 1, (
+        "a digest kept is not read as it was written, or was written again"
     )
-    rewritten = app.client.post(digest_path(document.item_id), params={"model": STANDIN_MODEL})
+    rewritten = app.client.post(
+        digest_path(document.item_id), params={"model": STANDIN_MODEL}, json=OVERVIEW
+    )
     assert rewritten.json()["model"] == app.model.asked()[-1].body["model"] == STANDIN_MODEL, (
         "a digest written anew was not written by the model chosen"
     )

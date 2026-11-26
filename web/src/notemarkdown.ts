@@ -1,4 +1,5 @@
 import { PASSAGE_LINK } from "./client";
+import type { WordsPiece } from "./statementwords";
 
 // The Markdown that infonium writes into a note by itself, and what is read out of a note's
 // Markdown without the editor. The editor is fetched only when a note is first opened, so what
@@ -62,6 +63,10 @@ const BLOCK_MARKERS = /^\s*(?:#{1,6}\s+|>\s*|[-+*]\s+|\d{1,9}[.)]\s+)*/;
 const MARKS = /\\(.)|[`*_~]/g;
 const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">" };
 const ENTITY = /&(?:amp|lt|gt);/g;
+// What bold words of Markdown may not start or end with, for a pair of double asterisks to hold
+// them bold whatever stands beside it: white space, or punctuation as CommonMark counts it, a
+// character of Unicode's punctuation or symbols.
+const UNBOLDABLE_EDGE = /[\s\p{P}\p{S}]/u;
 
 export function inlineText(text: string): string {
   return text
@@ -188,10 +193,24 @@ export function passageLink(words: string, passageId: string): string {
   return `[${words}](${PASSAGE_LINK}${passageId})`;
 }
 
+// Words in bold, where a pair of double asterisks holds them bold whatever stands beside it;
+// elsewhere they are written plain, since the note would show the asterisks as written.
+function boldMarkdown(words: string): string {
+  const markdown = linkedAddresses(words);
+  const characters = [...markdown];
+  const outer = [characters[0] ?? " ", characters.at(-1) ?? " "];
+  return outer.some((character) => UNBOLDABLE_EDGE.test(character))
+    ? markdown
+    : `**${markdown}**`;
+}
+
 // A statement, then a link to each passage it cites, numbered from 1.
-export function statementMarkdown(text: string, passageIds: string[]): string {
+export function statementMarkdown(words: WordsPiece[], passageIds: string[]): string {
   const links = passageIds.map((passageId, index) => passageLink(String(index + 1), passageId));
-  return [paragraph(linkedAddresses(text)), ...links].join(" ");
+  const written = words
+    .map((piece) => (piece.bold ? boldMarkdown(piece.text) : linkedAddresses(piece.text)))
+    .join("");
+  return [paragraph(written), ...links].join(" ");
 }
 
 // What the reader noted on a passage, as text of their own: a paragraph for each run of lines

@@ -20,6 +20,7 @@ import {
   type Scope,
 } from "./conversations";
 import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
+import { plainWords } from "./statementwords";
 import type { Seat } from "./seat";
 import "./chat.css";
 
@@ -110,7 +111,7 @@ function Answer({
           />
           <LostCitations statement={statement} citesAll={false} />
           <NoteDown
-            taking={statementTaking([statement], itemOf)}
+            taking={statementTaking([statement], itemOf, plainWords)}
             label="记到笔记：这句回答"
             shape="mark"
           />
@@ -128,7 +129,10 @@ function Answer({
       )}
       <div className="answer-foot">
         <Spent answer={answer} />
-        <NoteDown taking={statementTaking(answer.statements, itemOf)} label="记到笔记：整个回答" />
+        <NoteDown
+          taking={statementTaking(answer.statements, itemOf, plainWords)}
+          label="记到笔记：整个回答"
+        />
       </div>
     </div>
   );

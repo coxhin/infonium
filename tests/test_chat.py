@@ -29,7 +29,7 @@ from tests.model_standin import (
     Reply,
     pieces_of,
 )
-from tests.service import LEDGER, REVISED, SITE, App, numbered_blocks_asked
+from tests.service import LEDGER, OVERVIEW, REVISED, SITE, App, numbered_blocks_asked
 
 LEDGER_TITLE = "Quillmoor ledger"
 QUESTION = "When did the night ferry leave?"
@@ -143,7 +143,7 @@ def made_up_quotes(ledger: Ledger) -> st.SearchStrategy[Citation]:
 
 
 def test_the_model_is_given_the_document_as_a_digest_is(app: App, ledger: Ledger) -> None:
-    app.client.put(f"/api/items/{ledger.item_id}/digest")
+    app.client.post(f"/api/items/{ledger.item_id}/digest", json=OVERVIEW)
     [digest_asked] = app.model.asked()
     app.model.reset(says(["The ferry left at nine."]))
     answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
@@ -519,13 +519,13 @@ def test_asking_leaves_the_item_its_document_and_digest_as_they_were(
     app: App, ledger: Ledger
 ) -> None:
     paths = [f"/api/items/{ledger.item_id}", f"/api/items/{ledger.item_id}/document"]
-    digest = app.client.put(f"/api/items/{ledger.item_id}/digest").json()
+    digest = app.client.post(f"/api/items/{ledger.item_id}/digest", json=OVERVIEW).json()
     before = [app.client.get(path).json() for path in paths]
     app.model.reset(says(["Nothing changes."]))
     answered_turn(asking(app.client, conversation_path(ledger.item_id), QUESTION))
     after = [app.client.get(path).json() for path in paths]
-    kept_digest = app.client.put(f"/api/items/{ledger.item_id}/digest").json()
-    assert (after, kept_digest) == (before, digest), (
+    kept_digests = app.client.get(f"/api/items/{ledger.item_id}/digests").json()
+    assert (after, kept_digests) == (before, [digest]), (
         "asking about an item changed its entry, document or digest"
     )
 

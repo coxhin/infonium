@@ -214,11 +214,84 @@
         "title": "Conversation",
         "type": "object"
       },
+      "CustomChoice": {
+        "properties": {
+          "instructions": {
+            "description": "The reader's own description of the digest they want: its structure, length, tone and focus. infonium's rules of citing, of the language and of its punctuation hold whatever it says.",
+            "maxLength": 2000,
+            "pattern": "\\S",
+            "title": "Instructions",
+            "type": "string"
+          },
+          "style": {
+            "const": "custom",
+            "title": "Style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "style",
+          "instructions"
+        ],
+        "title": "CustomChoice",
+        "type": "object"
+      },
+      "DigestStyle": {
+        "enum": [
+          "overview",
+          "guide",
+          "brief",
+          "paper",
+          "outline",
+          "faq",
+          "custom"
+        ],
+        "title": "DigestStyle",
+        "type": "string"
+      },
+      "DigestStyleView": {
+        "properties": {
+          "custom": {
+            "title": "Custom",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/DigestStyle"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "custom"
+        ],
+        "title": "DigestStyleView",
+        "type": "object"
+      },
       "DigestView": {
         "properties": {
           "input_tokens": {
             "title": "Input Tokens",
             "type": "integer"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
           },
           "model": {
             "title": "Model",
@@ -234,10 +307,21 @@
             },
             "title": "Sections",
             "type": "array"
+          },
+          "style": {
+            "$ref": "#/components/schemas/DigestStyle"
+          },
+          "written": {
+            "format": "date-time",
+            "title": "Written",
+            "type": "string"
           }
         },
         "required": [
+          "style",
+          "instructions",
           "model",
+          "written",
           "input_tokens",
           "output_tokens",
           "sections"
@@ -1562,6 +1646,28 @@
         "title": "Read",
         "type": "object"
       },
+      "RecipeChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "style": {
+            "enum": [
+              "overview",
+              "guide",
+              "brief",
+              "paper",
+              "outline",
+              "faq"
+            ],
+            "title": "Style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "style"
+        ],
+        "title": "RecipeChoice",
+        "type": "object"
+      },
       "Revision": {
         "properties": {
           "document": {
@@ -1610,6 +1716,9 @@
       },
       "Section": {
         "properties": {
+          "form": {
+            "$ref": "#/components/schemas/SectionForm"
+          },
           "statements": {
             "items": {
               "$ref": "#/components/schemas/Statement"
@@ -1624,10 +1733,19 @@
         },
         "required": [
           "title",
+          "form",
           "statements"
         ],
         "title": "Section",
         "type": "object"
+      },
+      "SectionForm": {
+        "enum": [
+          "list",
+          "paragraph"
+        ],
+        "title": "SectionForm",
+        "type": "string"
       },
       "Segment": {
         "properties": {
@@ -2385,6 +2503,28 @@
         "summary": "Ask About Library"
       }
     },
+    "/api/digest-styles": {
+      "get": {
+        "operationId": "digest_styles_api_digest_styles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DigestStyleView"
+                  },
+                  "title": "Response Digest Styles Api Digest Styles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Digest Styles"
+      }
+    },
     "/api/documents/{document_id}/pictures/{name}": {
       "get": {
         "operationId": "document_picture_api_documents__document_id__pictures__name__get",
@@ -2832,7 +2972,7 @@
     },
     "/api/items/{item_id}/digest": {
       "post": {
-        "operationId": "rewrite_digest_api_items__item_id__digest_post",
+        "operationId": "write_digest_api_items__item_id__digest_post",
         "parameters": [
           {
             "in": "path",
@@ -2862,6 +3002,36 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "brief": "#/components/schemas/RecipeChoice",
+                    "custom": "#/components/schemas/CustomChoice",
+                    "faq": "#/components/schemas/RecipeChoice",
+                    "guide": "#/components/schemas/RecipeChoice",
+                    "outline": "#/components/schemas/RecipeChoice",
+                    "overview": "#/components/schemas/RecipeChoice",
+                    "paper": "#/components/schemas/RecipeChoice"
+                  },
+                  "propertyName": "style"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RecipeChoice"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CustomChoice"
+                  }
+                ],
+                "title": "Chosen"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -2914,10 +3084,12 @@
             "description": "Service Unavailable"
           }
         },
-        "summary": "Rewrite Digest"
-      },
-      "put": {
-        "operationId": "ensure_digest_api_items__item_id__digest_put",
+        "summary": "Write Digest"
+      }
+    },
+    "/api/items/{item_id}/digests": {
+      "get": {
+        "operationId": "item_digests_api_items__item_id__digests_get",
         "parameters": [
           {
             "in": "path",
@@ -2927,24 +3099,6 @@
               "title": "Item Id",
               "type": "string"
             }
-          },
-          {
-            "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
-            "in": "query",
-            "name": "model",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "The model to ask, one of those GET /api/models offers; without one, the default of the operation",
-              "title": "Model"
-            }
           }
         ],
         "responses": {
@@ -2952,7 +3106,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DigestView"
+                  "items": {
+                    "$ref": "#/components/schemas/DigestView"
+                  },
+                  "title": "Response Item Digests Api Items  Item Id  Digests Get",
+                  "type": "array"
                 }
               }
             },
@@ -2977,29 +3135,9 @@
               }
             },
             "description": "Validation Error"
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Failure"
-                }
-              }
-            },
-            "description": "Bad Gateway"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Failure"
-                }
-              }
-            },
-            "description": "Service Unavailable"
           }
         },
-        "summary": "Ensure Digest"
+        "summary": "Item Digests"
       }
     },
     "/api/items/{item_id}/document": {

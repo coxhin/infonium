@@ -37,7 +37,7 @@ from tests.model_standin import (
     call_id,
     pieces_of,
 )
-from tests.service import App, Source, article, as_owner, keep_sources, new_owner
+from tests.service import OVERVIEW, App, Source, article, as_owner, keep_sources, new_owner
 
 CONVERSATION = "/api/conversation"
 SEARCH = "search_blocks"
@@ -194,7 +194,7 @@ def test_a_document_reaches_the_model_as_json_alike_in_a_digest_a_conversation_a
     [source] = keep_sources(app.store, owner, [(title, texts)])
     with as_owner(owner):
         app.model.reset(lambda asked: Rejection(status=HTTPStatus.BAD_REQUEST, body="no"))
-        app.client.put(f"/api/items/{source.item}/digest")
+        app.client.post(f"/api/items/{source.item}/digest", json=OVERVIEW)
         digest = app.model.asked()[0]
         app.model.reset(lambda asked: says(["Of it."]))
         answered_turn(asking(app.client, f"/api/items/{source.item}/conversation", QUESTION))
@@ -491,7 +491,7 @@ def json_or_none(result: str) -> dict[str, Any]:
 def test_the_tools_change_nothing_of_the_library(app: App) -> None:
     item_id = app.read("/ledger")
     paths = [f"/api/items/{item_id}", f"/api/items/{item_id}/document", "/api/items"]
-    digest = app.client.put(f"/api/items/{item_id}/digest").json()
+    digest = app.client.post(f"/api/items/{item_id}/digest", json=OVERVIEW).json()
     app.model.reset(scripted([lambda asked: says(["Of the ledger."])]))
     item_turn = answered_turn(asking(app.client, f"/api/items/{item_id}/conversation", "When?"))
     before = [app.client.get(path).json() for path in paths]
@@ -507,7 +507,8 @@ def test_the_tools_change_nothing_of_the_library(app: App) -> None:
     answered_turn(questioned)
     assert searched_queries(questioned) == ["ferry"], "the search was not made"
     after = [app.client.get(path).json() for path in paths]
-    assert (after, app.client.put(f"/api/items/{item_id}/digest").json()) == (before, digest), (
+    kept_digests = app.client.get(f"/api/items/{item_id}/digests").json()
+    assert (after, kept_digests) == (before, [digest]), (
         "searching and reading the library changed an item, a document or a digest"
     )
     assert kept_turns(app.client, f"/api/items/{item_id}/conversation") == [item_turn], (

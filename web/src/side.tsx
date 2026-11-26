@@ -216,16 +216,6 @@ export function SideColumn({
     setFolded(false);
   });
 
-  // A digest may take a model call to write, so it is asked for only once its tab is shown,
-  // and then kept while the item stays open.
-  const [digestShown, setDigestShown] = useState<string>();
-  const digestWanted = seat !== undefined && (tab === "digest" || digestShown === seat.itemId);
-  useEffect(() => {
-    if (seat !== undefined && tab === "digest") {
-      setDigestShown(seat.itemId);
-    }
-  }, [seat?.itemId, tab]);
-
   // The model the column's work is asked of: digests, answers, and a block translated again.
   const answeringChoice = useModelChoice("answering");
 
@@ -264,7 +254,7 @@ export function SideColumn({
         className="panel scrolled"
         hidden={tab !== "digest"}
       >
-        {digestWanted ? (
+        {seat !== undefined ? (
           <DigestPanel
             key={seat.holding}
             itemId={seat.itemId}

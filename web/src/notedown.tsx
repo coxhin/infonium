@@ -3,6 +3,7 @@ import type { Anchor, Statement } from "./client";
 import { announce } from "./announce";
 import { reasonOf } from "./loading";
 import { inTurn, showNote, type Cited, type Excerpt, type Noted, type PutDown } from "./notes";
+import type { WordsPiece } from "./statementwords";
 import "./notedown.css";
 
 // One excerpt a press puts into a note, as it stands when the press comes: a highlight's
@@ -27,11 +28,12 @@ type Noting =
   | { state: "noted"; noted: Noted; leftOut: number }
   | { state: "failed"; reason: string | undefined; taken: number; noted: Noted | undefined };
 
-// A statement infonium wrote, with one cited passage for each of its citations whose item can
-// be told.
+// A statement infonium wrote, with its words as they are shown, and one cited passage for each
+// of its citations whose item can be told.
 export function statementTaking(
   statements: Statement[],
   itemOf: (anchor: Anchor) => string | undefined,
+  wordsOf: (text: string) => WordsPiece[],
 ): Taking {
   let leftOut = 0;
   const excerpts = statements.map((statement): PressedExcerpt => {
@@ -43,7 +45,7 @@ export function statementTaking(
       }
       return [{ anchors: [anchor], itemId }];
     });
-    const excerpt: Excerpt = { kind: "statement", text: statement.text, cited };
+    const excerpt: Excerpt = { kind: "statement", words: wordsOf(statement.text), cited };
     return () => Promise.resolve(excerpt);
   });
   return { excerpts, leftOut };

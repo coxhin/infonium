@@ -5,9 +5,10 @@ from typing import Any
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from infonium.digest import SectionForm
 from tests.conversation import answered_turn, asking, outline_of
 from tests.model_standin import Asked, Reply
-from tests.service import App, as_owner, keep_sources, new_owner
+from tests.service import OVERVIEW, App, as_owner, keep_sources, new_owner
 
 # A14: a quote that the model wrote with the escapes of the JSON the document reached it in
 # is found; one found as written stays where it was found, whatever it holds.
@@ -69,7 +70,7 @@ def expected_start(block: str, raw: str, written: str) -> int:
 def digest_citing(quote: str) -> Callable[[Asked], Reply]:
     citation = {"block_number": 0, "quote": quote}
     statement = {"text": "Quoted.", "citations": [citation]}
-    sections = [{"title": "Summary", "statements": [statement]}]
+    sections = [{"title": "Summary", "form": SectionForm.LIST, "statements": [statement]}]
     return lambda asked: Reply(pieces=[json.dumps({"sections": sections})])
 
 
@@ -89,7 +90,7 @@ def anchors_in(app: App, place: str, item_id: str, written: str) -> list[dict[st
     match place:
         case "digest":
             app.model.reset(digest_citing(written))
-            digest = app.client.post(f"/api/items/{item_id}/digest").json()
+            digest = app.client.post(f"/api/items/{item_id}/digest", json=OVERVIEW).json()
             anchors: list[dict[str, Any]] = digest["sections"][0]["statements"][0]["anchors"]
             return anchors
         case "item":

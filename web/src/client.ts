@@ -12,6 +12,10 @@ export type PagePlace = Schemas["PagePlace"];
 export type TimePlace = Schemas["TimePlace"];
 export type Style = Schemas["Style"];
 export type Digest = Schemas["DigestView"];
+export type DigestSection = Schemas["Section"];
+export type DigestStyle = Schemas["DigestStyle"];
+export type StyleOffer = Schemas["DigestStyleView"];
+export type ChosenStyle = Schemas["RecipeChoice"] | Schemas["CustomChoice"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
@@ -216,27 +220,49 @@ export function readModels(): Promise<ModelsOffered> {
   return settled(api.GET("/api/models"));
 }
 
-export function rewriteDigest(itemId: string, model: string | undefined): Promise<Digest> {
+// The styles a digest may be written in, in the order they are offered.
+export function readDigestStyles(): Promise<StyleOffer[]> {
+  return settled(api.GET("/api/digest-styles"));
+}
+
+// The digests kept of the document the item holds now, one of each style written; nothing is
+// written.
+export function readDigests(itemId: string): Promise<Digest[]> {
   return settled(
-    api.POST("/api/items/{item_id}/digest", {
-      params: { path: { item_id: itemId }, query: chosen(model) },
-    }),
+    api.GET("/api/items/{item_id}/digests", { params: { path: { item_id: itemId } } }),
   );
 }
 
-// Writing a digest takes a model call, so views that ask for the same item's digest while one
-// request is under way share that request. A digest kept is given whatever model is chosen.
+// Writing a digest takes a model call, so views that ask for the same item's digest of the same
+// style while one request is under way share that request.
 const digestsUnderWay = new Map<string, Promise<Digest>>();
 
-export function ensureDigest(itemId: string, model: string | undefined): Promise<Digest> {
+function digestKey(itemId: string, style: DigestStyle): string {
+  return `${itemId}\n${style}`;
+}
+
+// The writing of the item's digest of the style, while one is under way.
+export function digestUnderWay(itemId: string, style: DigestStyle): Promise<Digest> | undefined {
+  return digestsUnderWay.get(digestKey(itemId, style));
+}
+
+// Writes the item's digest of the style chosen with the model, in place of the one of that
+// style kept before.
+export function writeDigest(
+  itemId: string,
+  style: ChosenStyle,
+  model: string | undefined,
+): Promise<Digest> {
+  const key = digestKey(itemId, style.style);
   const underWay =
-    digestsUnderWay.get(itemId) ??
+    digestsUnderWay.get(key) ??
     settled(
-      api.PUT("/api/items/{item_id}/digest", {
+      api.POST("/api/items/{item_id}/digest", {
         params: { path: { item_id: itemId }, query: chosen(model) },
+        body: style,
       }),
-    ).finally(() => digestsUnderWay.delete(itemId));
-  digestsUnderWay.set(itemId, underWay);
+    ).finally(() => digestsUnderWay.delete(key));
+  digestsUnderWay.set(key, underWay);
   return underWay;
 }
 
