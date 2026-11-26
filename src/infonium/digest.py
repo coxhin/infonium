@@ -84,10 +84,12 @@ CustomInstructions = Annotated[
 
 
 class RecipeChoice(BaseModel):
-    # A style written by its recipe, which takes no instructions of the reader's.
+    # A style written by its recipe, which takes no instructions of the reader's: a body may
+    # give them as null, which is none.
     model_config = ConfigDict(extra="forbid")
 
     style: RecipeStyle
+    instructions: None = None
 
 
 class CustomChoice(BaseModel):

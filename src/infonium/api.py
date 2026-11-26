@@ -33,10 +33,8 @@ from infonium.chat import (
 from infonium.citing import numbered_blocks
 from infonium.digest import (
     ChosenStyle,
-    CustomChoice,
     Digest,
     DraftDigest,
-    RecipeChoice,
     Section,
     digest_instructions,
     grounded_sections,
@@ -631,14 +629,9 @@ def translation_view(standing: TranslationStanding) -> TranslationView:
 
 
 def digest_view(digest: Digest) -> DigestView:
-    match digest.chosen:
-        case CustomChoice(instructions=instructions):
-            given: str | None = instructions
-        case RecipeChoice():
-            given = None
     return DigestView(
         style=digest.chosen.style,
-        instructions=given,
+        instructions=digest.chosen.instructions,
         model=digest.model,
         written=digest.written,
         input_tokens=digest.input_tokens,

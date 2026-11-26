@@ -1096,6 +1096,8 @@ export interface components {
         };
         /** RecipeChoice */
         RecipeChoice: {
+            /** Instructions */
+            instructions?: null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

@@ -1650,6 +1650,10 @@
       "RecipeChoice": {
         "additionalProperties": false,
         "properties": {
+          "instructions": {
+            "title": "Instructions",
+            "type": "null"
+          },
           "style": {
             "enum": [
               "overview",

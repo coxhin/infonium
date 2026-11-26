@@ -15,7 +15,9 @@ export type Digest = Schemas["DigestView"];
 export type DigestSection = Schemas["Section"];
 export type DigestStyle = Schemas["DigestStyle"];
 export type StyleOffer = Schemas["DigestStyleView"];
-export type ChosenStyle = Schemas["RecipeChoice"] | Schemas["CustomChoice"];
+// A built-in style is sent without instructions: openapi-fetch's type of a request's body
+// refuses every value of a property that can only be null, as theirs is in the protocol.
+export type ChosenStyle = Omit<Schemas["RecipeChoice"], "instructions"> | Schemas["CustomChoice"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
