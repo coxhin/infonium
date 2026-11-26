@@ -74,6 +74,13 @@
    ]
   },
   {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
+  },
+  {
    "kind": "paragraph",
    "text": "A refitted sleeper car waits at Vienna's main station. Photograph by Lukas Brandt.",
    "marks": [],
@@ -822,6 +829,13 @@
      "height": 0.015000000000000069
     }
    ]
+  }
+ ],
+ "pictures": [
+  {
+   "block": 3,
+   "width": 1058,
+   "height": 225
   }
  ]
 }

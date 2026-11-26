@@ -145,7 +145,8 @@ def legible(text: str) -> str:
 Legible = Annotated[str, AfterValidator(legible)]
 Points = Annotated[float, Field(allow_inf_nan=False)]
 # Left, top, right and bottom, measured from the top left corner of the page as the engine
-# was given it.
+# was given it. Every region has one, whether it is read or set aside, and so does every
+# member of a group.
 Box = tuple[Points, Points, Points, Points]
 
 
@@ -179,12 +180,14 @@ class TableLine(BaseModel):
 class Text(BaseModel):
     type: Literal[RegionType.TEXT]
     index: int
+    bbox: Box
     lines: list[Line]
 
 
 class Title(BaseModel):
     type: Literal[RegionType.TITLE]
     level: HeadingLevel
+    bbox: Box
     lines: list[Line]
 
 
@@ -208,7 +211,9 @@ class OwnParagraph(BaseModel):
 
 
 class PictureBody(BaseModel):
+    # A picture or a chart, by the box of the page it is drawn in.
     type: Literal[RegionType.IMAGE_BODY, RegionType.CHART_BODY]
+    bbox: Box
 
 
 class TableBody(BaseModel):
@@ -219,6 +224,7 @@ class TableBody(BaseModel):
 
 class CodeBody(BaseModel):
     type: Literal[RegionType.CODE_BODY]
+    bbox: Box
     lines: list[Line]
 
 
@@ -226,7 +232,9 @@ Member = Annotated[OwnParagraph | PictureBody | TableBody | CodeBody, Field(disc
 
 
 class Group(BaseModel):
-    # A picture, a chart, a table or a listing, together with its captions and notes.
+    # A picture, a chart, a table or a listing, together with its captions and notes. The
+    # engine gives a group the box of its picture, chart, table or listing, which is kept with
+    # that member, and not again with the group.
     type: Literal[RegionType.IMAGE, RegionType.CHART, RegionType.TABLE, RegionType.CODE]
     blocks: list[Member]
 
@@ -236,6 +244,7 @@ Region = Annotated[Text | Title | OwnParagraph | Group, Field(discriminator="typ
 
 class Furniture(BaseModel):
     type: Literal[RegionType.HEADER, RegionType.FOOTER, RegionType.PAGE_NUMBER, RegionType.ASIDE]
+    bbox: Box
 
 
 Margin = Annotated[Furniture | OwnParagraph, Field(discriminator="type")]

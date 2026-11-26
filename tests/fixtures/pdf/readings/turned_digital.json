@@ -64,6 +64,13 @@
    ]
   },
   {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
+  },
+  {
    "kind": "paragraph",
    "text": "Source: Halden Survey",
    "marks": [],
@@ -123,6 +130,13 @@
      "height": 0.012626262626262652
     }
    ]
+  },
+  {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
   },
   {
    "kind": "paragraph",
@@ -185,6 +199,13 @@
      "height": 0.012626262626262624
     }
    ]
+  },
+  {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
   },
   {
    "kind": "paragraph",
@@ -331,6 +352,23 @@
      "height": 0.012626262626262652
     }
    ]
+  }
+ ],
+ "pictures": [
+  {
+   "block": 3,
+   "width": 804,
+   "height": 380
+  },
+  {
+   "block": 7,
+   "width": 870,
+   "height": 310
+  },
+  {
+   "block": 11,
+   "width": 870,
+   "height": 434
   }
  ]
 }

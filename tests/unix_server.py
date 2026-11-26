@@ -17,11 +17,17 @@ CLOSING_SECONDS = 1
 
 
 @contextmanager
-def unix_server(app: ASGIApp, lifespan: Literal["on", "off"]) -> Iterator[Path]:
+def unix_server(
+    app: ASGIApp,
+    lifespan: Literal["on", "off"],
+    certificate: Path | None = None,
+    key: Path | None = None,
+) -> Iterator[Path]:
     # An ASGI application served by uvicorn in this process over a Unix socket, which the
     # default run allows: a client of it speaks HTTP over a real connection, and closing that
-    # connection is a client leaving. The folder is short-named because a socket's path is
-    # held to about a hundred bytes.
+    # connection is a client leaving. Given a certificate and its key, it speaks HTTP over TLS
+    # with them. The folder is short-named because a socket's path is held to about a hundred
+    # bytes.
     with tempfile.TemporaryDirectory(prefix="infonium-") as folder:
         path = Path(folder) / SOCKET_NAME
         config = uvicorn.Config(
@@ -30,6 +36,8 @@ def unix_server(app: ASGIApp, lifespan: Literal["on", "off"]) -> Iterator[Path]:
             lifespan=lifespan,
             log_level="warning",
             timeout_graceful_shutdown=CLOSING_SECONDS,
+            ssl_certfile=certificate,
+            ssl_keyfile=key,
         )
         server = uvicorn.Server(config)
         thread = threading.Thread(target=server.run, daemon=True)

@@ -370,6 +370,16 @@
             "title": "Kind",
             "type": "string"
           },
+          "picture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeptPicture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "places": {
             "default": [],
             "items": {
@@ -405,6 +415,7 @@
           "kind",
           "source",
           "text",
+          "picture",
           "places"
         ],
         "title": "Figure",
@@ -759,6 +770,39 @@
           "revisions"
         ],
         "title": "ItemRevisions",
+        "type": "object"
+      },
+      "KeptPicture": {
+        "properties": {
+          "height": {
+            "description": "A length across a picture, in pixels.",
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "media_type": {
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "width": {
+            "description": "A length across a picture, in pixels.",
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "media_type",
+          "width",
+          "height"
+        ],
+        "title": "KeptPicture",
         "type": "object"
       },
       "KeptSource": {
@@ -2339,6 +2383,57 @@
           }
         },
         "summary": "Ask About Library"
+      }
+    },
+    "/api/documents/{document_id}/pictures/{name}": {
+      "get": {
+        "operationId": "document_picture_api_documents__document_id__pictures__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Document Picture"
       }
     },
     "/api/highlights": {

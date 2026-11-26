@@ -1,6 +1,7 @@
 from enum import StrEnum
 from hashlib import sha256
 from http import HTTPStatus
+from pathlib import Path
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
@@ -51,6 +52,14 @@ PDF_MEDIA_TYPE = "application/pdf"
 # How the address of a web page begins. An address is told by its beginning, not parsed: one
 # taken from a page may be malformed past it.
 WEB_SCHEMES = ("http://", "https://")
+# The kinds of picture that infonium keeps of a source: those that browsers show and that the
+# pictures of web pages are served in, a region of a PDF's page being drawn in one of them.
+PICTURE_MEDIA_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/gif", "image/webp", "image/avif"}
+)
+# A picture whose sides are both shorter than this many pixels is an icon, an avatar or a
+# spacer, and is not kept.
+SMALL_PICTURE_SIDE = 96
 
 RowSeparator = Literal["\n"]
 CellSeparator = Literal["\t"]
@@ -86,6 +95,7 @@ UNSPACED_CODE_POINTS = (
 LITTLE_TEXT_WORDS = 200
 TEXT_FIELD = "text"
 PLACES_FIELD = "places"
+PICTURE_FIELD = "picture"
 NO_WORDS = "a part of a text holds at least one word"
 
 
@@ -256,10 +266,26 @@ class Table(Tagged):
     places: PlacesInText = []
 
 
+PictureSide = Annotated[int, Field(gt=0, description="A length across a picture, in pixels.")]
+
+
+class KeptPicture(BaseModel):
+    # A picture that the library keeps of a figure, under the name its bytes hash to, with
+    # the kind and the size of those bytes.
+    name: str
+    media_type: MediaType
+    width: PictureSide
+    height: PictureSide
+
+
 class Figure(Tagged):
+    # A picture of the source and the words that describe it. The source is the address a web
+    # page gives the picture, and empty for a picture drawn from a region of a PDF's page; the
+    # picture is the one the library keeps, where it keeps one.
     kind: Literal[BlockKind.FIGURE] = BlockKind.FIGURE
     source: str
     text: str
+    picture: KeptPicture | None = None
     places: PlacesInText = []
 
 
@@ -317,11 +343,37 @@ def error_text(error: BaseException) -> str:
     return said if said.strip() else type(error).__name__
 
 
+def is_small_picture(width: int, height: int) -> bool:
+    return width < SMALL_PICTURE_SIDE and height < SMALL_PICTURE_SIDE
+
+
+class ExtractedPicture(BaseModel):
+    # A picture that a reading found for one figure block of what it extracted: a file in the
+    # reading's folder, which the library keeps with the document.
+    block: BlockNumber
+    file: Path
+    media_type: MediaType
+    width: PictureSide
+    height: PictureSide
+
+
 class Extracted(BaseModel):
     # What an extractor makes of one source, before it is kept as a document. An extractor
-    # that finds nothing to read raises UnreadableSource.
+    # that finds nothing to read raises UnreadableSource. The pictures are those found for its
+    # figure blocks, one at most for each.
     title: str
     blocks: DocumentBlocks
+    pictures: list[ExtractedPicture] = []
+
+    @model_validator(mode="after")
+    def of_its_figures(self) -> Self:
+        numbers = [picture.block for picture in self.pictures]
+        if len(set(numbers)) < len(numbers):
+            raise ValueError("a figure block has one picture at most")
+        for number in numbers:
+            if number >= len(self.blocks) or not isinstance(self.blocks[number], Figure):
+                raise ValueError(f"block {number} is no figure of the extracted blocks")
+        return self
 
 
 class Document(BaseModel):
@@ -337,9 +389,17 @@ def document_of(
     item_id: str, extractor: str, snapshot: str, media_type: str, blocks: list[Block]
 ) -> Document:
     # A block without places is hashed as blocks were before they had any, so a source that
-    # was kept then is the same document when it is read again.
-    unplaced = {number: {PLACES_FIELD} for number, block in enumerate(blocks) if not block.places}
-    hashed = BLOCKS.dump_json(blocks, exclude=unplaced)
+    # was kept then is the same document when it is read again. A figure's picture is no part
+    # of what a document is, as its snapshot is not: a page whose pictures arrive in other
+    # bytes is the same document, and one kept before pictures were kept is the same too.
+    left_out: dict[int, set[str]] = {}
+    for number, block in enumerate(blocks):
+        fields = set() if block.places else {PLACES_FIELD}
+        if isinstance(block, Figure):
+            fields.add(PICTURE_FIELD)
+        if fields:
+            left_out[number] = fields
+    hashed = BLOCKS.dump_json(blocks, exclude=left_out)
     return Document(
         id=sha256(b"\n".join([item_id.encode(), extractor.encode(), hashed])).hexdigest(),
         item_id=item_id,

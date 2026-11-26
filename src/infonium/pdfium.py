@@ -4,11 +4,14 @@ import re
 import sys
 import threading
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
-from pypdfium2 import PdfDocument, PdfiumError, PdfTextPage, raw
+from pypdfium2 import PdfBitmap, PdfDocument, PdfiumError, PdfTextPage, raw
 
 from infonium.document import WORD_GAP
 
@@ -33,6 +36,16 @@ REACH_DIGITS = 3
 # A character beyond the first 65,536 of Unicode, which UTF-16 writes in two units.
 FIRST_WIDE = 0x10000
 WIDE_CHARACTER = re.compile(f"[{chr(FIRST_WIDE)}-{chr(sys.maxunicode)}]")
+# A region of a page is drawn as pypdfium2 draws a whole page unless told otherwise: on white,
+# with the page's annotations, three bytes a pixel.
+PAPER = (255, 255, 255, 255)
+# What drawing a region can raise: PdfiumError where PDFium fails to fill the drawing, and
+# MemoryError where the memory for its pixels cannot be had.
+DRAWING_FAILURES = (PdfiumError, MemoryError)
+
+# The left, top, right and bottom edges of a region of a page, as parts of the page's width and
+# height, measured from the top left corner of the page as its file shows it.
+PageEdges = tuple[float, float, float, float]
 
 
 class StoredPage(BaseModel):
@@ -234,3 +247,51 @@ def holds_wide_characters(file: Path) -> bool:
     # Whether the text layer of a file holds a character beyond the first 65,536 of Unicode.
     with PDFIUM_IN_USE, PdfDocument(file) as document:
         return any(WIDE_CHARACTER.search(page.get_textpage().get_text_range()) for page in document)
+
+
+class OpenPage:
+    # A page of a file, open in PDFium, whose regions are drawn as the file shows the page:
+    # turned the way it says, and with its annotations. Its width and height are those it is
+    # shown with, in points. A region is drawn alone, placed where it lies in a drawing of the
+    # whole page, which has the page's sides in points times the scale, rounded up, for its
+    # sides. What is filled in it comes out with the very pixels it has there; a letter that
+    # the region's edge cuts may come out otherwise, a line a shade otherwise, and a picture
+    # embedded in the page smoothed a little otherwise.
+    def __init__(self, page: Any) -> None:
+        self.page = page
+        width, height = page.get_size()
+        self.width: float = width
+        self.height: float = height
+
+    def whole(self, scale: float) -> tuple[int, int]:
+        return math.ceil(self.width * scale), math.ceil(self.height * scale)
+
+    def pixels(self, edges: PageEdges, scale: float) -> tuple[int, int, int, int]:
+        # The edges of a region in a drawing of the whole page at so many pixels a point.
+        across, down = self.whole(scale)
+        left, top, right, bottom = edges
+        return round(left * across), round(top * down), round(right * across), round(bottom * down)
+
+    def drawn(self, edges: PageEdges, scale: float) -> Image.Image:
+        # The drawing's pixels are let go while PDFium is held, whatever befalls it.
+        across, down = self.whole(scale)
+        left, top, right, bottom = self.pixels(edges, scale)
+        width, height = right - left, bottom - top
+        bitmap = PdfBitmap.new_native(width, height, raw.FPDFBitmap_BGR)
+        try:
+            bitmap.fill_rect(PAPER, 0, 0, width, height)
+            raw.FPDF_RenderPageBitmap(
+                bitmap, self.page, -left, -top, across, down, 0, raw.FPDF_ANNOT
+            )
+            drawing: Image.Image = bitmap.to_pil()
+        finally:
+            bitmap.close()
+        return drawing
+
+
+@contextmanager
+def open_page(file: Path, number: int) -> Iterator[OpenPage]:
+    # A page of a file, open for as long as its caller draws from it, which holds PDFium as
+    # long: what is done with a drawing is better done once the page is closed.
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
+        yield OpenPage(document[number])

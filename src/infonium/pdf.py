@@ -1,3 +1,6 @@
+import io
+import logging
+import math
 import re
 import unicodedata
 from itertools import accumulate, pairwise
@@ -5,6 +8,7 @@ from pathlib import Path
 from statistics import median
 
 from lxml import html
+from PIL import Image
 from pydantic import BaseModel
 
 from infonium.document import (
@@ -12,8 +16,11 @@ from infonium.document import (
     SOFT_HYPHEN,
     WORD_GAP,
     Block,
+    BlockNumber,
     Code,
     Extracted,
+    ExtractedPicture,
+    Figure,
     FormulaMark,
     Heading,
     ListItem,
@@ -27,7 +34,9 @@ from infonium.document import (
     StyleMark,
     Table,
     UnreadableSource,
+    error_text,
     has_words,
+    is_small_picture,
     joined,
     tabled,
 )
@@ -43,6 +52,7 @@ from infonium.mineru import (
     OwnParagraph,
     ParsedPage,
     ParsedPages,
+    PictureBody,
     PicturePages,
     RegionType,
     TableBody,
@@ -52,7 +62,16 @@ from infonium.mineru import (
     parsed_pages,
     word_lines,
 )
-from infonium.pdfium import WHOLE_TURN, Quarters, StoredFile, stored_file, upright_file
+from infonium.pdfium import (
+    DRAWING_FAILURES,
+    WHOLE_TURN,
+    PageEdges,
+    Quarters,
+    StoredFile,
+    open_page,
+    stored_file,
+    upright_file,
+)
 from infonium.plain_letters import PLAIN_FORM, plain_letters_file
 
 EXTRACTOR = "pdf/1"
@@ -74,6 +93,35 @@ LAID_ACROSS: Quarters = 3
 # A tall first letter is about as wide as it is high, and a line of words many times wider:
 # a detected line no more than this many times as wide as it is high is taken for a letter.
 LETTER_WIDTHS = 2
+# A picture or a chart is kept as a picture of the region of its page it stands in, drawn alone
+# at two pixels a point, 144 to the inch, and written as WebP into a folder of the reading's
+# own, under the number of its figure's block. WebP holds a picture no wider and no higher than
+# so many pixels. A side of a region comes out less than 2 pixels longer than its points times
+# the scale, its ends being rounded to whole pixels.
+PICTURE_SCALE = 2
+PICTURE_FORMAT = "WEBP"
+PICTURE_MEDIA_TYPE = "image/webp"
+PICTURE_SUFFIX = ".webp"
+PICTURE_QUALITY = 85
+PICTURES_FOLDER = "pictures"
+WEBP_LONGEST_SIDE = 16383
+ROUNDED_SIDE = 2
+# What encoding a drawing as WebP, in memory, can raise: ValueError where Pillow's encoder
+# refuses it, OSError where the encoder gives nothing back, and MemoryError. A picture whose
+# drawing or encoding fails is lost, and its reading goes on; writing it to the disk is not
+# among these, and a failure there fails the reading.
+ENCODING_FAILURES = (ValueError, OSError, MemoryError)
+# What the log says of such a picture: the page, counted from 1, the region's left, top, right
+# and bottom edges in points from the page's top left corner, and what failed.
+UNDRAWN = (
+    "a figure on page %d is left without a picture: drawing or encoding its region %s failed: %s"
+)
+# The engine's box of a picture has whole points for edges, and may end a point or two inside
+# the drawing, through a frame or a label. A picture takes in up to this many points of its
+# page past each side of the box, no further than halfway to any other box beyond that side,
+# so that two pictures close together, or a picture and its caption, take nothing of each
+# other.
+PICTURE_MARGIN = 2.0
 
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
@@ -110,6 +158,9 @@ ROW_SPAN = "rowspan"
 ONE_CELL = "1"
 
 
+logger = logging.getLogger(__name__)
+
+
 class Piece(BaseModel):
     # Words of one line that are set alike, or that make one formula. A word that ends in a
     # soft hyphen goes on in the word after it, with no gap between the two.
@@ -137,6 +188,13 @@ class Flow(BaseModel):
     text: str
     marks: list[Mark]
     places: list[Place]
+
+
+class PdfReading(BaseModel):
+    # The blocks read from a PDF, and for each figure among them, by the number of its block,
+    # the region its picture is drawn from, on its page as the PDF shows it.
+    blocks: list[Block]
+    figures: dict[BlockNumber, Area]
 
 
 class PdfFindings(BaseModel):
@@ -485,8 +543,10 @@ def headings(region: Title, page: ParsedPage, findings: PdfFindings) -> list[Blo
 
 
 def bullet_position(earlier: list[Block]) -> int:
-    match earlier[-1:]:
-        case [ListItem(ordered=False, position=position)]:
+    # A picture drawn between two items of a list, as one beside the items of a slide, does
+    # not end it: the item after it goes on from the item before it.
+    match next((block for block in reversed(earlier) if not isinstance(block, Figure)), None):
+        case ListItem(ordered=False, position=position):
             return position + 1
         case _:
             return 1
@@ -582,6 +642,8 @@ def listings(body: CodeBody, page: ParsedPage, findings: PdfFindings) -> list[Bl
 
 
 def member_blocks(member: Member, page: ParsedPage, findings: PdfFindings) -> list[Block]:
+    # A picture or a chart is a figure without words or places: what describes it is its
+    # captions and notes, which are paragraphs of their own, and its picture is drawn apart.
     match member:
         case OwnParagraph():
             return paragraphs(shown_lines(page, member.lines, findings), findings)
@@ -589,8 +651,8 @@ def member_blocks(member: Member, page: ParsedPage, findings: PdfFindings) -> li
             return tables(member, page, findings)
         case CodeBody():
             return listings(member, page, findings)
-        case _:
-            return []
+        case PictureBody():
+            return [Figure(source="", text="")]
 
 
 def text_chains(
@@ -628,9 +690,65 @@ def detected_lines(parsed: ParsedPages) -> dict[PageNumber, list[Area]]:
             return {page.page_idx: [] for page in parsed.pages}
 
 
-def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) -> list[Block]:
+def other_boxes(page: ParsedPage, body: PictureBody) -> list[Box]:
+    # The boxes of a page but a picture's own: those of the regions read and of those set
+    # aside, as headers and footers, and of the members of every group. A group's own box is
+    # the box of its picture, chart, table or listing, which its members already give.
+    members = [
+        member
+        for region in page.preproc_blocks
+        if isinstance(region, Group)
+        for member in region.blocks
+    ]
+    regions = [
+        region
+        for region in [*page.preproc_blocks, *page.discarded_blocks]
+        if not isinstance(region, Group)
+    ]
+    return [found.bbox for found in [*regions, *members] if found is not body]
+
+
+def rooms_along(
+    start: float, end: float, other_start: float, other_end: float, apart: float
+) -> tuple[float, float]:
+    # The room another box leaves a picture's box before its start and after its end along
+    # one axis of the page, the two lying so far apart along the other axis, less than
+    # nothing where they overlap along it. A box wholly beyond an end, within the margin's
+    # reach along the other axis, leaves half the gap between them. A box that overlaps the
+    # picture's leaves no room past an end it reaches past, and one inside it leaves the
+    # whole margin.
+    apart_along = max(other_start - end, start - other_end)
+    overlapping = apart_along < 0 and apart < 0
+    if overlapping:
+        return (
+            0.0 if other_start < start else PICTURE_MARGIN,
+            0.0 if other_end > end else PICTURE_MARGIN,
+        )
+    reached = apart < PICTURE_MARGIN
+    before = (start - other_end) / 2 if reached and other_end <= start else PICTURE_MARGIN
+    after = (other_start - end) / 2 if reached and other_start >= end else PICTURE_MARGIN
+    return before, after
+
+
+def widened(box: Box, others: list[Box]) -> Box:
+    # A picture's box grown by the margin on each side, as far as the other boxes of its page
+    # leave room. It may reach past the page, and area cuts it to the page.
+    left, top, right, bottom = box
+    to_left = to_top = to_right = to_bottom = PICTURE_MARGIN
+    for other_left, other_top, other_right, other_bottom in others:
+        apart_across = max(other_left - right, left - other_right)
+        apart_down = max(other_top - bottom, top - other_bottom)
+        before, after = rooms_along(left, right, other_left, other_right, apart_down)
+        to_left, to_right = min(to_left, before), min(to_right, after)
+        before, after = rooms_along(top, bottom, other_top, other_bottom, apart_across)
+        to_top, to_bottom = min(to_top, before), min(to_bottom, after)
+    return (left - to_left, top - to_top, right + to_right, bottom + to_bottom)
+
+
+def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) -> PdfReading:
     # The blocks of a file that the engine read without a turned page, with their places on
     # the pages as the PDF shows them: turned by so many quarters from the way they were read.
+    # The members of a group come in the engine's order, a figure where its picture stands.
     from_pictures = isinstance(parsed, PicturePages)
     spellings = {
         page.page_idx: frozenset()
@@ -649,6 +767,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
     )
     chains = text_chains(parsed.pages, findings)
     blocks: list[Block] = []
+    figures: dict[BlockNumber, Area] = {}
     for page in parsed.pages:
         continued = page.continued()
         for region in page.preproc_blocks:
@@ -663,18 +782,19 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
                 case OwnParagraph():
                     blocks.extend(paragraphs(shown_lines(page, region.lines, findings), findings))
                 case Group():
-                    blocks.extend(
-                        block
-                        for member in region.blocks
-                        for block in member_blocks(member, page, findings)
-                    )
+                    for member in region.blocks:
+                        if isinstance(member, PictureBody):
+                            others = other_boxes(page, member)
+                            cut = widened(member.bbox, others)
+                            figures[len(blocks)] = turned_back(area(page, cut), findings)
+                        blocks.extend(member_blocks(member, page, findings))
         # A footnote says something the document says, so it is kept: as a paragraph after
         # the text of its page, where it interrupts no sentence of that page. The engine does
         # not always list the notes of a page in the order they stand, so they go top down.
         notes = [margin for margin in page.discarded_blocks if isinstance(margin, OwnParagraph)]
         for note in sorted(notes, key=lambda note: area(page, note.bbox).top):
             blocks.extend(paragraphs(shown_lines(page, note.lines, findings), findings))
-    return blocks
+    return PdfReading(blocks=blocks, figures=figures)
 
 
 def names_document(title: str) -> bool:
@@ -698,20 +818,111 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
     return name
 
 
+def webp_of(drawing: Image.Image) -> bytes:
+    encoded = io.BytesIO()
+    drawing.save(encoded, PICTURE_FORMAT, quality=PICTURE_QUALITY)
+    return encoded.getvalue()
+
+
+def drawing_scale(width: float, height: float) -> float:
+    # The pixels a point that a region so many points wide and high is drawn at: two, or fewer
+    # where its longer side would come out longer than WebP holds, or where it would come out
+    # with more pixels than Pillow opens without taking it for a decompression bomb, the bound
+    # that a web page's picture is kept within as well. A region of no width or height comes
+    # out as nothing at any scale.
+    if not width or not height:
+        return PICTURE_SCALE
+    scales = [PICTURE_SCALE, (WEBP_LONGEST_SIDE + 1 - ROUNDED_SIDE) / max(width, height)]
+    bound = Image.MAX_IMAGE_PIXELS
+    if bound is not None:
+        # The scale s at which (width * s + 2) * (height * s + 2) pixels make the bound.
+        sides, area = ROUNDED_SIDE * (width + height), width * height
+        reach = math.sqrt(sides**2 - 4 * area * (ROUNDED_SIDE**2 - bound))
+        scales.append((reach - sides) / (2 * area))
+    return min(scales)
+
+
+def drawn_pictures(
+    file: Path, figures: dict[BlockNumber, Area], folder: Path
+) -> dict[BlockNumber, ExtractedPicture]:
+    # The picture of each figure, by the number of its block: its region drawn alone, at the
+    # scale drawing_scale gives, from its page as the file shows it. The page is open, and
+    # PDFium held, while the region is drawn and no longer: the drawing is encoded and written
+    # once the page is closed. A region that would come out as nothing, or small, is not
+    # drawn, and one whose drawing or encoding fails is told of in the log; either way its
+    # figure gets no picture.
+    folder.mkdir(exist_ok=True)
+    pictures: dict[BlockNumber, ExtractedPicture] = {}
+    for number, where in figures.items():
+        edges: PageEdges = (
+            where.left,
+            where.top,
+            where.left + where.width,
+            where.top + where.height,
+        )
+        with open_page(file, where.page) as page:
+            scale = drawing_scale(where.width * page.width, where.height * page.height)
+            left, top, right, bottom = page.pixels(edges, scale)
+            sides = (page.width, page.height, page.width, page.height)
+            points = tuple(round(edge * side, 1) for edge, side in zip(edges, sides, strict=True))
+            if right - left < 1 or bottom - top < 1 or is_small_picture(right - left, bottom - top):
+                continue
+            try:
+                drawing = page.drawn(edges, scale)
+            except DRAWING_FAILURES as failure:
+                logger.warning(UNDRAWN, where.page + 1, points, error_text(failure))
+                continue
+        try:
+            encoded = webp_of(drawing)
+        except ENCODING_FAILURES as failure:
+            logger.warning(UNDRAWN, where.page + 1, points, error_text(failure))
+            continue
+        picture = folder / f"{number}{PICTURE_SUFFIX}"
+        picture.write_bytes(encoded)
+        pictures[number] = ExtractedPicture(
+            block=number,
+            file=picture,
+            media_type=PICTURE_MEDIA_TYPE,
+            width=drawing.width,
+            height=drawing.height,
+        )
+    return pictures
+
+
+def without_unpictured_figures(
+    read: PdfReading, pictures: dict[BlockNumber, ExtractedPicture]
+) -> tuple[list[Block], list[ExtractedPicture]]:
+    # The blocks read without the figures that got no picture, and the pictures numbered by
+    # the blocks kept. A figure without a picture would hold nothing at all, no words, no place
+    # and no picture: its region was small, an icon or a mark, or its drawing failed.
+    blocks: list[Block] = []
+    kept: list[ExtractedPicture] = []
+    for number, block in enumerate(read.blocks):
+        if number in read.figures:
+            if number not in pictures:
+                continue
+            kept.append(pictures[number].model_copy(update={"block": len(blocks)}))
+        blocks.append(block)
+    return blocks, kept
+
+
 def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     # The name is what the file goes by where it has no title of its own; the folder is
     # where the engine may write, and is the caller's to clear. The engine is given the file
     # with no page turned, with fonts that say how far their letters reach, and with plain
     # letters for those of the mathematical alphabets; the text layer is read from that file,
     # so that its words are the engine's. What the engine finds is placed on the pages as the
-    # file shows them.
+    # file shows them, and the pictures of its figures are drawn from the file itself. A file
+    # in which nothing but figures is found holds no text to read.
     upright = upright_file(file, folder / UPRIGHT_COPY)
     measured = measured_file(upright.file, folder / MEASURED_COPY)
     handed = plain_letters_file(measured, folder / PLAIN_COPY)
     stored = stored_file(handed)
     to_parse = FileToParse(file=handed, engine=engine, folder=folder)
     parsed = parsed_pages(to_parse, len(stored.pages))
-    blocks = pdf_blocks(parsed, stored, upright.turned)
-    if not blocks:
+    read = pdf_blocks(parsed, stored, upright.turned)
+    if not any(block.text for block in read.blocks):
         raise UnreadableSource(f"no readable text in {name}")
-    return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks)
+    pictures = drawn_pictures(file, read.figures, folder / PICTURES_FOLDER)
+    blocks, kept = without_unpictured_figures(read, pictures)
+    return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks, pictures=kept)

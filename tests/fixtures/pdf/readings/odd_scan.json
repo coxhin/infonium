@@ -92,6 +92,13 @@
    ]
   },
   {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
+  },
+  {
    "kind": "paragraph",
    "text": "The second part begins a year later, in a town none of them had meant to see again.",
    "marks": [],
@@ -180,6 +187,13 @@
    ]
   },
   {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
+  },
+  {
    "kind": "heading",
    "level": 2,
    "text": "5. A bar code and a signature",
@@ -196,6 +210,20 @@
      "height": 0.018000000000000016
     }
    ]
+  },
+  {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
+  },
+  {
+   "kind": "figure",
+   "source": "",
+   "text": "",
+   "picture": null,
+   "places": []
   },
   {
    "kind": "heading",
@@ -937,6 +965,28 @@
      "height": 0.127
     }
    ]
+  }
+ ],
+ "pictures": [
+  {
+   "block": 4,
+   "width": 674,
+   "height": 40
+  },
+  {
+   "block": 10,
+   "width": 430,
+   "height": 175
+  },
+  {
+   "block": 12,
+   "width": 538,
+   "height": 107
+  },
+  {
+   "block": 13,
+   "width": 452,
+   "height": 96
   }
  ]
 }

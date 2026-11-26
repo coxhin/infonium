@@ -23,6 +23,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/documents/{document_id}/pictures/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Document Picture */
+        get: operations["document_picture_api_documents__document_id__pictures__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/highlights": {
         parameters: {
             query?: never;
@@ -551,6 +568,7 @@ export interface components {
              * @enum {string}
              */
             kind: "figure";
+            picture: components["schemas"]["KeptPicture"] | null;
             /**
              * Places
              * @default []
@@ -683,6 +701,23 @@ export interface components {
             current: number;
             /** Revisions */
             revisions: components["schemas"]["Revision"][];
+        };
+        /** KeptPicture */
+        KeptPicture: {
+            /**
+             * Height
+             * @description A length across a picture, in pixels.
+             */
+            height: number;
+            /** Media Type */
+            media_type: string;
+            /** Name */
+            name: string;
+            /**
+             * Width
+             * @description A length across a picture, in pixels.
+             */
+            width: number;
         };
         /** KeptSource */
         KeptSource: {
@@ -1386,6 +1421,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    document_picture_api_documents__document_id__pictures__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

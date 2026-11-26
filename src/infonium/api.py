@@ -99,6 +99,10 @@ READERS = 2
 # A source is another site's bytes served from this origin; a browser that opens one treats
 # it as inert and as the kind of bytes it is said to be.
 SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
+# A picture of a document is served as a source is. Its name is the hash of its bytes, so
+# what is served under it never changes, and a browser may keep it a year without asking
+# again; it is one reader's, so no cache between them and infonium may keep it.
+PICTURE_HEADERS = {**SOURCE_HEADERS, "Cache-Control": "private, max-age=31536000, immutable"}
 # A web page an item was read from, served as a document of its own, is inert and quiet
 # whoever opens its address, a frame or a tab: these headers are the first line of defence,
 # and what framedpage removes from the page the second. The page keeps infonium's origin so
@@ -708,6 +712,23 @@ def item_source(item_id: str, owner: Owner) -> FileResponse:
         source = library.kept_source(item_id)
     return FileResponse(
         store.snapshot(source.snapshot), media_type=source.media_type, headers=SOURCE_HEADERS
+    )
+
+
+@app.get(
+    "/api/documents/{document_id}/pictures/{name}",
+    responses=NOT_IN_LIBRARY,
+    response_class=FileResponse,
+)
+def document_picture(document_id: str, name: str, owner: Owner) -> FileResponse:
+    # A picture the library keeps of a figure of one of the owner's documents, any revision of
+    # an item, by the name the figure gives it. The library keeps one copy of a picture,
+    # however many documents name it, and serves it only to one who holds such a document.
+    store = library_store()
+    with store.library(owner) as library:
+        picture = library.kept_picture(document_id, name)
+    return FileResponse(
+        store.picture(picture.name), media_type=picture.media_type, headers=PICTURE_HEADERS
     )
 
 

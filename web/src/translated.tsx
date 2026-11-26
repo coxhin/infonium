@@ -73,6 +73,7 @@ export function AgainControl({
 
 function TranslationOf({
   block,
+  documentId,
   number,
   translated,
   beside,
@@ -81,6 +82,7 @@ function TranslationOf({
   onAgain,
 }: {
   block: Block;
+  documentId: string;
   number: number;
   translated: TranslatedBlock;
   beside: boolean;
@@ -105,6 +107,7 @@ function TranslationOf({
     >
       <BlockForm
         block={block}
+        documentId={documentId}
         text={translated.segments.map((segment) => segment.text).join(SEGMENT_GAP)}
         content={content}
         marking={tablePointed ? { className: POINTED_CLASS } : {}}
@@ -121,6 +124,7 @@ function TranslationOf({
 // translation that arrives in pieces redraws only the blocks of each piece.
 export const Row = memo(function Row({
   block,
+  documentId,
   number,
   setting,
   translated,
@@ -130,6 +134,7 @@ export const Row = memo(function Row({
   missing,
 }: {
   block: Block;
+  documentId: string;
   number: number;
   setting: Setting;
   translated: TranslatedBlock | undefined;
@@ -143,19 +148,25 @@ export const Row = memo(function Row({
   if (setting !== "source" && translated === undefined && missing) {
     return (
       <div className="untranslated">
-        <SourceBlock block={block} number={number} hidden={false} />
+        <SourceBlock block={block} documentId={documentId} number={number} hidden={false} />
         <AgainControl number={number} again={again} onAgain={onAgain} missing />
       </div>
     );
   }
   if (setting === "source" || translated === undefined) {
-    return <SourceBlock block={block} number={number} hidden={false} />;
+    return <SourceBlock block={block} documentId={documentId} number={number} hidden={false} />;
   }
   return (
     <>
-      <SourceBlock block={block} number={number} hidden={setting === "translation"} />
+      <SourceBlock
+        block={block}
+        documentId={documentId}
+        number={number}
+        hidden={setting === "translation"}
+      />
       <TranslationOf
         block={block}
+        documentId={documentId}
         number={number}
         translated={translated}
         beside={setting === "both"}

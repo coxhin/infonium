@@ -16,7 +16,7 @@ import filetype
 import httpx
 from pydantic import BaseModel
 
-from infonium import browser, captions, guard, media, pdf, recording, speech, webpage
+from infonium import browser, captions, guard, media, pdf, recording, speech, webpage, webpictures
 from infonium.document import (
     BROKEN_OFF_SOURCE,
     HTML_MEDIA_TYPE,
@@ -25,7 +25,9 @@ from infonium.document import (
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     PDF_MEDIA_TYPE,
+    Block,
     Extracted,
+    KeptPicture,
     MediaType,
     UnreadableSource,
     document_of,
@@ -43,6 +45,7 @@ from infonium.library import (
     Origin,
     Read,
     Reading,
+    StagedPicture,
     Upload,
     arrival_of,
     is_underway,
@@ -61,7 +64,8 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0 Safari/537.36 infonium/0.1"
 )
-# The longest silence a server is allowed while a source is fetched from it.
+# The longest silence a server is allowed while a source, or a picture of a page, is fetched
+# from it.
 FETCH_TIMEOUT_SECONDS = 20.0
 # The longest a fetch may take in all, and the most it may bring.
 FETCH_LIMIT_SECONDS = 600.0
@@ -231,10 +235,18 @@ def page_copy(asked: str, file: Path, served: str) -> PageCopy:
     return copy
 
 
-def copy_readout(copy: PageCopy) -> Readout:
+def with_pictures(extracted: Extracted, page: str, directory: Path) -> Extracted:
+    # The pictures of a page's figures are asked for as the page was, by the same user agent
+    # and after as long a silence of their server.
+    return webpictures.with_pictures(extracted, page, directory, USER_AGENT, FETCH_TIMEOUT_SECONDS)
+
+
+def copy_readout(copy: PageCopy, directory: Path) -> Readout:
     return Readout(
         extractor=webpage.EXTRACTOR,
-        extracted=webpage.extracted_text(copy.text, copy.served),
+        extracted=with_pictures(
+            webpage.extracted_text(copy.text, copy.served), copy.served, directory
+        ),
         file=copy.file,
         media_type=HTML_MEDIA_TYPE,
     )
@@ -249,7 +261,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
     # changes are the reason.
     plain = page_copy(url, source.file, source.reference)
     if plain.words >= LITTLE_TEXT_WORDS:
-        return copy_readout(plain)
+        return copy_readout(plain, directory)
     try:
         rendered = browser.rendered_page(source.reference, directory, engines.browser)
         if len(rendered.broken_off) > 1:
@@ -267,7 +279,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
         logger.warning(
             "rendering %s failed: %s; its plain reading is kept", source.reference, failure
         )
-        return copy_readout(plain)
+        return copy_readout(plain, directory)
     kept = built if built.words > plain.words else plain
     if rendered.broken_off_by_network:
         if not kept.text.blocks:
@@ -277,7 +289,7 @@ def page_readout(url: str, source: Source, directory: Path, engines: Engines) ->
             "hold only part of the page",
             source.reference,
         )
-    return copy_readout(kept)
+    return copy_readout(kept, directory)
 
 
 def link_readout(
@@ -307,7 +319,11 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     if source.media_type == HTML_MEDIA_TYPE:
         return Readout(
             extractor=webpage.EXTRACTOR,
-            extracted=webpage.extract_page(source.file.read_bytes(), source.reference),
+            extracted=with_pictures(
+                webpage.extract_page(source.file.read_bytes(), source.reference),
+                source.reference,
+                directory,
+            ),
             file=source.file,
             media_type=source.media_type,
         )
@@ -327,6 +343,21 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
             engines.recogniser,
         )
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
+
+
+def pictured_blocks(extracted: Extracted, staged: dict[Path, StagedPicture]) -> list[Block]:
+    # The blocks a reading extracted, each figure it found a picture for carrying that picture
+    # as the library keeps it, by the file the picture was staged from.
+    blocks = list(extracted.blocks)
+    for picture in extracted.pictures:
+        kept = KeptPicture(
+            name=staged[picture.file].name,
+            media_type=picture.media_type,
+            width=picture.width,
+            height=picture.height,
+        )
+        blocks[picture.block] = blocks[picture.block].model_copy(update={"picture": kept})
+    return blocks
 
 
 class Intake:
@@ -463,44 +494,61 @@ class Intake:
         item = self.changed(owner, item_id, reading_begun)
         if not is_underway(item.reading):
             return
-        with TemporaryDirectory(dir=self.store.work) as directory:
-            match item.origin:
-                case Link(url=url):
-                    readout = link_readout(
-                        url,
-                        Path(directory),
-                        self.engines,
-                        partial(self.keep_arrival, owner, item_id),
-                    )
-                case Upload(name=name):
-                    # An upload is kept as it arrived when its reading was asked for; this is
-                    # for a reading begun again after the service stopped before that.
-                    source = uploaded(self.store.upload(item_id), name)
-                    if not arrival_of(item.reading):
-                        self.keep_arrival(owner, item_id, source)
-                    readout = readout_of(source, Path(directory), self.engines)
-            staged = self.store.staged_snapshot(readout.file)
-        document = document_of(
-            item_id=item.id,
-            extractor=readout.extractor,
-            snapshot=staged.name,
-            media_type=readout.media_type,
-            blocks=readout.extracted.blocks,
-        )
-        # A reading that gives a document the library keeps already leaves that document and
-        # its file as they are, and keeps no other file beside it.
-        with self.turn:
-            with self.store.library(owner) as library:
-                current = library.item(item_id)
-                settled = reading_settled(current.reading, readout.extracted.title, document.id)
-                new_document = library.keep_document(document, datetime.now(UTC))
-                if new_document:
-                    self.store.keep_snapshot(staged)
-                else:
-                    staged.file.unlink()
-                library.keep_item(item_with(current, settled))
-            self.drop_upload(current)
-            self.drop_arrival(current.reading, [staged.name] if new_document else [])
+        # The files a reading stages in the work directory are kept from there, or go once it
+        # ends, though it fail.
+        staged: list[Path] = []
+        try:
+            with TemporaryDirectory(dir=self.store.work) as directory:
+                match item.origin:
+                    case Link(url=url):
+                        readout = link_readout(
+                            url,
+                            Path(directory),
+                            self.engines,
+                            partial(self.keep_arrival, owner, item_id),
+                        )
+                    case Upload(name=name):
+                        # An upload is kept as it arrived when its reading was asked for; this
+                        # is for a reading begun again after the service stopped before that.
+                        source = uploaded(self.store.upload(item_id), name)
+                        if not arrival_of(item.reading):
+                            self.keep_arrival(owner, item_id, source)
+                        readout = readout_of(source, Path(directory), self.engines)
+                snapshot = self.store.staged_snapshot(readout.file)
+                staged.append(snapshot.file)
+                # The pictures are staged while the reading's folder holds them, a file once
+                # however many figures it is the picture of.
+                pictures: dict[Path, StagedPicture] = {}
+                for file in dict.fromkeys(picture.file for picture in readout.extracted.pictures):
+                    pictures[file] = self.store.staged_picture(file)
+                    staged.append(pictures[file].file)
+            document = document_of(
+                item_id=item.id,
+                extractor=readout.extractor,
+                snapshot=snapshot.name,
+                media_type=readout.media_type,
+                blocks=pictured_blocks(readout.extracted, pictures),
+            )
+            # A reading that gives a document the library keeps already leaves that document and
+            # its file as they are, and keeps no other file beside it; of its pictures, it keeps
+            # those it gives the document's figures that have none.
+            with self.turn:
+                with self.store.library(owner) as library:
+                    current = library.item(item_id)
+                    settled = reading_settled(current.reading, readout.extracted.title, document.id)
+                    new_document = library.keep_document(document, datetime.now(UTC))
+                    if new_document:
+                        self.store.keep_snapshot(snapshot)
+                    given = set() if new_document else library.give_pictures(document)
+                    for picture in pictures.values():
+                        if new_document or picture.name in given:
+                            self.store.keep_picture(picture)
+                    library.keep_item(item_with(current, settled))
+                self.drop_upload(current)
+                self.drop_arrival(current.reading, [snapshot.name] if new_document else [])
+        finally:
+            for file in staged:
+                file.unlink(missing_ok=True)
 
     def record(self, owner: str, item_id: str, finished: Future[None]) -> None:
         error = None if finished.cancelled() else finished.exception()
