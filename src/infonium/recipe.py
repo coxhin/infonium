@@ -94,8 +94,9 @@ then says what the document says about that topic in one or two sentences.
 Write these sections, in this order.
 
 The first section is titled with the words for "Bottom line" in the output language, in its \
-sense of the conclusion that counts, and is a paragraph. It holds one statement: what is new, \
-or what the document concludes, in one sentence a reader could stop after.
+sense of the conclusion that counts (in Chinese 核心结论, never 底线), and is a paragraph. It \
+holds one statement: what is new, or what the document concludes, in one sentence a reader \
+could stop after.
 
 The second section is titled with the words for "Why it matters" in the output language, \
 and is a paragraph. It holds one or two statements: why it matters as the document presents \
@@ -107,9 +108,9 @@ list. It holds three to six statements: the facts, numbers and details that supp
 bottom line.
 
 The fourth section is titled with the words for "Yes, but" in the output language, as a \
-heading of reservations, and is a list. It holds up to three statements: caveats, \
-counterpoints or uncertainties that the document states. Leave it out when the document states \
-none.
+heading of reservations (in Chinese 保留意见, never a bare 但是), and is a list. It holds up to \
+three statements: caveats, counterpoints or uncertainties that the document states. Leave it \
+out when the document states none.
 
 The fifth section is titled with the words for "What's next" in the output language, and is \
 a list. It holds up to three statements: what the document says comes next, such as dates, \
