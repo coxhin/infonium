@@ -801,11 +801,11 @@ def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_t
     drawn = pdfium.OpenPage.drawn
 
     def out_of_memory_on_the_left(
-        page: pdfium.OpenPage, region: pdfium.Region, scale: float
+        page: pdfium.OpenPage, edges: pdfium.PageEdges, scale: float
     ) -> Image.Image:
-        if region[0] < 0.5:
+        if edges[0] < 0.5:
             raise MemoryError
-        return drawn(page, region, scale)
+        return drawn(page, edges, scale)
 
     monkeypatch.setattr(pdfium.OpenPage, "drawn", out_of_memory_on_the_left)
     caplog.set_level(logging.WARNING, logger=pdf.__name__)
@@ -821,8 +821,8 @@ def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_t
     )
     told = [record.getMessage() for record in caplog.records if record.name == pdf.__name__]
     assert told == [
-        "a figure on page 1 is left without a picture: its region (98.0, 98.0, 302.0, 252.0) "
-        "could not be drawn: MemoryError"
+        "a figure on page 1 is left without a picture: drawing or encoding its region "
+        "(98.0, 98.0, 302.0, 252.0) failed: MemoryError"
     ], f"the log does not tell of the lost picture by its page and region: {told}"
 
 
