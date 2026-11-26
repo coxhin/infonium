@@ -92,7 +92,7 @@ class RecipeChoice(BaseModel):
 
 class CustomChoice(BaseModel):
     # The reader's own style: their instructions for the digest in place of a recipe.
-    model_config = ConfigDict(regex_engine=PYTHON_REGEX)
+    model_config = ConfigDict(extra="forbid", regex_engine=PYTHON_REGEX)
 
     style: Literal[DigestStyle.CUSTOM]
     instructions: CustomInstructions
