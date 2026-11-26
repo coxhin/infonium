@@ -25,7 +25,9 @@ from infonium.document import (
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
     PDF_MEDIA_TYPE,
+    Block,
     Extracted,
+    KeptPicture,
     MediaType,
     UnreadableSource,
     document_of,
@@ -43,6 +45,7 @@ from infonium.library import (
     Origin,
     Read,
     Reading,
+    StagedPicture,
     Upload,
     arrival_of,
     is_underway,
@@ -329,6 +332,21 @@ def readout_of(source: Source, directory: Path, engines: Engines) -> Readout:
     raise UnreadableSource(f"infonium cannot read {source.reference}: {source.media_type}")
 
 
+def pictured_blocks(extracted: Extracted, staged: dict[Path, StagedPicture]) -> list[Block]:
+    # The blocks a reading extracted, each figure it found a picture for carrying that picture
+    # as the library keeps it, by the file the picture was staged from.
+    blocks = list(extracted.blocks)
+    for picture in extracted.pictures:
+        kept = KeptPicture(
+            name=staged[picture.file].name,
+            media_type=picture.media_type,
+            width=picture.width,
+            height=picture.height,
+        )
+        blocks[picture.block] = blocks[picture.block].model_copy(update={"picture": kept})
+    return blocks
+
+
 class Intake:
     # Reads the sources of a library's items into documents, a few at a time and off the
     # thread that asks.
@@ -480,15 +498,21 @@ class Intake:
                         self.keep_arrival(owner, item_id, source)
                     readout = readout_of(source, Path(directory), self.engines)
             staged = self.store.staged_snapshot(readout.file)
+            # The pictures are staged while the reading's folder holds them, a file once
+            # however many figures it is the picture of.
+            pictures = {
+                file: self.store.staged_picture(file)
+                for file in dict.fromkeys(picture.file for picture in readout.extracted.pictures)
+            }
         document = document_of(
             item_id=item.id,
             extractor=readout.extractor,
             snapshot=staged.name,
             media_type=readout.media_type,
-            blocks=readout.extracted.blocks,
+            blocks=pictured_blocks(readout.extracted, pictures),
         )
-        # A reading that gives a document the library keeps already leaves that document and
-        # its file as they are, and keeps no other file beside it.
+        # A reading that gives a document the library keeps already leaves that document, its
+        # file and its pictures as they are, and keeps no other file or picture beside it.
         with self.turn:
             with self.store.library(owner) as library:
                 current = library.item(item_id)
@@ -498,6 +522,11 @@ class Intake:
                     self.store.keep_snapshot(staged)
                 else:
                     staged.file.unlink()
+                for picture in pictures.values():
+                    if new_document:
+                        self.store.keep_picture(picture)
+                    else:
+                        picture.file.unlink()
                 library.keep_item(item_with(current, settled))
             self.drop_upload(current)
             self.drop_arrival(current.reading, [staged.name] if new_document else [])

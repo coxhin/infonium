@@ -44,7 +44,10 @@ type Refusal = Schemas["Failure"] | Schemas["HTTPValidationError"];
 
 const SOURCE_PATH = "/api/items/{item_id}/source" satisfies keyof paths;
 const PAGE_PATH = "/api/items/{item_id}/page" satisfies keyof paths;
+const PICTURE_PATH = "/api/documents/{document_id}/pictures/{name}" satisfies keyof paths;
 const ITEM_PLACE = "{item_id}";
+const DOCUMENT_PLACE = "{document_id}";
+const NAME_PLACE = "{name}";
 
 const api = createClient<paths>();
 
@@ -56,6 +59,11 @@ export function sourceLink(itemId: string): string {
 // Where the web page an item was read from is served, inert, for a frame to show.
 export function pageLink(itemId: string): string {
   return PAGE_PATH.replace(ITEM_PLACE, itemId);
+}
+
+// Where the picture the library keeps of a figure of a document is served, by its name.
+export function pictureLink(documentId: string, name: string): string {
+  return PICTURE_PATH.replace(DOCUMENT_PLACE, documentId).replace(NAME_PLACE, name);
 }
 
 // How the target of a link in a note's Markdown begins when it leads to one of the note's

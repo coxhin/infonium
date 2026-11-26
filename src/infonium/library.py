@@ -16,7 +16,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, TypeAda
 from sqlalchemy.dialects import sqlite
 
 from infonium.digest import Digest
-from infonium.document import HTML_MEDIA_TYPE, Document, MediaType, Tagged
+from infonium.document import HTML_MEDIA_TYPE, Document, Figure, KeptPicture, MediaType, Tagged
 
 # The one user of a self-hosted library. Item ids hash the owner, so a deployment that adds
 # accounts keeps this id for that first user.
@@ -24,6 +24,7 @@ LOCAL_OWNER = "local"
 LIBRARY_FILE = "library.sqlite"
 LOCK_FILE = "library.lock"
 SNAPSHOT_DIRECTORY = "snapshots"
+PICTURE_DIRECTORY = "pictures"
 UPLOAD_DIRECTORY = "uploads"
 WORK_DIRECTORY = "work"
 CONTENT_HASH = "sha256"
@@ -294,6 +295,12 @@ class Holding(BaseModel):
 
 class StagedSnapshot(BaseModel):
     # A source's file, staged in the work directory to be kept under its name.
+    name: str
+    file: Path
+
+
+class StagedPicture(BaseModel):
+    # A picture's file, staged in the work directory to be kept under its name.
     name: str
     file: Path
 
@@ -579,6 +586,19 @@ class Library:
             raise NotInLibrary(f"document {document_id} is not in the library")
         return Document.model_validate_json(body)
 
+    def kept_picture(self, document_id: str, name: str) -> KeptPicture:
+        # A picture that a figure of the owner's document carries, by its name. A picture that
+        # the document does not name is not found, though the library may keep it for another.
+        pictures = [
+            block.picture
+            for block in self.owned_document(document_id).blocks
+            if isinstance(block, Figure) and block.picture is not None
+        ]
+        named = [picture for picture in pictures if picture.name == name]
+        if not named:
+            raise NotInLibrary(f"document {document_id} holds no picture {name}")
+        return named[0]
+
     def kept_source(self, item_id: str) -> KeptSource:
         # The file of the item's source beside the document it holds, or, while it holds none,
         # the one its reading keeps as it arrived.
@@ -609,9 +629,10 @@ class Library:
 class LibraryStore:
     def __init__(self, directory: Path) -> None:
         self.snapshots = directory / SNAPSHOT_DIRECTORY
+        self.pictures = directory / PICTURE_DIRECTORY
         self.uploads = directory / UPLOAD_DIRECTORY
         self.work = directory / WORK_DIRECTORY
-        for kept in (self.snapshots, self.uploads, self.work):
+        for kept in (self.snapshots, self.pictures, self.uploads, self.work):
             kept.mkdir(parents=True, exist_ok=True)
         # One service at a time works on a library; a second one stops here.
         self.lock = FileLock(directory / LOCK_FILE)
@@ -666,17 +687,36 @@ class LibraryStore:
             shutil.copyfileobj(content, arrived)
         return Path(arrived.name)
 
+    def staged_named(self, file: Path) -> tuple[str, Path]:
+        # A copy of a file's bytes in the work directory, and the name those bytes hash to.
+        with file.open("rb") as content:
+            name = file_digest(content, CONTENT_HASH).hexdigest()
+            content.seek(0)
+            return name, self.staged(content)
+
     def snapshot(self, name: str) -> Path:
         return self.snapshots / name[:2] / name
 
     def staged_snapshot(self, file: Path) -> StagedSnapshot:
-        with file.open("rb") as content:
-            name = file_digest(content, CONTENT_HASH).hexdigest()
-            content.seek(0)
-            return StagedSnapshot(name=name, file=self.staged(content))
+        name, staged = self.staged_named(file)
+        return StagedSnapshot(name=name, file=staged)
 
     def keep_snapshot(self, staged: StagedSnapshot) -> None:
         kept = self.snapshot(staged.name)
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        staged.file.replace(kept)
+
+    def picture(self, name: str) -> Path:
+        return self.pictures / name[:2] / name
+
+    def staged_picture(self, file: Path) -> StagedPicture:
+        name, staged = self.staged_named(file)
+        return StagedPicture(name=name, file=staged)
+
+    def keep_picture(self, staged: StagedPicture) -> None:
+        # A picture is kept once, however many figures, documents and owners name it: the
+        # bytes kept under its name already are the same bytes.
+        kept = self.picture(staged.name)
         kept.parent.mkdir(parents=True, exist_ok=True)
         staged.file.replace(kept)
 
