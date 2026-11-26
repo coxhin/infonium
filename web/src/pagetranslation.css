@@ -139,9 +139,16 @@
   z-index: 1;
 }
 
-/* Where the source is to be seen under the translation, a flow pressed lets it through. */
+/* Where the source is to be seen under the translation, a flow pressed lets it through. What
+   the flow holds is then unseen, and so takes no press and no focus: a press on a link there
+   lands on the flow and closes it, and a drag there selects the source. Its areas keep their
+   boxes, so its fitting stands. */
 .page-translation.revealing :is(.flow, .paper)[data-open] {
   opacity: 0;
+}
+
+.page-translation.revealing .flow[data-open] .area {
+  visibility: hidden;
 }
 
 .page-translation .flow:focus-visible {
