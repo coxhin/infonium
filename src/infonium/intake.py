@@ -494,57 +494,61 @@ class Intake:
         item = self.changed(owner, item_id, reading_begun)
         if not is_underway(item.reading):
             return
-        with TemporaryDirectory(dir=self.store.work) as directory:
-            match item.origin:
-                case Link(url=url):
-                    readout = link_readout(
-                        url,
-                        Path(directory),
-                        self.engines,
-                        partial(self.keep_arrival, owner, item_id),
-                    )
-                case Upload(name=name):
-                    # An upload is kept as it arrived when its reading was asked for; this is
-                    # for a reading begun again after the service stopped before that.
-                    source = uploaded(self.store.upload(item_id), name)
-                    if not arrival_of(item.reading):
-                        self.keep_arrival(owner, item_id, source)
-                    readout = readout_of(source, Path(directory), self.engines)
-            staged = self.store.staged_snapshot(readout.file)
-            # The pictures are staged while the reading's folder holds them, a file once
-            # however many figures it is the picture of.
-            pictures = {
-                file: self.store.staged_picture(file)
-                for file in dict.fromkeys(picture.file for picture in readout.extracted.pictures)
-            }
-        document = document_of(
-            item_id=item.id,
-            extractor=readout.extractor,
-            snapshot=staged.name,
-            media_type=readout.media_type,
-            blocks=pictured_blocks(readout.extracted, pictures),
-        )
-        # A reading that gives a document the library keeps already leaves that document and
-        # its file as they are, and keeps no other file beside it; of its pictures, it keeps
-        # those it gives the document's figures that have none.
-        with self.turn:
-            with self.store.library(owner) as library:
-                current = library.item(item_id)
-                settled = reading_settled(current.reading, readout.extracted.title, document.id)
-                new_document = library.keep_document(document, datetime.now(UTC))
-                if new_document:
-                    self.store.keep_snapshot(staged)
-                else:
-                    staged.file.unlink()
-                given = set() if new_document else library.give_pictures(document)
-                for picture in pictures.values():
-                    if new_document or picture.name in given:
-                        self.store.keep_picture(picture)
-                    else:
-                        picture.file.unlink()
-                library.keep_item(item_with(current, settled))
-            self.drop_upload(current)
-            self.drop_arrival(current.reading, [staged.name] if new_document else [])
+        # The files a reading stages in the work directory are kept from there, or go once it
+        # ends, though it fail.
+        staged: list[Path] = []
+        try:
+            with TemporaryDirectory(dir=self.store.work) as directory:
+                match item.origin:
+                    case Link(url=url):
+                        readout = link_readout(
+                            url,
+                            Path(directory),
+                            self.engines,
+                            partial(self.keep_arrival, owner, item_id),
+                        )
+                    case Upload(name=name):
+                        # An upload is kept as it arrived when its reading was asked for; this
+                        # is for a reading begun again after the service stopped before that.
+                        source = uploaded(self.store.upload(item_id), name)
+                        if not arrival_of(item.reading):
+                            self.keep_arrival(owner, item_id, source)
+                        readout = readout_of(source, Path(directory), self.engines)
+                snapshot = self.store.staged_snapshot(readout.file)
+                staged.append(snapshot.file)
+                # The pictures are staged while the reading's folder holds them, a file once
+                # however many figures it is the picture of.
+                pictures: dict[Path, StagedPicture] = {}
+                for file in dict.fromkeys(picture.file for picture in readout.extracted.pictures):
+                    pictures[file] = self.store.staged_picture(file)
+                    staged.append(pictures[file].file)
+            document = document_of(
+                item_id=item.id,
+                extractor=readout.extractor,
+                snapshot=snapshot.name,
+                media_type=readout.media_type,
+                blocks=pictured_blocks(readout.extracted, pictures),
+            )
+            # A reading that gives a document the library keeps already leaves that document and
+            # its file as they are, and keeps no other file beside it; of its pictures, it keeps
+            # those it gives the document's figures that have none.
+            with self.turn:
+                with self.store.library(owner) as library:
+                    current = library.item(item_id)
+                    settled = reading_settled(current.reading, readout.extracted.title, document.id)
+                    new_document = library.keep_document(document, datetime.now(UTC))
+                    if new_document:
+                        self.store.keep_snapshot(snapshot)
+                    given = set() if new_document else library.give_pictures(document)
+                    for picture in pictures.values():
+                        if new_document or picture.name in given:
+                            self.store.keep_picture(picture)
+                    library.keep_item(item_with(current, settled))
+                self.drop_upload(current)
+                self.drop_arrival(current.reading, [snapshot.name] if new_document else [])
+        finally:
+            for file in staged:
+                file.unlink(missing_ok=True)
 
     def record(self, owner: str, item_id: str, finished: Future[None]) -> None:
         error = None if finished.cancelled() else finished.exception()

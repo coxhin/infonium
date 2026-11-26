@@ -1,3 +1,4 @@
+import errno
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -9,6 +10,7 @@ from PIL import Image
 
 from infonium import pdf, webpictures
 from infonium.document import Block, Extracted, ExtractedPicture, Figure, Paragraph
+from infonium.library import LibraryStore
 from tests.service import FILLER, SITE, App, as_owner, new_owner, stand
 
 # The pictures a reading keeps with its document, and how they are served: a stand-in for the
@@ -260,3 +262,51 @@ def test_a_page_whose_pictures_all_fail_is_read_with_its_figures_at_their_source
     assert [block["source"] for block in document["blocks"] if block["kind"] == "figure"] == (
         sources
     ), "a figure whose picture failed lost its source"
+
+
+def test_a_web_page_read_again_gives_its_figures_the_pictures_they_lacked(app: App) -> None:
+    rain, snow = drawing((40, 90, 200), kind="PNG"), drawing((220, 220, 230), kind="PNG")
+    app.site.pictures["rain.png"] = (rain, PNG)
+    sources = [f"{SITE}/picture/{name}" for name in ("rain.png", "snow.png")]
+    item = app.read_page("weather", pictured_page(*sources))
+    first = document_of(app, item)
+    assert pictures_of(first) == [name_of(rain), None], (
+        "the page's second picture was kept though its site did not serve it: a test's fault"
+    )
+    app.site.pictures["snow.png"] = (snow, PNG)
+    read_again(app, item)
+    again = document_of(app, item)
+    assert again["id"] == first["id"], "a page read again with the same text is another document"
+    assert pictures_of(again) == [name_of(rain), name_of(snow)], (
+        "a figure without a picture was not given the one its page read again brought"
+    )
+    assert kept_pictures(app) == sorted([name_of(rain), name_of(snow)]), (
+        "the library does not keep the picture given to a document kept already"
+    )
+
+
+@pytest.mark.parametrize("failing", ["staged_picture", "keep_picture"])
+def test_a_reading_that_fails_once_its_pictures_are_staged_leaves_none_in_the_work_folder(
+    app: App, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    # The disk fills while the second picture is staged, or while the first is kept.
+    pictures = {"rain.png": drawing((40, 90, 200), kind="PNG")}
+    pictures["snow.png"] = drawing((220, 220, 230), kind="PNG")
+    app.site.pictures |= {name: (content, PNG) for name, content in pictures.items()}
+    step = getattr(LibraryStore, failing)
+    calls: list[object] = []
+
+    def filling(store: LibraryStore, staged: Any) -> Any:
+        calls.append(staged)
+        if failing == "keep_picture" or len(calls) == 2:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return step(store, staged)
+
+    monkeypatch.setattr(LibraryStore, failing, filling)
+    app.site.pages["full"] = pictured_page(*(f"{SITE}/picture/{name}" for name in pictures))
+    entry = app.settled(app.link(f"{SITE}/page/full").json()["id"])
+    assert stand(entry) == "unread/failed", f"a reading whose disk filled did not fail: {entry}"
+    assert "No space left on device" in entry["reading"]["attempt"]["reason"], (
+        "a reading whose disk filled failed for another reason"
+    )
+    assert app.left_in(app.store.work) == [], "a reading that failed left what it staged"

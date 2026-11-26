@@ -1,10 +1,15 @@
 import asyncio
+import gzip
 import logging
 import os
+import shutil
 import socket
 import socketserver
+import ssl
+import subprocess
 import tempfile
 import time
+import tracemalloc
 from collections.abc import Iterator
 from contextlib import contextmanager
 from io import BytesIO
@@ -16,7 +21,7 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from PIL import Image
+from PIL import ExifTags, Image
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
@@ -46,6 +51,29 @@ REBOUND_NAME = "rebound.example"
 REBOUND_ADDRESSES = ("93.184.215.14", "192.168.1.20")
 UNKNOWN_NAME = "nowhere.example"
 NAMED = {"localhost": LOCALHOST, REBOUND_NAME: REBOUND_ADDRESSES}
+# A host that none of the test's sites is, and the port a site answers over TLS on.
+OTHER_HOST = "other.test"
+HTTPS_PORT = 443
+# How the certificate authority of a test session, and the certificates it signs for servers,
+# are made, with the extensions that Python's strict checking of certificates asks for. The
+# authority and its certificates are made anew for each session and trusted by its tests alone.
+AUTHORITY_CONFIG = """[req]
+distinguished_name = name
+[name]
+[authority]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+"""
+SERVER_EXTENSIONS = """basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+subjectAltName = {names}
+"""
+NEW_KEY = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes")
+VALID_DAYS = "2"
 EXAMPLES = settings(max_examples=12, suppress_health_check=[HealthCheck.function_scoped_fixture])
 
 
@@ -96,6 +124,8 @@ class PictureSite:
         self.answering = 0
         self.most_at_once = 0
         self.servers: dict[str, Path] = {}
+        # Where the site answers over TLS, while it does.
+        self.secure: Path | None = None
 
     def reset(self) -> None:
         self.answers.clear()
@@ -142,8 +172,9 @@ def site(monkeypatch: pytest.MonkeyPatch) -> Iterator[PictureSite]:
         def connection(host: str, port: int) -> socket.socket:
             if host not in PUBLIC_LOOKING | served.servers.keys():
                 return judged(host, port)
+            secure = served.secure if port == HTTPS_PORT else None
             local = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            local.connect(str(served.servers.get(host, path)))
+            local.connect(str(served.servers.get(host, secure or path)))
             return local
 
         def lookup(host: str, port: int, *arguments: Any, **options: Any) -> list[Any]:
@@ -166,6 +197,73 @@ def site(monkeypatch: pytest.MonkeyPatch) -> Iterator[PictureSite]:
         monkeypatch.setattr(egress, "public_connection", connection)
         monkeypatch.setattr(socket, "getaddrinfo", lookup)
         yield served
+
+
+class Certified(BaseModel):
+    # A server's certificate and its key.
+    certificate: Path
+    key: Path
+
+
+class Authority(BaseModel):
+    # A certificate authority made for the test session, and the certificates it signed: one
+    # that names the hosts of the test's sites, and one that names another host.
+    certificate: Path
+    sites: Certified
+    other: Certified
+
+
+def made(command: list[str | Path]) -> None:
+    subprocess.run(command, check=True, capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def authority(tmp_path_factory: pytest.TempPathFactory) -> Authority:
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.skip("openssl not found: put it on the PATH, to make the tests' certificates")
+    folder = tmp_path_factory.mktemp("authority")
+    config = folder / "authority.cnf"
+    config.write_text(AUTHORITY_CONFIG)
+    certificate, key = folder / "authority.pem", folder / "authority.key"
+    subject = "/CN=infonium test authority"
+    made([openssl, "req", "-x509", "-config", config, "-extensions", "authority", *NEW_KEY,
+          "-keyout", key, "-out", certificate, "-days", VALID_DAYS, "-subj", subject])  # fmt: skip
+    signed: dict[str, Certified] = {}
+    for serial, (name, hosts) in enumerate(
+        (("sites", sorted(PUBLIC_LOOKING)), ("other", [OTHER_HOST])), start=1
+    ):
+        server = Certified(certificate=folder / f"{name}.pem", key=folder / f"{name}.key")
+        request, extensions = folder / f"{name}.csr", folder / f"{name}.ext"
+        extensions.write_text(
+            SERVER_EXTENSIONS.format(names=",".join(f"DNS:{host}" for host in hosts))
+        )
+        made([openssl, "req", "-new", "-config", config, *NEW_KEY, "-keyout", server.key,
+              "-out", request, "-subj", f"/CN={hosts[0]}"])  # fmt: skip
+        made([openssl, "x509", "-req", "-in", request, "-CA", certificate, "-CAkey", key,
+              "-set_serial", str(serial), "-days", VALID_DAYS, "-extfile", extensions,
+              "-out", server.certificate])  # fmt: skip
+        signed[name] = server
+    return Authority(certificate=certificate, sites=signed["sites"], other=signed["other"])
+
+
+@contextmanager
+def secured(site: PictureSite, server: Certified) -> Iterator[None]:
+    # The site answers on the port of HTTPS too, over TLS, with the certificate given.
+    with unix_server(site, lifespan="off", certificate=server.certificate, key=server.key) as path:
+        site.secure = path
+        try:
+            yield
+        finally:
+            site.secure = None
+
+
+def trusting(monkeypatch: pytest.MonkeyPatch, authority: Authority) -> None:
+    # Pictures are downloaded over a transport that trusts the test session's authority alone.
+    context = ssl.create_default_context(cafile=authority.certificate)
+    monkeypatch.setattr(
+        webpictures, "public_transport", lambda: webpictures.PublicTransport(context)
+    )
 
 
 def page_with(*sources: str) -> Extracted:
@@ -237,6 +335,24 @@ def test_each_address_is_downloaded_once_and_kept_as_served_by_the_kind_its_byte
     assert extracted.blocks == page_with(*sources, sources[0]).blocks, "the blocks were changed"
 
 
+@pytest.mark.parametrize(
+    ("orientation", "size"), [(1, (400, 300)), (3, (400, 300)), (6, (300, 400)), (8, (300, 400))]
+)
+def test_a_jpeg_is_kept_at_the_size_a_browser_draws_it_turned_by_its_exif(
+    site: PictureSite, tmp_path: Path, orientation: int, size: tuple[int, int]
+) -> None:
+    exif = Image.Exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    with BytesIO() as written:
+        Image.new("RGB", (400, 300), (90, 120, 200)).save(written, "JPEG", exif=exif.tobytes())
+        site.answers["/turned.jpg"] = Answer(body=written.getvalue())
+    [handed] = downloaded(page_with("http://pictures.test/turned.jpg"), tmp_path).pictures
+    assert (handed.width, handed.height) == size, (
+        f"a JPEG 400 by 300 of orientation {orientation} was kept as "
+        f"{handed.width} by {handed.height}, not as a browser draws it"
+    )
+
+
 def test_a_picture_is_asked_for_as_a_browser_that_shows_the_page_asks_for_it(
     site: PictureSite, tmp_path: Path
 ) -> None:
@@ -285,6 +401,83 @@ def test_a_picture_is_given_the_referrer_a_browser_gives_it_unless_a_page_says_o
     )
 
 
+def test_a_picture_over_tls_is_kept_where_a_trusted_authority_certified_its_host(
+    site: PictureSite, tmp_path: Path, authority: Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusting(monkeypatch, authority)
+    site.answers["/secure.png"] = Answer(body=PNG)
+    with secured(site, authority.sites):
+        extracted = downloaded(page_with("https://pictures.test/secure.png"), tmp_path)
+    assert pictured(extracted) == ["https://pictures.test/secure.png"], (
+        "a picture over TLS from a host its certificate names was not kept"
+    )
+    assert site.asked() == ["pictures.test/secure.png"], "the picture was not asked for once"
+
+
+@pytest.mark.parametrize(
+    ("certified", "trusted", "said"),
+    [
+        ("other", True, "Hostname mismatch"),
+        ("sites", False, "unable to get local issuer certificate"),
+    ],
+)
+def test_a_picture_over_tls_is_refused_where_its_certificate_names_another_host_or_is_untrusted(
+    site: PictureSite,
+    tmp_path: Path,
+    logged: pytest.LogCaptureFixture,
+    authority: Authority,
+    monkeypatch: pytest.MonkeyPatch,
+    certified: str,
+    trusted: bool,
+    said: str,
+) -> None:
+    if trusted:
+        trusting(monkeypatch, authority)
+    site.answers["/secure.png"] = Answer(body=PNG)
+    with secured(site, authority.other if certified == "other" else authority.sites):
+        extracted = downloaded(page_with("https://pictures.test/secure.png"), tmp_path)
+    assert pictured(extracted) == [], "a picture over TLS was kept from a host not proved"
+    told = reasons(logged)["https://pictures.test/secure.png"]
+    assert told.startswith("ConnectError: ") and "certificate verify failed" in told, told
+    assert said in told, f"a certificate was refused otherwise than for {said!r}: {told}"
+    assert site.asked() == [], "a picture was asked of a host that did not prove it was named"
+
+
+def test_each_address_a_redirect_leads_to_is_given_the_referrer_a_browser_gives_it(
+    site: PictureSite, tmp_path: Path, authority: Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A page whose address holds a secret, with a picture that redirects from the page's own
+    # site to another, and with one that redirects from a secure address to one that is not.
+    shared = "news.test/shared/doc?token=SECRET-123"
+    trusting(monkeypatch, authority)
+    site.answers |= {
+        "/same.png": moved("http://cdn.test/moved.png"),
+        "/moved.png": Answer(body=PNG),
+        "/secure.png": moved("http://cdn.test/plain.png"),
+        "/plain.png": Answer(body=PNG),
+    }
+    with secured(site, authority.sites):
+        kept = [
+            *pictured(
+                downloaded(page_with("http://news.test/same.png"), tmp_path, f"http://{shared}")
+            ),
+            *pictured(
+                downloaded(
+                    page_with("https://pictures.test/secure.png"), tmp_path, f"https://{shared}"
+                )
+            ),
+        ]
+    assert kept == ["http://news.test/same.png", "https://pictures.test/secure.png"], (
+        "a picture behind a redirect was not kept"
+    )
+    assert {address: headers.get("referer") for address, headers in site.heard} == {
+        "news.test/same.png": f"http://{shared}",
+        "cdn.test/moved.png": "http://news.test/",
+        "pictures.test/secure.png": "https://news.test/",
+        "cdn.test/plain.png": None,
+    }, "an address a redirect led to was given the referrer of the address before it"
+
+
 def test_svg_and_bytes_of_no_kind_kept_leave_their_figures_at_their_sources(
     site: PictureSite, tmp_path: Path, logged: pytest.LogCaptureFixture
 ) -> None:
@@ -299,13 +492,48 @@ def test_svg_and_bytes_of_no_kind_kept_leave_their_figures_at_their_sources(
     site.answers |= answers
     sources = [f"http://pictures.test{path}" for path in answers]
     assert pictured(downloaded(page_with(*sources), tmp_path)) == [], "no picture was kept"
-    served = {
-        path: answer.headers.get("content-type", "nothing") for path, answer in answers.items()
-    }
     assert reasons(logged) == {
-        f"http://pictures.test{path}": webpictures.OTHER_KIND.format(served=kind)
-        for path, kind in served.items()
+        f"http://pictures.test{path}": webpictures.OTHER_KIND.format(
+            served=webpictures.served_as(answer.headers.get("content-type", ""))
+        )
+        for path, answer in answers.items()
     }, "bytes of a kind not kept were not told as such"
+
+
+def test_a_picture_served_compressed_is_refused_with_none_of_its_bytes_decoded(
+    site: PictureSite, tmp_path: Path, logged: pytest.LogCaptureFixture
+) -> None:
+    # A picture compressed once or twice that would be a picture kept once undone, one said to
+    # be compressed as it is not, and 64 MB of nothing compressed into 64 KB.
+    nothing = bytes(64 * 1024**2)
+    bomb = gzip.compress(nothing, 9)
+    del nothing
+    answers = {
+        "/once": Answer(body=gzip.compress(PNG), headers={"content-encoding": "gzip"}),
+        "/twice": Answer(
+            body=gzip.compress(gzip.compress(PNG)), headers={"content-encoding": "gzip, gzip"}
+        ),
+        "/claimed": Answer(body=PNG, headers={"content-encoding": "br"}),
+        "/bomb": Answer(body=bomb, headers={"content-encoding": "GZIP"}),
+        "/plain": Answer(body=PNG, headers={"content-encoding": "identity"}),
+    }
+    site.answers |= answers
+    sources = [f"http://pictures.test{path}" for path in answers]
+    tracemalloc.start()
+    try:
+        extracted = downloaded(page_with(*sources), tmp_path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert pictured(extracted) == sources[-1:], "a picture served compressed was kept"
+    assert reasons(logged) == {
+        f"http://pictures.test{path}": webpictures.ENCODED.format(
+            coding=answer.headers["content-encoding"]
+        )
+        for path, answer in answers.items()
+        if path != "/plain"
+    }, "a picture served compressed was not refused as such"
+    assert peak < 16 * 1024**2, f"downloading the pictures took {peak / 1024**2:.0f} MB at most"
 
 
 @pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning")
