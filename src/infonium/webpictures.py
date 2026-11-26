@@ -303,6 +303,18 @@ def served_as(kind: str) -> str:
     return SERVED_AS.format(kind=kind) if kind else SERVED_UNNAMED
 
 
+def referred(request: httpx.Request, page: str) -> httpx.Request:
+    # A request with the referrer that a browser that shows the page gives the address it asks
+    # for, or with none. Each address a redirect leads to is asked for by a request of its own,
+    # given its own referrer, as a browser gives it.
+    referrer = referrer_of(page, str(request.url))
+    if referrer is None:
+        request.headers.pop(REFERRER, None)
+    else:
+        request.headers[REFERRER] = referrer
+    return request
+
+
 def judged_picture(file: Path, served: str) -> Downloaded:
     # Bytes are kept as they were served when Pillow, reading their header and drawing nothing,
     # finds them a picture of a kind kept, no decompression bomb and not small.
@@ -368,12 +380,8 @@ class PageDownloads:
         begun = time.monotonic()
         deadline = min(self.deadline, begun + PICTURE_LIMIT_SECONDS)
         overdue = PAGE_OVERDUE if deadline == self.deadline else OVERDUE
-        referrer = referrer_of(self.page, address)
-        request = self.client.build_request(
-            "GET",
-            address,
-            headers={} if referrer is None else {REFERRER: referrer},
-            timeout=self.silence,
+        request = referred(
+            self.client.build_request("GET", address, timeout=self.silence), self.page
         )
         picture_ends.at = deadline
         try:
@@ -384,7 +392,7 @@ class PageDownloads:
                 try:
                     if answer.next_request is None:
                         return self.picture_of(answer, file, deadline, overdue)
-                    request = answer.next_request
+                    request = referred(answer.next_request, self.page)
                 finally:
                     answer.close()
             raise Refused(TOO_MANY_REDIRECTS)

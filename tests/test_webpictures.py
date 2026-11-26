@@ -425,6 +425,41 @@ def test_a_picture_over_tls_is_refused_where_its_certificate_names_another_host_
     assert site.asked() == [], "a picture was asked of a host that did not prove it was named"
 
 
+def test_each_address_a_redirect_leads_to_is_given_the_referrer_a_browser_gives_it(
+    site: PictureSite, tmp_path: Path, authority: Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A page whose address holds a secret, with a picture that redirects from the page's own
+    # site to another, and with one that redirects from a secure address to one that is not.
+    shared = "news.test/shared/doc?token=SECRET-123"
+    trusting(monkeypatch, authority)
+    site.answers |= {
+        "/same.png": moved("http://cdn.test/moved.png"),
+        "/moved.png": Answer(body=PNG),
+        "/secure.png": moved("http://cdn.test/plain.png"),
+        "/plain.png": Answer(body=PNG),
+    }
+    with secured(site, authority.sites):
+        kept = [
+            *pictured(
+                downloaded(page_with("http://news.test/same.png"), tmp_path, f"http://{shared}")
+            ),
+            *pictured(
+                downloaded(
+                    page_with("https://pictures.test/secure.png"), tmp_path, f"https://{shared}"
+                )
+            ),
+        ]
+    assert kept == ["http://news.test/same.png", "https://pictures.test/secure.png"], (
+        "a picture behind a redirect was not kept"
+    )
+    assert {address: headers.get("referer") for address, headers in site.heard} == {
+        "news.test/same.png": f"http://{shared}",
+        "cdn.test/moved.png": "http://news.test/",
+        "pictures.test/secure.png": "https://news.test/",
+        "cdn.test/plain.png": None,
+    }, "an address a redirect led to was given the referrer of the address before it"
+
+
 def test_svg_and_bytes_of_no_kind_kept_leave_their_figures_at_their_sources(
     site: PictureSite, tmp_path: Path, logged: pytest.LogCaptureFixture
 ) -> None:
