@@ -48,9 +48,10 @@ PAGE_PICTURES_LIMIT_SECONDS = 120.0
 PICTURES_AT_ONCE = 6
 # How many redirects the address of a picture may lead through.
 REDIRECTS = 5
-# What a browser that shows a picture accepts, but for SVG, which is not kept; and the bytes of
-# a picture are asked for as they are, since they are compressed already, and a compression
-# that is undone could turn a little into very much.
+# What a browser that shows a picture accepts, but for SVG, which is not kept. The bytes of a
+# picture are asked for as they are, since they are compressed already, and a compression that
+# is undone could turn a few bytes into very many: an answer compressed all the same is
+# refused, and the bytes of every answer are read as they came.
 PICTURE_ACCEPT = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
 AS_THEY_ARE = "identity"
 # The kinds of picture kept, those of PICTURE_MEDIA_TYPES, by the names of the formats Pillow
@@ -65,9 +66,10 @@ PICTURE_FORMATS = {
 }
 OPENED_FORMATS = PICTURE_FORMATS | {"MPO": "image/jpeg"}
 SECURE_SCHEME = "https"
-LENGTH = "content-length"
-KIND = "content-type"
-UNDECLARED = "nothing"
+CONTENT_TYPE = "content-type"
+CONTENT_LENGTH = "content-length"
+CONTENT_ENCODING = "content-encoding"
+UNDECLARED = ""
 PICTURES_FOLDER = "pictures-"
 REFERRER = "Referer"
 # Why a picture is not kept, beside what a failure of its download says.
@@ -78,7 +80,10 @@ PAGE_OVERDUE = "the pictures of the page take longer than 120 seconds"
 BEYOND = "the page shows more than 200 pictures"
 TOO_MANY_REDIRECTS = "it leads through more than 5 redirects"
 TIME_UP = "the time of the picture is up"
-OTHER_KIND = "its bytes are no JPEG, PNG, GIF, WebP or AVIF picture (served as {served})"
+OTHER_KIND = "its bytes are no JPEG, PNG, GIF, WebP or AVIF picture ({served})"
+SERVED_AS = "served as {kind}"
+SERVED_UNNAMED = "served as no kind"
+ENCODED = "it is served encoded as {coding}, which is not undone"
 BOMB = "Pillow takes it for a decompression bomb, at {width} by {height} pixels"
 SMALL = "it is small, at {width} by {height} pixels"
 # What the log says of a picture that is not kept, and of the pictures of a page.
@@ -291,10 +296,15 @@ def referrer_of(page: str, address: str) -> str | None:
     return str(httpx.URL(scheme=shown.scheme, host=shown.host, port=shown.port, path="/"))
 
 
+def served_as(kind: str) -> str:
+    # The kind a server gave bytes, as a reason tells it.
+    return SERVED_AS.format(kind=kind) if kind else SERVED_UNNAMED
+
+
 def judged_picture(file: Path, served: str) -> Downloaded:
     # Bytes are kept as they were served when Pillow, reading their header and drawing nothing,
     # finds them a picture of a kind kept, no decompression bomb and not small.
-    other_kind = Refused(OTHER_KIND.format(served=served or UNDECLARED))
+    other_kind = Refused(OTHER_KIND.format(served=served_as(served)))
     try:
         with Image.open(file, formats=list(PICTURE_FORMATS)) as picture:
             kind, (width, height) = picture.format, picture.size
@@ -389,13 +399,16 @@ class PageDownloads:
         # The picture an answer that redirects nowhere brings, written to the file.
         if not answer.is_success:
             raise Refused(error_status(str(answer.url), answer.status_code))
-        declared = answer.headers.get(LENGTH, "")
+        codings = answer.headers.get_list(CONTENT_ENCODING, split_commas=True)
+        if {coding.lower() for coding in codings} - {UNDECLARED, AS_THEY_ARE}:
+            raise Refused(ENCODED.format(coding=answer.headers[CONTENT_ENCODING]))
+        declared = answer.headers.get(CONTENT_LENGTH, UNDECLARED)
         if declared.isdigit() and int(declared) > PICTURE_LIMIT_BYTES:
             raise Refused(TOO_LARGE)
         with file.open("wb") as written:
             # Bytes are taken as they arrive, so that a picture that only trickles is still held
-            # to the time it may take.
-            for chunk in answer.iter_bytes():
+            # to the time it may take, and as they came, so that none is decoded.
+            for chunk in answer.iter_raw():
                 if written.tell() + len(chunk) > PICTURE_LIMIT_BYTES:
                     raise Refused(TOO_LARGE)
                 if not self.allowance.take(len(chunk)):
@@ -403,7 +416,7 @@ class PageDownloads:
                 written.write(chunk)
                 if time.monotonic() >= deadline:
                     raise Refused(overdue)
-        return judged_picture(file, answer.headers.get(KIND, ""))
+        return judged_picture(file, answer.headers.get(CONTENT_TYPE, UNDECLARED))
 
 
 def with_pictures(

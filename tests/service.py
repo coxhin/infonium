@@ -127,8 +127,10 @@ class Site:
                     200, headers={"content-type": "text/html"}, content=self.pages[name]
                 )
             case ["picture", name] if name in self.pictures:
+                # A picture's bytes are streamed, as a server's are, for a reader of them as they
+                # come.
                 content, kind = self.pictures[name]
-                return httpx.Response(200, headers={"content-type": kind}, content=content)
+                return httpx.Response(200, headers={"content-type": kind}, content=iter([content]))
             case ["counted", name]:
                 time.sleep(0.3)
                 return httpx.Response(200, html=article(f"Counted {name}").decode())

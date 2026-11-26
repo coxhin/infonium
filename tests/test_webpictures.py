@@ -1,10 +1,12 @@
 import asyncio
+import gzip
 import logging
 import os
 import socket
 import socketserver
 import tempfile
 import time
+import tracemalloc
 from collections.abc import Iterator
 from contextlib import contextmanager
 from io import BytesIO
@@ -299,13 +301,48 @@ def test_svg_and_bytes_of_no_kind_kept_leave_their_figures_at_their_sources(
     site.answers |= answers
     sources = [f"http://pictures.test{path}" for path in answers]
     assert pictured(downloaded(page_with(*sources), tmp_path)) == [], "no picture was kept"
-    served = {
-        path: answer.headers.get("content-type", "nothing") for path, answer in answers.items()
-    }
     assert reasons(logged) == {
-        f"http://pictures.test{path}": webpictures.OTHER_KIND.format(served=kind)
-        for path, kind in served.items()
+        f"http://pictures.test{path}": webpictures.OTHER_KIND.format(
+            served=webpictures.served_as(answer.headers.get("content-type", ""))
+        )
+        for path, answer in answers.items()
     }, "bytes of a kind not kept were not told as such"
+
+
+def test_a_picture_served_compressed_is_refused_with_none_of_its_bytes_decoded(
+    site: PictureSite, tmp_path: Path, logged: pytest.LogCaptureFixture
+) -> None:
+    # A picture compressed once or twice that would be a picture kept once undone, one said to
+    # be compressed as it is not, and 64 MB of nothing compressed into 64 KB.
+    nothing = bytes(64 * 1024**2)
+    bomb = gzip.compress(nothing, 9)
+    del nothing
+    answers = {
+        "/once": Answer(body=gzip.compress(PNG), headers={"content-encoding": "gzip"}),
+        "/twice": Answer(
+            body=gzip.compress(gzip.compress(PNG)), headers={"content-encoding": "gzip, gzip"}
+        ),
+        "/claimed": Answer(body=PNG, headers={"content-encoding": "br"}),
+        "/bomb": Answer(body=bomb, headers={"content-encoding": "GZIP"}),
+        "/plain": Answer(body=PNG, headers={"content-encoding": "identity"}),
+    }
+    site.answers |= answers
+    sources = [f"http://pictures.test{path}" for path in answers]
+    tracemalloc.start()
+    try:
+        extracted = downloaded(page_with(*sources), tmp_path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert pictured(extracted) == sources[-1:], "a picture served compressed was kept"
+    assert reasons(logged) == {
+        f"http://pictures.test{path}": webpictures.ENCODED.format(
+            coding=answer.headers["content-encoding"]
+        )
+        for path, answer in answers.items()
+        if path != "/plain"
+    }, "a picture served compressed was not refused as such"
+    assert peak < 16 * 1024**2, f"downloading the pictures took {peak / 1024**2:.0f} MB at most"
 
 
 @pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning")
