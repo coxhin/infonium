@@ -13,6 +13,7 @@ import openai
 from fastapi import Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, HttpUrl
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from infonium.asking import UnusableTranslation
 from infonium.blockholders import BLOCK_ATTRIBUTE, CELL_ATTRIBUTE, PAGE_ATTRIBUTE
@@ -37,7 +38,14 @@ from infonium.digest import (
     digest_instructions,
     grounded_sections,
 )
-from infonium.document import HTML_MEDIA_TYPE, Block, BlockNumber, MediaType, error_text
+from infonium.document import (
+    HTML_MEDIA_TYPE,
+    PDF_MEDIA_TYPE,
+    Block,
+    BlockNumber,
+    MediaType,
+    error_text,
+)
 from infonium.embedding import EmbeddingEngine
 from infonium.framedpage import FramedPage, KeptPages
 from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
@@ -85,6 +93,7 @@ from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
 from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
 from infonium.refinding import standing_in
+from infonium.revalidation import Revalidation
 from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
@@ -252,6 +261,13 @@ async def running(service: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="infonium", lifespan=running)
+# An answer is compressed once its version is named, by its bytes as the service gives them.
+# A PDF is sent as its bytes are: its streams are compressed already, and the reader's viewer
+# fetches it in parts, which it does only of a file sent uncompressed.
+app.add_middleware(Revalidation)
+app.add_middleware(
+    GZipMiddleware, exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, PDF_MEDIA_TYPE)
+)
 
 
 class Failure(BaseModel):
