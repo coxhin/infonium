@@ -1,3 +1,5 @@
+import io
+import logging
 import re
 import unicodedata
 from itertools import accumulate, pairwise
@@ -5,6 +7,7 @@ from pathlib import Path
 from statistics import median
 
 from lxml import html
+from PIL import Image
 from pydantic import BaseModel
 
 from infonium.document import (
@@ -30,6 +33,7 @@ from infonium.document import (
     StyleMark,
     Table,
     UnreadableSource,
+    error_text,
     has_words,
     is_small_picture,
     joined,
@@ -58,10 +62,11 @@ from infonium.mineru import (
     word_lines,
 )
 from infonium.pdfium import (
+    DRAWING_FAILURES,
     WHOLE_TURN,
     Quarters,
     StoredFile,
-    drawn_page,
+    open_page,
     stored_file,
     upright_file,
 )
@@ -86,10 +91,10 @@ LAID_ACROSS: Quarters = 3
 # A tall first letter is about as wide as it is high, and a line of words many times wider:
 # a detected line no more than this many times as wide as it is high is taken for a letter.
 LETTER_WIDTHS = 2
-# A picture or a chart is kept as a picture of the region of its page it stands in, cut from a
-# drawing of the page at two pixels a point, 144 to the inch, and written as WebP into a folder
-# of the reading's own, under the number of its figure's block. WebP holds a picture no wider
-# and no higher than so many pixels.
+# A picture or a chart is kept as a picture of the region of its page it stands in, drawn alone
+# at two pixels a point, 144 to the inch, and written as WebP into a folder of the reading's
+# own, under the number of its figure's block. WebP holds a picture no wider and no higher than
+# so many pixels.
 PICTURE_SCALE = 2
 PICTURE_FORMAT = "WEBP"
 PICTURE_MEDIA_TYPE = "image/webp"
@@ -97,6 +102,17 @@ PICTURE_SUFFIX = ".webp"
 PICTURE_QUALITY = 85
 PICTURES_FOLDER = "pictures"
 WEBP_LONGEST_SIDE = 16383
+# What encoding a drawing as WebP, in memory, can raise: ValueError where Pillow's encoder
+# refuses it, OSError where the encoder gives nothing back, and MemoryError. A picture whose
+# drawing or encoding fails is lost, and its reading goes on; writing it to the disk is not
+# among these, and a failure there fails the reading.
+ENCODING_FAILURES = (ValueError, OSError, MemoryError)
+PICTURE_FAILURES = (*DRAWING_FAILURES, *ENCODING_FAILURES)
+# What the log says of such a picture: the page, counted from 1, the region's left, top, right
+# and bottom edges in points from the page's top left corner, and what failed.
+UNDRAWN = "a figure on page %d is left without a picture: its region %s could not be drawn: %s"
+
+logger = logging.getLogger(__name__)
 # The engine's box of a picture has whole points for edges, and may end a point or two inside
 # the drawing, through a frame or a label. A picture takes in up to this many points of its
 # page past each side of the box, no further than halfway to any other box beyond that side,
@@ -802,54 +818,68 @@ def document_title(own: str, blocks: list[Block], name: str) -> str:
     return name
 
 
-def pixel_edges(where: Area, width: int, height: int) -> tuple[int, int, int, int]:
-    # The left, top, right and bottom edges of a region of a page, in a drawing of the page
-    # so many pixels wide and high.
-    return (
-        round(where.left * width),
-        round(where.top * height),
-        round((where.left + where.width) * width),
-        round((where.top + where.height) * height),
-    )
+def webp_of(drawing: Image.Image) -> bytes:
+    encoded = io.BytesIO()
+    drawing.save(encoded, PICTURE_FORMAT, quality=PICTURE_QUALITY)
+    return encoded.getvalue()
 
 
 def drawn_pictures(
     file: Path, figures: dict[BlockNumber, Area], folder: Path
 ) -> dict[BlockNumber, ExtractedPicture]:
-    # The picture of each figure, by the number of its block, cut from a drawing of its page
-    # as the file shows it. Each page that holds figures is drawn once. A region that covers
-    # no pixel across or down, or so few that its picture is a small one, gets no picture.
+    # The picture of each figure, by the number of its block: its region drawn alone, from
+    # its page as the file shows it, which is opened once for all the figures on it. A region
+    # is drawn at two pixels a point, or at fewer where its longer side would come out longer
+    # than WebP holds, by a pixel short of that, as a drawing's sides are rounded. A region
+    # that would come out as nothing, or small, is not drawn, and one whose drawing or encoding
+    # fails is told of in the log; either way its figure gets no picture.
     folder.mkdir(exist_ok=True)
     on_pages: dict[PageNumber, list[BlockNumber]] = {}
     for number, where in figures.items():
         on_pages.setdefault(where.page, []).append(number)
     pictures: dict[BlockNumber, ExtractedPicture] = {}
-    for page, numbers in on_pages.items():
-        drawing = drawn_page(file, page, PICTURE_SCALE, WEBP_LONGEST_SIDE)
-        for number in numbers:
-            left, top, right, bottom = pixel_edges(figures[number], drawing.width, drawing.height)
-            width, height = right - left, bottom - top
-            if not width or not height or is_small_picture(width, height):
-                continue
-            picture = folder / f"{number}{PICTURE_SUFFIX}"
-            cut = drawing.crop((left, top, right, bottom))
-            cut.save(picture, PICTURE_FORMAT, quality=PICTURE_QUALITY)
-            pictures[number] = ExtractedPicture(
-                block=number,
-                file=picture,
-                media_type=PICTURE_MEDIA_TYPE,
-                width=width,
-                height=height,
-            )
+    for page_number, numbers in on_pages.items():
+        with open_page(file, page_number) as page:
+            for number in numbers:
+                where = figures[number]
+                region = (where.left, where.top, where.left + where.width, where.top + where.height)
+                longest = max(where.width * page.width, where.height * page.height)
+                scale = (
+                    min(PICTURE_SCALE, (WEBP_LONGEST_SIDE - 1) / longest)
+                    if longest
+                    else PICTURE_SCALE
+                )
+                left, top, right, bottom = page.pixels(region, scale)
+                width, height = right - left, bottom - top
+                if width < 1 or height < 1 or is_small_picture(width, height):
+                    continue
+                try:
+                    encoded = webp_of(page.drawn(region, scale))
+                except PICTURE_FAILURES as failure:
+                    edges = (page.width, page.height, page.width, page.height)
+                    points = tuple(
+                        round(part * side, 1) for part, side in zip(region, edges, strict=True)
+                    )
+                    logger.warning(UNDRAWN, page_number + 1, points, error_text(failure))
+                    continue
+                picture = folder / f"{number}{PICTURE_SUFFIX}"
+                picture.write_bytes(encoded)
+                pictures[number] = ExtractedPicture(
+                    block=number,
+                    file=picture,
+                    media_type=PICTURE_MEDIA_TYPE,
+                    width=width,
+                    height=height,
+                )
     return pictures
 
 
-def pictured(
+def without_unpictured_figures(
     read: PdfReading, pictures: dict[BlockNumber, ExtractedPicture]
 ) -> tuple[list[Block], list[ExtractedPicture]]:
-    # The blocks read, with only the figures that have a picture, and their pictures numbered
-    # by the blocks kept. A figure without one stands for a small picture, an icon or a mark,
-    # and would hold nothing at all: no words, no place and no picture.
+    # The blocks read without the figures that got no picture, and the pictures numbered by
+    # the blocks kept. A figure without a picture would hold nothing at all, no words, no place
+    # and no picture: its region was small, an icon or a mark, or its drawing failed.
     blocks: list[Block] = []
     kept: list[ExtractedPicture] = []
     for number, block in enumerate(read.blocks):
@@ -879,5 +909,5 @@ def extract_pdf(file: Path, name: str, engine: Path, folder: Path) -> Extracted:
     if not any(block.text for block in read.blocks):
         raise UnreadableSource(f"no readable text in {name}")
     pictures = drawn_pictures(file, read.figures, folder / PICTURES_FOLDER)
-    blocks, kept = pictured(read, pictures)
+    blocks, kept = without_unpictured_figures(read, pictures)
     return Extracted(title=document_title(stored.title, blocks, name), blocks=blocks, pictures=kept)

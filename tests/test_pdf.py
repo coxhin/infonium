@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, get_args
@@ -12,7 +13,7 @@ from hypothesis import strategies as st
 from pikepdf import Name
 from PIL import Image, ImageChops, ImageStat
 
-from infonium import pdf
+from infonium import pdf, pdfium
 from infonium.document import (
     Code,
     Extracted,
@@ -694,6 +695,50 @@ def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption
     assert set(side_fills(picture_of(extracted, 2)).values()) == {"red"}, (
         "the figure left after the icon was given another region's picture"
     )
+
+
+def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_the_reading_goes_on(
+    standin_pdf_engine: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The memory for the pixels of the red picture, on the left of the page, cannot be had, as
+    # it may not be for a very large region; the blue one beside it is drawn.
+    beside = (350.0, 100.0, 500.0, 250.0)
+    drawing = " ".join([filled(RED, PICTURE), filled(BLUE, beside)])
+    file = drawn_pdf(tmp_path / "unmade.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "Two pictures, one never drawn."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, beside)]),
+    ]
+    drawn = pdfium.OpenPage.drawn
+
+    def out_of_memory_on_the_left(
+        page: pdfium.OpenPage, region: pdfium.Region, scale: float
+    ) -> Image.Image:
+        if region[0] < 0.5:
+            raise MemoryError
+        return drawn(page, region, scale)
+
+    monkeypatch.setattr(pdfium.OpenPage, "drawn", out_of_memory_on_the_left)
+    caplog.set_level(logging.WARNING, logger=pdf.__name__)
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    read = [(block.kind, block.text) for block in extracted.blocks]
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert read == [("paragraph", "Two pictures, one never drawn."), ("figure", "")], (
+        f"a figure whose picture could not be drawn was kept, or the other was lost: {read}"
+    )
+    assert sizes == {1: (300 + MARGINS, 300 + MARGINS)}, f"the pictures kept are {sizes}"
+    assert set(side_fills(picture_of(extracted, 1)).values()) == {"blue"}, (
+        "the figure left was given the picture that failed"
+    )
+    told = [record.getMessage() for record in caplog.records if record.name == pdf.__name__]
+    assert told == [
+        "a figure on page 1 is left without a picture: its region (98.0, 98.0, 302.0, 252.0) "
+        "could not be drawn: MemoryError"
+    ], f"the log does not tell of the lost picture by its page and region: {told}"
 
 
 def test_a_picture_on_a_page_the_file_stores_turned_is_its_region_as_the_reader_sees_it(
