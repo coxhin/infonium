@@ -966,5 +966,27 @@
     }
    ]
   }
+ ],
+ "pictures": [
+  {
+   "block": 4,
+   "width": 674,
+   "height": 40
+  },
+  {
+   "block": 10,
+   "width": 430,
+   "height": 175
+  },
+  {
+   "block": 12,
+   "width": 538,
+   "height": 107
+  },
+  {
+   "block": 13,
+   "width": 452,
+   "height": 96
+  }
  ]
 }

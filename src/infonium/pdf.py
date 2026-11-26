@@ -111,8 +111,6 @@ PICTURE_FAILURES = (*DRAWING_FAILURES, *ENCODING_FAILURES)
 # What the log says of such a picture: the page, counted from 1, the region's left, top, right
 # and bottom edges in points from the page's top left corner, and what failed.
 UNDRAWN = "a figure on page %d is left without a picture: its region %s could not be drawn: %s"
-
-logger = logging.getLogger(__name__)
 # The engine's box of a picture has whole points for edges, and may end a point or two inside
 # the drawing, through a frame or a label. A picture takes in up to this many points of its
 # page past each side of the box, no further than halfway to any other box beyond that side,
@@ -153,6 +151,9 @@ ROW_CELLS = "./td | ./th"
 COLUMN_SPAN = "colspan"
 ROW_SPAN = "rowspan"
 ONE_CELL = "1"
+
+
+logger = logging.getLogger(__name__)
 
 
 class Piece(BaseModel):
@@ -703,7 +704,7 @@ def other_boxes(page: ParsedPage, body: PictureBody) -> list[Box]:
 
 
 def rooms_along(
-    start: float, end: float, other_start: float, other_end: float, apart: float, overlapping: bool
+    start: float, end: float, other_start: float, other_end: float, apart: float
 ) -> tuple[float, float]:
     # The room another box leaves a picture's box before its start and after its end along
     # one axis of the page, the two lying so far apart along the other axis, less than
@@ -711,6 +712,8 @@ def rooms_along(
     # reach along the other axis, leaves half the gap between them. A box that overlaps the
     # picture's leaves no room past an end it reaches past, and one inside it leaves the
     # whole margin.
+    apart_along = max(other_start - end, start - other_end)
+    overlapping = apart_along < 0 and apart < 0
     if overlapping:
         return (
             0.0 if other_start < start else PICTURE_MARGIN,
@@ -722,27 +725,19 @@ def rooms_along(
     return before, after
 
 
-def widened(box: Box, others: list[Box], size: tuple[float, float]) -> Box:
+def widened(box: Box, others: list[Box]) -> Box:
     # A picture's box grown by the margin on each side, as far as the other boxes of its page
-    # leave room, and not past the page.
+    # leave room. It may reach past the page, and area cuts it to the page.
     left, top, right, bottom = box
-    width, height = size
-    to_left, to_top = min(PICTURE_MARGIN, left), min(PICTURE_MARGIN, top)
-    to_right, to_bottom = min(PICTURE_MARGIN, width - right), min(PICTURE_MARGIN, height - bottom)
+    to_left = to_top = to_right = to_bottom = PICTURE_MARGIN
     for other_left, other_top, other_right, other_bottom in others:
         apart_across = max(other_left - right, left - other_right)
         apart_down = max(other_top - bottom, top - other_bottom)
-        overlapping = apart_across < 0 and apart_down < 0
-        before, after = rooms_along(left, right, other_left, other_right, apart_down, overlapping)
+        before, after = rooms_along(left, right, other_left, other_right, apart_down)
         to_left, to_right = min(to_left, before), min(to_right, after)
-        before, after = rooms_along(top, bottom, other_top, other_bottom, apart_across, overlapping)
+        before, after = rooms_along(top, bottom, other_top, other_bottom, apart_across)
         to_top, to_bottom = min(to_top, before), min(to_bottom, after)
-    return (
-        left - max(0.0, to_left),
-        top - max(0.0, to_top),
-        right + max(0.0, to_right),
-        bottom + max(0.0, to_bottom),
-    )
+    return (left - to_left, top - to_top, right + to_right, bottom + to_bottom)
 
 
 def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) -> PdfReading:
@@ -785,7 +780,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
                     for member in region.blocks:
                         if isinstance(member, PictureBody):
                             others = other_boxes(page, member)
-                            cut = widened(member.bbox, others, page.page_size)
+                            cut = widened(member.bbox, others)
                             figures[len(blocks)] = turned_back(area(page, cut), findings)
                         blocks.extend(member_blocks(member, page, findings))
         # A footnote says something the document says, so it is kept: as a paragraph after
