@@ -23,11 +23,11 @@ import { boldPieces, StatementWords } from "./statementwords";
 import "./digest.css";
 
 const CUSTOM = "custom" satisfies DigestStyle;
-// The most characters a custom style's description may have, as the service holds it to.
-const INSTRUCTIONS_CHARACTERS = 2000;
+// The most characters a custom style's instructions may have, as the service holds them to.
+const CUSTOM_INSTRUCTIONS_CHARACTERS = 2000;
 const SAID_SOMETHING = /\S/;
 // What the reader chose last, kept with the browser as the models chosen are: the style on
-// show, and the description of the custom style last written.
+// show, and the instructions of the custom style last written.
 const STYLE_KEY = "infonium.digestStyle";
 const INSTRUCTIONS_KEY = "infonium.customInstructions";
 
@@ -143,8 +143,8 @@ function DigestBody({
   );
 }
 
-// The reader's own description of the digest they want, with how much of the limit it takes,
-// and the button that writes it.
+// The reader's own instructions for the digest they want, with how much of the limit they
+// take, and the button that writes them.
 function InstructionsBox({
   prefilled,
   disabled,
@@ -158,7 +158,7 @@ function InstructionsBox({
 }) {
   const [draft, setDraft] = useState(prefilled);
   const count = characterCount(draft);
-  const over = count > INSTRUCTIONS_CHARACTERS;
+  const over = count > CUSTOM_INSTRUCTIONS_CHARACTERS;
   return (
     <div className="instructions-box">
       <textarea
@@ -170,7 +170,7 @@ function InstructionsBox({
       />
       <div className="instructions-foot">
         <span className={over ? "count over" : "count"} aria-live="polite">
-          {count.toLocaleString()} / {INSTRUCTIONS_CHARACTERS.toLocaleString()}
+          {count.toLocaleString()} / {CUSTOM_INSTRUCTIONS_CHARACTERS.toLocaleString()}
         </span>
         {onCancel !== undefined && <button onClick={onCancel}>取消</button>}
         <button

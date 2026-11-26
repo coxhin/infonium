@@ -553,7 +553,7 @@ export interface components {
         CustomChoice: {
             /**
              * Instructions
-             * @description The reader's own description of the digest they want: its structure, length, tone and focus. infonium's rules of citing, of the language and of its punctuation hold whatever it says.
+             * @description The reader's own instructions for the digest they want: its structure, length, tone and focus. infonium's rules of citing, of the language and of its punctuation hold whatever they say.
              */
             instructions: string;
             /**

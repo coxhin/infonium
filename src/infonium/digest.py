@@ -13,8 +13,8 @@ from infonium.citing import (
 from infonium.document import CHINESE_MARKS, Document
 from infonium.recipe import DigestStyle, RecipeStyle, recipe_of
 
-INSTRUCTIONS_CHARACTERS = 2_000
-# What a custom style's description holds at least: one character that is not white space.
+CUSTOM_INSTRUCTIONS_CHARACTERS = 2_000
+# What a custom style's instructions hold at least: one character that is not white space.
 SAID_SOMETHING = r"\S"
 # The engine that matches it: Python's own, whose white space is that of str.isspace, where
 # the Rust engine pydantic uses by default takes U+001C to U+001F for words.
@@ -54,9 +54,9 @@ write fewer.
 document does not say.
 
 """
-# What leads the sections of a custom style: the reader's own description follows it, as
-# they wrote it.
-CUSTOM_SECTIONS = """\
+# The section rules of a custom style: what leads the reader's own instructions, which follow
+# it as they wrote them.
+CUSTOM_SECTION_RULES = """\
 The reader describes the digest they want below, in their own words. Follow the description \
 in the digest's structure, length, tone and focus. The rules above hold whatever it says.
 
@@ -72,12 +72,12 @@ class SectionForm(StrEnum):
 
 CustomInstructions = Annotated[
     str,
-    StringConstraints(max_length=INSTRUCTIONS_CHARACTERS, pattern=SAID_SOMETHING),
+    StringConstraints(max_length=CUSTOM_INSTRUCTIONS_CHARACTERS, pattern=SAID_SOMETHING),
     Field(
         description=(
-            "The reader's own description of the digest they want: its structure, length, tone"
+            "The reader's own instructions for the digest they want: its structure, length, tone"
             " and focus. infonium's rules of citing, of the language and of its punctuation hold"
-            " whatever it says."
+            " whatever they say."
         )
     ),
 ]
@@ -91,14 +91,14 @@ class RecipeChoice(BaseModel):
 
 
 class CustomChoice(BaseModel):
-    # The reader's own style: their description of the digest in place of a recipe.
+    # The reader's own style: their instructions for the digest in place of a recipe.
     model_config = ConfigDict(regex_engine=PYTHON_REGEX)
 
     style: Literal[DigestStyle.CUSTOM]
     instructions: CustomInstructions
 
 
-# The style a reader chooses a digest in, with the description of a custom one.
+# The style a reader chooses a digest in, with the instructions of a custom one.
 ChosenStyle = Annotated[RecipeChoice | CustomChoice, Field(discriminator="style")]
 
 
@@ -146,20 +146,20 @@ class DraftDigest(BaseModel):
 
 
 def digest_instructions(language: str, chosen: ChosenStyle) -> str:
-    # The style's part follows the rules every style shares. A reader's description is joined
-    # on as it was written, whatever marks it holds.
+    # The style's section rules follow the rules every style shares. A reader's instructions
+    # are joined on as they were written, whatever marks they hold.
     match chosen:
         case CustomChoice(instructions=instructions):
-            sections = CUSTOM_SECTIONS + instructions + "\n"
+            section_rules = CUSTOM_SECTION_RULES + instructions + "\n"
         case RecipeChoice(style=style):
-            sections = recipe_of(style).sections
+            section_rules = recipe_of(style).section_rules
     shared = INSTRUCTIONS.format(
         blocks_explained=BLOCKS_EXPLAINED,
         citing_rules=CITING_RULES,
         language=language,
         chinese_marks=CHINESE_MARKS,
     )
-    return shared + sections
+    return shared + section_rules
 
 
 def grounded_sections(document: Document, draft: DraftDigest) -> list[Section]:

@@ -302,7 +302,7 @@ class DocumentView(BaseModel):
 
 class DigestView(BaseModel):
     # A digest of the document an item holds, in the style it was written in; the
-    # instructions are the reader's description of a custom one, and none of any other.
+    # instructions are those the reader wrote for a custom one, and none of any other.
     style: DigestStyle
     instructions: str | None
     model: str
@@ -314,7 +314,7 @@ class DigestView(BaseModel):
 
 class DigestStyleView(BaseModel):
     # A style a reader may choose a digest in, with its name and what its digest holds; a
-    # custom one is written by the reader's own description.
+    # custom one is written by the reader's own instructions.
     id: DigestStyle
     name: str
     description: str

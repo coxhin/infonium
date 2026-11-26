@@ -28,15 +28,15 @@ RecipeStyle = Literal[
 
 class Recipe(BaseModel):
     # A style of digest as data, the shape a recipe plugin takes: its name and the description
-    # of what its digest holds, as a reader is offered them, and the part of a digest's
-    # instructions that says which sections to write and what each holds.
+    # of what its digest holds, as a reader is offered them, and its section rules, the part of
+    # a digest's instructions that says which sections to write and what each holds.
     style: RecipeStyle
     name: str
     description: str
-    sections: str
+    section_rules: str
 
 
-# The style whose sections the reader describes in their own words, in place of a recipe.
+# The style written by the reader's own instructions, in place of a recipe's section rules.
 CUSTOM_NAME = "自定义"
 CUSTOM_DESCRIPTION = "写下你想要的结构、篇幅和语气。引用、语言和标点的规则照旧。"
 
@@ -48,7 +48,7 @@ RECIPES = (
             "3\N{EN DASH}5 句概述\N{FULLWIDTH COMMA}加 5\N{EN DASH}10 条值得记住的要点。"
             "原来的写法\N{FULLWIDTH COMMA}适合大多数文章。"
         ),
-        sections="""\
+        section_rules="""\
 Write two sections.
 
 The first section is titled with the word for "Summary" in the output language, and is a \
@@ -68,7 +68,7 @@ on its own and is specific.
             "一段概要\N{FULLWIDTH LEFT PARENTHESIS}关键词加粗\N{FULLWIDTH RIGHT PARENTHESIS}"
             "\N{FULLWIDTH COMMA}加 3\N{EN DASH}6 个关键主题。仿 Gemini Notebook 的来源导读。"
         ),
-        sections="""\
+        section_rules="""\
 Write two sections.
 
 The first section is titled with the word for "Overview" in the output language, and is a \
@@ -90,7 +90,7 @@ then says what the document says about that topic in one or two sentences.
             "仿 Axios 的 Smart Brevity 和“结论先行”\N{FULLWIDTH LEFT PARENTHESIS}BLUF"
             "\N{FULLWIDTH RIGHT PARENTHESIS}。适合新闻、公告、报告。"
         ),
-        sections="""\
+        section_rules="""\
 Write these sections, in this order.
 
 The first section is titled with the words for "Bottom line" in the output language, in its \
@@ -124,7 +124,7 @@ decisions and open questions. Leave it out when the document says nothing of it.
             "一句话、问题与动机、方法、结果、局限。"
             "参考 Keshav 的三遍读论文法和 Fabric 的 summarize_paper。适合论文和技术报告。"
         ),
-        sections="""\
+        section_rules="""\
 Write these sections, in this order.
 
 The first section is titled with the words for "In one sentence" in the output language, and \
@@ -161,7 +161,7 @@ rest.
             "\N{FULLWIDTH SEMICOLON}引文能跳到那一段\N{FULLWIDTH COMMA}录音能跳到那一刻。"
             "参考通义听悟的章节速览。适合长文、讲座、播客。"
         ),
-        sections="""\
+        section_rules="""\
 Write three to ten sections that follow the document's own order and parts. Each section is \
 a list of one to four statements. In a document with headings, the sections are its main \
 parts, each titled with its own heading in the output language, shortened if it is long. In \
@@ -176,7 +176,7 @@ topic changes, each titled by its topic.
             "4\N{EN DASH}8 个读者会问的问题\N{FULLWIDTH COMMA}每个都用原文回答。"
             "仿 NotebookLM 的 FAQ 和通义听悟的问答回顾。"
         ),
-        sections="""\
+        section_rules="""\
 Write four to eight sections, each a question that a reader of the document would ask, with \
 its answer. Title each section with its question, ending with a question mark. Each section \
 is a paragraph, never a list, of one to three statements that answer the question. Order the \
