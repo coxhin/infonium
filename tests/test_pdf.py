@@ -10,7 +10,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from pikepdf import Name
-from PIL import Image, ImageStat
+from PIL import Image, ImageChops, ImageStat
 
 from infonium import pdf
 from infonium.document import (
@@ -242,6 +242,7 @@ def test_the_words_a_document_shows_whole_are_those_inside_its_lines(
             Text(
                 type=RegionType.TEXT,
                 index=0,
+                bbox=(72.0, 72.0, 540.0, 82.0 + 12 * (len(lines) - 1)),
                 lines=[
                     Line(
                         bbox=(72.0, 72.0 + 12 * number, 540.0, 82.0 + 12 * number),
@@ -398,9 +399,12 @@ STORED_TURNED = f"0 1 -1 0 {LETTER[1]:g} 0 cm"
 [HYBRID] = get_args(HybridBackend)
 [ENGINE_VERSION] = get_args(EngineVersion)
 # The colours of those fills as a picture holds them. A colour of a picture is a fill's where
-# each of its channels stands this near the fill's, as WebP keeps a colour only nearly.
+# each of its channels stands this near the fill's, as WebP keeps a colour only nearly; and a
+# picture holds a fill where one of its pixels has that much more of the fill's own channel
+# than of the other fill's.
 FILL_COLOURS = {"red": (255, 0, 0), "blue": (0, 0, 255)}
 NEAR = 60
+WHITE = "1 1 1 rg"
 # The sides of a picture, each a quarter of it deep, as parts of its width and height.
 PICTURE_SIDES = {
     "top": (0.0, 0.0, 1.0, 0.25),
@@ -452,7 +456,10 @@ def text_region(index: int, box: Box, words: str) -> dict[str, Any]:
 
 
 def group(kind: RegionType, members: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"type": kind, "blocks": members}
+    # A group as the engine writes one, in a box that holds its members.
+    lefts, tops, rights, bottoms = zip(*(member["bbox"] for member in members), strict=True)
+    held = [min(lefts), min(tops), max(rights), max(bottoms)]
+    return {"type": kind, "bbox": held, "blocks": members}
 
 
 def body(kind: RegionType, box: Box) -> dict[str, Any]:
@@ -511,6 +518,15 @@ def fill_of(colour: Sequence[float]) -> str | None:
     )
 
 
+def holds(image: Image.Image, fill: str) -> bool:
+    # Whether any pixel of a picture has more of the fill's channel than of the other fill's,
+    # by NEAR or more: white, red, blue and their blends with white hold no other fill.
+    own, other = ("R", "B") if fill == "red" else ("B", "R")
+    more = ImageChops.subtract(image.getchannel(own), image.getchannel(other))
+    [(_, most)] = ImageStat.Stat(more).extrema
+    return most >= NEAR
+
+
 def side_fills(image: Image.Image) -> dict[str, str | None]:
     # The fill of each side of a picture, by the mean of its colours.
     fills = {}
@@ -522,11 +538,17 @@ def side_fills(image: Image.Image) -> dict[str, str | None]:
     return fills
 
 
-# Where a test's page holds a picture, a frame around it and a line of words, in the engine's
-# points.
+# Where a test's page holds a picture and a line of words, in the engine's points. A picture
+# takes in two points of its page past each side of its box where nothing lies near, which
+# at two pixels a point gives it 8 pixels more each way.
 PICTURE = (100.0, 100.0, 300.0, 250.0)
-FRAME = (80.0, 80.0, 320.0, 270.0)
 OPENING = (72.0, 600.0, 540.0, 612.0)
+MARGINS = 8
+
+
+def grown(box: Box, by: float) -> Box:
+    left, top, right, bottom = box
+    return (left - by, top - by, right + by, bottom + by)
 
 
 def test_pictures_and_charts_are_figures_where_the_engine_puts_them_with_pictures_of_their_size(
@@ -578,18 +600,26 @@ def test_pictures_and_charts_are_figures_where_the_engine_puts_them_with_picture
     items = [block.position for block in extracted.blocks if isinstance(block, ListItem)]
     assert items == [1, 2], f"a picture between two items of a list ended it: {items}"
     sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
-    assert sizes == {2: (480, 360), 3: (600, 300), 6: (240, 240)}, (
-        f"the figures were not given pictures of their regions at 144 dpi: {sizes}"
-    )
+    regions_drawn = {2: (480, 360), 3: (600, 300), 6: (240, 240)}
+    assert sizes == {
+        number: (width + MARGINS, height + MARGINS)
+        for number, (width, height) in regions_drawn.items()
+    }, f"the figures were not given pictures of their regions and margins at 144 dpi: {sizes}"
     for number in sizes:
         picture_of(extracted, number)
 
 
-def test_a_figures_picture_shows_what_is_drawn_in_its_region_and_nothing_around_it(
+def test_a_figures_picture_is_its_region_with_a_margin_of_two_points_and_nothing_further(
     standin_pdf_engine: Callable[..., Path], tmp_path: Path
 ) -> None:
+    # Red fills the region, white the three points around it, and blue all beyond.
     drawing = " ".join(
-        [filled(BLUE, FRAME), filled(RED, PICTURE), written("A red picture.", OPENING)]
+        [
+            filled(BLUE, grown(PICTURE, 20)),
+            filled(WHITE, grown(PICTURE, 3)),
+            filled(RED, PICTURE),
+            written("A red picture.", OPENING),
+        ]
     )
     file = drawn_pdf(tmp_path / "red.pdf", [(LETTER, 0, drawing)])
     regions = [
@@ -598,15 +628,40 @@ def test_a_figures_picture_shows_what_is_drawn_in_its_region_and_nothing_around_
     ]
     extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
     image = picture_of(extracted, 1)
-    extrema = ImageStat.Stat(image).extrema
-    off_red = [
-        max(abs(lowest - own), abs(highest - own))
-        for (lowest, highest), own in zip(extrema, FILL_COLOURS["red"], strict=True)
-    ]
-    assert image.size == (400, 300) and max(off_red) < NEAR, (
-        f"the picture of a red region in a blue frame, {image.size}, holds pixels as far from "
-        f"red as {off_red} in its channels"
+    inside = image.crop((MARGINS, MARGINS, image.width - MARGINS, image.height - MARGINS))
+    assert image.size == (400 + MARGINS, 300 + MARGINS), (
+        f"the picture of a region of 400 by 300 pixels with nothing near is {image.size}"
     )
+    assert fill_of(ImageStat.Stat(inside).mean) == "red" and not holds(image, "blue"), (
+        "the picture of a red region with blue three points around it does not show the red, "
+        "or shows the blue"
+    )
+
+
+def test_two_pictures_close_together_each_take_half_the_gap_and_nothing_of_the_other(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # A red picture stands a point above a blue one: each grows half a point toward the other,
+    # one pixel, where two points would take in a strip of the other.
+    upper = (100.0, 100.0, 300.0, 200.0)
+    lower = (100.0, 201.0, 300.0, 300.0)
+    drawing = " ".join([filled(RED, upper), filled(BLUE, lower), written("Two pictures.", OPENING)])
+    file = drawn_pdf(tmp_path / "close.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "Two pictures."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, upper)]),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, lower)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    # The regions are 400 by 200 and 400 by 198 pixels; each grows by 4 pixels on its three
+    # free sides and by 1 toward the other.
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert sizes == {1: (408, 205), 2: (408, 203)}, (
+        f"the pictures did not grow by half the gap toward each other: {sizes}"
+    )
+    red, blue = picture_of(extracted, 1), picture_of(extracted, 2)
+    assert holds(red, "red") and not holds(red, "blue"), "the red picture took in the blue one"
+    assert holds(blue, "blue") and not holds(blue, "red"), "the blue picture took in the red one"
 
 
 def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption(
@@ -633,8 +688,10 @@ def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption
         ("paragraph", "An icon and a picture."),
         ("paragraph", "An icon."),
         ("figure", ""),
-    ], f"an icon of 60 by 60 pixels was kept as a figure, or its caption was lost: {read}"
-    assert sizes == {2: (400, 300)}, f"the picture is not the one of its figure: {sizes}"
+    ], f"an icon of 68 by 68 pixels, margins and all, was kept as a figure: {read}"
+    assert sizes == {2: (400 + MARGINS, 300 + MARGINS)}, (
+        f"the picture is not the one of its figure: {sizes}"
+    )
     assert set(side_fills(picture_of(extracted, 2)).values()) == {"red"}, (
         "the figure left after the icon was given another region's picture"
     )
@@ -658,7 +715,8 @@ def test_a_picture_on_a_page_the_file_stores_turned_is_its_region_as_the_reader_
     extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
     image = picture_of(extracted, 1)
     sides = side_fills(image)
-    assert image.size == (400, 300) and (sides["top"], sides["bottom"]) == ("red", "blue"), (
+    upright = (400 + MARGINS, 300 + MARGINS)
+    assert image.size == upright and (sides["top"], sides["bottom"]) == ("red", "blue"), (
         f"the picture of a page stored turned, {image.size}, is not red above blue: {sides}"
     )
 
@@ -682,6 +740,7 @@ def test_a_picture_on_a_page_the_file_only_shows_turned_is_its_region_turned_wit
     extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
     image = picture_of(extracted, 1)
     sides = side_fills(image)
-    assert image.size == (300, 400) and (sides["left"], sides["right"]) == ("blue", "red"), (
+    turned = (300 + MARGINS, 400 + MARGINS)
+    assert image.size == turned and (sides["left"], sides["right"]) == ("blue", "red"), (
         f"the picture of a page shown turned, {image.size}, is not blue left of red: {sides}"
     )

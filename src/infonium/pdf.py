@@ -97,6 +97,12 @@ PICTURE_SUFFIX = ".webp"
 PICTURE_QUALITY = 85
 PICTURES_FOLDER = "pictures"
 WEBP_LONGEST_SIDE = 16383
+# The engine's box of a picture has whole points for edges, and may end a point or two inside
+# the drawing, through a frame or a label. A picture takes in up to this many points of its
+# page past each side of the box, no further than halfway to any other box beyond that side,
+# so that two pictures close together, or a picture and its caption, take nothing of each
+# other.
+PICTURE_MARGIN = 2.0
 
 # What a program writes as the title when it is given none: the name of the file it printed.
 FILE_SUFFIXES = (".doc", ".docx", ".dvi", ".indd", ".odt", ".pdf", ".ppt", ".pptx", ".ps")
@@ -662,6 +668,66 @@ def detected_lines(parsed: ParsedPages) -> dict[PageNumber, list[Area]]:
             return {page.page_idx: [] for page in parsed.pages}
 
 
+def other_boxes(page: ParsedPage, group: Group, body: PictureBody) -> list[Box]:
+    # The boxes of a page but a picture's own and its group's, which holds it: those of the
+    # regions read and of those set aside, as headers and footers, and of the members of
+    # every group.
+    members = [
+        member
+        for region in page.preproc_blocks
+        if isinstance(region, Group)
+        for member in region.blocks
+    ]
+    return [
+        found.bbox
+        for found in [*page.preproc_blocks, *page.discarded_blocks, *members]
+        if found is not group and found is not body
+    ]
+
+
+def rooms_along(
+    start: float, end: float, other_start: float, other_end: float, apart: float, overlapping: bool
+) -> tuple[float, float]:
+    # The room another box leaves a picture's box before its start and after its end along
+    # one axis of the page, the two lying so far apart along the other axis, less than
+    # nothing where they overlap along it. A box wholly beyond an end, within the margin's
+    # reach along the other axis, leaves half the gap between them. A box that overlaps the
+    # picture's leaves no room past an end it reaches past, and one inside it leaves the
+    # whole margin.
+    if overlapping:
+        return (
+            0.0 if other_start < start else PICTURE_MARGIN,
+            0.0 if other_end > end else PICTURE_MARGIN,
+        )
+    reached = apart < PICTURE_MARGIN
+    before = (start - other_end) / 2 if reached and other_end <= start else PICTURE_MARGIN
+    after = (other_start - end) / 2 if reached and other_start >= end else PICTURE_MARGIN
+    return before, after
+
+
+def widened(box: Box, others: list[Box], size: tuple[float, float]) -> Box:
+    # A picture's box grown by the margin on each side, as far as the other boxes of its page
+    # leave room, and not past the page.
+    left, top, right, bottom = box
+    width, height = size
+    to_left, to_top = min(PICTURE_MARGIN, left), min(PICTURE_MARGIN, top)
+    to_right, to_bottom = min(PICTURE_MARGIN, width - right), min(PICTURE_MARGIN, height - bottom)
+    for other_left, other_top, other_right, other_bottom in others:
+        apart_across = max(other_left - right, left - other_right)
+        apart_down = max(other_top - bottom, top - other_bottom)
+        overlapping = apart_across < 0 and apart_down < 0
+        before, after = rooms_along(left, right, other_left, other_right, apart_down, overlapping)
+        to_left, to_right = min(to_left, before), min(to_right, after)
+        before, after = rooms_along(top, bottom, other_top, other_bottom, apart_across, overlapping)
+        to_top, to_bottom = min(to_top, before), min(to_bottom, after)
+    return (
+        left - max(0.0, to_left),
+        top - max(0.0, to_top),
+        right + max(0.0, to_right),
+        bottom + max(0.0, to_bottom),
+    )
+
+
 def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) -> PdfReading:
     # The blocks of a file that the engine read without a turned page, with their places on
     # the pages as the PDF shows them: turned by so many quarters from the way they were read.
@@ -701,7 +767,9 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
                 case Group():
                     for member in region.blocks:
                         if isinstance(member, PictureBody):
-                            figures[len(blocks)] = turned_back(area(page, member.bbox), findings)
+                            others = other_boxes(page, region, member)
+                            cut = widened(member.bbox, others, page.page_size)
+                            figures[len(blocks)] = turned_back(area(page, cut), findings)
                         blocks.extend(member_blocks(member, page, findings))
         # A footnote says something the document says, so it is kept: as a paragraph after
         # the text of its page, where it interrupts no sentence of that page. The engine does
