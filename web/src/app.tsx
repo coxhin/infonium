@@ -117,13 +117,13 @@ function shownDocument(shown: Shown): string {
 type Opened = { shown: Shown; itemDocument: ItemDocument; holding: string };
 
 // The reader of a read item. A document of another revision, or the document the item comes
-// to hold after a new reading, is loaded while the reader on show stays, so that the column
-// beside it never sees the reader gone: the seat changes its document and the document the
-// item holds together, when the new one is on show. Meanwhile the head already lists the
-// revisions there are now, and names the document on show by its place among them. A reader
-// opened by one link and shown again by another link to the same document, such as the plain
-// link and that of the revision the item holds now, is seated again with the link the window
-// is at, for a passage awaited there.
+// to hold after a new reading, the same one included, is loaded while the reader on show
+// stays, so that the column beside it never sees the reader gone: the seat changes its
+// document and the document the item holds together, when the new one is on show. Meanwhile
+// the head already lists the revisions there are now, and names the document on show by its
+// place among them. A reader opened by one link and shown again by another link to the same
+// document, such as the plain link and that of the revision the item holds now, is seated
+// again with the link the window is at, for a passage awaited there.
 function DocumentPane({
   entry,
   wanted,
@@ -136,8 +136,13 @@ function DocumentPane({
   const [opened, setOpened] = useState<Opened>();
   const [failed, setFailed] = useState<{ key: string; reason: string }>();
   const key = wanted === undefined ? undefined : shownKey(wanted);
+  // A reading that settles into the document on show, as one of a page whose text is unchanged,
+  // may have given figures of it the pictures they lacked, so the document is loaded again once
+  // a reading settles; while one is under way, the document on show stays.
+  const underway = entry.reading.attempt.kind === "underway";
   useEffect(() => {
-    if (wanted === undefined) {
+    const onShow = opened !== undefined && shownKey(opened.shown) === key;
+    if (wanted === undefined || (underway && onShow)) {
       return undefined;
     }
     let current = true;
@@ -161,7 +166,7 @@ function DocumentPane({
     return () => {
       current = false;
     };
-  }, [key]);
+  }, [key, underway]);
   const failure = failed !== undefined && failed.key === key ? failed.reason : undefined;
   useCannotShow(entry.id, failure);
   if (failure !== undefined) {
