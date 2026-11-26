@@ -307,9 +307,10 @@ def framed_page(content: bytes, item_id: str, origin: Origin, blocks: list[Block
 
 
 class KeptPages:
-    # The pages built last, kept by owner and document. A document never changes, so a page is
-    # dropped only for room. functools.lru_cache keys a result on every argument it is built
-    # from, where a page must be built from the document already read and kept by its name.
+    # The pages built last, kept by owner and document. A document changes only by the pictures
+    # a later reading gives its figures, which a page does not show, so a page is dropped only
+    # for room. functools.lru_cache keys a result on every argument it is built from, where a
+    # page must be built from the document already read and kept by its name.
     def __init__(self, room: int) -> None:
         self.room = room
         self.pages: OrderedDict[tuple[str, str], FramedPage] = OrderedDict()

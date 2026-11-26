@@ -163,16 +163,29 @@ def test_a_picture_is_served_for_every_revision_that_names_it_and_no_other(
     )
 
 
-def test_a_reading_that_gives_a_document_kept_already_leaves_its_pictures_and_keeps_no_other(
+def test_a_reading_that_gives_a_document_kept_already_gives_only_its_figures_without_pictures(
     app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    standin = StandinPdf([(WORDS, [RED, None]), (WORDS, [BLUE, GREEN])])
+    standin = StandinPdf([(WORDS, [RED, None, None]), (WORDS, [BLUE, GREEN, None])])
     item = read_pdf(app, monkeypatch, standin)
     first = document_of(app, item)
+    revisions = app.client.get(f"/api/items/{item}/revisions").json()
     read_again(app, item)
     again = document_of(app, item)
-    assert again == first, "a reading that gave the same text changed the document kept"
-    assert kept_pictures(app) == [name_of(RED)], (
-        "a reading that gave a document kept already kept pictures of its own"
+    assert again["id"] == first["id"], "a reading of the same text gave another document"
+    assert pictures_of(again) == [name_of(RED), name_of(GREEN), None], (
+        "a figure with a picture lost it, or one without was not given the picture read again"
+    )
+    assert [block for block in again["blocks"] if block["kind"] != "figure"] == [
+        block for block in first["blocks"] if block["kind"] != "figure"
+    ], "a document given pictures changed otherwise"
+    assert app.client.get(f"/api/items/{item}/revisions").json() == revisions, (
+        "a document given pictures became another revision"
+    )
+    assert kept_pictures(app) == sorted([name_of(RED), name_of(GREEN)]), (
+        "a reading of a document kept already kept a picture that the document does not name"
+    )
+    assert picture_answer(app, again["id"], name_of(GREEN)).content == GREEN, (
+        "a picture given to a document kept already was not served"
     )
     assert app.left_in(app.store.work) == [], "a reading left a picture in the work folder"

@@ -511,8 +511,9 @@ class Intake:
             media_type=readout.media_type,
             blocks=pictured_blocks(readout.extracted, pictures),
         )
-        # A reading that gives a document the library keeps already leaves that document, its
-        # file and its pictures as they are, and keeps no other file or picture beside it.
+        # A reading that gives a document the library keeps already leaves that document and
+        # its file as they are, and keeps no other file beside it; of its pictures, it keeps
+        # those it gives the document's figures that have none.
         with self.turn:
             with self.store.library(owner) as library:
                 current = library.item(item_id)
@@ -522,8 +523,9 @@ class Intake:
                     self.store.keep_snapshot(staged)
                 else:
                     staged.file.unlink()
+                given = set() if new_document else library.give_pictures(document)
                 for picture in pictures.values():
-                    if new_document:
+                    if new_document or picture.name in given:
                         self.store.keep_picture(picture)
                     else:
                         picture.file.unlink()

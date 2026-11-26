@@ -483,8 +483,9 @@ class Library:
         # A document read from an item's source is a revision of the item: a new one, numbered
         # one above the item's highest, unless the item was read into this document before.
         # Then the document stays as it was first kept, with the file kept beside it then, and
-        # so does its revision: a document never changes under its id. Whether the document
-        # is new to the library.
+        # so does its revision: what a document is never changes under its id, and only a
+        # figure without a picture may be given one later (give_pictures). Whether the
+        # document is new to the library.
         kept = self.connection.execute(
             sqlite.insert(document_table)
             .values(
@@ -526,6 +527,32 @@ class Library:
             .on_conflict_do_nothing(index_elements=[revision_table.c.document_id])
         )
         return bool(kept.rowcount)
+
+    def give_pictures(self, document: Document) -> set[str]:
+        # A reading that gives a document kept already gives each figure of the kept one that
+        # has no picture the picture this reading found for it, as a page kept before pictures
+        # were kept, or one whose picture failed to arrive, may be read again. A figure that
+        # has a picture keeps it, and nothing else of the document changes: a picture is no
+        # part of what the document is. The names of the pictures given.
+        kept = self.owned_document(document.id)
+        blocks = list(kept.blocks)
+        given: set[str] = set()
+        for number, (held, read) in enumerate(zip(kept.blocks, document.blocks, strict=True)):
+            if (
+                isinstance(held, Figure)
+                and held.picture is None
+                and isinstance(read, Figure)
+                and read.picture is not None
+            ):
+                blocks[number] = held.model_copy(update={"picture": read.picture})
+                given.add(read.picture.name)
+        if given:
+            self.connection.execute(
+                sqlalchemy.update(document_table)
+                .where(document_table.c.owner == self.owner, document_table.c.id == document.id)
+                .values(body=kept.model_copy(update={"blocks": blocks}).model_dump_json())
+            )
+        return given
 
     def keep_digest(self, digest: Digest) -> None:
         self.connection.execute(
