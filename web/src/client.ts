@@ -12,7 +12,6 @@ export type PagePlace = Schemas["PagePlace"];
 export type TimePlace = Schemas["TimePlace"];
 export type Style = Schemas["Style"];
 export type Digest = Schemas["DigestView"];
-export type DigestSection = Schemas["Section"];
 export type DigestStyle = Schemas["DigestStyle"];
 export type StyleOffer = Schemas["DigestStyleView"];
 // A built-in style is sent without instructions: openapi-fetch's type of a request's body
