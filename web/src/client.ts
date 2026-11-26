@@ -234,17 +234,18 @@ export function readDigests(itemId: string): Promise<Digest[]> {
   );
 }
 
+// A digest being written: the style asked, with the instructions of a custom one, and the
+// request that answers the digest.
+export type DigestWriting = { asked: ChosenStyle; digest: Promise<Digest> };
+
 // Writing a digest takes a model call, so views that ask for the same item's digest of the same
-// style while one request is under way share that request.
-const digestsUnderWay = new Map<string, Promise<Digest>>();
+// style while one request is under way share that request. The writings under way are kept by
+// item, then by style.
+const digestWritings = new Map<string, Map<DigestStyle, DigestWriting>>();
 
-function digestKey(itemId: string, style: DigestStyle): string {
-  return `${itemId}\n${style}`;
-}
-
-// The writing of the item's digest of the style, while one is under way.
-export function digestUnderWay(itemId: string, style: DigestStyle): Promise<Digest> | undefined {
-  return digestsUnderWay.get(digestKey(itemId, style));
+// The writings of the item's digests that are under way, by style.
+export function digestsUnderWay(itemId: string): ReadonlyMap<DigestStyle, DigestWriting> {
+  return new Map(digestWritings.get(itemId));
 }
 
 // Writes the item's digest of the style chosen with the model, in place of the one of that
@@ -253,18 +254,20 @@ export function writeDigest(
   itemId: string,
   style: ChosenStyle,
   model: string | undefined,
-): Promise<Digest> {
-  const key = digestKey(itemId, style.style);
-  const underWay =
-    digestsUnderWay.get(key) ??
-    settled(
+): DigestWriting {
+  const writings = digestWritings.get(itemId) ?? new Map<DigestStyle, DigestWriting>();
+  digestWritings.set(itemId, writings);
+  const writing = writings.get(style.style) ?? {
+    asked: style,
+    digest: settled(
       api.POST("/api/items/{item_id}/digest", {
         params: { path: { item_id: itemId }, query: chosen(model) },
         body: style,
       }),
-    ).finally(() => digestsUnderWay.delete(key));
-  digestsUnderWay.set(key, underWay);
-  return underWay;
+    ).finally(() => writings.delete(style.style)),
+  };
+  writings.set(style.style, writing);
+  return writing;
 }
 
 export function readTranslation(itemId: string): Promise<Translation> {

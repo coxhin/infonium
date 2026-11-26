@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  digestUnderWay,
+  digestsUnderWay,
   readDigestStyles,
   readDigests,
   writeDigest,
   type ChosenStyle,
   type Digest,
   type DigestStyle,
+  type DigestWriting,
   type Statement,
   type StyleOffer,
 } from "./client";
@@ -290,30 +291,39 @@ function StylePane({
 }
 
 // The digests of the open item. Nothing is written until the reader chooses a style: with none
-// kept, the styles are offered, and a press of one writes it; with some kept, the style chosen
-// last is on show if it is kept, or else the one written last, under a row of every style.
+// kept or being written, the styles are offered, and a press of one writes it. Otherwise the
+// style chosen last is on show if it is kept or being written, or else the one written last,
+// or else one being written, under a row of every style.
 function Digests({
   itemId,
   model,
   citing,
   styles,
   keptAtFirst,
+  underWayAtFirst,
 }: {
   itemId: string;
   model: string | undefined;
   citing: Citing;
   styles: StyleOffer[];
   keptAtFirst: Digest[];
+  underWayAtFirst: ReadonlyMap<DigestStyle, DigestWriting>;
 }) {
   const [kept, setKept] = useState(
     () => new Map(keptAtFirst.map((digest) => [digest.style, digest])),
   );
-  const [writings, setWritings] = useState(() => new Map<DigestStyle, Writing>());
+  const [writings, setWritings] = useState(
+    () =>
+      new Map<DigestStyle, Writing>(
+        [...underWayAtFirst.keys()].map((style) => [style, { state: "writing" }]),
+      ),
+  );
   const [picked, setPicked] = useState<DigestStyle>();
 
-  function follow(style: DigestStyle, underWay: Promise<Digest>) {
-    setWritings((before) => new Map(before).set(style, { state: "writing" }));
-    underWay.then(
+  // The digest written goes among those kept whenever it arrives.
+  function follow(writing: DigestWriting) {
+    const style = writing.asked.style;
+    writing.digest.then(
       (digest) => {
         setKept((before) => new Map(before).set(style, digest));
         setWritings((before) => {
@@ -329,13 +339,11 @@ function Digests({
     );
   }
 
-  // A digest that another view of the item began to write is shown as being written here too.
+  // The writings under way when the digests kept were read, which another view of the item
+  // began, are followed from the start, so that one that ended meanwhile lands as well.
   useEffect(() => {
-    for (const offer of styles) {
-      const underWay = digestUnderWay(itemId, offer.id);
-      if (underWay !== undefined) {
-        follow(offer.id, underWay);
-      }
+    for (const writing of underWayAtFirst.values()) {
+      follow(writing);
     }
   }, []);
 
@@ -346,18 +354,23 @@ function Digests({
 
   // The chips of the digest that is written anew are gone, so the passage one of them showed
   // is taken off show with them.
-  function write(style: ChosenStyle) {
+  function write(asked: ChosenStyle) {
     citing.hide();
-    choose(style.style);
-    follow(style.style, writeDigest(itemId, style, model));
+    choose(asked.style);
+    setWritings((before) => new Map(before).set(asked.style, { state: "writing" }));
+    follow(writeDigest(itemId, asked, model));
   }
 
   const lastChosen = localStorage.getItem(STYLE_KEY);
   const latest = [...kept.values()].sort(
     (one, other) => Date.parse(other.written) - Date.parse(one.written),
   )[0];
-  const chosenKept = [...kept.keys()].find((style) => style === lastChosen);
-  const shown = picked ?? chosenKept ?? latest?.style;
+  // The styles that have something to show: a digest kept, or a writing under way or failed.
+  const present = styles
+    .map((offered) => offered.id)
+    .filter((style) => kept.has(style) || writings.has(style));
+  const shown =
+    picked ?? present.find((style) => style === lastChosen) ?? latest?.style ?? present[0];
   const offer = styles.find((style) => style.id === shown);
 
   if (offer === undefined) {
@@ -423,7 +436,16 @@ export function DigestPanel({
   model: string | undefined;
   citing: Citing;
 }) {
-  const loaded = useLoaded(() => Promise.all([offeredStyles(), readDigests(itemId)]), itemId);
+  // The writings under way are taken before the digests kept are read: one that ends while
+  // they are read is then still followed, though the digests read may not hold its digest.
+  const loaded = useLoaded(() => {
+    const underWay = digestsUnderWay(itemId);
+    return Promise.all([offeredStyles(), readDigests(itemId)]).then(([styles, kept]) => ({
+      styles,
+      kept,
+      underWay,
+    }));
+  }, itemId);
   return (
     <div className="digest">
       {loaded.state === "loading" && <p className="status">正在读取摘要…</p>}
@@ -433,8 +455,9 @@ export function DigestPanel({
           itemId={itemId}
           model={model}
           citing={citing}
-          styles={loaded.value[0]}
-          keptAtFirst={loaded.value[1]}
+          styles={loaded.value.styles}
+          keptAtFirst={loaded.value.kept}
+          underWayAtFirst={loaded.value.underWay}
         />
       )}
     </div>
