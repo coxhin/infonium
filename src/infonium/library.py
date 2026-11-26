@@ -709,9 +709,17 @@ class LibraryStore:
                 waiting.unlink()
 
     def staged(self, content: BinaryIO) -> Path:
-        # Bytes arrive in the work directory and are moved to their place whole.
-        with NamedTemporaryFile(dir=self.work, delete=False) as arrived:
-            shutil.copyfileobj(content, arrived)
+        # Bytes arrive in the work directory and are moved to their place whole. A copy that
+        # fails partway, as on a full disk, while it writes or as it is closed, is removed.
+        partway: Path | None = None
+        try:
+            with NamedTemporaryFile(dir=self.work, delete=False) as arrived:
+                partway = Path(arrived.name)
+                shutil.copyfileobj(content, arrived)
+        except BaseException:
+            if partway is not None:
+                partway.unlink(missing_ok=True)
+            raise
         return Path(arrived.name)
 
     def staged_named(self, file: Path) -> tuple[str, Path]:

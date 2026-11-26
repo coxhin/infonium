@@ -50,16 +50,21 @@ export function PagesView({
   marking,
   onShow,
 }: ViewContext) {
+  // A document's text and its places never change under its id: a reading that settles into
+  // the document on show gives at most its figures the pictures they lacked, which the pages do
+  // not draw. So what the pages are worked out from is the blocks the document first came with,
+  // and such a reading neither works it out anew nor turns the pages to a passage again.
+  const blocks = useMemo(() => itemDocument.blocks, [itemDocument.id]);
   // Worked out anew at every act of pointing, so that the pages turn to the same boxes again.
   const boxes = useMemo(
     () =>
       pointed === undefined
         ? NO_PAGES
-        : pointed.anchors.flatMap((anchor) => pagePlaces(placesOf(itemDocument.blocks, anchor))),
-    [pointed, itemDocument],
+        : pointed.anchors.flatMap((anchor) => pagePlaces(placesOf(blocks, anchor))),
+    [pointed, blocks],
   );
-  const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
-  const text = useMemo(() => new PageText(itemDocument.blocks), [itemDocument]);
+  const layout = useMemo(() => layoutOf(blocks), [blocks]);
+  const text = useMemo(() => new PageText(blocks), [blocks]);
   const marks = useMemo<PageMarks>(() => {
     const onPages = pageMarksOf(text, marking.marked, marking.opened);
     return {
@@ -105,7 +110,7 @@ export function PagesView({
     }
     const onPages = new Map<number, AreaText[]>();
     translation.blocks.forEach((translated, blockNumber) => {
-      const block = itemDocument.blocks[blockNumber];
+      const block = blocks[blockNumber];
       if (block === undefined) {
         return;
       }
@@ -133,7 +138,7 @@ export function PagesView({
       [...translation.blocks.values()].map((block) => translatedText(block, SEGMENT_GAP).text),
     );
     return pageTextsOf(onPages, layout, unspaced);
-  }, [shown, translation.blocks, itemDocument, layout, sourceLinks]);
+  }, [shown, translation.blocks, blocks, layout, sourceLinks]);
   // The passage pointed at, as it glows: its words on the source's lines, and where a
   // translation is on show, the sentences of each block's translation that stand for them.
   const glow = useMemo<Glow | undefined>(() => {
@@ -142,7 +147,7 @@ export function PagesView({
     }
     const translated: TranslatedGlow[] = [];
     for (const anchor of overlays === undefined ? [] : pointed.anchors) {
-      const block = itemDocument.blocks[anchor.block_number];
+      const block = blocks[anchor.block_number];
       const translatedBlock = translation.blocks.get(anchor.block_number);
       const areas = translatedBlock === undefined ? undefined : placedKept.get(translatedBlock);
       if (block !== undefined && translatedBlock !== undefined && areas !== undefined) {
@@ -163,8 +168,8 @@ export function PagesView({
       })),
       translated,
     };
-  }, [pointed, overlays, itemDocument, translation.blocks]);
-  const hasTables = itemDocument.blocks.some((block) => block.kind === "table");
+  }, [pointed, overlays, blocks, translation.blocks]);
+  const hasTables = blocks.some((block) => block.kind === "table");
   const opening = useArrivalPosition(entry.id);
   return (
     <>

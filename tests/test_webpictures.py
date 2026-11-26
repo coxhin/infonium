@@ -5,7 +5,6 @@ import os
 import shutil
 import socket
 import socketserver
-import ssl
 import subprocess
 import tempfile
 import time
@@ -73,6 +72,9 @@ authorityKeyIdentifier = keyid
 subjectAltName = {names}
 """
 NEW_KEY = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes")
+# Where httpx's own context finds the authorities it trusts, where the environment names them.
+CERTIFICATE_FILE = "SSL_CERT_FILE"
+CERTIFICATE_DIRECTORY = "SSL_CERT_DIR"
 VALID_DAYS = "2"
 EXAMPLES = settings(max_examples=12, suppress_health_check=[HealthCheck.function_scoped_fixture])
 
@@ -221,7 +223,7 @@ def made(command: list[str | Path]) -> None:
 def authority(tmp_path_factory: pytest.TempPathFactory) -> Authority:
     openssl = shutil.which("openssl")
     if openssl is None:
-        pytest.skip("openssl not found: put it on the PATH, to make the tests' certificates")
+        pytest.fail("the tests of TLS make their certificates with openssl: put it on the PATH")
     folder = tmp_path_factory.mktemp("authority")
     config = folder / "authority.cnf"
     config.write_text(AUTHORITY_CONFIG)
@@ -258,12 +260,14 @@ def secured(site: PictureSite, server: Certified) -> Iterator[None]:
             site.secure = None
 
 
-def trusting(monkeypatch: pytest.MonkeyPatch, authority: Authority) -> None:
-    # Pictures are downloaded over a transport that trusts the test session's authority alone.
-    context = ssl.create_default_context(cafile=authority.certificate)
-    monkeypatch.setattr(
-        webpictures, "public_transport", lambda: webpictures.PublicTransport(context)
-    )
+def trusting(monkeypatch: pytest.MonkeyPatch, authority: Authority | None) -> None:
+    # httpx's own context, the one the transport checks certificates by, trusts the test
+    # session's authority alone, as the environment names its file; or, given none, the
+    # authorities certifi lists.
+    for name in (CERTIFICATE_FILE, CERTIFICATE_DIRECTORY):
+        monkeypatch.delenv(name, raising=False)
+    if authority is not None:
+        monkeypatch.setenv(CERTIFICATE_FILE, str(authority.certificate))
 
 
 def page_with(*sources: str) -> Extracted:
@@ -431,8 +435,7 @@ def test_a_picture_over_tls_is_refused_where_its_certificate_names_another_host_
     trusted: bool,
     said: str,
 ) -> None:
-    if trusted:
-        trusting(monkeypatch, authority)
+    trusting(monkeypatch, authority if trusted else None)
     site.answers["/secure.png"] = Answer(body=PNG)
     with secured(site, authority.other if certified == "other" else authority.sites):
         extracted = downloaded(page_with("https://pictures.test/secure.png"), tmp_path)
