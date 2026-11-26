@@ -28,6 +28,10 @@ from tests.model_standin import (
     Reply,
 )
 
+# These tests wait out real pauses and test only the pace, so the default run leaves them out;
+# run them with `-m pace` after a change to the pace.
+pytestmark = pytest.mark.pace
+
 # Two models of GLM's endpoint, one asked over connections that a reader who leaves cuts.
 GLM_MODEL = "glm-standin"
 GLM_FLASH = "glm-standin-flash"
