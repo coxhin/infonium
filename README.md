@@ -366,6 +366,12 @@ uv run pytest -m ffmpeg    # ffmpeg and ffprobe
 uv run pytest -m mineru    # MinerU 3.4.2, by INFONIUM_PDF_ENGINE, on a GPU
 ```
 
+The tests of the pace of requests to GLM's endpoint wait out real pauses and take about seven seconds. They carry the marker `pace`, are left out of `make test` as well, and are run after a change to the pace (`Pace` and the pauses in `src/infonium/model_connection.py`). On a busy machine one of them fails at times: its four requests sent at once do not all reach the stand-in before the first refusal begins the pause.
+
+```bash
+uv run pytest -m pace      # the pace of requests to GLM's endpoint
+```
+
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).

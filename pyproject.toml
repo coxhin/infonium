@@ -54,18 +54,20 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The default run refuses the network, and leaves out the tests that need a program of their
-# own; `-m` with a marker's name runs those.
+# own and the tests of the pace, which time requests on the clock; `-m` with a marker's name
+# runs those.
 addopts = [
     "--strict-markers",
     "--disable-socket",
     "--allow-unix-socket",
     "-m",
-    "not chrome and not ffmpeg and not mineru",
+    "not chrome and not ffmpeg and not mineru and not pace",
 ]
 markers = [
     "chrome: renders pages in Google Chrome or Chromium, with its sandbox",
     "ffmpeg: reads recordings with FFmpeg's ffmpeg and ffprobe",
     "mineru: parses PDFs with MinerU 3.4.2 on a GPU",
+    "pace: times the requests to GLM's endpoint on the clock",
 ]
 
 [[tool.mypy.overrides]]
