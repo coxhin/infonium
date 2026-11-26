@@ -242,10 +242,12 @@ class AnswerBytes(httpx.SyncByteStream):
 
 class PublicTransport(httpx.BaseTransport):
     # httpx's requests sent over a pool of httpcore's connections, each made through
-    # PublicBackend; httpx's own transport takes no backend for its connections.
-    def __init__(self) -> None:
+    # PublicBackend; httpx's own transport takes no backend for its connections. A secure
+    # connection's certificate is checked by the context given, by default httpx's, which
+    # trusts the authorities certifi lists.
+    def __init__(self, ssl_context: ssl.SSLContext | None = None) -> None:
         self.pool = httpcore.ConnectionPool(
-            ssl_context=httpx.create_ssl_context(),
+            ssl_context=httpx.create_ssl_context() if ssl_context is None else ssl_context,
             max_connections=PICTURES_AT_ONCE,
             network_backend=PublicBackend(),
         )
