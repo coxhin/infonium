@@ -1,0 +1,772 @@
+{
+  "language": "简体中文",
+  "items": [
+    {
+      "id": "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80",
+      "origin": {
+        "kind": "link",
+        "url": "https://pages.test/page/harbour"
+      },
+      "reading": {
+        "kind": "read",
+        "title": "Quillmoor harbour book",
+        "document": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+        "attempt": {
+          "kind": "settled"
+        }
+      }
+    },
+    {
+      "id": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+      "origin": {
+        "kind": "link",
+        "url": "https://pages.test/page/ledger"
+      },
+      "reading": {
+        "kind": "read",
+        "title": "Quillmoor ledger",
+        "document": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+        "attempt": {
+          "kind": "settled"
+        }
+      }
+    }
+  ],
+  "item_answers": {
+    "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce": {
+      "entry": {
+        "id": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+        "origin": {
+          "kind": "link",
+          "url": "https://pages.test/page/ledger"
+        },
+        "reading": {
+          "kind": "read",
+          "title": "Quillmoor ledger",
+          "document": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+          "attempt": {
+            "kind": "settled"
+          }
+        }
+      },
+      "document": {
+        "id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+        "media_type": "text/html",
+        "blocks": [
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Quillmoor ledger",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "The harbour ledger of Quillmoor records that the night ferry left at a quarter past nine on every weekday of the winter season.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Its keeper, Odalys Brenn, wrote each departure in green ink and each delay in red, so that a reader could count the late crossings at a glance.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "In the third winter the ferry ran late on forty-one nights, most of them in the weeks when fog lay over the eastern breakwater.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "The town council answered by moving the departure to half past eight, which cut the late crossings to nine in the winter that followed.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "日本語の段落もある。港の帳簿は町の図書館に今も保管されている。",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 0 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 1 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 2 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 3 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 4 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 5 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 6 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 7 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          }
+        ]
+      },
+      "revisions": {
+        "current": 1,
+        "revisions": [
+          {
+            "number": 1,
+            "document": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+            "read": "2026-11-26T15:29:21.307867Z"
+          }
+        ]
+      },
+      "highlights": [
+        {
+          "id": "a5b476e429d04333badcb39609e888e1",
+          "item": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+          "revision": 1,
+          "passage": {
+            "anchors": [
+              {
+                "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                "block_number": 3,
+                "start": 42,
+                "end": 58,
+                "quote": "forty-one nights"
+              }
+            ]
+          },
+          "standing": {
+            "kind": "found",
+            "passage": {
+              "anchors": [
+                {
+                  "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                  "block_number": 3,
+                  "start": 42,
+                  "end": 58,
+                  "quote": "forty-one nights"
+                }
+              ]
+            },
+            "exact": true
+          },
+          "comment": "四十一个夜晚，大多起雾。",
+          "made": "2026-11-26T15:29:21.645696Z"
+        }
+      ],
+      "translation": {
+        "document": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+        "language": "简体中文",
+        "progress": {
+          "kind": "translated"
+        },
+        "input_tokens": 200,
+        "output_tokens": 100,
+        "blocks": [
+          {
+            "block_number": 0,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 16,
+                "text": "译Quillmoor ledger",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 1,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 127,
+                "text": "译The harbour ledger of Quillmoor records that the night ferry left at a quarter past nine on every weekday of the winter season.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 2,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 143,
+                "text": "译Its keeper, Odalys Brenn, wrote each departure in green ink and each delay in red, so that a reader could count the late crossings at a glance.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 3,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 127,
+                "text": "译In the third winter the ferry ran late on forty-one nights, most of them in the weeks when fog lay over the eastern breakwater.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 4,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 135,
+                "text": "译The town council answered by moving the departure to half past eight, which cut the late crossings to nine in the winter that followed.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 5,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 31,
+                "text": "译日本語の段落もある。港の帳簿は町の図書館に今も保管されている。",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 6,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 0 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 7,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 1 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 8,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 2 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 9,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 3 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 10,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 4 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 11,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 5 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 12,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 6 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          },
+          {
+            "block_number": 13,
+            "model": "stand-in-translation-model",
+            "segments": [
+              {
+                "start": 0,
+                "end": 150,
+                "text": "译Filler paragraph number 7 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+                "marks": []
+              }
+            ]
+          }
+        ],
+        "blocks_to_translate": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13
+        ]
+      },
+      "digests": [
+        {
+          "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+          "model": "stand-in-model",
+          "written": "2026-11-26T15:29:21.626545Z",
+          "input_tokens": 100,
+          "output_tokens": 50,
+          "sections": [
+            {
+              "title": "摘要",
+              "statements": [
+                {
+                  "text": "Quillmoor 的港口账簿记下了冬季每个工作日夜渡的发船时间。",
+                  "anchors": [
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 1,
+                      "start": 45,
+                      "end": 88,
+                      "quote": "the night ferry left at a quarter past nine"
+                    }
+                  ],
+                  "lost_citations": 0
+                },
+                {
+                  "text": "守账人 Odalys Brenn 用绿墨记发船，用红墨记延误。",
+                  "anchors": [
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 2,
+                      "start": 26,
+                      "end": 81,
+                      "quote": "wrote each departure in green ink and each delay in red"
+                    }
+                  ],
+                  "lost_citations": 0
+                }
+              ]
+            },
+            {
+              "title": "要点",
+              "statements": [
+                {
+                  "text": "第三个冬季渡船有四十一个夜晚晚点，多在东防波堤起雾的几周。",
+                  "anchors": [
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 3,
+                      "start": 20,
+                      "end": 58,
+                      "quote": "the ferry ran late on forty-one nights"
+                    },
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 3,
+                      "start": 86,
+                      "end": 126,
+                      "quote": "when fog lay over the eastern breakwater"
+                    }
+                  ],
+                  "lost_citations": 0
+                },
+                {
+                  "text": "镇议会把发船提前到八点半，次年冬季晚点降到九次。",
+                  "anchors": [
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 4,
+                      "start": 76,
+                      "end": 106,
+                      "quote": "cut the late crossings to nine"
+                    }
+                  ],
+                  "lost_citations": 1
+                },
+                {
+                  "text": "账簿至今保存在镇图书馆。",
+                  "anchors": [
+                    {
+                      "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                      "block_number": 5,
+                      "start": 10,
+                      "end": 30,
+                      "quote": "港の帳簿は町の図書館に今も保管されている"
+                    }
+                  ],
+                  "lost_citations": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80": {
+      "entry": {
+        "id": "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80",
+        "origin": {
+          "kind": "link",
+          "url": "https://pages.test/page/harbour"
+        },
+        "reading": {
+          "kind": "read",
+          "title": "Quillmoor harbour book",
+          "document": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+          "attempt": {
+            "kind": "settled"
+          }
+        }
+      },
+      "document": {
+        "id": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+        "media_type": "text/html",
+        "blocks": [
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Quillmoor harbour book",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "The harbour master of Quillmoor kept a second book for the cargo boats, in which every barrel of salt herring was counted twice.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Its pages end in the spring of the fifth winter, when the cargo trade moved to the new quay at Ostrel.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 0 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 1 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 2 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 3 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 4 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 5 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 6 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          },
+          {
+            "kind": "paragraph",
+            "text": "Filler paragraph number 7 keeps the extractor sure that this page is an article with running text enough to be worth reading, sentence after sentence.",
+            "marks": [],
+            "places": []
+          }
+        ]
+      },
+      "revisions": {
+        "current": 1,
+        "revisions": [
+          {
+            "number": 1,
+            "document": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+            "read": "2026-11-26T15:29:21.350347Z"
+          }
+        ]
+      },
+      "highlights": [
+        {
+          "id": "9066f41fc5564ca490578cc2f2c9cc6b",
+          "item": "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80",
+          "revision": 1,
+          "passage": {
+            "anchors": [
+              {
+                "document_id": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+                "block_number": 2,
+                "start": 79,
+                "end": 91,
+                "quote": "the new quay"
+              }
+            ]
+          },
+          "standing": {
+            "kind": "found",
+            "passage": {
+              "anchors": [
+                {
+                  "document_id": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+                  "block_number": 2,
+                  "start": 79,
+                  "end": 91,
+                  "quote": "the new quay"
+                }
+              ]
+            },
+            "exact": true
+          },
+          "comment": "",
+          "made": "2026-11-26T15:29:21.664584Z"
+        }
+      ],
+      "translation": {
+        "document": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+        "language": "简体中文",
+        "progress": {
+          "kind": "unasked"
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "blocks": [],
+        "blocks_to_translate": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "digests": []
+    }
+  },
+  "highlights": [
+    {
+      "item": "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80",
+      "title": "Quillmoor harbour book",
+      "highlights": [
+        {
+          "id": "9066f41fc5564ca490578cc2f2c9cc6b",
+          "item": "975cf54141c8c148c15640b37606841c26f0bd6bfde5b14d08ff91f0920f7a80",
+          "revision": 1,
+          "passage": {
+            "anchors": [
+              {
+                "document_id": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+                "block_number": 2,
+                "start": 79,
+                "end": 91,
+                "quote": "the new quay"
+              }
+            ]
+          },
+          "standing": {
+            "kind": "found",
+            "passage": {
+              "anchors": [
+                {
+                  "document_id": "9d52b6ec06c050b3e8f2cbe3eace4e12f0ebc1aba527ab80157ca614607ac18a",
+                  "block_number": 2,
+                  "start": 79,
+                  "end": 91,
+                  "quote": "the new quay"
+                }
+              ]
+            },
+            "exact": true
+          },
+          "comment": "",
+          "made": "2026-11-26T15:29:21.664584Z"
+        }
+      ]
+    },
+    {
+      "item": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+      "title": "Quillmoor ledger",
+      "highlights": [
+        {
+          "id": "a5b476e429d04333badcb39609e888e1",
+          "item": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+          "revision": 1,
+          "passage": {
+            "anchors": [
+              {
+                "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                "block_number": 3,
+                "start": 42,
+                "end": 58,
+                "quote": "forty-one nights"
+              }
+            ]
+          },
+          "standing": {
+            "kind": "found",
+            "passage": {
+              "anchors": [
+                {
+                  "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                  "block_number": 3,
+                  "start": 42,
+                  "end": 58,
+                  "quote": "forty-one nights"
+                }
+              ]
+            },
+            "exact": true
+          },
+          "comment": "四十一个夜晚，大多起雾。",
+          "made": "2026-11-26T15:29:21.645696Z"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "id": "95ef7c651cce4c0b919743227c768b52",
+      "title": "渡船为何晚点",
+      "made": "2026-11-26T15:29:21.677970Z",
+      "changed": "2026-11-26T15:29:21.677970Z",
+      "items": [
+        "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce"
+      ]
+    }
+  ],
+  "note_views": {
+    "95ef7c651cce4c0b919743227c768b52": {
+      "id": "95ef7c651cce4c0b919743227c768b52",
+      "edition": 1,
+      "title": "渡船为何晚点",
+      "markdown": "发船改到[八点半](passage:a)之后，晚点少了。",
+      "passages": [
+        {
+          "id": "a",
+          "item": "89b3d45eed21b38b2ef79664dcfef6dbcaa18a948252a5edede439ddf8f252ce",
+          "title": "Quillmoor ledger",
+          "revision": 1,
+          "passage": {
+            "anchors": [
+              {
+                "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                "block_number": 4,
+                "start": 53,
+                "end": 68,
+                "quote": "half past eight"
+              }
+            ]
+          },
+          "standing": {
+            "kind": "found",
+            "passage": {
+              "anchors": [
+                {
+                  "document_id": "5f5acbeaf10fb9e046f6ac35843a9a0dd67244c0b097c3577760b79adffad27c",
+                  "block_number": 4,
+                  "start": 53,
+                  "end": 68,
+                  "quote": "half past eight"
+                }
+              ]
+            },
+            "exact": true
+          }
+        }
+      ],
+      "made": "2026-11-26T15:29:21.677970Z",
+      "changed": "2026-11-26T15:29:21.677970Z"
+    }
+  }
+}
