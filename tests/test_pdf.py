@@ -801,11 +801,11 @@ def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_t
     drawn = pdfium.OpenPage.drawn
 
     def out_of_memory_on_the_left(
-        page: pdfium.OpenPage, region: pdfium.Region, scale: float
+        page: pdfium.OpenPage, edges: pdfium.PageEdges, scale: float
     ) -> Image.Image:
-        if region[0] < 0.5:
+        if edges[0] < 0.5:
             raise MemoryError
-        return drawn(page, region, scale)
+        return drawn(page, edges, scale)
 
     monkeypatch.setattr(pdfium.OpenPage, "drawn", out_of_memory_on_the_left)
     caplog.set_level(logging.WARNING, logger=pdf.__name__)
@@ -821,9 +821,79 @@ def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_t
     )
     told = [record.getMessage() for record in caplog.records if record.name == pdf.__name__]
     assert told == [
-        "a figure on page 1 is left without a picture: its region (98.0, 98.0, 302.0, 252.0) "
-        "could not be drawn: MemoryError"
+        "a figure on page 1 is left without a picture: drawing or encoding its region "
+        "(98.0, 98.0, 302.0, 252.0) failed: MemoryError"
     ], f"the log does not tell of the lost picture by its page and region: {told}"
+
+
+def test_a_picture_encoded_wrongly_is_lost_with_its_figure_and_told_of_once(
+    standin_pdf_engine: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Pillow's encoder refuses the red picture, as it refuses one larger than WebP holds; the
+    # blue one beside it is encoded.
+    beside = (350.0, 100.0, 500.0, 250.0)
+    drawing = " ".join([filled(RED, PICTURE), filled(BLUE, beside)])
+    file = drawn_pdf(tmp_path / "unencoded.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "Two pictures, one never encoded."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, beside)]),
+    ]
+    encoded = pdf.webp_of
+    refusal = "encoding error 5: the stand-in encoder refuses it"
+
+    def refusing_red(drawn: Image.Image) -> bytes:
+        if fill_of(ImageStat.Stat(drawn.convert("RGB")).mean) == "red":
+            raise ValueError(refusal)
+        return encoded(drawn)
+
+    monkeypatch.setattr(pdf, "webp_of", refusing_red)
+    caplog.set_level(logging.WARNING, logger=pdf.__name__)
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    read = [(block.kind, block.text) for block in extracted.blocks]
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert read == [("paragraph", "Two pictures, one never encoded."), ("figure", "")], (
+        f"a figure whose picture could not be encoded was kept, or the other was lost: {read}"
+    )
+    assert sizes == {1: (300 + MARGINS, 300 + MARGINS)}, f"the pictures kept are {sizes}"
+    assert set(side_fills(picture_of(extracted, 1)).values()) == {"blue"}, (
+        "the figure left was given the picture that failed"
+    )
+    told = [record.getMessage() for record in caplog.records if record.name == pdf.__name__]
+    assert told == [
+        "a figure on page 1 is left without a picture: drawing or encoding its region "
+        f"(98.0, 98.0, 302.0, 252.0) failed: {refusal}"
+    ], f"the log does not tell once of the lost picture by its page and region: {told}"
+
+
+def test_a_region_whose_picture_would_pass_pillows_bound_is_drawn_smaller_in_its_proportion(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With Pillow's bound lowered to 100,000 pixels, a region of 404 by 304 points, its margins
+    # taken in, would come out at 808 by 608 pixels at two a point, 491,264 in all.
+    bound = 100_000
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", bound)
+    large = (100.0, 100.0, 500.0, 400.0)
+    file = drawn_pdf(tmp_path / "large.pdf", [(LETTER, 0, filled(RED, large))])
+    regions = [
+        text_region(0, OPENING, "A large picture."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, large)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    [picture] = extracted.pictures
+    width, height = picture.width, picture.height
+    assert width * height <= bound, (
+        f"a picture of {width} by {height} pixels passes the bound of {bound}"
+    )
+    assert abs(width / height - 404 / 304) < 0.01, (
+        f"a picture of a region of 404 by 304 points came out {width} by {height} pixels"
+    )
+    assert set(side_fills(picture_of(extracted, 1)).values()) == {"red"}, (
+        "the smaller picture is not the region's"
+    )
 
 
 def test_a_picture_on_a_page_the_file_stores_turned_is_its_region_as_the_reader_sees_it(
