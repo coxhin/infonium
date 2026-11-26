@@ -58,10 +58,6 @@ export function PagesView({
         : pointed.anchors.flatMap((anchor) => pagePlaces(placesOf(itemDocument.blocks, anchor))),
     [pointed, itemDocument],
   );
-  const pointedBlocks = useMemo(
-    () => new Set(pointed?.anchors.map((anchor) => anchor.block_number)),
-    [pointed],
-  );
   const layout = useMemo(() => layoutOf(itemDocument.blocks), [itemDocument]);
   const text = useMemo(() => new PageText(itemDocument.blocks), [itemDocument]);
   const marks = useMemo<PageMarks>(() => {
@@ -178,7 +174,6 @@ export function PagesView({
       <PageViewer
         source={sourceLink(entry.id)}
         pointed={boxes}
-        pointedBlocks={pointedBlocks}
         glow={glow}
         inView={onShow}
         overlays={overlays}

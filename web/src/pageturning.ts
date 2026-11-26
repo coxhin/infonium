@@ -35,12 +35,12 @@ export function turnTo(viewer: Element, { page, within }: PagePosition, margin =
 // The pages scroll sideways inside the column only while they are wider than it, as when
 // zoomed: only then is their list a scroller of its own, since a scroller cuts off what runs
 // past its foot, as a flow of the last page shown whole.
-const WIDE = "data-wide";
+const SIDEWAYS = "data-sideways";
 // Pages wider than the column by this many pixels or fewer fit it.
 const FITS_WITHIN = 1;
 
-function markWide(viewer: HTMLElement): void {
-  viewer.toggleAttribute(WIDE, viewer.scrollWidth > viewer.clientWidth + FITS_WITHIN);
+function markSideways(viewer: HTMLElement): void {
+  viewer.toggleAttribute(SIDEWAYS, viewer.scrollWidth > viewer.clientWidth + FITS_WITHIN);
 }
 
 // A point of a page held under the pointer while the pages are zoomed around it: the page, the
@@ -117,14 +117,14 @@ export function usePagesZoom(
     if (shown === null) {
       return;
     }
-    const resized = new ResizeObserver(() => markWide(shown));
+    const resized = new ResizeObserver(() => markSideways(shown));
     resized.observe(shown);
     return () => resized.disconnect();
   }, [viewer]);
   // Before the place is kept, which may scroll the pages sideways.
   useLayoutEffect(() => {
     if (viewer.current !== null) {
-      markWide(viewer.current);
+      markSideways(viewer.current);
     }
   });
 

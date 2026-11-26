@@ -52,7 +52,6 @@ export function PageTranslation({
   revealing,
   width,
   pointed,
-  pointedBlocks,
   onMarked,
   markedBlocks,
   drawing,
@@ -65,7 +64,6 @@ export function PageTranslation({
   width: number;
   // The lines of the page a passage pointed at runs through.
   pointed: PagePlace[];
-  pointedBlocks: ReadonlySet<number>;
   // Told of the area that holds the first line pointed at, each time it is set.
   onMarked: (area: HTMLElement) => void;
   markedBlocks: ReadonlyMap<number, MarkState>;
@@ -183,7 +181,6 @@ export function PageTranslation({
           spacing={body.spacing}
           colours={colours}
           revealing={revealing}
-          pointedBlocks={pointedBlocks}
           cited={cited}
           markedBlocks={markedBlocks}
           drawing={drawing}

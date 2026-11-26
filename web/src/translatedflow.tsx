@@ -24,7 +24,6 @@ function TranslatedArea({
   spacing,
   colours,
   ragged,
-  pointed,
   cited,
   marked,
   drawing,
@@ -36,10 +35,7 @@ function TranslatedArea({
   spacing: number;
   colours: Colours | undefined;
   ragged: boolean;
-  // Whether the area holds the translation of a block a passage pointed at runs through: it
-  // is then marked whole, as the text view marks the translated block.
-  pointed: boolean;
-  // Whether it holds the translation of the first line pointed at on its page.
+  // Whether the area holds the translation of the first line pointed at on its page.
   cited: boolean;
   // How the strongest of the highlights that run through the area's block is drawn, if any
   // does; and the selection, which the area is drawn in where it takes text of its block.
@@ -62,12 +58,7 @@ function TranslatedArea({
   } as CSSProperties;
   return (
     <div
-      className={[
-        "area",
-        pointed ? "pointed" : "",
-        marked !== undefined ? "marked" : "",
-        selected ? "selected" : "",
-      ]
+      className={["area", marked !== undefined ? "marked" : "", selected ? "selected" : ""]
         .filter(Boolean)
         .join(" ")}
       data-mark={marked}
@@ -98,7 +89,6 @@ export function TranslatedFlow({
   spacing,
   colours,
   revealing,
-  pointedBlocks,
   cited,
   markedBlocks,
   drawing,
@@ -115,7 +105,6 @@ export function TranslatedFlow({
   spacing: number;
   colours: ReadonlyMap<string, Colours>;
   revealing: boolean;
-  pointedBlocks: ReadonlySet<number>;
   cited: string | undefined;
   markedBlocks: ReadonlyMap<number, MarkState>;
   drawing: SelectionDrawing;
@@ -215,7 +204,6 @@ export function TranslatedFlow({
             spacing={spacing}
             colours={colours.get(text.key)}
             ragged={ragged.has(text.key)}
-            pointed={pointedBlocks.has(text.blockNumber)}
             cited={cited === text.key}
             marked={markedBlocks.get(text.blockNumber)}
             drawing={drawing}

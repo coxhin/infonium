@@ -5,7 +5,6 @@ import { PageViewer, type PageMarks } from "./pages";
 import type { PagePosition } from "./pageturning";
 
 const NO_PLACES: PagePlace[] = [];
-const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 // Where the reader last stood in the pages of each item's file as it arrived, for the pages
 // shown again, and those of the document read from it, to open at.
@@ -32,7 +31,6 @@ export function ArrivedPages({ itemId }: { itemId: string }) {
       <PageViewer
         source={sourceLink(itemId)}
         pointed={NO_PLACES}
-        pointedBlocks={NO_BLOCKS}
         glow={undefined}
         inView
         overlays={undefined}

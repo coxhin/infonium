@@ -13,23 +13,9 @@ import { stretches } from "./justification";
 // is; while lines are measured, its areas are set flush left.
 const SETTING = "data-setting";
 const MEASURING_LINES = "data-measuring-lines";
-// A page whose width keeps changing, as while the reader zooms, keeps its setting, which scales
-// with it, and is set again once its width has stood still this long, in milliseconds. A page
-// made wider is drawn again sharper then too.
-export const WIDTH_SETTLES = 300;
 
 function areasIn(flow: HTMLElement): NodeListOf<HTMLElement> {
   return flow.querySelectorAll<HTMLElement>(":scope > .area");
-}
-
-// A width that is taken once it has stood still for a moment; the first is taken at once.
-function useSettled(width: number): number {
-  const [settled, setSettled] = useState(width);
-  useEffect(() => {
-    const settling = window.setTimeout(() => setSettled(width), WIDTH_SETTLES);
-    return () => window.clearTimeout(settling);
-  }, [width]);
-  return settled;
 }
 
 // The flows of a page with how each is fitted, how each area's flow was fitted, and the areas
@@ -41,13 +27,15 @@ export type Fitted = {
   ragged: ReadonlySet<string>;
 };
 
-// The fitting of the flows drawn in a page's translation, the last worked out.
+// The fitting of the flows drawn in a page's translation, the last worked out. The page's width
+// is the one it last settled at (pages.tsx): while it keeps changing, as while the reader
+// zooms, the setting scales with it.
 export function usePageFitting(
   root: RefObject<HTMLDivElement | null>,
   flows: Flow[],
   leadings: number[],
   shape: number,
-  width: number,
+  settledWidth: number,
 ): Fitted | undefined {
   // Fonts that come after the first fitting, a formula's above all, change what the text
   // takes, so the page is fitted again once they are in.
@@ -59,7 +47,6 @@ export function usePageFitting(
       current = false;
     };
   }, []);
-  const settledWidth = useSettled(width);
   const [fitting, setFitting] = useState<Fitted>();
   useLayoutEffect(() => {
     const host = root.current;

@@ -39,7 +39,6 @@ import {
 } from "./pagelinks";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import type { Drawn } from "./pagedrawing";
-import { WIDTH_SETTLES } from "./pagefitting";
 import { NO_PAGE_TEXTS, type PageTexts } from "./pagetexts";
 import { PageTranslation } from "./pagetranslation";
 import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
@@ -65,6 +64,9 @@ const MOST_PIXELS = 2 ** 25;
 // A page shown this much wider than it was drawn for, as through a zoom, is drawn again once
 // its width has settled.
 const BLURRED_WIDTH = 1.1;
+// A page's width settles once it has stood still this long, in milliseconds: then a page made
+// wider is drawn again sharper, and its translation set again.
+const WIDTH_SETTLES = 300;
 const BOX_CLASS = "page-box";
 const UNDER_CLASS = "under";
 // The longest a page's lines wait to be read off its drawing for the browser to be idle, in
@@ -176,23 +178,32 @@ function giveUp(drawnCanvas: HTMLCanvasElement | null | undefined): void {
   }
 }
 
+// The width a page last settled at, once it stood still for a moment; the first is taken at
+// once.
+function useSettled(width: number): number {
+  const [settled, setSettled] = useState(width);
+  useEffect(() => {
+    const settling = window.setTimeout(() => setSettled(width), WIDTH_SETTLES);
+    return () => window.clearTimeout(settling);
+  }, [width]);
+  return settled === 0 ? width : settled;
+}
+
 // How many times a page was drawn again to be sharp at a width it was made wider to, as by a
-// zoom, and the width it was last drawn for, which the drawing sets. A page shown more than a
-// tenth wider than it was drawn for is drawn again once its width has stood still; a page made
-// narrower keeps its sharper drawing.
+// zoom, and the width it was last drawn for, which the drawing sets and a page that has gone
+// far forgets. A page that settles more than a tenth wider than it was drawn for is drawn
+// again; a page made narrower keeps its sharper drawing.
 function useSharpening(
   near: boolean,
-  width: number,
+  settledWidth: number,
 ): { sharpened: number; drawnWidth: { current: number } } {
   const drawnWidth = useRef(0);
   const [sharpened, setSharpened] = useState(0);
   useEffect(() => {
-    if (!near || drawnWidth.current === 0 || width <= drawnWidth.current * BLURRED_WIDTH) {
-      return;
+    if (near && drawnWidth.current > 0 && settledWidth > drawnWidth.current * BLURRED_WIDTH) {
+      setSharpened((count) => count + 1);
     }
-    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), WIDTH_SETTLES);
-    return () => window.clearTimeout(waiting);
-  }, [near, width]);
+  }, [near, settledWidth]);
   return { sharpened, drawnWidth };
 }
 
@@ -201,7 +212,6 @@ function Page({
   number,
   shape,
   boxes,
-  pointedBlocks,
   onMarked,
   overlay,
   text,
@@ -216,7 +226,6 @@ function Page({
   number: number;
   shape: number;
   boxes: PagePlace[];
-  pointedBlocks: ReadonlySet<number>;
   onMarked: (area: HTMLElement) => void;
   overlay: Overlay | undefined;
   text: PageText;
@@ -239,7 +248,8 @@ function Page({
   const paired = overlay?.paired ?? false;
   // Whether the page is near what is on show now, as the drawing's cleanup must know.
   const nearNow = useRef(false);
-  const { sharpened, drawnWidth } = useSharpening(near, width);
+  const settledWidth = useSettled(width);
+  const { sharpened, drawnWidth } = useSharpening(near, settledWidth);
   // The page's links are read once it comes near, and told to whoever sets a translation over
   // the pages, which carries those it can.
   const links = usePageLinks(file, number, near);
@@ -326,12 +336,13 @@ function Page({
       drawing?.cancel();
       // A page that has gone far gives up its drawing, which is as large as a photograph,
       // and once the drawing has ended, what the file keeps of the page's pictures; it is
-      // drawn again when it comes near. A page drawn again to be sharper keeps its drawing
-      // until the new one is whole.
+      // drawn again when it comes near, at the width it then has. A page drawn again to be
+      // sharper keeps its drawing until the new one is whole.
       if (!nearNow.current) {
         setDrawn(undefined);
         giveUp(canvas.current);
         giveUp(copy.current);
+        drawnWidth.current = 0;
       }
       const release = () => {
         void drawnPage?.cleanup();
@@ -426,9 +437,8 @@ function Page({
             shape={shape}
             drawn={drawn}
             revealing={overlay.revealing}
-            width={width}
+            width={settledWidth}
             pointed={boxes}
-            pointedBlocks={pointedBlocks}
             onMarked={onMarked}
             markedBlocks={markedBlocks}
             drawing={drawing}
@@ -449,12 +459,10 @@ const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
 const NO_TEXTS: PageTexts = NO_PAGE_TEXTS;
-const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
   file,
   pointed,
-  pointedBlocks,
   glow,
   inView,
   overlays,
@@ -466,7 +474,6 @@ function Pages({
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
-  pointedBlocks: ReadonlySet<number>;
   glow: Glow | undefined;
   inView: boolean;
   overlays: Map<number, PageTexts> | undefined;
@@ -574,9 +581,6 @@ function Pages({
           number={number}
           shape={shapes?.[number] ?? LETTER_SHAPE}
           boxes={pointed.filter((place) => place.page === number)}
-          pointedBlocks={
-            pointed.some((place) => place.page === number) ? pointedBlocks : NO_BLOCKS
-          }
           onMarked={marked}
           text={marks.text}
           marks={marks.onPages.get(number) ?? NO_MARKS}
@@ -618,7 +622,6 @@ function Pages({
 export const PageViewer = memo(function PageViewer({
   source,
   pointed,
-  pointedBlocks,
   glow,
   inView,
   overlays,
@@ -630,9 +633,6 @@ export const PageViewer = memo(function PageViewer({
 }: {
   source: string;
   pointed: PagePlace[];
-  // The blocks the passage pointed at runs through, whose translation's areas the pages turn
-  // to.
-  pointedBlocks: ReadonlySet<number>;
   // The passage pointed at, as it glows.
   glow: Glow | undefined;
   inView: boolean;
@@ -652,7 +652,6 @@ export const PageViewer = memo(function PageViewer({
         <Pages
           file={file.value}
           pointed={pointed}
-          pointedBlocks={pointedBlocks}
           glow={glow}
           inView={inView}
           overlays={overlays}
