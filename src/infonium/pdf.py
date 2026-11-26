@@ -668,21 +668,22 @@ def detected_lines(parsed: ParsedPages) -> dict[PageNumber, list[Area]]:
             return {page.page_idx: [] for page in parsed.pages}
 
 
-def other_boxes(page: ParsedPage, group: Group, body: PictureBody) -> list[Box]:
-    # The boxes of a page but a picture's own and its group's, which holds it: those of the
-    # regions read and of those set aside, as headers and footers, and of the members of
-    # every group.
+def other_boxes(page: ParsedPage, body: PictureBody) -> list[Box]:
+    # The boxes of a page but a picture's own: those of the regions read and of those set
+    # aside, as headers and footers, and of the members of every group. A group's own box is
+    # the box of its picture, chart, table or listing, which its members already give.
     members = [
         member
         for region in page.preproc_blocks
         if isinstance(region, Group)
         for member in region.blocks
     ]
-    return [
-        found.bbox
-        for found in [*page.preproc_blocks, *page.discarded_blocks, *members]
-        if found is not group and found is not body
+    regions = [
+        region
+        for region in [*page.preproc_blocks, *page.discarded_blocks]
+        if not isinstance(region, Group)
     ]
+    return [found.bbox for found in [*regions, *members] if found is not body]
 
 
 def rooms_along(
@@ -767,7 +768,7 @@ def pdf_blocks(parsed: ParsedPages, stored: StoredFile, turned: list[Quarters]) 
                 case Group():
                     for member in region.blocks:
                         if isinstance(member, PictureBody):
-                            others = other_boxes(page, region, member)
+                            others = other_boxes(page, member)
                             cut = widened(member.bbox, others, page.page_size)
                             figures[len(blocks)] = turned_back(area(page, cut), findings)
                         blocks.extend(member_blocks(member, page, findings))

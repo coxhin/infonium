@@ -456,9 +456,8 @@ def text_region(index: int, box: Box, words: str) -> dict[str, Any]:
 
 
 def group(kind: RegionType, members: list[dict[str, Any]]) -> dict[str, Any]:
-    # A group as the engine writes one, in a box that holds its members.
-    lefts, tops, rights, bottoms = zip(*(member["bbox"] for member in members), strict=True)
-    held = [min(lefts), min(tops), max(rights), max(bottoms)]
+    # A group as the engine writes one, with the box of its body.
+    [held] = [member["bbox"] for member in members if member["type"].endswith("_body")]
     return {"type": kind, "bbox": held, "blocks": members}
 
 
