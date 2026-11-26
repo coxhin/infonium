@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  digestsUnderWay,
+  digestWritings,
   readDigestStyles,
   readDigests,
   writeDigest,
@@ -10,6 +10,7 @@ import {
   type DigestWriting,
   type Statement,
   type StyleOffer,
+  type WritingEnd,
 } from "./client";
 import {
   Citations,
@@ -18,7 +19,7 @@ import {
   type CitationNumbers,
   type Citing,
 } from "./citing";
-import { reasonOf, useLoaded } from "./loading";
+import { useLoaded } from "./loading";
 import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import { boldPieces, StatementWords } from "./statementwords";
 import "./digest.css";
@@ -31,10 +32,6 @@ const SAID_SOMETHING = /\S/;
 // show, and the instructions of the custom style last written.
 const STYLE_KEY = "infonium.digestStyle";
 const INSTRUCTIONS_KEY = "infonium.customInstructions";
-
-// How a style's digest stands in the panel beyond what is kept: being written, or not written
-// the last time it was asked for, and why, with what was asked.
-type Writing = { state: "writing" } | { state: "failed"; reason: string; asked: ChosenStyle };
 
 // The service offers the same styles until it starts again, so they are asked for once; a
 // failure is asked again the next time.
@@ -242,7 +239,7 @@ function StylePane({
   itemId: string;
   offer: StyleOffer;
   digest: Digest | undefined;
-  writing: Writing | undefined;
+  writing: DigestWriting | undefined;
   draft: string | undefined;
   citing: Citing;
   onWrite: (asked: ChosenStyle) => void;
@@ -314,66 +311,57 @@ function StylePane({
 }
 
 // The digests of the open item. Nothing is written until the reader chooses a style: with none
-// kept or being written, the styles are offered, and a press of one writes it. Otherwise the
-// style chosen last is on show if it is kept or being written, or else the one written last,
-// or else one being written, under a row of every style.
+// kept, being written or failed, the styles are offered, and a press of one writes it.
+// Otherwise the style chosen last is on show if it is one of those, or else the one written
+// last, or else one being written or failed, under a row of every style.
 function Digests({
   itemId,
   model,
   citing,
   styles,
   keptAtFirst,
-  underWayAtFirst,
+  writingsAtFirst,
 }: {
   itemId: string;
   model: string | undefined;
   citing: Citing;
   styles: StyleOffer[];
   keptAtFirst: Digest[];
-  underWayAtFirst: ReadonlyMap<DigestStyle, DigestWriting>;
+  writingsAtFirst: ReadonlyMap<DigestStyle, DigestWriting>;
 }) {
   const [kept, setKept] = useState(
     () => new Map(keptAtFirst.map((digest) => [digest.style, digest])),
   );
-  const [writings, setWritings] = useState(
-    () =>
-      new Map<DigestStyle, Writing>(
-        [...underWayAtFirst.keys()].map((style) => [style, { state: "writing" }]),
-      ),
-  );
+  const [writings, setWritings] = useState(() => new Map(writingsAtFirst));
   const [picked, setPicked] = useState<DigestStyle>();
   // The custom instructions the reader has in the box and has not sent, which stay while
   // another style is looked at.
   const [draft, setDraft] = useState<string>();
 
-  // The digest written goes among those kept whenever it arrives.
-  function follow(writing: DigestWriting) {
-    const style = writing.asked.style;
-    writing.digest.then(
-      (digest) => {
-        setKept((before) => new Map(before).set(style, digest));
+  // A writing ends in its digest, which goes among those kept whenever it arrives, or in a
+  // failure, which shows in its style's place.
+  function follow(style: DigestStyle, end: Promise<WritingEnd>) {
+    end.then((ended) => {
+      if (ended.state === "written") {
+        setKept((before) => new Map(before).set(style, ended.digest));
         setWritings((before) => {
           const after = new Map(before);
           after.delete(style);
           return after;
         });
-      },
-      (error: unknown) =>
-        setWritings((before) =>
-          new Map(before).set(style, {
-            state: "failed",
-            reason: reasonOf(error),
-            asked: writing.asked,
-          }),
-        ),
-    );
+      } else {
+        setWritings((before) => new Map(before).set(style, ended));
+      }
+    });
   }
 
   // The writings under way when the digests kept were read, which another view of the item
   // began, are followed from the start, so that one that ended meanwhile lands as well.
   useEffect(() => {
-    for (const writing of underWayAtFirst.values()) {
-      follow(writing);
+    for (const [style, writing] of writingsAtFirst) {
+      if (writing.state === "writing") {
+        follow(style, writing.end);
+      }
     }
   }, []);
 
@@ -387,8 +375,9 @@ function Digests({
   function write(asked: ChosenStyle) {
     citing.hide();
     choose(asked.style);
-    setWritings((before) => new Map(before).set(asked.style, { state: "writing" }));
-    follow(writeDigest(itemId, asked, model));
+    const writing = writeDigest(itemId, asked, model);
+    setWritings((before) => new Map(before).set(asked.style, writing));
+    follow(asked.style, writing.end);
   }
 
   const lastChosen = localStorage.getItem(STYLE_KEY);
@@ -468,14 +457,15 @@ export function DigestPanel({
   model: string | undefined;
   citing: Citing;
 }) {
-  // The writings under way are taken before the digests kept are read: one that ends while
-  // they are read is then still followed, though the digests read may not hold its digest.
+  // The item's writings, under way or failed, are taken before the digests kept are read: one
+  // that ends while they are read is then still followed, though the digests read may not hold
+  // its digest.
   const loaded = useLoaded(() => {
-    const underWay = digestsUnderWay(itemId);
+    const writings = digestWritings(itemId);
     return Promise.all([offeredStyles(), readDigests(itemId)]).then(([styles, kept]) => ({
       styles,
       kept,
-      underWay,
+      writings,
     }));
   }, itemId);
   return (
@@ -489,7 +479,7 @@ export function DigestPanel({
           citing={citing}
           styles={loaded.value.styles}
           keptAtFirst={loaded.value.kept}
-          underWayAtFirst={loaded.value.underWay}
+          writingsAtFirst={loaded.value.writings}
         />
       )}
     </div>
