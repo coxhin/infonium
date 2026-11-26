@@ -203,14 +203,18 @@ export function coloursOf(canvas: HTMLCanvasElement, box: Box): Colours | undefi
 // A pixel this far from the paper's colour, as a distance between colours, is drawn on: the
 // soft edge of a letter and a light grey rule as much as ink.
 const DRAWN_DISTANCE = 48;
-// Letters reach past the boxes of their lines, and so into the strips beside them, by up to
-// this part of the body's size: what is drawn that near a strip's sides is taken for them. In
-// two papers, descenders reached one or two pixel rows into the strip under their line, and
-// letters at a line's end two columns into the strip beside it, at twice the printed size.
+// Letters reach past the boxes of their lines, and so into the strips beside them: what is
+// drawn within this part of the body's size of a strip's side is taken for the letters beside
+// it. In two papers drawn at about twice their printed size, letters at a line's end reached
+// two columns into the strip beside it, and the ink of descenders ran on up to 6 pixel rows
+// below the boxes of their lines, a third of the body's size in one of them.
 const LETTERS_REACH = 0.25;
-// Where the boxes of lines leave out their letters' descenders, as for a font that says its
-// letters reach not below the line, the letters reach further, as ink that runs on from the
-// side unbroken, up to this part of the body's size.
+// From a side that runs along lines, as the top and the foot of a strip between lines written
+// across, the letters reach further where their ink runs on from the side unbroken, up to this
+// part of the body's size: the boxes of lines may leave out their letters' descenders, as for a
+// font that says its letters reach not below the line, and a descender that ends about
+// LETTERS_REACH past its line's box ends inside that reach on one drawing of a page and past it
+// on another, as the reach is rounded to whole pixels at the drawing's size.
 const LETTERS_FURTHEST = 0.5;
 // A run of pixels drawn on, across or down, this many times the body's size long is a rule or
 // the side of a frame wherever it stands: a part of a letter is shorter.
@@ -262,9 +266,34 @@ function pixelsFor(canvas: HTMLCanvasElement, size: number, part: number): numbe
   return Math.ceil(part * size * canvas.height);
 }
 
+// How many lines of pixels, from a side of a part of the drawing inward, ink runs on through
+// unbroken, given how many pixels of each line are drawn on, taken from that side.
+function unbrokenFrom(inward: number[]): number {
+  const broken = inward.findIndex((drawn) => drawn === 0);
+  return broken === -1 ? inward.length : broken;
+}
+
+// How many lines of pixels of a part of the drawing are the letters' beside one of its sides
+// that runs along lines, from how many pixels of each line are drawn on, taken from that side
+// inward: those within LETTERS_REACH of the side, and beyond them those the ink runs on through
+// unbroken from it, up to LETTERS_FURTHEST. Every test of blank paper takes the letters' reach
+// from such a side here, so that what one test takes for letters another does not take for
+// something drawn.
+function lettersReach(inward: number[], canvas: HTMLCanvasElement, size: number): number {
+  const near = pixelsFor(canvas, size, LETTERS_REACH);
+  const furthest = pixelsFor(canvas, size, LETTERS_FURTHEST);
+  return Math.max(near, Math.min(furthest, unbrokenFrom(inward)));
+}
+
 // Whether the drawing shows only a paper in a box, given the size of the body's text as a part
-// of the page's height: no rule or side of a frame anywhere in it, and nothing but specks away
-// from its sides, where a formula, a figure or a page number would stand.
+// of the page's height: no rule or side of a frame anywhere in it, and nothing but specks past
+// the letters beside its sides, where a formula, a figure or a page number would stand. The
+// letters of the lines over and under the box reach in from its top and its foot as far as
+// lettersReach finds, those at the ends of the lines beside it LETTERS_REACH from its left and
+// its right. Ink that runs on unbroken from the top or the foot past the letters' reach is past
+// the letters, though the reach from the other side covers it: in the strip beside a caption of
+// one line that another caption stands beside, the reaches from the top and the foot together
+// would take the other caption's whole line for letters.
 export function isBlank(
   canvas: HTMLCanvasElement,
   box: Box,
@@ -276,23 +305,30 @@ export function isBlank(
     return true;
   }
   const colour = rgbOf(paper);
-  const reach = pixelsFor(canvas, size, LETTERS_REACH);
+  const endsReach = pixelsFor(canvas, size, LETTERS_REACH);
   const rule = pixelsFor(canvas, size, RULE_LENGTH);
-  const rows = drawnLines(pixels, colour, false, reach, pixels.width - reach);
+  const rows = drawnLines(pixels, colour, false, endsReach, pixels.width - endsReach);
   const columns = drawnLines(pixels, colour, true, 0, 0);
   if ([...rows.longest, ...columns.longest].some((longest) => longest >= rule)) {
     return false;
   }
-  const inside = rows.drawn
-    .slice(reach, Math.max(reach, pixels.height - reach))
-    .reduce((sum, drawn) => sum + drawn, 0);
+  const fromFoot = [...rows.drawn].reverse();
+  const top = lettersReach(rows.drawn, canvas, size);
+  const foot = pixels.height - lettersReach(fromFoot, canvas, size);
+  const topInkEnds = unbrokenFrom(rows.drawn);
+  const footInkBegins = pixels.height - unbrokenFrom(fromFoot);
+  const inside = rows.drawn.reduce((sum, drawn, row) => {
+    const pastTop = row >= top && (row < foot || row < topInkEnds);
+    const pastFoot = row < foot && (row >= top || row >= footInkBegins);
+    return pastTop || pastFoot ? sum + drawn : sum;
+  }, 0);
   return inside < SPECKS;
 }
 
 // How far into a box the drawing shows only a paper, from one of its sides, as a part of the
 // page's height or width, and whether something is drawn there: up to the first line of pixels
-// that holds a rule, or more than specks past the reach of the letters beside that side, which
-// runs on as far as their ink does unbroken.
+// that holds a rule, or more than specks past the reach of the letters beside that side, as
+// lettersReach finds it.
 export function blankInto(
   canvas: HTMLCanvasElement,
   box: Box,
@@ -304,23 +340,17 @@ export function blankInto(
   if (pixels === undefined) {
     return { blank: 0, drawn: false };
   }
-  const reach = pixelsFor(canvas, size, LETTERS_REACH);
   const rule = pixelsFor(canvas, size, RULE_LENGTH);
   const byColumn = from === "right";
   const along = byColumn ? pixels.height : pixels.width;
   const lines = drawnLines(pixels, rgbOf(paper), byColumn, 0, along);
   const inOrder = from === "top" ? [...lines.drawn.keys()] : [...lines.drawn.keys()].reverse();
-  const furthest = pixelsFor(canvas, size, LETTERS_FURTHEST);
-  let unbroken = true;
-  const first = inOrder.findIndex((line, index) => {
-    const drawn = lines.drawn[line] ?? 0;
-    if ((lines.longest[line] ?? 0) >= rule) {
-      return true;
-    }
-    unbroken = unbroken && drawn > 0;
-    const letters = index < reach || (unbroken && index < furthest);
-    return !letters && drawn >= SPECKS;
-  });
+  const letters = lettersReach(inOrder.map((line) => lines.drawn[line] ?? 0), canvas, size);
+  const first = inOrder.findIndex(
+    (line, index) =>
+      (lines.longest[line] ?? 0) >= rule ||
+      (index >= letters && (lines.drawn[line] ?? 0) >= SPECKS),
+  );
   const line = inOrder[first];
   if (line === undefined) {
     return { blank: byColumn ? box.width : box.height, drawn: false };
