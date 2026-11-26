@@ -315,8 +315,8 @@ main > .status {
 }
 
 /* The pages are as wide as the column holds, up to a bound, times their zoom (--zoom). Pages
-   zoomed wider than the column scroll sideways inside it, from their left edge; the column
-   alone scrolls them down. */
+   zoomed wider than the column (data-wide) scroll sideways inside it, from their left edge;
+   the column alone scrolls them down. */
 .pages {
   display: flex;
   flex-direction: column;
@@ -324,6 +324,9 @@ main > .status {
   gap: 1rem;
   padding: 1rem;
   background: var(--panel);
+}
+
+.pages[data-wide] {
   overflow-x: auto;
   overflow-y: hidden;
 }

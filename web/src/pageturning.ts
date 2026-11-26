@@ -32,6 +32,17 @@ export function turnTo(viewer: Element, { page, within }: PagePosition, margin =
   }
 }
 
+// The pages scroll sideways inside the column only while they are wider than it, as when
+// zoomed: only then is their list a scroller of its own, since a scroller cuts off what runs
+// past its foot, as a flow of the last page shown whole.
+const WIDE = "data-wide";
+// Pages wider than the column by this many pixels or fewer fit it.
+const FITS_WITHIN = 1;
+
+function markWide(viewer: HTMLElement): void {
+  viewer.toggleAttribute(WIDE, viewer.scrollWidth > viewer.clientWidth + FITS_WITHIN);
+}
+
 // A point of a page held under the pointer while the pages are zoomed around it: the page, the
 // point as parts of its width and height, and where the pointer was in the window.
 type Pin = { page: number; x: number; y: number; clientX: number; clientY: number };
@@ -56,7 +67,8 @@ function pinOf(viewer: Element, event: WheelEvent): Pin | undefined {
 // pinch or the wheel with Ctrl held, and otherwise the place at the top of what the pages show;
 // a zoom made while the pages are not on show, as from another window, moves nothing. Whatever
 // scrolls the pages is heard, since a change of the window's width may hand the scrolling from
-// the reader's column to the window.
+// the reader's column to the window. Whether the pages are wider than the column is read again
+// each time the view lays them out anew, and whenever their list changes size.
 export function usePagesZoom(
   viewer: RefObject<HTMLElement | null>,
   inView: boolean,
@@ -99,6 +111,22 @@ export function usePagesZoom(
     [viewer],
   );
   useWheelZoom(viewer, "pages", zooming);
+
+  useEffect(() => {
+    const shown = viewer.current;
+    if (shown === null) {
+      return;
+    }
+    const resized = new ResizeObserver(() => markWide(shown));
+    resized.observe(shown);
+    return () => resized.disconnect();
+  }, [viewer]);
+  // Before the place is kept, which may scroll the pages sideways.
+  useLayoutEffect(() => {
+    if (viewer.current !== null) {
+      markWide(viewer.current);
+    }
+  });
 
   useLayoutEffect(() => {
     const shown = viewer.current;
