@@ -6,13 +6,15 @@ import { SelectionActions } from "./selectionactions";
 import { NO_MARKING, type Marking, type Selected } from "./marking";
 import { placesOf, surfaceOf, timePlaces } from "./places";
 import { Clock, Player } from "./player";
-import { checkAnchor, hideAnchor } from "./reader";
+import { endGlow } from "./glowing";
+import { checkAnchor } from "./reader";
 import { ModelChoiceSelect, useModelChoice } from "./modelchoice";
 import { SettingSwitch, useSetting } from "./setting";
 import { SidePanel, useLosing } from "./side";
 import { TranslationNote } from "./translated";
 import { useTranslation } from "./translation";
 import { viewsOf, type Pointed, type ViewContext, type ViewName } from "./views";
+import { ZoomControl } from "./zoom";
 import "./reading.css";
 
 export type ReadEntry = ItemEntry & { reading: { kind: "read" } };
@@ -127,7 +129,7 @@ export function ReadItem({
       setPlayed(timePlaces(anchors.flatMap((anchor) => placesOf(itemDocument.blocks, anchor))));
     },
     hide() {
-      hideAnchor();
+      endGlow();
       setPointed(undefined);
     },
   };
@@ -161,6 +163,9 @@ export function ReadItem({
                   </button>
                 ))}
               </div>
+            )}
+            {(shown?.name === "pages" || shown?.name === "text") && (
+              <ZoomControl kind={shown.name} />
             )}
             {!earlier && <SettingSwitch setting={setting} />}
             {!earlier && (

@@ -1,0 +1,38 @@
+/* A passage pointed at, glowing on a PDF's page over the words it holds: it comes up at once,
+   stays whole and then fades, over the times words glow by (glowing.ts), which the element
+   carries as --glow-whole and --glow-fade. A page is light whatever the theme, so the glow
+   multiplies into its paper and print under it stays dark. Over the source it lies above the
+   reader's highlights; on a page that shows the translation it lies under it, where the
+   translation's own sentences glow. */
+
+.page-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  animation: page-glow var(--glow-fade) linear var(--glow-whole) forwards;
+}
+
+.page-glow.under {
+  z-index: 0;
+}
+
+.page-glow > div {
+  position: absolute;
+  background: rgb(255 204 51 / 0.6);
+  box-shadow: 0 0 0 2px rgb(255 204 51 / 0.6);
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+
+@keyframes page-glow {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-glow {
+    animation-timing-function: steps(1, end);
+  }
+}

@@ -7,7 +7,15 @@ import {
   type RenderTask,
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 import { percent } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
@@ -19,11 +27,22 @@ import {
   type MarkState,
   type PageMark,
 } from "./pagemarking";
+import { glowsOn, PageGlow, useTranslatedGlow, type Glow } from "./pageglow";
+import {
+  GoingBack,
+  LinksLayer,
+  useGoingBack,
+  useLinkPresses,
+  usePageLinks,
+  type PageLink,
+  type Place,
+} from "./pagelinks";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
 import type { Drawn } from "./pagedrawing";
 import { NO_PAGE_TEXTS, type PageTexts } from "./pagetexts";
 import { PageTranslation } from "./pagetranslation";
-import { scrollerOf, uncoveredTop } from "./scrolling";
+import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
+import { scrollerOf } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -39,6 +58,13 @@ const LEAST_SHARPNESS = 2;
 // The most pixels the floor above draws a page at: a letter or A4 page at twice its printed
 // size takes about 2 million, which this leaves whole.
 const MOST_FLOOR_PIXELS = 4_000_000;
+// The most pixels a page is drawn at however large it is shown, as pdf.js's own viewer bounds
+// it: a page zoomed further is drawn this large and stretched.
+const MOST_PIXELS = 2 ** 25;
+// A page shown this much wider than it was drawn for is drawn again, once its width has stood
+// still this many milliseconds, as through a zoom.
+const BLURRED_WIDTH = 1.1;
+const SETTLED_WIDTH = 300;
 const BOX_CLASS = "page-box";
 const UNDER_CLASS = "under";
 // The longest a page's lines wait to be read off its drawing for the browser to be idle, in
@@ -47,28 +73,6 @@ const READING_WAIT = 500;
 // The area that holds the translation of the first line pointed at on its page.
 const CITED_AREA = ".area[data-cited]";
 const PAGE_CLASS_SELECTOR = ".page";
-
-// Where the reader stands in the pages: the page at the top of what the scroller shows them of,
-// and how far down that page the view begins, as a part of its height.
-export type PagePosition = { page: number; within: number };
-
-function positionOf(viewer: Element): PagePosition | undefined {
-  const top = uncoveredTop(viewer);
-  const pages = [...viewer.children];
-  const page = pages.findIndex((shown) => shown.getBoundingClientRect().bottom > top);
-  const place = pages[page]?.getBoundingClientRect();
-  return place === undefined
-    ? undefined
-    : { page, within: Math.max(0, (top - place.top) / place.height) };
-}
-
-function turnTo(viewer: Element, { page, within }: PagePosition) {
-  const place = viewer.children[page]?.getBoundingClientRect();
-  if (place !== undefined) {
-    const scroller = scrollerOf(viewer) ?? document.scrollingElement;
-    scroller?.scrollBy({ top: place.top - uncoveredTop(viewer) + within * place.height });
-  }
-}
 
 // Hands a result or a failure on only while the view that asked is still the current one. A
 // file that was closed in the meantime fails what was asked of it, and that is no failure of
@@ -133,10 +137,9 @@ export type PageMarks = {
 
 const NO_MARKS: PageMark[] = [];
 
-// The outline of the lines pointed at. On a page that shows the translation it lies under the
-// translation: an area that holds the cited block's translation is marked itself, and covers the
-// outline until it is pressed to show the source under it; where the block has no area there,
-// the outline is what the page shows of it.
+// The lines pointed at, which the pages turn to; the reader sees the passage glow instead
+// (pageglow.tsx). On a page that shows the translation they lie under the translation: where
+// an area holds the cited block's translation, the pages turn to it.
 function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   return boxes.map((box, index) => (
     <div
@@ -152,6 +155,47 @@ function Boxes({ boxes, under }: { boxes: PagePlace[]; under: boolean }) {
   ));
 }
 
+// The scale a page is drawn at for a width on show. A page is drawn no smaller than at its
+// printed size twice over, however small it is on show: the colours of a translation are read
+// off the drawing, and drawn smaller, a thin stroke covers no pixel whole and black print reads
+// grey. That floor is bounded by a count of pixels, as a file may give its pages in pixels
+// rather than points; a page so large holds its strokes at many pixels already. A page shown
+// larger than either is drawn as it is shown, as before, and none larger than a bound.
+function sharpnessOf(shownWidth: number, width: number, height: number): number {
+  const shown = (shownWidth / width) * devicePixelRatio;
+  const bounded = Math.sqrt(MOST_FLOOR_PIXELS / (width * height));
+  const most = Math.sqrt(MOST_PIXELS / (width * height));
+  return Math.min(most, Math.max(shown, Math.min(LEAST_SHARPNESS, bounded)));
+}
+
+// A drawing given up: its pixels, as large as a photograph's, are let go at once.
+function giveUp(drawnCanvas: HTMLCanvasElement | null | undefined): void {
+  if (drawnCanvas !== null && drawnCanvas !== undefined) {
+    drawnCanvas.width = 0;
+    drawnCanvas.height = 0;
+  }
+}
+
+// How many times a page was drawn again to be sharp at a width it was made wider to, as by a
+// zoom, and the width it was last drawn for, which the drawing sets. A page shown more than a
+// tenth wider than it was drawn for is drawn again once its width has stood still; a page made
+// narrower keeps its sharper drawing.
+function useSharpening(
+  near: boolean,
+  width: number,
+): { sharpened: number; drawnWidth: { current: number } } {
+  const drawnWidth = useRef(0);
+  const [sharpened, setSharpened] = useState(0);
+  useEffect(() => {
+    if (!near || drawnWidth.current === 0 || width <= drawnWidth.current * BLURRED_WIDTH) {
+      return;
+    }
+    const waiting = window.setTimeout(() => setSharpened((count) => count + 1), SETTLED_WIDTH);
+    return () => window.clearTimeout(waiting);
+  }, [near, width]);
+  return { sharpened, drawnWidth };
+}
+
 function Page({
   file,
   number,
@@ -164,6 +208,9 @@ function Page({
   marks,
   markedBlocks,
   drawing,
+  glow,
+  onPlace,
+  onLinks,
 }: {
   file: PDFDocumentProxy;
   number: number;
@@ -176,6 +223,9 @@ function Page({
   marks: PageMark[];
   markedBlocks: ReadonlyMap<number, MarkState>;
   drawing: SelectionDrawing;
+  glow: Glow | undefined;
+  onPlace: (place: Place) => void;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -187,13 +237,27 @@ function Page({
   const [drawn, setDrawn] = useState<Drawn>();
   const [width, setWidth] = useState(0);
   const paired = overlay?.paired ?? false;
+  // Whether the page is near what is on show now, as the drawing's cleanup must know.
+  const nearNow = useRef(false);
+  const { sharpened, drawnWidth } = useSharpening(near, width);
+  // The page's links are read once it comes near, and told to whoever sets a translation over
+  // the pages, which carries those it can.
+  const links = usePageLinks(file, number, near);
+  useEffect(() => {
+    if (links.length > 0) {
+      onLinks?.(number, links);
+    }
+  }, [links, number, onLinks]);
 
   useEffect(() => {
     if (frame.current === null) {
       return;
     }
     const watcher = new IntersectionObserver(
-      (sightings) => setNear(sightings.at(-1)?.isIntersecting ?? false),
+      (sightings) => {
+        nearNow.current = sightings.at(-1)?.isIntersecting ?? false;
+        setNear(nearNow.current);
+      },
       { root: scrollerOf(frame.current), rootMargin: DRAWING_MARGIN },
     );
     watcher.observe(frame.current);
@@ -215,6 +279,7 @@ function Page({
     let current = true;
     let drawnPage: PDFPageProxy | undefined;
     let drawing: RenderTask | undefined;
+    let aside: HTMLCanvasElement | undefined;
     function draw(page: PDFPageProxy) {
       const target = canvas.current;
       if (target === null || frame.current === null) {
@@ -223,24 +288,31 @@ function Page({
       drawnPage = page;
       setFailure(undefined);
       const natural = page.getViewport({ scale: 1 });
-      // A page is drawn no smaller than at its printed size twice over, however small it is on
-      // show: the colours of a translation are read off the drawing, and drawn smaller, a thin
-      // stroke covers no pixel whole and black print reads grey. That floor is bounded by a
-      // count of pixels, as a file may give its pages in pixels rather than points; a page so
-      // large holds its strokes at many pixels already. A page shown larger than either is
-      // drawn as it is shown, as before.
-      const shown = (frame.current.clientWidth / natural.width) * devicePixelRatio;
-      const bounded = Math.sqrt(MOST_FLOOR_PIXELS / (natural.width * natural.height));
-      const sharpness = Math.max(shown, Math.min(LEAST_SHARPNESS, bounded));
-      const viewport = page.getViewport({ scale: sharpness });
-      target.width = viewport.width;
-      target.height = viewport.height;
-      drawing = page.render({ canvas: target, viewport });
+      drawnWidth.current = frame.current.clientWidth;
+      const viewport = page.getViewport({
+        scale: sharpnessOf(frame.current.clientWidth, natural.width, natural.height),
+      });
+      // A page drawn again to be sharper is drawn aside, and shown once it is whole, so that it
+      // never shows blank meanwhile.
+      const into = target.width > 0 && sharpened > 0 ? document.createElement("canvas") : target;
+      aside = into === target ? undefined : into;
+      into.width = viewport.width;
+      into.height = viewport.height;
+      drawing = page.render({ canvas: into, viewport });
       // Leaving the page cancels its drawing, which is no failure; anything else is one.
       drawing.promise.then(
-        () =>
-          current &&
-          setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 })),
+        () => {
+          if (!current) {
+            return;
+          }
+          if (into !== target) {
+            target.width = into.width;
+            target.height = into.height;
+            target.getContext("2d")?.drawImage(into, 0, 0);
+            giveUp(into);
+          }
+          setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 }));
+        },
         (error: unknown) => {
           if (!(error instanceof RenderingCancelledException)) {
             setFailure(reasonOf(error));
@@ -252,20 +324,32 @@ function Page({
     return () => {
       current = false;
       drawing?.cancel();
-      setDrawn(undefined);
       // A page that has gone far gives up its drawing, which is as large as a photograph,
       // and once the drawing has ended, what the file keeps of the page's pictures; it is
-      // drawn again when it comes near.
-      for (const drawnCanvas of [canvas.current, copy.current]) {
-        if (drawnCanvas !== null) {
-          drawnCanvas.width = 0;
-          drawnCanvas.height = 0;
-        }
+      // drawn again when it comes near. A page drawn again to be sharper keeps its drawing
+      // until the new one is whole.
+      if (!nearNow.current) {
+        setDrawn(undefined);
+        giveUp(canvas.current);
+        giveUp(copy.current);
       }
-      const release = () => void drawnPage?.cleanup();
+      const release = () => {
+        void drawnPage?.cleanup();
+        giveUp(aside);
+      };
       void drawing?.promise.then(release, release);
     };
-  }, [near, file, number]);
+  }, [near, file, number, sharpened]);
+  // A page that leaves the pages gives up its drawings at once. The canvases are taken while
+  // they stand, as their refs are emptied before this runs.
+  useEffect(() => {
+    const drawnCanvas = canvas.current;
+    const copied = copy.current;
+    return () => {
+      giveUp(drawnCanvas);
+      giveUp(copied);
+    };
+  }, []);
 
   // The source beside the translated page is the same drawing, copied.
   useEffect(() => {
@@ -280,10 +364,10 @@ function Page({
   // The lines of the page are read off its drawing when it arrives; the highlights are drawn
   // again whenever the lines on this page are cut anew, as when the drawing of another page a
   // block of this one runs over arrives.
-  // A page that holds highlights is read as its drawing arrives; any other on the first press
-  // on it. Reading takes some milliseconds a page, so it waits for a moment the browser is
-  // idle, as while the pages scroll every frame counts.
-  const holdsMarks = marks.length > 0;
+  // A page that holds highlights, or a passage pointed at, is read as its drawing arrives; any
+  // other on the first press on it. Reading takes some milliseconds a page, so it waits for a
+  // moment the browser is idle, as while the pages scroll every frame counts.
+  const holdsMarks = marks.length > 0 || glowsOn(glow, text, number);
   useEffect(() => {
     text.drawnOn(number, drawn?.canvas);
     if (!holdsMarks) {
@@ -299,7 +383,7 @@ function Page({
   // drawn as lines on the source's page, and under the translation on a page that shows it.
   const translated = overlay !== undefined;
   return (
-    <div className="page-pair">
+    <div className="page-pair" data-paired={paired ? "" : undefined}>
       <div
         className="page"
         hidden={!paired}
@@ -313,6 +397,10 @@ function Page({
         )}
         {paired && <SelectionLayer drawing={drawing} page={number} under={false} />}
         <Boxes boxes={boxes} under={false} />
+        {paired && <LinksLayer links={links} under={false} onPlace={onPlace} />}
+        {paired && (
+          <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={false} />
+        )}
       </div>
       <div
         className="page"
@@ -347,6 +435,8 @@ function Page({
           />
         )}
         <Boxes boxes={boxes} under={overlay !== undefined} />
+        <LinksLayer links={links} under={translated} onPlace={onPlace} />
+        <PageGlow glow={glow} text={text} page={number} drawings={drawings} under={translated} />
       </div>
     </div>
   );
@@ -365,26 +455,35 @@ function Pages({
   file,
   pointed,
   pointedBlocks,
+  glow,
   inView,
   overlays,
   pairing,
   marks,
   opening,
   onTurned,
+  onLinks,
 }: {
   file: PDFDocumentProxy;
   pointed: PagePlace[];
   pointedBlocks: ReadonlySet<number>;
+  glow: Glow | undefined;
   inView: boolean;
   overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;
   onTurned: ((position: PagePosition) => void) | undefined;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const viewer = useRef<HTMLDivElement>(null);
   const [drawing] = useState(() => new SelectionDrawing());
   usePageSelecting(viewer, drawing, marks.selecting, inView);
+  useTranslatedGlow(viewer, glow, inView);
+  // A link that leads to a place of the document turns the pages there, with a way back.
+  const goingBack = useGoingBack(viewer);
+  useLinkPresses(viewer, goingBack.follow);
+  const zoom = usePagesZoom(viewer, inView, onTurned);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
   // The outline turned to under the translation before the area that holds its line was set:
@@ -433,32 +532,6 @@ function Pages({
     }
   }, [opening, shapes, inView, pointed]);
 
-  // Where the reader stands is told as the pages scroll, once a frame at most. Whatever scrolls
-  // them is heard, since a change of the window's width may hand the scrolling from the
-  // reader's column to the window.
-  useEffect(() => {
-    const shown = viewer.current;
-    if (onTurned === undefined || shown === null) {
-      return;
-    }
-    let frame = 0;
-    const scrolled = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const position = positionOf(shown);
-        if (position !== undefined) {
-          onTurned(position);
-        }
-      });
-    };
-    const heard = { capture: true, passive: true };
-    document.addEventListener("scroll", scrolled, heard);
-    return () => {
-      document.removeEventListener("scroll", scrolled, heard);
-      cancelAnimationFrame(frame);
-    };
-  }, [onTurned]);
-
   useEffect(() => {
     if (viewer.current === null) {
       return;
@@ -492,8 +565,8 @@ function Pages({
     }
   }, [pointed, inView, shapes, pairing, wide]);
 
-  return (
-    <div className="pages" ref={viewer}>
+  const pages = (
+    <div className="pages" ref={viewer} style={{ "--zoom": zoom } as CSSProperties}>
       {Array.from({ length: file.numPages }, (_, number) => (
         <Page
           key={number}
@@ -509,6 +582,9 @@ function Pages({
           marks={marks.onPages.get(number) ?? NO_MARKS}
           markedBlocks={marks.blocks}
           drawing={drawing}
+          glow={glow}
+          onPlace={goingBack.follow}
+          onLinks={onLinks}
           overlay={
             overlays === undefined
               ? undefined
@@ -522,37 +598,50 @@ function Pages({
       ))}
     </div>
   );
+  return (
+    <>
+      {pages}
+      <GoingBack going={goingBack} />
+    </>
+  );
 }
 
-// Shows a PDF page by page, outlines the boxes that were pointed at, draws the reader's
-// highlights, lets the reader select by dragging over the lines, and sets a translation over
-// the pages where one is given, by page; with the source beside each page, or under each area,
-// where pairing is asked for. It opens at the position given, if one is, and tells where the
-// reader stands as they scroll, if asked to. The reader is drawn again whenever a view hands a
+// Shows a PDF page by page, turns to the boxes that were pointed at and makes the passage glow
+// there, draws the reader's highlights, lets the reader select by dragging over the lines, and
+// sets a translation over the pages where one is given, by page; with the source beside each
+// page, or under each area, where pairing is asked for. A link of a page leads where it leads,
+// with a way back from a place of the document. It opens at the position given, if one is,
+// and tells where the reader stands as they scroll, if asked to; it tells the links of each
+// page as they are read, if asked to. The reader is drawn again whenever a view hands a
 // selection over, as at every frame of a scroll while one is held; the pages only when what
 // they are given changes.
 export const PageViewer = memo(function PageViewer({
   source,
   pointed,
   pointedBlocks,
+  glow,
   inView,
   overlays,
   pairing,
   marks,
   opening,
   onTurned,
+  onLinks,
 }: {
   source: string;
   pointed: PagePlace[];
-  // The blocks the passage pointed at runs through, whose translation is marked where it is
-  // set.
+  // The blocks the passage pointed at runs through, whose translation's areas the pages turn
+  // to.
   pointedBlocks: ReadonlySet<number>;
+  // The passage pointed at, as it glows.
+  glow: Glow | undefined;
   inView: boolean;
   overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;
   onTurned: ((position: PagePosition) => void) | undefined;
+  onLinks: ((page: number, links: PageLink[]) => void) | undefined;
 }) {
   const file = useFile(source);
   return (
@@ -564,12 +653,14 @@ export const PageViewer = memo(function PageViewer({
           file={file.value}
           pointed={pointed}
           pointedBlocks={pointedBlocks}
+          glow={glow}
           inView={inView}
           overlays={overlays}
           pairing={pairing}
           marks={marks}
           opening={opening}
           onTurned={onTurned}
+          onLinks={onLinks}
         />
       )}
     </>

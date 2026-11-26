@@ -297,11 +297,6 @@ main > .status {
   vertical-align: top;
 }
 
-::highlight(anchor) {
-  background-color: var(--found);
-  color: inherit;
-}
-
 /* Source: the pages of a paged file, or the player of a recording */
 
 .views {
@@ -319,19 +314,24 @@ main > .status {
   color: var(--on-accent);
 }
 
+/* The pages are as wide as the column holds, up to a bound, times their zoom (--zoom). Pages
+   zoomed wider than the column scroll sideways inside it, from their left edge; the column
+   alone scrolls them down. */
 .pages {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: safe center;
   gap: 1rem;
   padding: 1rem;
   background: var(--panel);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .page {
   position: relative;
   width: 100%;
-  max-width: 62rem;
+  max-width: calc(62rem * var(--zoom, 1));
   background: #ffffff;
   box-shadow: 0 0 0 1px var(--line);
   /* What is drawn on a page is layered within the page alone: its highlights, a selection and
@@ -346,13 +346,11 @@ main > .status {
   height: 100%;
 }
 
-/* A page is light whatever the theme, so its marks keep one colour. */
+/* The lines of a passage pointed at, which the pages turn to; what the reader sees of the
+   passage is its words glowing for a moment (pageglow.css). */
 .page-box {
   position: absolute;
   pointer-events: none;
-  background: rgb(255 208 64 / 0.38);
-  outline: 2px solid #a8481f;
-  border-radius: 2px;
 }
 
 .page .status {

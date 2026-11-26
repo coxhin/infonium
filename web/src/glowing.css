@@ -1,0 +1,33 @@
+/* A passage pointed at glows for a moment and fades: whole, then lighter in steps, at the times
+   glowing.ts sets. The glow lets what it lies over through, so that where lines are set closer
+   than their letters are tall, as a translation on a PDF's page may be, the glow of one line
+   does not hide the letters of the line above it. */
+
+:root {
+  --glow: light-dark(rgb(255 200 40 / 0.5), rgb(235 185 40 / 0.42));
+}
+
+::highlight(anchor) {
+  background-color: var(--glow);
+  color: inherit;
+}
+
+::highlight(anchor-fading-1) {
+  background-color: color-mix(in srgb, var(--glow) 75%, transparent);
+  color: inherit;
+}
+
+::highlight(anchor-fading-2) {
+  background-color: color-mix(in srgb, var(--glow) 50%, transparent);
+  color: inherit;
+}
+
+::highlight(anchor-fading-3) {
+  background-color: color-mix(in srgb, var(--glow) 30%, transparent);
+  color: inherit;
+}
+
+::highlight(anchor-fading-4) {
+  background-color: color-mix(in srgb, var(--glow) 12%, transparent);
+  color: inherit;
+}

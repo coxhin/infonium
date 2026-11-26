@@ -1,3 +1,4 @@
+import { unitOffset, unitOffsets } from "./blocktext";
 import { FORMULA_ATTRIBUTE } from "./formula";
 
 // How the words of a block, or of its translation, lie in the element that draws them: the
@@ -149,4 +150,30 @@ export function characterAt(
     passed += length;
   }
   return undefined;
+}
+
+// The ranges of the page that show a stretch of a text drawn in parts, one after another with
+// a gap between each two that no element draws, as a translation's segments are: one range for
+// each part the stretch reaches into. The stretch is counted in code points of the parts' text
+// joined by the gap.
+export function rangesThrough(
+  parts: Element[],
+  gap: string,
+  stretch: { start: number; end: number },
+): Range[] {
+  const ranges: Range[] = [];
+  const gapLength = [...gap].length;
+  let reached = 0;
+  for (const part of parts) {
+    const text = textOf(part);
+    const length = [...text].length;
+    const start = Math.max(stretch.start, reached) - reached;
+    const end = Math.min(stretch.end, reached + length) - reached;
+    if (start < end) {
+      const offsets = unitOffsets(text);
+      ranges.push(rangeIn(part, unitOffset(offsets, start), unitOffset(offsets, end)));
+    }
+    reached += length + gapLength;
+  }
+  return ranges;
 }

@@ -5,20 +5,25 @@ import { unitOffset, unitOffsets } from "./blocktext";
 import { originLabel } from "./entry";
 import type { Marking } from "./marking";
 import type { Clock } from "./player";
+import { endGlow, glowOver } from "./glowing";
 import { inView, scrollerOf, scrolls } from "./scrolling";
+import { translatedStretch } from "./sentences";
 import type { Setting } from "./setting";
 import { useTextMarks } from "./textmarks";
 import { useSelectionHandedOver, type TextOnShow } from "./textselection";
-import { rangeIn, textOf } from "./textpieces";
+import { rangeIn, rangesThrough, textOf } from "./textpieces";
 import { Transcript, LINES_ATTRIBUTE } from "./transcript";
-import { POINTED_CLASS, Row, TRANSLATION_ATTRIBUTE } from "./translated";
+import {
+  POINTED_CLASS,
+  Row,
+  SEGMENT_CLASS,
+  SEGMENT_GAP,
+  TRANSLATION_ATTRIBUTE,
+} from "./translated";
 import type { TranslationState } from "./translation";
+import { useWheelZoom, useZoom } from "./zoom";
 
 const DOCUMENT_ATTRIBUTE = "data-document";
-const ANCHOR_HIGHLIGHT = "anchor";
-// The passage pointed at is drawn above the reader's highlights (textmarks.ts), so that it
-// stays the stronger where the two lie over each other.
-const ANCHOR_PRIORITY = 10;
 const NONE_LEFT_OUT: ReadonlySet<number> = new Set();
 const NONE_POINTED: ReadonlyMap<number, Anchor> = new Map();
 const NOT_ON_SHOW = "这段引文所在的原文不在当前页面上";
@@ -99,14 +104,19 @@ export function Reader({
   const article = useRef<HTMLElement>(null);
   useSelectionHandedOver(article, show, marking, onShow);
   const pressed = useTextMarks(article, show, marking);
-  // The passage highlighted in this document goes when the document leaves the page. React
-  // runs this before the effects of a reader that takes its place, so the passage that reader
-  // is opened for stays.
-  useEffect(() => hideAnchor, []);
+  // The text is zoomed as a whole, by the control in the reader's head, or by a pinch or the
+  // wheel with Ctrl held over it; the browser keeps the words at the top where they were.
+  const zoom = useZoom("text");
+  useWheelZoom(article, "text", undefined);
+  // The passage glowing in this document goes when the document leaves the page. React runs
+  // this before the effects of a reader that takes its place, so the passage that reader is
+  // opened for glows.
+  useEffect(() => endGlow, []);
   return (
     <article
       ref={article}
       className="reader"
+      style={{ zoom }}
       onClickCapture={pressed}
       {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
     >
@@ -242,30 +252,48 @@ function rangeOfAnchor(anchor: Anchor): Range {
   return rangeIn(blockElement, start, end);
 }
 
-// Highlights a passage, every anchor in its source block whether or not that block is on show,
-// and gives the range of its first.
-function highlightPassage(anchors: Anchors): Range {
-  const first = rangeOfAnchor(anchors[0]);
-  const highlight = new Highlight(first, ...anchors.slice(1).map(rangeOfAnchor));
-  highlight.priority = ANCHOR_PRIORITY;
-  CSS.highlights.set(ANCHOR_HIGHLIGHT, highlight);
-  return first;
+// The ranges of the page that show the translation of an anchor's passage, where the block's
+// translation is on show: the sentences of the translation that stand for the sentences the
+// passage runs through in the source, since a translation is given whole for its block.
+function translatedRanges(anchor: Anchor, source: string): Range[] {
+  const translation = document.querySelector(
+    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] [${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"]`,
+  );
+  if (translation === null || !translation.checkVisibility()) {
+    return [];
+  }
+  // A table's cells hold no element of their own around each segment: the table holds the
+  // translation's text whole, its cells' separators among it.
+  const segments = [...translation.querySelectorAll(`.${SEGMENT_CLASS}`)];
+  const table = translation.querySelector("table");
+  const parts = segments.length > 0 ? segments : table === null ? [] : [table];
+  const text = parts.map(textOf).join(SEGMENT_GAP);
+  return rangesThrough(parts, SEGMENT_GAP, translatedStretch(source, text, anchor));
 }
 
-// Highlights a passage and brings into view where its start is on show: the passage in its
-// source block, or, where only the block's translation or its lines are on show, the parts of
-// them that the reader has marked as pointed at.
+// Makes a passage glow where it is on show, and brings into view where its start is: in its
+// source blocks where they are on show, and where only a block's translation is, in the
+// sentences of the translation that stand for the passage. Where a recording's lines are on
+// show, the lines marked as pointed at are brought into view. Every anchor is checked against
+// the source first, so that a passage whose quoted text is no longer there is refused.
 export function showPassage(anchors: Anchors): void {
-  const passage = highlightPassage(anchors);
-  const anchor = anchors[0];
-  if (blockElementOf(anchor).checkVisibility()) {
-    bringIntoView(passage);
+  const sources = anchors.map((anchor) => ({ anchor, range: rangeOfAnchor(anchor) }));
+  const shown = sources.flatMap(({ anchor, range }) => {
+    const blockElement = blockElementOf(anchor);
+    return blockElement.checkVisibility()
+      ? [range]
+      : translatedRanges(anchor, textOf(blockElement));
+  });
+  glowOver(shown);
+  const first = shown[0];
+  if (first !== undefined) {
+    bringIntoView(first);
     return;
   }
-  const shown = pointedTranslationOf(anchor);
-  if (shown !== null) {
+  const lines = pointedTranslationOf(anchors[0]);
+  if (lines !== null) {
     const place = document.createRange();
-    place.selectNodeContents(shown);
+    place.selectNodeContents(lines);
     bringIntoView(place);
   }
 }
@@ -411,8 +439,4 @@ export function usePassageKept(
   useEffect(() => release, [release]);
 
   return remember;
-}
-
-export function hideAnchor(): void {
-  CSS.highlights.delete(ANCHOR_HIGHLIGHT);
 }

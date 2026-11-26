@@ -1,0 +1,28 @@
+/* The zoom of what the reader shows, in the reader's head: smaller, the zoom, larger. */
+
+.zoom-control {
+  display: inline-flex;
+}
+
+.zoom-control button {
+  font-size: 0.85rem;
+  border-radius: 0;
+  margin-left: -1px;
+  min-width: 2rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.zoom-control button:first-child {
+  border-radius: 0.4rem 0 0 0.4rem;
+  margin-left: 0;
+}
+
+.zoom-control button:last-child {
+  border-radius: 0 0.4rem 0.4rem 0;
+}
+
+.zoom-control .zoom-value {
+  min-width: 3.6rem;
+  font-variant-numeric: tabular-nums;
+}
