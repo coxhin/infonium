@@ -551,6 +551,7 @@ export interface components {
              * @enum {string}
              */
             kind: "figure";
+            picture: components["schemas"]["KeptPicture"] | null;
             /**
              * Places
              * @default []
@@ -683,6 +684,23 @@ export interface components {
             current: number;
             /** Revisions */
             revisions: components["schemas"]["Revision"][];
+        };
+        /** KeptPicture */
+        KeptPicture: {
+            /**
+             * Height
+             * @description A length across a picture, in pixels.
+             */
+            height: number;
+            /** Media Type */
+            media_type: string;
+            /** Name */
+            name: string;
+            /**
+             * Width
+             * @description A length across a picture, in pixels.
+             */
+            width: number;
         };
         /** KeptSource */
         KeptSource: {

@@ -18,7 +18,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from infonium import speech
-from infonium.document import HTML_MEDIA_TYPE, Paragraph, document_of
+from infonium.document import HTML_MEDIA_TYPE, Figure, KeptPicture, Paragraph, document_of
 from infonium.library import LIBRARY_FILE, LOCAL_OWNER, Item, LibraryStore, Link, Read, Settled
 from infonium.recording import AudioTrack
 from infonium.speech import Recogniser
@@ -190,6 +190,20 @@ def test_each_reading_that_gives_another_document_is_numbered_once_counted_from_
             "R1: a revision is not kept with the time its document was first read: "
             f"{revision['read']} for a reading between {started} and {ended}"
         )
+
+
+def test_a_figures_kept_picture_leaves_its_document_the_one_kept_before_pictures_were() -> None:
+    # The identity below is the one infonium gave these blocks before it kept any picture.
+    paragraph = Paragraph(text="Rainfall by month.", marks=[])
+    described = Figure(source="https://example.com/rain.png", text="A chart of rainfall")
+    pictured = described.model_copy(
+        update={
+            "picture": KeptPicture(name="a" * 64, media_type="image/png", width=640, height=480)
+        }
+    )
+    for figure in (described, pictured):
+        document = document_of("item", "webpage", "snapshot", HTML_MEDIA_TYPE, [paragraph, figure])
+        assert document.id == "3418a1f78e6ffcf10fda408df8bd4e6a529f4333d39496845d7ecfc3335eddbd"
 
 
 def test_reading_an_unchanged_source_again_gives_the_same_revision_its_number_and_time(

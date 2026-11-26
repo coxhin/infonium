@@ -370,6 +370,16 @@
             "title": "Kind",
             "type": "string"
           },
+          "picture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeptPicture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "places": {
             "default": [],
             "items": {
@@ -405,6 +415,7 @@
           "kind",
           "source",
           "text",
+          "picture",
           "places"
         ],
         "title": "Figure",
@@ -759,6 +770,39 @@
           "revisions"
         ],
         "title": "ItemRevisions",
+        "type": "object"
+      },
+      "KeptPicture": {
+        "properties": {
+          "height": {
+            "description": "A length across a picture, in pixels.",
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "media_type": {
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "width": {
+            "description": "A length across a picture, in pixels.",
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "media_type",
+          "width",
+          "height"
+        ],
+        "title": "KeptPicture",
         "type": "object"
       },
       "KeptSource": {
