@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
@@ -16,6 +16,9 @@ from infonium.recipe import DigestStyle, RecipeStyle, recipe_of
 INSTRUCTIONS_CHARACTERS = 2_000
 # What a custom style's description holds at least: one character that is not white space.
 SAID_SOMETHING = r"\S"
+# The engine that matches it: Python's own, whose white space is that of str.isspace, where
+# the Rust engine pydantic uses by default takes U+001C to U+001F for words.
+PYTHON_REGEX: Final = "python-re"
 
 INSTRUCTIONS = """\
 You digest a document for a reader who wants to grasp it quickly and check every claim \
@@ -31,28 +34,33 @@ Grounding rules:
 Writing rules:
 - Each statement says one thing, and no two statements of the digest say the same thing.
 - Say what the document says directly. Do not begin a statement with words about the \
-document itself, such as "the article says" or "the author argues", unless a section asks \
-what the document is. Name who holds a view, such as the author, a speaker or a party, only \
-where it matters who holds it: for an opinion, a disputed claim, or one of several voices.
+document itself or about its section, such as "the article says", "the author argues" or \
+"the bottom line is", unless a section asks what the document is. Name who holds a view, \
+such as the author, a speaker or a party, only where it matters who holds it: for an \
+opinion, a disputed claim, or one of several voices.
 - Keep the names, numbers, dates and units that the document gives.
-- In each statement, mark with double asterisks, **like this**, the one or two words that a \
-reader skimming the digest most needs: a key term, a name or a number. Use no other Markdown.
+- Every statement, in every section, marks one or two of its words with double asterisks, \
+**like this**: the words a reader skimming the digest most needs, such as a key term, a \
+name or a number. Never mark a word that only names the document or its kind, such as \
+"article" or "paper". Put the asterisks right against the words they mark, with no space \
+that the words would not have without them. Use no other Markdown.
 - Give each section a form: "list" shows its statements one under another, and "paragraph" \
 shows them as one running paragraph. Use the form that the description of the sections \
 below gives, and where it gives none, the one that fits what it asks for.
-- Within the ranges given below, write as many statements as the document's length and \
-substance support. When the document is too short to support them, write fewer.
+- Keep to the ranges given below, and within them write as many statements as the \
+document's length and substance support. When the document is too short to support them, \
+write fewer.
 - Leave out a section that the document gives nothing for, rather than fill it with what the \
 document does not say.
 
-{sections}"""
-# The sections of a custom style: the reader's own description, as they wrote it.
+"""
+# What leads the sections of a custom style: the reader's own description follows it, as
+# they wrote it.
 CUSTOM_SECTIONS = """\
 The reader describes the digest they want below, in their own words. Follow the description \
 in the digest's structure, length, tone and focus. The rules above hold whatever it says.
 
 The reader's description:
-{instructions}
 """
 
 
@@ -84,6 +92,8 @@ class RecipeChoice(BaseModel):
 
 class CustomChoice(BaseModel):
     # The reader's own style: their description of the digest in place of a recipe.
+    model_config = ConfigDict(regex_engine=PYTHON_REGEX)
+
     style: Literal[DigestStyle.CUSTOM]
     instructions: CustomInstructions
 
@@ -136,18 +146,20 @@ class DraftDigest(BaseModel):
 
 
 def digest_instructions(language: str, chosen: ChosenStyle) -> str:
+    # The style's part follows the rules every style shares. A reader's description is joined
+    # on as it was written, whatever marks it holds.
     match chosen:
         case CustomChoice(instructions=instructions):
-            sections = CUSTOM_SECTIONS.format(instructions=instructions)
+            sections = CUSTOM_SECTIONS + instructions + "\n"
         case RecipeChoice(style=style):
             sections = recipe_of(style).sections
-    return INSTRUCTIONS.format(
+    shared = INSTRUCTIONS.format(
         blocks_explained=BLOCKS_EXPLAINED,
         citing_rules=CITING_RULES,
         language=language,
         chinese_marks=CHINESE_MARKS,
-        sections=sections,
     )
+    return shared + sections
 
 
 def grounded_sections(document: Document, draft: DraftDigest) -> list[Section]:

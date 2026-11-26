@@ -78,8 +78,8 @@ where it ends up.
 
 The second section is titled with the words for "Key topics" in the output language, and is \
 a list. It holds three to six statements, one for each topic the document takes up, in the \
-order it takes them up. Each statement begins with the topic's name in bold, followed by \
-what the document says about that topic in one or two sentences.
+order it takes them up. Each statement begins with the topic's name in bold and a colon, \
+then says what the document says about that topic in one or two sentences.
 """,
     ),
     Recipe(
@@ -93,9 +93,9 @@ what the document says about that topic in one or two sentences.
         sections="""\
 Write these sections, in this order.
 
-The first section is titled with the words for "Bottom line" in the output language, and is \
-a paragraph. It holds one statement: what is new, or what the document concludes, in one \
-sentence a reader could stop after.
+The first section is titled with the words for "Bottom line" in the output language, in its \
+sense of the conclusion that counts, and is a paragraph. It holds one statement: what is new, \
+or what the document concludes, in one sentence a reader could stop after.
 
 The second section is titled with the words for "Why it matters" in the output language, \
 and is a paragraph. It holds one or two statements: why it matters as the document presents \
@@ -106,9 +106,10 @@ The third section is titled with the words for "Key facts" in the output languag
 list. It holds three to six statements: the facts, numbers and details that support the \
 bottom line.
 
-The fourth section is titled with the words for "Yes, but" in the output language, and is a \
-list. It holds up to three statements: caveats, counterpoints or uncertainties that the \
-document states. Leave it out when the document states none.
+The fourth section is titled with the words for "Yes, but" in the output language, as a \
+heading of reservations, and is a list. It holds up to three statements: caveats, \
+counterpoints or uncertainties that the document states. Leave it out when the document states \
+none.
 
 The fifth section is titled with the words for "What's next" in the output language, and is \
 a list. It holds up to three statements: what the document says comes next, such as dates, \
@@ -131,7 +132,8 @@ contribution or result.
 
 The second section is titled with the words for "Problem and motivation" in the output \
 language, and is a list. It holds one to three statements: the question, why it matters, and \
-the gap in earlier work that the document names.
+the gap in earlier work that the document names. State the gap itself, not that the document \
+names it.
 
 The third section is titled with the word for "Method" in the output language, and is a \
 list. It holds two to five statements: how the work goes about it, such as its key idea, its \
@@ -176,9 +178,9 @@ topic changes, each titled by its topic.
         sections="""\
 Write four to eight sections, each a question that a reader of the document would ask, with \
 its answer. Title each section with its question, ending with a question mark. Each section \
-is a paragraph of one to three statements that answer the question. Order the questions from \
-the broadest, such as what the document is about and what it concludes, to the most \
-specific. Ask only questions that the document answers.
+is a paragraph, never a list, of one to three statements that answer the question. Order the \
+questions from the broadest, such as what the document is about and what it concludes, to \
+the most specific. Ask only questions that the document answers.
 """,
     ),
 )
