@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Annotated
 
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 from pypdfium2 import PdfDocument, PdfiumError, PdfTextPage, raw
 
@@ -234,3 +235,15 @@ def holds_wide_characters(file: Path) -> bool:
     # Whether the text layer of a file holds a character beyond the first 65,536 of Unicode.
     with PDFIUM_IN_USE, PdfDocument(file) as document:
         return any(WIDE_CHARACTER.search(page.get_textpage().get_text_range()) for page in document)
+
+
+def drawn_page(file: Path, number: int, scale: float, longest: int) -> Image.Image:
+    # A page of a file drawn as the file shows it, turned the way it says and with its
+    # annotations, at so many pixels a point. A page too large for its sides to stay within so
+    # many pixels at that scale is drawn smaller, to a pixel short of them, as the sides of a
+    # drawing are rounded up to whole pixels.
+    with PDFIUM_IN_USE, PdfDocument(file) as document:
+        page = document[number]
+        fitting = min(scale, (longest - 1) / max(page.get_size()))
+        drawing: Image.Image = page.render(scale=fitting).to_pil()
+        return drawing
