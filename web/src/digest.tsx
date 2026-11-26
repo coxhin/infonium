@@ -147,27 +147,28 @@ function DigestBody({
 // The reader's own instructions for the digest they want, with how much of the limit they
 // take, and the button that writes them.
 function InstructionsBox({
-  prefilled,
+  text,
   disabled,
+  onChange,
   onWrite,
   onCancel,
 }: {
-  prefilled: string;
+  text: string;
   disabled: boolean;
+  onChange: (text: string) => void;
   onWrite: (instructions: string) => void;
   onCancel: (() => void) | undefined;
 }) {
-  const [draft, setDraft] = useState(prefilled);
-  const count = characterCount(draft);
+  const count = characterCount(text);
   const over = count > CUSTOM_INSTRUCTIONS_CHARACTERS;
   return (
     <div className="instructions-box">
       <textarea
         aria-label="自定义摘要的要求"
         placeholder="例如：按时间顺序列出文中的事件，每条以日期开头"
-        value={draft}
+        value={text}
         rows={4}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onChange(event.target.value)}
       />
       <div className="instructions-foot">
         <span className={over ? "count over" : "count"} aria-live="polite">
@@ -176,8 +177,8 @@ function InstructionsBox({
         {onCancel !== undefined && <button onClick={onCancel}>取消</button>}
         <button
           className="write"
-          disabled={disabled || over || !SAID_SOMETHING.test(draft)}
-          onClick={() => onWrite(draft)}
+          disabled={disabled || over || !SAID_SOMETHING.test(text)}
+          onClick={() => onWrite(text)}
         >
           生成
         </button>
@@ -186,30 +187,32 @@ function InstructionsBox({
   );
 }
 
-// What the custom digest on show was written by, and the way to change it and write it again.
-// After a writing that failed, the box opens with the instructions it sent.
+// What the custom digest on show was written by, and the way to change it and write it again:
+// the box is open while it holds the reader's draft. After a writing that failed, it opens with
+// the instructions that writing sent.
 function KeptInstructions({
   instructions,
   failedInstructions,
+  draft,
   disabled,
+  onDraft,
   onWrite,
 }: {
   instructions: string;
   failedInstructions: string | undefined;
+  draft: string | undefined;
   disabled: boolean;
+  onDraft: (draft: string | undefined) => void;
   onWrite: (instructions: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
+  if (draft !== undefined) {
     return (
       <InstructionsBox
-        prefilled={failedInstructions ?? instructions}
+        text={draft}
         disabled={disabled}
-        onWrite={(changed) => {
-          setEditing(false);
-          onWrite(changed);
-        }}
-        onCancel={() => setEditing(false)}
+        onChange={onDraft}
+        onWrite={onWrite}
+        onCancel={() => onDraft(undefined)}
       />
     );
   }
@@ -217,7 +220,7 @@ function KeptInstructions({
     <div className="kept-instructions">
       <span className="label">按这些要求生成：</span>
       <p>{instructions}</p>
-      <button disabled={disabled} onClick={() => setEditing(true)}>
+      <button disabled={disabled} onClick={() => onDraft(failedInstructions ?? instructions)}>
         修改要求
       </button>
     </div>
@@ -231,15 +234,19 @@ function StylePane({
   offer,
   digest,
   writing,
+  draft,
   citing,
   onWrite,
+  onDraft,
 }: {
   itemId: string;
   offer: StyleOffer;
   digest: Digest | undefined;
   writing: Writing | undefined;
+  draft: string | undefined;
   citing: Citing;
-  onWrite: (style: ChosenStyle) => void;
+  onWrite: (asked: ChosenStyle) => void;
+  onDraft: (draft: string | undefined) => void;
 }) {
   const style = offer.id;
   const busy = writing?.state === "writing";
@@ -250,6 +257,11 @@ function StylePane({
   const writeCustom = (instructions: string) => {
     localStorage.setItem(INSTRUCTIONS_KEY, instructions);
     onWrite({ style: CUSTOM, instructions });
+  };
+  // Writing the draft in the box sends it, so the box holds it no longer.
+  const writeDraft = (instructions: string) => {
+    onDraft(undefined);
+    writeCustom(instructions);
   };
   const rewrite = () =>
     style === CUSTOM ? writeCustom(digest?.instructions ?? "") : onWrite({ style });
@@ -270,9 +282,10 @@ function StylePane({
           <p className="description">{offer.description}</p>
           {style === CUSTOM ? (
             <InstructionsBox
-              prefilled={failedInstructions ?? localStorage.getItem(INSTRUCTIONS_KEY) ?? ""}
+              text={draft ?? failedInstructions ?? localStorage.getItem(INSTRUCTIONS_KEY) ?? ""}
               disabled={busy}
-              onWrite={writeCustom}
+              onChange={onDraft}
+              onWrite={writeDraft}
               onCancel={undefined}
             />
           ) : (
@@ -287,8 +300,10 @@ function StylePane({
             <KeptInstructions
               instructions={digest.instructions}
               failedInstructions={failedInstructions}
+              draft={draft}
               disabled={busy}
-              onWrite={writeCustom}
+              onDraft={onDraft}
+              onWrite={writeDraft}
             />
           )}
           <DigestBody itemId={itemId} digest={digest} citing={citing} />
@@ -327,6 +342,9 @@ function Digests({
       ),
   );
   const [picked, setPicked] = useState<DigestStyle>();
+  // The custom instructions the reader has in the box and has not sent, which stay while
+  // another style is looked at.
+  const [draft, setDraft] = useState<string>();
 
   // The digest written goes among those kept whenever it arrives.
   function follow(writing: DigestWriting) {
@@ -428,8 +446,10 @@ function Digests({
         offer={offer}
         digest={kept.get(offer.id)}
         writing={writings.get(offer.id)}
+        draft={draft}
         citing={citing}
         onWrite={write}
+        onDraft={setDraft}
       />
     </>
   );
