@@ -781,15 +781,12 @@ def document_picture(document_id: str, name: str, owner: Owner) -> FileResponse:
 def digest_styles() -> list[DigestStyleView]:
     # The styles a reader may choose a digest in, in the order they are offered.
     return [
-        *(
-            DigestStyleView(
-                id=recipe.style, name=recipe.name, description=recipe.description, custom=False
-            )
-            for recipe in RECIPES
-        ),
-        DigestStyleView(
-            id=DigestStyle.CUSTOM, name=CUSTOM_NAME, description=CUSTOM_DESCRIPTION, custom=True
-        ),
+        DigestStyleView(id=style, name=CUSTOM_NAME, description=CUSTOM_DESCRIPTION, custom=True)
+        if style is DigestStyle.CUSTOM
+        else DigestStyleView(
+            id=style, name=RECIPES[style].name, description=RECIPES[style].description, custom=False
+        )
+        for style in DigestStyle
     ]
 
 

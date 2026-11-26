@@ -30,7 +30,6 @@ class Recipe(BaseModel):
     # A style of digest as data, the shape a recipe plugin takes: its name and the description
     # of what its digest holds, as a reader is offered them, and its section rules, the part of
     # a digest's instructions that says which sections to write and what each holds.
-    style: RecipeStyle
     name: str
     description: str
     section_rules: str
@@ -40,9 +39,9 @@ class Recipe(BaseModel):
 CUSTOM_NAME = "自定义"
 CUSTOM_DESCRIPTION = "写下你想要的结构、篇幅和语气。引用、语言和标点的规则照旧。"
 
-RECIPES = (
-    Recipe(
-        style=DigestStyle.OVERVIEW,
+# The recipes, each under the style it writes.
+RECIPES: dict[RecipeStyle, Recipe] = {
+    DigestStyle.OVERVIEW: Recipe(
         name="概述与要点",
         description=(
             "3\N{EN DASH}5 句概述\N{FULLWIDTH COMMA}加 5\N{EN DASH}10 条值得记住的要点。"
@@ -61,8 +60,7 @@ claims, findings, numbers, definitions, recommendations and caveats. Each statem
 on its own and is specific.
 """,
     ),
-    Recipe(
-        style=DigestStyle.GUIDE,
+    DigestStyle.GUIDE: Recipe(
         name="导读",
         description=(
             "一段概要\N{FULLWIDTH LEFT PARENTHESIS}关键词加粗\N{FULLWIDTH RIGHT PARENTHESIS}"
@@ -82,8 +80,7 @@ order it takes them up. Each statement begins with the topic's name in bold and 
 then says what the document says about that topic in one or two sentences.
 """,
     ),
-    Recipe(
-        style=DigestStyle.BRIEF,
+    DigestStyle.BRIEF: Recipe(
         name="简报",
         description=(
             "一句话结论、为什么重要、关键事实、保留与接下来。"
@@ -117,8 +114,7 @@ a list. It holds up to three statements: what the document says comes next, such
 decisions and open questions. Leave it out when the document says nothing of it.
 """,
     ),
-    Recipe(
-        style=DigestStyle.PAPER,
+    DigestStyle.PAPER: Recipe(
         name="论文精读",
         description=(
             "一句话、问题与动机、方法、结果、局限。"
@@ -153,8 +149,7 @@ When the document is not a paper, write the sections that apply to it and leave 
 rest.
 """,
     ),
-    Recipe(
-        style=DigestStyle.OUTLINE,
+    DigestStyle.OUTLINE: Recipe(
         name="章节速览",
         description=(
             "顺着原文的顺序分成 3\N{EN DASH}10 段\N{FULLWIDTH COMMA}每段一个标题和几条要点"
@@ -169,8 +164,7 @@ a recording, or in a document without headings, the sections are the stretches w
 topic changes, each titled by its topic.
 """,
     ),
-    Recipe(
-        style=DigestStyle.FAQ,
+    DigestStyle.FAQ: Recipe(
         name="问答",
         description=(
             "4\N{EN DASH}8 个读者会问的问题\N{FULLWIDTH COMMA}每个都用原文回答。"
@@ -184,8 +178,4 @@ questions from the broadest, such as what the document is about and what it conc
 the most specific. Ask only questions that the document answers.
 """,
     ),
-)
-
-
-def recipe_of(style: RecipeStyle) -> Recipe:
-    return next(recipe for recipe in RECIPES if recipe.style == style)
+}

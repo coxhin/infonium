@@ -11,7 +11,7 @@ from infonium.citing import (
     grounded,
 )
 from infonium.document import CHINESE_MARKS, Document
-from infonium.recipe import DigestStyle, RecipeStyle, recipe_of
+from infonium.recipe import RECIPES, DigestStyle, RecipeStyle
 
 CUSTOM_INSTRUCTIONS_CHARACTERS = 2_000
 # What a custom style's instructions hold at least: one character that is not white space.
@@ -152,7 +152,7 @@ def digest_instructions(language: str, chosen: ChosenStyle) -> str:
         case CustomChoice(instructions=instructions):
             section_rules = CUSTOM_SECTION_RULES + instructions + "\n"
         case RecipeChoice(style=style):
-            section_rules = recipe_of(style).section_rules
+            section_rules = RECIPES[style].section_rules
     shared = INSTRUCTIONS.format(
         blocks_explained=BLOCKS_EXPLAINED,
         citing_rules=CITING_RULES,
