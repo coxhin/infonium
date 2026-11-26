@@ -63,12 +63,10 @@
   background-image: linear-gradient(var(--page-area-mark), var(--page-area-mark));
 }
 
-/* An area holds lines up to the next area's paper, which would cover a line under its foot:
-   a commented highlight's area is told by a bar at its side. */
+/* A line under an area's foot would stand on the next area's text: a commented highlight's
+   area is told by a bar at its side. */
 .page-translation .area.marked[data-mark="commented"] {
-  box-shadow:
-    0 0 0 max(2px, 0.2em) var(--paper, transparent),
-    inset 3px 0 0 var(--page-mark-edge);
+  box-shadow: inset 3px 0 0 var(--page-mark-edge);
 }
 
 .page-translation .area.marked[data-mark="opened"] {

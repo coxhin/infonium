@@ -1,6 +1,8 @@
-/* A translation set over a drawn page. Each area lies over the lines it translates, in the
-   page's colours, at the size of the source's text times the part it had to be made smaller
-   by to fit (--fit). Sizes are parts of the page's width, so the text scales with the page. */
+/* A translation set over a drawn page, as flows. A flow lays the page's paper over its room,
+   and its areas follow one another in it, each at the size of its print times the flow's step
+   (--step), led at the flow's leading (--leading), after its gap and its shares of the flow's
+   spare room (--share). Sizes are parts of the page's width, so the text scales with the
+   page. */
 
 .page {
   container-type: inline-size;
@@ -11,28 +13,50 @@
   inset: 0;
 }
 
-.page-translation .area {
+/* The source's letters reach a little past the boxes of their lines; the paper is laid a
+   little past the flow to cover them, without taking room from the text, but not over its top
+   or its foot where something is drawn closer than that (--edge-top, --edge-foot). */
+.page-translation :is(.flow, .paper) {
+  --edge: max(2px, 0.2em);
+  box-shadow: 0 0 0 var(--edge) var(--paper, transparent);
+}
+
+.page-translation .flow[data-bare] {
+  box-shadow:
+    var(--edge) 0 0 0 var(--paper, transparent),
+    calc(-1 * var(--edge)) 0 0 0 var(--paper, transparent),
+    0 calc(var(--edge-foot, 1) * var(--edge)) 0 0 var(--paper, transparent),
+    0 calc(-1 * var(--edge-top, 1) * var(--edge)) 0 0 var(--paper, transparent);
+}
+
+.page-translation .flow {
   position: absolute;
-  overflow: hidden;
-  font-size: calc(var(--size) * var(--fit));
+  display: flow-root;
+  font-size: var(--body);
+}
+
+.page-translation .flow.vertical {
+  writing-mode: vertical-rl;
+}
+
+.page-translation .area {
+  font-size: calc(var(--size) * var(--step));
   font-family:
     "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "Noto Sans CJK SC", serif;
   text-align: justify;
   overflow-wrap: anywhere;
   white-space: normal;
   padding: 0 0.05em;
-  /* The source's letters reach a little past the boxes of their lines; the paper is laid a
-     little past the area to cover them, without taking room from the text. */
-  box-shadow: 0 0 0 max(2px, 0.2em) var(--paper, transparent);
 }
 
-.page-translation .area.vertical {
-  writing-mode: vertical-rl;
+.page-translation .area[data-ragged],
+.page-translation .flow.vertical .area,
+.page-translation[data-measuring-lines] .area {
   text-align: start;
 }
 
 .page-translation .area .marker {
-  margin-right: 0.5em;
+  margin-inline-end: 0.5em;
 }
 
 .page-translation .area a {
@@ -45,8 +69,20 @@
   font-size: 0.9em;
 }
 
-/* Text cut at the floor of its size ends in a mark, over the paper of its area. */
-.page-translation .area[data-cut]::after {
+/* Where a flow's foot stands short of something drawn beside its last lines, its paper goes on
+   below over those lines alone. */
+.page-translation .paper {
+  position: absolute;
+  pointer-events: none;
+  font-size: var(--body);
+}
+
+/* A flow that does not fit is cut at its foot and ends in a mark, over its paper. */
+.page-translation .flow[data-cut] {
+  overflow: hidden;
+}
+
+.page-translation .flow[data-cut]::after {
   content: "…▾";
   position: absolute;
   right: 0;
@@ -58,33 +94,52 @@
   color: #a8481f;
 }
 
-.page-translation .area[role="button"] {
+.page-translation .flow[role="button"] {
   cursor: pointer;
 }
 
-/* Pressed or focused, cut text is shown whole: the area grows below its lines, over the page,
-   at a size that can be read. */
-.page-translation:not(.revealing) .area[data-cut]:is([data-open], :focus-visible),
-.page-translation.revealing .area[data-cut]:focus-visible:not([data-open]) {
+/* Pressed or focused, a cut flow is shown whole: it grows below its room, over the page, at a
+   size that can be read. */
+.page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible),
+.page-translation.revealing .flow[data-cut]:focus-visible:not([data-open]) {
   z-index: 2;
   height: auto !important;
-  min-height: auto;
   overflow: visible;
-  font-size: max(calc(var(--size) * var(--fit)), 12px);
   box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
   outline: 2px solid #a8481f;
 }
 
-.page-translation .area[data-cut]:is([data-open], :focus-visible)::after {
+.page-translation:not(.revealing, [data-setting])
+  .flow[data-cut]:is([data-open], :focus-visible)
+  .area,
+.page-translation.revealing:not([data-setting])
+  .flow[data-cut]:focus-visible:not([data-open])
+  .area {
+  font-size: max(calc(var(--size) * var(--step)), 12px);
+}
+
+.page-translation .flow[data-cut]:is([data-open], :focus-visible)::after {
   content: none;
 }
 
-/* Where the source is to be seen under the translation, an area pressed lets it through. */
-.page-translation.revealing .area[data-open] {
+/* A cut flow shown whole may run past the foot of its page: the page lies over the pages that
+   follow while it does, and only over them, as the list of pages is a layer of its own under
+   the reader's head. */
+.pages {
+  isolation: isolate;
+}
+
+.page:has(> .page-translation:not(.revealing) .flow[data-cut]:is([data-open], :focus-visible)),
+.page:has(> .page-translation.revealing .flow[data-cut]:focus-visible:not([data-open])) {
+  z-index: 1;
+}
+
+/* Where the source is to be seen under the translation, a flow pressed lets it through. */
+.page-translation.revealing :is(.flow, .paper)[data-open] {
   opacity: 0;
 }
 
-.page-translation .area:focus-visible {
+.page-translation .flow:focus-visible {
   outline: 2px solid #a8481f;
   outline-offset: 1px;
 }

@@ -8,7 +8,7 @@ import {
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { percent, type AreaText } from "./areas";
+import { percent } from "./areas";
 import type { PagePlace } from "./client";
 import { reasonOf, type Loaded } from "./loading";
 import type { PageText } from "./pagelines";
@@ -20,7 +20,9 @@ import {
   type PageMark,
 } from "./pagemarking";
 import { usePageSelecting, type PageSelecting } from "./pageselecting";
-import { PageTranslation, type Drawn } from "./pagetranslation";
+import type { Drawn } from "./pagedrawing";
+import { NO_PAGE_TEXTS, type PageTexts } from "./pagetexts";
+import { PageTranslation } from "./pagetranslation";
 import { scrollerOf, uncoveredTop } from "./scrolling";
 
 GlobalWorkerOptions.workerSrc = workerSource;
@@ -42,7 +44,9 @@ const UNDER_CLASS = "under";
 // The longest a page's lines wait to be read off its drawing for the browser to be idle, in
 // milliseconds.
 const READING_WAIT = 500;
-const POINTED_AREA = "area.pointed";
+// The area that holds the translation of the first line pointed at on its page.
+const CITED_AREA = ".area[data-cited]";
+const PAGE_CLASS_SELECTOR = ".page";
 
 // Where the reader stands in the pages: the page at the top of what the scroller shows them of,
 // and how far down that page the view begins, as a part of its height.
@@ -64,15 +68,6 @@ function turnTo(viewer: Element, { page, within }: PagePosition) {
     const scroller = scrollerOf(viewer) ?? document.scrollingElement;
     scroller?.scrollBy({ top: place.top - uncoveredTop(viewer) + within * place.height });
   }
-}
-
-function overlaps(one: DOMRect, other: DOMRect): boolean {
-  return (
-    one.left < other.right &&
-    other.left < one.right &&
-    one.top < other.bottom &&
-    other.top < one.bottom
-  );
 }
 
 // Hands a result or a failure on only while the view that asked is still the current one. A
@@ -124,8 +119,8 @@ function useFile(source: string): Loaded<PDFDocumentProxy> {
 }
 
 // How a page's translation is shown: over the page alone, over the page and the source beside
-// it, or over the page with each area letting the source through when pressed.
-export type Overlay = { texts: AreaText[]; paired: boolean; revealing: boolean };
+// it, or over the page with each flow letting the source through when pressed.
+export type Overlay = { texts: PageTexts; paired: boolean; revealing: boolean };
 
 // The reader's highlights as the pages draw them: on each page, and by the blocks they run
 // through, for the areas of a translation; and how a selection is made, where one can be.
@@ -338,11 +333,13 @@ function Page({
         {failure !== undefined && <p className="status failed">这一页画不出来：{failure}</p>}
         {overlay !== undefined && near && drawn !== undefined && (
           <PageTranslation
+            page={number}
             texts={overlay.texts}
             shape={shape}
             drawn={drawn}
             revealing={overlay.revealing}
             width={width}
+            pointed={boxes}
             pointedBlocks={pointedBlocks}
             onMarked={onMarked}
             markedBlocks={markedBlocks}
@@ -361,7 +358,7 @@ function Page({
 const READABLE_PAGE_WIDTH = 600;
 const PAIR_GAP = 10;
 const PAIRED_WIDTH = 2 * READABLE_PAGE_WIDTH + PAIR_GAP;
-const NO_TEXTS: AreaText[] = [];
+const NO_TEXTS: PageTexts = NO_PAGE_TEXTS;
 const NO_BLOCKS: ReadonlySet<number> = new Set();
 
 function Pages({
@@ -379,7 +376,7 @@ function Pages({
   pointed: PagePlace[];
   pointedBlocks: ReadonlySet<number>;
   inView: boolean;
-  overlays: Map<number, AreaText[]> | undefined;
+  overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;
@@ -390,15 +387,15 @@ function Pages({
   usePageSelecting(viewer, drawing, marks.selecting, inView);
   const [shapes, setShapes] = useState<number[]>();
   const [wide, setWide] = useState(false);
-  // The outline turned to under the translation before the area over it was set: the area is
-  // turned to when it comes.
+  // The outline turned to under the translation before the area that holds its line was set:
+  // the area is turned to when it comes.
   const awaited = useRef<Element>(undefined);
   const marked = useCallback((area: HTMLElement) => {
     const box = awaited.current;
     if (
       box !== undefined &&
       box.isConnected &&
-      overlaps(area.getBoundingClientRect(), box.getBoundingClientRect())
+      area.closest(PAGE_CLASS_SELECTOR) === box.closest(PAGE_CLASS_SELECTOR)
     ) {
       awaited.current = undefined;
       area.scrollIntoView({ block: "center" });
@@ -479,8 +476,8 @@ function Pages({
   // turned to when the shapes come or the pages come back.
   // The boxes of the source page kept beside each page for 对照 stand in the page while it is
   // hidden, so what is turned to is the first outline on show; where it lies under the
-  // translation, the marked area over it. A block's areas can lie apart, the cited lines in one
-  // of them.
+  // translation, the area that holds the translation of its line, wherever that stands in its
+  // flow.
   useEffect(() => {
     if (shapes !== undefined) {
       const box = [...(viewer.current?.querySelectorAll(`.${BOX_CLASS}`) ?? [])].find((each) =>
@@ -488,9 +485,7 @@ function Pages({
       );
       const under = box?.classList.contains(UNDER_CLASS) === true;
       const over = under
-        ? [...(box.parentElement?.querySelectorAll(`.${POINTED_AREA}`) ?? [])].find((area) =>
-            overlaps(area.getBoundingClientRect(), box.getBoundingClientRect()),
-          )
+        ? (box.closest(PAGE_CLASS_SELECTOR)?.querySelector(CITED_AREA) ?? undefined)
         : undefined;
       awaited.current = under && over === undefined ? box : undefined;
       (over ?? box)?.scrollIntoView({ block: "center" });
@@ -553,7 +548,7 @@ export const PageViewer = memo(function PageViewer({
   // set.
   pointedBlocks: ReadonlySet<number>;
   inView: boolean;
-  overlays: Map<number, AreaText[]> | undefined;
+  overlays: Map<number, PageTexts> | undefined;
   pairing: boolean;
   marks: PageMarks;
   opening: PagePosition | undefined;
