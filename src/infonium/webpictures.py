@@ -13,7 +13,7 @@ from typing import Any
 
 import httpcore
 import httpx
-from PIL import Image
+from PIL import ExifTags, Image
 from pydantic import BaseModel
 
 from infonium import egress
@@ -65,6 +65,10 @@ PICTURE_FORMATS = {
     "AVIF": "image/avif",
 }
 OPENED_FORMATS = PICTURE_FORMATS | {"MPO": "image/jpeg"}
+# A JPEG whose Exif orientation is one of these is drawn by a browser turned a quarter: as
+# wide as it is tall in its file, and as tall as it is wide.
+TURNED_FORMATS = frozenset({"JPEG", "MPO"})
+QUARTER_TURNED = frozenset({5, 6, 7, 8})
 SECURE_SCHEME = "https"
 CONTENT_TYPE = "content-type"
 CONTENT_LENGTH = "content-length"
@@ -315,13 +319,26 @@ def referred(request: httpx.Request, page: str) -> httpx.Request:
     return request
 
 
+def is_turned(picture: Image.Image) -> bool:
+    # Whether a browser draws a JPEG turned a quarter, by the orientation its Exif gives,
+    # which Pillow reads with the header. Exif that Pillow cannot read turns nothing, as it
+    # turns nothing in a browser that cannot read it either.
+    try:
+        return picture.getexif().get(ExifTags.Base.Orientation) in QUARTER_TURNED
+    except Exception:
+        return False
+
+
 def judged_picture(file: Path, served: str) -> Downloaded:
     # Bytes are kept as they were served when Pillow, reading their header and drawing nothing,
-    # finds them a picture of a kind kept, no decompression bomb and not small.
+    # finds them a picture of a kind kept, no decompression bomb and not small. Its size is the
+    # one a browser draws it at, a JPEG's Exif orientation applied.
     other_kind = Refused(OTHER_KIND.format(served=served_as(served)))
     try:
         with Image.open(file, formats=list(PICTURE_FORMATS)) as picture:
             kind, (width, height) = picture.format, picture.size
+            if kind in TURNED_FORMATS and is_turned(picture):
+                width, height = height, width
     except Image.DecompressionBombError as bomb:
         raise Refused(error_text(bomb)) from bomb
     except Exception as unread:

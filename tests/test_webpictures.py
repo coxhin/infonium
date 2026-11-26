@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from PIL import Image
+from PIL import ExifTags, Image
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
@@ -333,6 +333,24 @@ def test_each_address_is_downloaded_once_and_kept_as_served_by_the_kind_its_byte
         "an address was asked for more than once, or another was asked for"
     )
     assert extracted.blocks == page_with(*sources, sources[0]).blocks, "the blocks were changed"
+
+
+@pytest.mark.parametrize(
+    ("orientation", "size"), [(1, (400, 300)), (3, (400, 300)), (6, (300, 400)), (8, (300, 400))]
+)
+def test_a_jpeg_is_kept_at_the_size_a_browser_draws_it_turned_by_its_exif(
+    site: PictureSite, tmp_path: Path, orientation: int, size: tuple[int, int]
+) -> None:
+    exif = Image.Exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    with BytesIO() as written:
+        Image.new("RGB", (400, 300), (90, 120, 200)).save(written, "JPEG", exif=exif.tobytes())
+        site.answers["/turned.jpg"] = Answer(body=written.getvalue())
+    [handed] = downloaded(page_with("http://pictures.test/turned.jpg"), tmp_path).pictures
+    assert (handed.width, handed.height) == size, (
+        f"a JPEG 400 by 300 of orientation {orientation} was kept as "
+        f"{handed.width} by {handed.height}, not as a browser draws it"
+    )
 
 
 def test_a_picture_is_asked_for_as_a_browser_that_shows_the_page_asks_for_it(
