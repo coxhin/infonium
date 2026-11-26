@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, get_args
@@ -12,7 +13,7 @@ from hypothesis import strategies as st
 from pikepdf import Name
 from PIL import Image, ImageChops, ImageStat
 
-from infonium import pdf
+from infonium import pdf, pdfium
 from infonium.document import (
     Code,
     Extracted,
@@ -81,9 +82,15 @@ def page_count(sample: str) -> int:
 
 
 def as_stored(extracted: Extracted) -> dict[str, Any]:
+    # A reading as the reference keeps it: its title, its blocks, and of each picture the
+    # figure it is drawn for and its size in pixels.
     return {
         "title": extracted.title,
         "blocks": [block.model_dump(mode="json") for block in extracted.blocks],
+        "pictures": [
+            {"block": picture.block, "width": picture.width, "height": picture.height}
+            for picture in extracted.pictures
+        ],
     }
 
 
@@ -98,7 +105,12 @@ def differences(expected: dict[str, Any], read: dict[str, Any]) -> str:
         if before != after
     ]
     title = "" if expected["title"] == read["title"] else f"the title became {read['title']!r}; "
-    return f"{title}blocks {changed} differ"
+    pictures = (
+        ""
+        if expected["pictures"] == read["pictures"]
+        else f"; the pictures {expected['pictures']} became {read['pictures']}"
+    )
+    return f"{title}blocks {changed} differ{pictures}"
 
 
 @pytest.mark.parametrize("sample", SAMPLES)
@@ -456,9 +468,8 @@ def text_region(index: int, box: Box, words: str) -> dict[str, Any]:
 
 
 def group(kind: RegionType, members: list[dict[str, Any]]) -> dict[str, Any]:
-    # A group as the engine writes one, in a box that holds its members.
-    lefts, tops, rights, bottoms = zip(*(member["bbox"] for member in members), strict=True)
-    held = [min(lefts), min(tops), max(rights), max(bottoms)]
+    # A group as the engine writes one, with the box of its body.
+    [held] = [member["bbox"] for member in members if member["type"].endswith("_body")]
     return {"type": kind, "bbox": held, "blocks": members}
 
 
@@ -664,6 +675,80 @@ def test_two_pictures_close_together_each_take_half_the_gap_and_nothing_of_the_o
     assert holds(blue, "blue") and not holds(blue, "red"), "the blue picture took in the red one"
 
 
+def test_a_pictures_margin_stops_at_the_edge_of_its_page(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    near_left = (1.0, 100.0, 201.0, 250.0)
+    near_corner = (500.0, 700.0, 611.0, 791.5)
+    file = drawn_pdf(tmp_path / "edges.pdf", [(LETTER, 0, "")])
+    regions = [
+        text_region(0, OPENING, "Two pictures by the edges of their page."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, near_left)]),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, near_corner)]),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    # The first, 200 by 150 points, grows by the point left of it and by 2 points on its
+    # other sides; the second, 111 by 91.5, by 2 points left and up, by the point right of it
+    # and by the half point under it.
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert sizes == {1: (406, 308), 2: (228, 188)}, (
+        f"pictures by the edges of their page did not stop there: {sizes}"
+    )
+
+
+def test_a_box_beside_a_picture_leaves_it_half_the_gap_where_the_margin_reaches_it(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # Level with the first picture, a box 3 points to its right leaves it a point and a half
+    # there. A box 2 points to its left but 3 above it lies out of the margin's reach both
+    # ways, and leaves it the whole margin. A box off the second picture's lower right corner,
+    # a point from it both ways, leaves it half a point to the right and half a point down.
+    first = (300.0, 100.0, 450.0, 200.0)
+    beside = (453.0, 120.0, 540.0, 180.0)
+    above_beside = (250.0, 30.0, 298.0, 97.0)
+    second = (100.0, 400.0, 300.0, 550.0)
+    off_the_corner = (301.0, 551.0, 400.0, 590.0)
+    file = drawn_pdf(tmp_path / "reach.pdf", [(LETTER, 0, "")])
+    regions = [
+        text_region(0, OPENING, "Two pictures and the boxes around them."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, first)]),
+        text_region(2, beside, "Beside."),
+        text_region(3, above_beside, "Above, beside."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, second)]),
+        text_region(5, off_the_corner, "Off the corner."),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    # The first, 150 by 100 points, grows by 2 points but on its right, by a point and a half;
+    # the second, 200 by 150, by 2 points left and up and by half a point right and down.
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert sizes == {1: (307, 208), 4: (405, 305)}, (
+        f"the pictures did not grow by half the gap to the boxes within reach, and by the whole "
+        f"margin past those out of it: {sizes}"
+    )
+
+
+def test_a_box_that_overlaps_a_picture_stops_its_margin_on_each_side_it_reaches_past(
+    standin_pdf_engine: Callable[..., Path], tmp_path: Path
+) -> None:
+    # One box lies in the picture but for the 10 points it reaches past its left side, as the
+    # words of a paragraph around a large first letter do; another reaches past its top and
+    # its right. The picture grows down alone.
+    past_left = (90.0, 110.0, 150.0, 150.0)
+    past_top_and_right = (250.0, 90.0, 320.0, 120.0)
+    file = drawn_pdf(tmp_path / "overlaps.pdf", [(LETTER, 0, "")])
+    regions = [
+        text_region(0, OPENING, "A picture that two boxes overlap."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+        text_region(2, past_left, "Past the left."),
+        text_region(3, past_top_and_right, "Past the top and the right."),
+    ]
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert sizes == {1: (400, 300 + MARGINS // 2)}, (
+        f"a picture grew into boxes that overlap it: {sizes}"
+    )
+
+
 def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption(
     standin_pdf_engine: Callable[..., Path], tmp_path: Path
 ) -> None:
@@ -695,6 +780,50 @@ def test_a_region_too_small_for_a_picture_gives_no_figure_and_leaves_its_caption
     assert set(side_fills(picture_of(extracted, 2)).values()) == {"red"}, (
         "the figure left after the icon was given another region's picture"
     )
+
+
+def test_a_picture_whose_drawing_fails_is_lost_with_its_figure_and_told_of_and_the_reading_goes_on(
+    standin_pdf_engine: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The memory for the pixels of the red picture, on the left of the page, cannot be had, as
+    # it may not be for a very large region; the blue one beside it is drawn.
+    beside = (350.0, 100.0, 500.0, 250.0)
+    drawing = " ".join([filled(RED, PICTURE), filled(BLUE, beside)])
+    file = drawn_pdf(tmp_path / "unmade.pdf", [(LETTER, 0, drawing)])
+    regions = [
+        text_region(0, OPENING, "Two pictures, one never drawn."),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, PICTURE)]),
+        group(RegionType.IMAGE, [body(RegionType.IMAGE_BODY, beside)]),
+    ]
+    drawn = pdfium.OpenPage.drawn
+
+    def out_of_memory_on_the_left(
+        page: pdfium.OpenPage, region: pdfium.Region, scale: float
+    ) -> Image.Image:
+        if region[0] < 0.5:
+            raise MemoryError
+        return drawn(page, region, scale)
+
+    monkeypatch.setattr(pdfium.OpenPage, "drawn", out_of_memory_on_the_left)
+    caplog.set_level(logging.WARNING, logger=pdf.__name__)
+    extracted = drawn_reading(file, regions, standin_pdf_engine, tmp_path)
+    read = [(block.kind, block.text) for block in extracted.blocks]
+    sizes = {picture.block: (picture.width, picture.height) for picture in extracted.pictures}
+    assert read == [("paragraph", "Two pictures, one never drawn."), ("figure", "")], (
+        f"a figure whose picture could not be drawn was kept, or the other was lost: {read}"
+    )
+    assert sizes == {1: (300 + MARGINS, 300 + MARGINS)}, f"the pictures kept are {sizes}"
+    assert set(side_fills(picture_of(extracted, 1)).values()) == {"blue"}, (
+        "the figure left was given the picture that failed"
+    )
+    told = [record.getMessage() for record in caplog.records if record.name == pdf.__name__]
+    assert told == [
+        "a figure on page 1 is left without a picture: its region (98.0, 98.0, 302.0, 252.0) "
+        "could not be drawn: MemoryError"
+    ], f"the log does not tell of the lost picture by its page and region: {told}"
 
 
 def test_a_picture_on_a_page_the_file_stores_turned_is_its_region_as_the_reader_sees_it(

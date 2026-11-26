@@ -232,10 +232,10 @@ Member = Annotated[OwnParagraph | PictureBody | TableBody | CodeBody, Field(disc
 
 
 class Group(BaseModel):
-    # A picture, a chart, a table or a listing, together with its captions and notes, in a
-    # box that holds them all.
+    # A picture, a chart, a table or a listing, together with its captions and notes. The
+    # engine gives a group the box of its picture, chart, table or listing, which is kept with
+    # that member, and not again with the group.
     type: Literal[RegionType.IMAGE, RegionType.CHART, RegionType.TABLE, RegionType.CODE]
-    bbox: Box
     blocks: list[Member]
 
 
