@@ -290,10 +290,12 @@ function lettersReach(inward: number[], canvas: HTMLCanvasElement, size: number)
 // the letters beside its sides, where a formula, a figure or a page number would stand. The
 // letters of the lines over and under the box reach in from its top and its foot as far as
 // lettersReach finds, those at the ends of the lines beside it LETTERS_REACH from its left and
-// its right. Ink that runs on unbroken from the top or the foot past the letters' reach is past
-// the letters, though the reach from the other side covers it: in the strip beside a caption of
-// one line that another caption stands beside, the reaches from the top and the foot together
-// would take the other caption's whole line for letters.
+// its right. A run of ink down one column between those ends that is longer than
+// LETTERS_FURTHEST is drawn wherever it stands, as no letter reaches that far into a strip: a
+// letter of a line that stands in the box, as another caption beside a caption of one line, or
+// the side of something too short to be a rule. A descender and the top of a letter under it
+// that touch in one column make such a run together, where the box is shorter than the two
+// reach into it.
 export function isBlank(
   canvas: HTMLCanvasElement,
   box: Box,
@@ -307,21 +309,19 @@ export function isBlank(
   const colour = rgbOf(paper);
   const endsReach = pixelsFor(canvas, size, LETTERS_REACH);
   const rule = pixelsFor(canvas, size, RULE_LENGTH);
+  const furthest = pixelsFor(canvas, size, LETTERS_FURTHEST);
   const rows = drawnLines(pixels, colour, false, endsReach, pixels.width - endsReach);
   const columns = drawnLines(pixels, colour, true, 0, 0);
   if ([...rows.longest, ...columns.longest].some((longest) => longest >= rule)) {
     return false;
   }
-  const fromFoot = [...rows.drawn].reverse();
+  const strokes = columns.longest.slice(endsReach, Math.max(endsReach, pixels.width - endsReach));
+  if (strokes.some((longest) => longest > furthest)) {
+    return false;
+  }
   const top = lettersReach(rows.drawn, canvas, size);
-  const foot = pixels.height - lettersReach(fromFoot, canvas, size);
-  const topInkEnds = unbrokenFrom(rows.drawn);
-  const footInkBegins = pixels.height - unbrokenFrom(fromFoot);
-  const inside = rows.drawn.reduce((sum, drawn, row) => {
-    const pastTop = row >= top && (row < foot || row < topInkEnds);
-    const pastFoot = row < foot && (row >= top || row >= footInkBegins);
-    return pastTop || pastFoot ? sum + drawn : sum;
-  }, 0);
+  const foot = pixels.height - lettersReach([...rows.drawn].reverse(), canvas, size);
+  const inside = rows.drawn.slice(top, Math.max(top, foot)).reduce((sum, drawn) => sum + drawn, 0);
   return inside < SPECKS;
 }
 
