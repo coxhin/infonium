@@ -28,7 +28,6 @@ from tests.service import App
 from tests.subscribing import (
     AWAITED,
     FAILED,
-    FAILS_AT_ONCE,
     SETTLED,
     UNADMITTED,
     UNDERWAY,
@@ -390,7 +389,6 @@ def test_every_sequence_of_polls_lists_each_key_once_numbered_by_newness_within_
     judged_polls(subscribing_app, feeds, scenario, polled)
 
 
-@FAILS_AT_ONCE
 @pytest.mark.parametrize("feeds", [LONG_INTERVAL], indirect=True)
 @given(scenario=scenarios(failures=True))
 @example(
@@ -445,7 +443,6 @@ def test_a_feed_whose_every_posting_is_new_awaits_the_newest_ten(
     )
 
 
-@FAILS_AT_ONCE
 def test_failed_polls_wait_twice_as_long_each_time_until_one_succeeds(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
@@ -501,7 +498,6 @@ def test_failed_polls_wait_twice_as_long_each_time_until_one_succeeds(
     )
 
 
-@FAILS_AT_ONCE
 @pytest.mark.parametrize("feeds", [OVER_A_DAY], indirect=True)
 def test_an_interval_longer_than_a_day_waits_a_day_after_a_failure(
     subscribing_app: App, feeds: FeedStandin
@@ -650,7 +646,6 @@ def failed_at_once(app: App, feeds: FeedStandin, subscription: str, failures: in
     answered_going_on(app, lambda: subscribe(app, other, 0), "subscribing to another feed")
 
 
-@FAILS_AT_ONCE
 def test_polls_whose_feed_fails_at_once_are_kept_failed_and_the_poller_goes_on(
     start_app: Callable[..., App], feeds: FeedStandin
 ) -> None:
@@ -700,7 +695,6 @@ def test_a_poll_by_hand_begins_now_whenever_the_next_was_due(
     ), "S6: a poll by hand of a subscription that is not there was not refused"
 
 
-@FAILS_AT_ONCE
 def test_a_poll_by_hand_tells_the_polls_failed_in_a_row_before_it(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:

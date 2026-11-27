@@ -22,16 +22,6 @@ MOST_POSTINGS_LISTED = 200
 # that the poller has looked at what is due and what waits, and has done nothing.
 WATCHES = 6
 HELD_READING = "held-reading"
-# A known fault of the part: a poll whose feed function raises at once can stop the poller for
-# good, and the service then neither answers nor stops, nor lets the tests end. A judgment of
-# such polls is not run until the part's mend is merged.
-FAILS_AT_ONCE = pytest.mark.xfail(
-    run=False,
-    reason=(
-        "S5, S6: a poll whose feed function raises at once can deadlock the poller, and the "
-        "service then neither answers nor stops (known fault, being mended)"
-    ),
-)
 UNDERWAY = "underway"
 SETTLED = "settled"
 FAILED = "failed"
