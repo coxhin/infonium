@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Folder } from "./client";
 import { FolderNameField, type NameDone } from "./foldername";
 import { MenuItem, Popup, type Opening } from "./menu";
-import { usePress } from "./pressing";
+import { usePress, type Press } from "./pressing";
 
 // The menu of a subscription or of a hand-added item that moves it: to one of the folders, the
 // one it is in marked; to a folder made here, whose name the menu asks for in its place; or out
@@ -51,52 +51,68 @@ export function PlaceMenu({
     }
   }
 
+  // While it asks for a new folder's name, the menu is a dialog, which holds a field and a press.
+  if (naming) {
+    return (
+      <Popup
+        key="naming"
+        opening={opening}
+        role="dialog"
+        label={`把“${what}”移到新分类`}
+        onLeave={onLeave}
+      >
+        <FolderNameField asked={{ kind: "new" }} waiting={asking} onSend={onMake} onDone={named} />
+        <PlacingSaid press={placing.press} />
+      </Popup>
+    );
+  }
   return (
     <Popup opening={opening} role="menu" label={`移动“${what}”`} onLeave={onLeave}>
-      {naming ? (
-        <FolderNameField asked={{ kind: "new" }} waiting={asking} onSend={onMake} onDone={named} />
-      ) : (
+      <p className="menu-heading" aria-hidden="true">
+        移到分类…
+      </p>
+      <div role="group" aria-label="移到分类">
+        {folders.map((folder) => (
+          <MenuItem
+            key={folder.id}
+            checked={folder.id === current}
+            disabled={asking}
+            onChoose={() => placeIn(folder.id)}
+          >
+            <span className="menu-name" dir="auto" title={folder.name}>
+              {folder.name}
+            </span>
+          </MenuItem>
+        ))}
+        <MenuItem disabled={asking} onChoose={() => setNaming(true)}>
+          新建分类…
+        </MenuItem>
+      </div>
+      {current !== null && (
         <>
-          <p className="menu-heading" aria-hidden="true">
-            移到分类…
-          </p>
-          <div role="group" aria-label="移到分类">
-            {folders.map((folder) => (
-              <MenuItem
-                key={folder.id}
-                checked={folder.id === current}
-                disabled={asking}
-                onChoose={() => placeIn(folder.id)}
-              >
-                <span className="menu-name" dir="auto" title={folder.name}>
-                  {folder.name}
-                </span>
-              </MenuItem>
-            ))}
-            <MenuItem disabled={asking} onChoose={() => setNaming(true)}>
-              新建分类…
-            </MenuItem>
-          </div>
-          {current !== null && (
-            <>
-              <div role="separator" />
-              <MenuItem disabled={asking} onChoose={() => placeIn(null)}>
-                移出分类
-              </MenuItem>
-            </>
-          )}
+          <div role="separator" />
+          <MenuItem disabled={asking} onChoose={() => placeIn(null)}>
+            移出分类
+          </MenuItem>
         </>
       )}
-      {asking && (
-        <p className="status" role="status">
-          正在移动…
-        </p>
-      )}
-      {placing.press.state === "refused" && (
-        <p className="status failed" role="alert">
-          没有移动：{placing.press.reason}
-        </p>
-      )}
+      <PlacingSaid press={placing.press} />
     </Popup>
   );
+}
+
+// What the menu says of a move: that it is under way, or why the service refused it.
+function PlacingSaid({ press }: { press: Press }) {
+  if (press.state === "asking") {
+    return (
+      <p className="status" role="status">
+        正在移动…
+      </p>
+    );
+  }
+  return press.state === "refused" ? (
+    <p className="status failed" role="alert">
+      没有移动：{press.reason}
+    </p>
+  ) : null;
 }

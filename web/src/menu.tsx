@@ -62,9 +62,9 @@ function movedInMenu(event: KeyboardEvent<HTMLElement>, own: HTMLElement): boole
 }
 
 // A popup over the page, beside what opened it: a menu, or a question asked before a press is
-// sent. The keyboard goes to its first item, or to the field or button marked autoFocus. Escape
-// or Tab leaves it for the control that opened it; a press outside it leaves it where the press
-// was.
+// sent. The keyboard goes to its first item, or to the button marked autoFocus, or stays in the
+// field that took it. Escape or Tab leaves it for the control that opened it; a press outside it
+// leaves it where the press was.
 export function Popup({
   opening,
   role,
@@ -92,9 +92,12 @@ export function Popup({
     if (element === null) {
       return undefined;
     }
-    const first =
-      element.querySelector<HTMLElement>("[data-autofocus]") ?? menuItems(element)[0] ?? element;
-    first.focus({ preventScroll: true });
+    // A part that took the keyboard as it opened, as a field, keeps it.
+    if (!element.contains(document.activeElement)) {
+      const first =
+        element.querySelector<HTMLElement>("[data-autofocus]") ?? menuItems(element)[0] ?? element;
+      first.focus({ preventScroll: true });
+    }
     const pressed = (event: PointerEvent) => {
       if (!(event.target instanceof Node && element.contains(event.target))) {
         onLeave(false);
