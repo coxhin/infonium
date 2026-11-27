@@ -182,8 +182,6 @@ FOUND_BROKEN = "RSS or Atom that breaks off, or is broken, before its title and 
 # The relations of a link that feedparser reports: the page of a posting or of a feed, and a
 # file it carries. A link without a relation is an alternate one, which feedparser says.
 ALTERNATE = "alternate"
-# The versions feedparser gives a feed of Atom begin so.
-ATOM = "atom"
 ENCLOSURE = "enclosure"
 PLAIN_TEXT = "text/plain"
 MARKUP_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -561,13 +559,15 @@ def feed_of(
     )
 
 
-def given_text(parsed: ParsedText, version: str) -> GivenText:
-    # A text of Atom is plain or markup as its type says; one of RSS carries markup by custom.
-    plain = version.startswith(ATOM) and parsed.type not in MARKUP_TYPES
-    return GivenText(value=parsed.value, kind=TextKind.PLAIN if plain else TextKind.MARKUP)
+def given_text(parsed: ParsedText) -> GivenText:
+    # A text is markup or plain as its type says: Atom's as the feed writes it, and RSS's, which
+    # does not say, as feedparser judges it, markup where it looks like HTML. "Why Vec<T> is
+    # fast" is so a title of its own words, and "<em>Seen</em> and heard" one without its markup.
+    markup = parsed.type in MARKUP_TYPES
+    return GivenText(value=parsed.value, kind=TextKind.MARKUP if markup else TextKind.PLAIN)
 
 
-def listing_of_entry(entry: ParsedEntry, version: str) -> Listing:
+def listing_of_entry(entry: ParsedEntry) -> Listing:
     # A posting's recordings are the enclosures of RSS and Atom, its pages the alternate links
     # of Atom and the link of RSS, then a guid that is a permalink, which feedparser gives as
     # the link where the posting has no other: that is taken only where it is a web address
@@ -583,10 +583,8 @@ def listing_of_entry(entry: ParsedEntry, version: str) -> Listing:
     return Listing(
         id=entry.id,
         addresses=[*recordings, *pages, linked],
-        title=given_text(entry.title_detail, version) if entry.title_detail is not None else None,
-        summaries=[
-            given_text(text, version) for text in [entry.summary_detail, *entry.content] if text
-        ],
+        title=given_text(entry.title_detail) if entry.title_detail is not None else None,
+        summaries=[given_text(text) for text in [entry.summary_detail, *entry.content] if text],
         times=[entry.published, entry.updated],
     )
 
@@ -689,12 +687,11 @@ def rss_or_atom(parsed: ParsedFeed, address: str) -> Feed:
     # names, which gives a posting's updated time as its published one where it has none and
     # warns that it will stop.
     channel = parsed.feed
-    version = parsed.version
     entries = (ParsedEntry.model_validate(dict.copy(entry)) for entry in parsed.entries)
     return feed_of(
-        title=given_text(channel.title_detail, version) if channel.title_detail else None,
+        title=given_text(channel.title_detail) if channel.title_detail is not None else None,
         sites=[*[link.href for link in channel.links if link.rel == ALTERNATE], channel.link],
-        listings=(listing_of_entry(entry, version) for entry in entries),
+        listings=(listing_of_entry(entry) for entry in entries),
         address=address,
     )
 
