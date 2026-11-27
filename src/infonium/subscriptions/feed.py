@@ -126,10 +126,8 @@ JSON_OPENINGS = ("{", "[")
 XML_OPENING = "<"
 
 # What a reader is told of bytes that hold no feed: what they hold instead, and what to give.
-NOT_A_FEED = (
-    "{address} is not a feed but {found}; give the address of a feed, or a route of RSSHub"
-    " as rsshub://<route>, instead"
-)
+GIVE_A_FEED = "give the address of a feed, or a route of RSSHub, instead"
+NOT_A_FEED = "{address} is not a feed but {found}; " + GIVE_A_FEED
 FOUND_NOTHING = "an empty answer"
 FOUND_PAGE = "a web page"
 FOUND_JSON = "JSON that is not a JSON Feed"

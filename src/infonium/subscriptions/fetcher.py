@@ -72,6 +72,15 @@ class Unchanged(Tagged):
 Fetched = Annotated[Changed | Unchanged, Field(discriminator="kind")]
 
 
+class Answer(BaseModel):
+    # What an address answered with: the address the answer came from after redirects, the
+    # kind it declares, its bytes, and the validators it gives.
+    address: str
+    declared: str
+    content: bytes
+    validators: Validators
+
+
 def request_headers(validators: Validators) -> dict[str, str]:
     held = [(IF_NONE_MATCH, validators.etag), (IF_MODIFIED_SINCE, validators.modified)]
     return {
@@ -121,21 +130,22 @@ def bounded_content(response: httpx.Response, source: str, most_bytes: int, ends
     return bytes(content)
 
 
-def served_address(response: httpx.Response) -> str:
-    # The address an answer came from, after redirects.
-    return str(response.url.copy_with(fragment=None))
-
-
-def changed(response: httpx.Response, content: bytes) -> Changed:
-    # The feed an answer holds, read at the address it came from as the kind it declares, and
-    # the validators it gives.
-    return Changed(
-        feed=read_feed(
-            content, response.headers.get(CONTENT_TYPE, UNDECLARED), served_address(response)
-        ),
+def answer_of(response: httpx.Response, content: bytes) -> Answer:
+    return Answer(
+        address=str(response.url.copy_with(fragment=None)),
+        declared=response.headers.get(CONTENT_TYPE, UNDECLARED),
+        content=content,
         validators=Validators(
             etag=response.headers.get(ETAG), modified=response.headers.get(LAST_MODIFIED)
         ),
+    )
+
+
+def changed(answer: Answer) -> Changed:
+    # The feed an answer holds, read at the address it came from as the kind it declares.
+    return Changed(
+        feed=read_feed(answer.content, answer.declared, answer.address),
+        validators=answer.validators,
     )
 
 
@@ -148,5 +158,5 @@ def fetched_feed(address: str, validators: Validators) -> Fetched:
     with answer_to(address, validators) as response:
         if response.status_code == HTTPStatus.NOT_MODIFIED:
             return Unchanged()
-        content = bounded_content(response, address, FEED_LIMIT_BYTES, ends)
-    return changed(response, content)
+        answer = answer_of(response, bounded_content(response, address, FEED_LIMIT_BYTES, ends))
+    return changed(answer)
