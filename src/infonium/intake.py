@@ -404,9 +404,12 @@ class Intake:
                 arrived.replace(self.store.upload(item_id))
                 item = self.started(owner, item_id, origin)
         if not underway:
-            # The reading starts whether or not the file is kept as it arrived.
+            # The reading starts whether or not the file is kept as it arrived. The item is
+            # answered as keeping the file left it, read before its reading can begin.
             try:
                 self.keep_arrival(owner, item_id, uploaded(self.store.upload(item_id), origin.name))
+                with self.store.library(owner) as library:
+                    item = library.item(item_id)
             finally:
                 self.read_in_background(owner, item_id)
         return item

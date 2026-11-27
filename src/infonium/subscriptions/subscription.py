@@ -22,6 +22,8 @@ from infonium.library import (
     field_path,
     item_identity,
     item_table,
+    kept_document_id,
+    media_type_table,
     metadata,
     origin_kind,
     reading_kind,
@@ -425,13 +427,13 @@ def posting_row(
     }
 
 
-def shown_posting(body: str, item: str | None, seen: str | None) -> ShownPosting:
+def shown_posting(body: str, item: str | None, seen: str | None, noted: str | None) -> ShownPosting:
     # A posting as it is kept, and, of one that was admitted, its item as it is kept with when
-    # it was seen.
+    # it was seen and the media type noted of the document it holds.
     listed = ListedPosting.model_validate_json(body)
     match listed.admission:
         case Admitted() if item is not None:
-            admission: Unadmitted | Awaited | HeldItem = HeldItem(item=seen_item(item, seen))
+            admission: Unadmitted | Awaited | HeldItem = HeldItem(item=seen_item(item, seen, noted))
         case Admitted(item=item_id):
             raise NotInLibrary(f"item {item_id}, which a posting was admitted as, is missing")
         case Unadmitted() | Awaited() as waiting:
@@ -590,18 +592,28 @@ class Subscriptions:
         # The postings that the conditions hold of, the newest first, with the items of those
         # that were admitted, in one query.
         rows = self.connection.execute(
-            sqlalchemy.select(posting_table.c.body, item_table.c.body, seen_table.c.seen)
+            sqlalchemy.select(
+                posting_table.c.body,
+                item_table.c.body,
+                seen_table.c.seen,
+                media_type_table.c.media_type,
+            )
             .select_from(posting_table)
             .outerjoin(
                 item_table,
                 (item_table.c.id == posting_table.c.item_id) & (item_table.c.owner == self.owner),
             )
             .outerjoin(seen_table, seen_table.c.item_id == posting_table.c.item_id)
+            .outerjoin(
+                media_type_table,
+                (media_type_table.c.owner == self.owner)
+                & (media_type_table.c.document_id == kept_document_id),
+            )
             .where(*self.of_subscription(subscription_id), *where)
             .order_by(posting_table.c.number.desc())
             .limit(limit)
         ).all()
-        return [shown_posting(body, item, seen) for body, item, seen in rows]
+        return [shown_posting(body, item, seen, noted) for body, item, seen, noted in rows]
 
     def page(self, subscription_id: str, before: int | None, limit: int) -> list[ShownPosting]:
         # The newest postings, or the newest of those below the number given.
