@@ -80,14 +80,6 @@ class BegunPoll(BaseModel):
     added: AwareDatetime
 
 
-def record_fault(finished: Future[None]) -> None:
-    # A poll keeps its own failure; what still ends one is a fault in keeping it. This runs in
-    # whichever thread finishes or registers last, which may hold the turn, so it takes none.
-    error = None if finished.cancelled() else finished.exception()
-    if error is not None:
-        logger.error("a poll's failure could not be kept", exc_info=error)
-
-
 def polled(subscriptions: Subscriptions, begun: BegunPoll) -> list[Subscription]:
     # The subscription a poll was begun of, while that poll is under way; nothing once it was
     # removed.
@@ -142,7 +134,7 @@ class Poller:
             cut_off = underway_polls(every_owner)
         for owned in cut_off:
             self.poll_in_background(owned.owner, owned.subscription)
-        self.watching.submit(self.watch).add_done_callback(self.record_watch)
+        self.watching.submit(self.watch).add_done_callback(self.record_end)
 
     def raise_failure(self) -> None:
         # Once the schedule has stopped on a fault, every operation on subscriptions fails with
@@ -174,7 +166,10 @@ class Poller:
         self.watching.shutdown(wait=True, cancel_futures=True)
         self.pool.shutdown(wait=False, cancel_futures=True)
 
-    def record_watch(self, finished: Future[None]) -> None:
+    def record_end(self, finished: Future[None]) -> None:
+        # The end of the watch, or of a poll, which keeps its own end: a fault that escapes
+        # either is a fault of the schedule, and stops it. This runs in whichever thread ends
+        # the work or registers last, which may hold the turn.
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             self.stop_on(error)
@@ -211,13 +206,15 @@ class Poller:
 
     def poll_in_background(self, owner: str, subscription: Subscription) -> None:
         begun = BegunPoll(owner=owner, subscription_id=subscription.id, added=subscription.added)
-        finished = self.pool.submit(self.poll, begun)
-        finished.add_done_callback(record_fault)
+        self.pool.submit(self.poll, begun).add_done_callback(self.record_end)
 
     def poll(self, begun: BegunPoll) -> None:
         # The feed is asked for from where the fetcher stopped, unless the subscription was
         # removed before the poll had its turn. A poll that fails keeps its failure itself, in
-        # the poller's own thread, which holds nothing when it begins.
+        # the poller's own thread, which holds nothing when it begins. A poll whose turn comes
+        # once the schedule has stopped stays under way, and begins again when infonium does.
+        if self.stopped.is_set():
+            return
         with self.store.transaction(begun.owner) as transaction:
             asked = polled(Subscriptions(transaction), begun)
         for subscription in asked:
