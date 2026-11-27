@@ -73,7 +73,8 @@ POSTING_OPENING = re.compile(r"<(?:[\w.-]+:)?(?:item|entry)[\s/>]", re.IGNORECAS
 # feedparser also builds every link, enclosure, category, content, author and thumbnail it
 # finds, close to a kilobyte each: one posting with 1.3 million links took a gigabyte. So a
 # feed is read no further than the element of these kinds after ten for each posting read, and
-# of one posting no more than 50 of each are looked at.
+# of one posting no more than 50 of each are looked at, nor of a JSON Feed's item more than 50
+# attachments.
 READ_LISTED = 10 * READ_POSTINGS
 LISTED_OPENING = re.compile(
     r"<(?:[\w.-]+:)?(?:link|enclosure|category|content|author|contributor|thumbnail)[\s/>]",
@@ -146,6 +147,7 @@ BOZO_EXCEPTION = "bozo_exception"
 ID = "id"
 HREF = "href"
 LINKS = "links"
+PERMALINK = "guidislink"
 # feedparser takes each element's base anew, joining it to the base around it: given the feed's
 # address, that cost a second for 40,000 elements and 1 GiB more for 6.9 million unclosed ones.
 # It is given the address only where the feed names a base of its own, in an attribute xml:base
@@ -361,7 +363,7 @@ class JsonFeedItem(BaseModel):
     content_html: str | None = None
     date_published: str | None = None
     date_modified: str | None = None
-    attachments: list[JsonFeedAttachment] | None = None
+    attachments: Annotated[list[JsonFeedAttachment], BeforeValidator(mappings_of)] = []
 
 
 class JsonFeed(BaseModel):
@@ -610,6 +612,9 @@ def parser_keeping_ids(parser_class: Any) -> Any:
     # One of feedparser's parsers, but that it keeps an id as written, where it would resolve
     # one it takes for a permalink against the base, and resolves the address of an RSS
     # enclosure against the base in effect where it stands, as it does that of every link.
+    # feedparser sets what it takes an id for only where an id or a guid opens, and reads it
+    # where one closes, which a broken feed may do without opening one: until one opens, an id
+    # is no permalink.
     def pop(parser: Any, element: str, strip_whitespace: int = 1) -> Any:
         if element != ID:
             return parser_class.pop(parser, element, strip_whitespace)
@@ -625,7 +630,7 @@ def parser_keeping_ids(parser_class: Any) -> Any:
         if HREF in enclosure:
             enclosure[HREF] = parser.resolve_uri(enclosure[HREF])
 
-    overrides = {"pop": pop, "_start_enclosure": start_enclosure}
+    overrides = {"pop": pop, "_start_enclosure": start_enclosure, PERMALINK: False}
     return type(f"{parser_class.__name__}KeepingIds", (parser_class,), overrides)
 
 
@@ -660,8 +665,10 @@ def feedparser_result(data: bytes, base: str) -> Any:
         parser = LOOSE_PARSER(base, None, DEFAULT_ENCODING, entities)
         parser.resolve_relative_uris = parser.sanitize_html = False
         parser.feed(data.decode(DEFAULT_ENCODING, errors="replace"))
+    # A posting still open where the feed ends is one the feed broke off inside, and is left
+    # out: what was read of it may differ from it whole, its key among it.
     result[FEED] = parser.feeddata
-    result[ENTRIES] = parser.entries
+    result[ENTRIES] = parser.entries[:-1] if parser.inentry else parser.entries
     result[VERSION] = result[VERSION] or parser.version
     return result
 
