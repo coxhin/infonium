@@ -9,9 +9,8 @@ from pathlib import PurePath
 from typing import Annotated, Any, Literal
 from urllib.parse import urldefrag, urlsplit
 
-import httpx
 import openai
-from fastapi import Depends, FastAPI, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, HttpUrl
 from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
@@ -107,7 +106,7 @@ from infonium.speech import Recogniser
 from infonium.subscriptions.discovery import discovered_feed
 from infonium.subscriptions.feed import UnreadableFeed
 from infonium.subscriptions.fetcher import fetched_feed
-from infonium.subscriptions.poller import Poller
+from infonium.subscriptions.poller import Poller, ScheduleStopped
 from infonium.subscriptions.subscription import (
     AdmissionKind,
     Awaited,
@@ -595,9 +594,7 @@ app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
-# A feed looked for at an address that cannot be reached, or that is no address httpx can ask.
-app.add_exception_handler(httpx.HTTPError, explained(HTTPStatus.BAD_REQUEST))
-app.add_exception_handler(httpx.InvalidURL, explained(HTTPStatus.BAD_REQUEST))
+app.add_exception_handler(ScheduleStopped, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -1282,7 +1279,17 @@ def remove_note(note_id: str, owner: Owner) -> None:
         Notes(transaction).remove(note_id)
 
 
-@app.get("/api/subscriptions")
+def schedule_running() -> None:
+    # Once the schedule has stopped on a fault, every operation on subscriptions is refused
+    # with it, so that the reader is told where they look.
+    poller().raise_failure()
+
+
+# The operations on subscriptions.
+subscriptions = APIRouter(dependencies=[Depends(schedule_running)])
+
+
+@subscriptions.get("/api/subscriptions")
 def list_subscriptions(owner: Owner) -> list[SubscriptionView]:
     # The owner's subscriptions, the one added last first.
     with library_store().transaction(owner) as transaction:
@@ -1290,7 +1297,7 @@ def list_subscriptions(owner: Owner) -> list[SubscriptionView]:
     return [subscription_view(subscription) for subscription in counted]
 
 
-@app.post("/api/subscriptions", responses=NO_FEED)
+@subscriptions.post("/api/subscriptions", responses=NO_FEED)
 def subscribe(draft: SubscriptionDraft, owner: Owner) -> SubscriptionView:
     # Finds the feed the address leads to, reads it, and keeps a subscription to it that
     # lists the postings the feed holds now; the newest of them, as many as the draft says,
@@ -1300,19 +1307,19 @@ def subscribe(draft: SubscriptionDraft, owner: Owner) -> SubscriptionView:
     return subscription_view(poller().subscribe(owner, draft))
 
 
-@app.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
+@subscriptions.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
 def read_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     with library_store().transaction(owner) as transaction:
         return subscription_view(Subscriptions(transaction).counted(subscription_id))
 
 
-@app.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
+@subscriptions.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
 def choose_follows(subscription_id: str, choice: FollowsChoice, owner: Owner) -> SubscriptionView:
     # Sets how the subscription follows its feed from now on.
     return subscription_view(poller().follow(owner, subscription_id, choice.follows))
 
 
-@app.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
+@subscriptions.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
 def poll_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     # Starts a poll of the subscription's feed now, whenever the next was due and though the
     # subscription be paused. Where a poll is under way already, that one goes on and no
@@ -1321,7 +1328,7 @@ def poll_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     return subscription_view(poller().poll_now(owner, subscription_id))
 
 
-@app.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
+@subscriptions.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
 def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     # Takes every item of the subscription's postings that is read and not seen for seen now.
     with library_store().transaction(owner) as transaction:
@@ -1330,7 +1337,7 @@ def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
         return subscription_view(subscriptions.counted(subscription_id))
 
 
-@app.delete(
+@subscriptions.delete(
     "/api/subscriptions/{subscription_id}",
     responses=NOT_IN_LIBRARY,
     status_code=HTTPStatus.NO_CONTENT,
@@ -1341,7 +1348,7 @@ def unsubscribe(subscription_id: str, owner: Owner) -> None:
     poller().unsubscribe(owner, subscription_id)
 
 
-@app.get("/api/subscriptions/{subscription_id}/postings", responses=NOT_IN_LIBRARY)
+@subscriptions.get("/api/subscriptions/{subscription_id}/postings", responses=NOT_IN_LIBRARY)
 def subscription_postings(
     subscription_id: str,
     owner: Owner,
@@ -1359,7 +1366,7 @@ def subscription_postings(
     return [posting_view(shown) for shown in page]
 
 
-@app.post(
+@subscriptions.post(
     "/api/subscriptions/{subscription_id}/postings/{number}/reading", responses=NOT_IN_LIBRARY
 )
 def read_posting(subscription_id: str, number: PostingNumber, owner: Owner) -> PostingView:
@@ -1367,3 +1374,6 @@ def read_posting(subscription_id: str, number: PostingNumber, owner: Owner) -> P
     # admitted to the library now, and one whose item's reading failed is read again. One
     # whose item is being read, or is read, is answered as it stands.
     return posting_view(poller().read_posting(owner, subscription_id, number))
+
+
+app.include_router(subscriptions)
