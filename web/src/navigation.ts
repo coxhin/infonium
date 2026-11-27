@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   dissolveFolder,
   makeFolder,
@@ -29,7 +29,8 @@ import {
   ALL,
   byName,
   followed,
-  holds,
+  isThere,
+  openingSelection,
   sameSelection,
   tallied,
   type MediaChoice,
@@ -43,6 +44,8 @@ export type Navigation = {
   subscriptions: Watched<Subscription[]>;
   folders: Watched<Folder[]>;
   selection: Selection;
+  // Whether the selection the page opens with is decided, which waits for the three lists.
+  opened: boolean;
   // The subscription the list column shows, with what it was opened for.
   pane: SubscriptionPlace | undefined;
   select: (selection: Selection) => void;
@@ -97,6 +100,10 @@ export function useNavigation(
     () => new Set(listedSubscriptions.map((subscription) => subscription.id)),
     [listedSubscriptions],
   );
+  const folderIds = useMemo(
+    () => new Set(listedFolders.map((folder) => folder.id)),
+    [listedFolders],
+  );
   const tally = useMemo(
     () => tallied(listedEntries, media, present, seen),
     [listedEntries, media, present, seen],
@@ -115,6 +122,7 @@ export function useNavigation(
   const select = useCallback(
     (chosen: Selection) => {
       keepSelection(chosen);
+      setOpened(true);
       setSubscribing(false);
       setPane(
         chosen.kind === "subscription"
@@ -125,54 +133,41 @@ export function useNavigation(
     [keepSelection],
   );
 
-  // After a reload, the selection remembered is kept where it holds the item open in the
-  // reader; otherwise the item's subscription is selected, or its folder, or every item. A
-  // subscription selected so looks for the item's posting. An item opened later, by a link
+  // The selection a page opens with is decided in this one place, once the items, the
+  // subscriptions and the folders are all read, whichever arrives first: until then nothing
+  // moves it, and the list column waits. A subscription selected so looks for the posting of the
+  // item open. A selection the reader makes meanwhile stands. An item opened later, by a link
   // within the app, leaves the selection as it is.
-  const opening = useRef(openedAtStart);
+  const [opened, setOpened] = useState(false);
+  const allRead =
+    entries.loaded.state === "ready" &&
+    subscriptions.loaded.state === "ready" &&
+    folders.loaded.state === "ready";
   useEffect(() => {
-    const itemId = opening.current;
-    if (
-      itemId === undefined ||
-      entries.loaded.state === "loading" ||
-      subscriptions.loaded.state === "loading" ||
-      folders.loaded.state === "loading"
-    ) {
+    if (opened || !allRead) {
       return;
     }
-    opening.current = undefined;
-    const entry = listedEntries.find((each) => each.id === itemId);
-    if (entry === undefined) {
-      return;
-    }
-    const subscription = followed(entry, present);
-    const chosen = holds(selection, entry, present, seen)
-      ? selection
-      : subscription !== undefined
-        ? ({ kind: "subscription", subscriptionId: subscription } as const)
-        : entry.folder !== null
-          ? ({ kind: "folder", folderId: entry.folder } as const)
-          : ALL;
+    setOpened(true);
+    const entry =
+      openedAtStart === undefined
+        ? undefined
+        : listedEntries.find((each) => each.id === openedAtStart);
+    const chosen = openingSelection(selection, entry, folderIds, present, seen);
     keepSelection(chosen);
-    if (chosen.kind === "subscription") {
-      setPane({ subscriptionId: chosen.subscriptionId, sought: itemId, again: false });
+    if (chosen.kind === "subscription" && entry !== undefined) {
+      setPane({ subscriptionId: chosen.subscriptionId, sought: entry.id, again: false });
     }
-  }, [entries.loaded, subscriptions.loaded, folders.loaded]);
+  }, [opened, allRead]);
 
-  // A folder or a subscription selected that is there no more, as one removed in another window,
-  // gives way to every item. The form that subscribes stays where it is open, with what it says.
+  // Once the page has opened, a folder or a subscription selected that is there no more, as one
+  // removed in another window, gives way to every item. The form that subscribes stays where it
+  // is open, with what it says.
   useEffect(() => {
-    const missing =
-      (selection.kind === "folder" &&
-        folders.loaded.state === "ready" &&
-        !listedFolders.some((folder) => folder.id === selection.folderId)) ||
-      (selection.kind === "subscription" &&
-        subscriptions.loaded.state === "ready" &&
-        !present.has(selection.subscriptionId));
-    if (missing) {
+    const read = selection.kind === "folder" ? folders.loaded : subscriptions.loaded;
+    if (opened && read.state === "ready" && !isThere(selection, folderIds, present)) {
       keepSelection(ALL);
     }
-  }, [selection, folders.loaded, subscriptions.loaded]);
+  }, [opened, selection, folders.loaded, subscriptions.loaded]);
 
   // What the service refuses may rest on something this page shows that is there no more, as a
   // folder dissolved in another window: the lists are read again, and the refusal is said.
@@ -255,6 +250,7 @@ export function useNavigation(
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       }
       keepSelection({ kind: "subscription", subscriptionId: subscription.id });
+      setOpened(true);
       setSubscribing(false);
       setPane({ subscriptionId: subscription.id, sought: undefined, again });
     },
@@ -283,6 +279,7 @@ export function useNavigation(
     subscriptions,
     folders,
     selection,
+    opened,
     pane:
       selection.kind === "subscription"
         ? pane?.subscriptionId === selection.subscriptionId

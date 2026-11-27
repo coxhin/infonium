@@ -114,10 +114,13 @@ export function ListColumn({
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }
       : undefined;
-  // The lists the selection is drawn from are read first; until then, they are being opened.
+  // The lists the selection is drawn from are read first, and the selection the page opens with
+  // is decided; until then, it is being opened. Every item is listed at once: no list moves it.
   const waiting =
     selection.kind !== "all" &&
-    (subscriptions.loaded.state === "loading" || folders.loaded.state === "loading");
+    (!navigation.opened ||
+      subscriptions.loaded.state === "loading" ||
+      folders.loaded.state === "loading");
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
@@ -172,7 +175,7 @@ export function ListColumn({
             <SubscribingHint />
           )}
         </div>
-      ) : selection.kind === "subscription" && navigation.pane !== undefined ? (
+      ) : !waiting && selection.kind === "subscription" && navigation.pane !== undefined ? (
         <SubscriptionPane
           key={navigation.pane.subscriptionId}
           subscriptionId={navigation.pane.subscriptionId}

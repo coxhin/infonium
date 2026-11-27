@@ -81,6 +81,51 @@ export function isOfMedia(entry: ItemEntry, media: MediaChoice): boolean {
   return media === "any" || entry.media === media;
 }
 
+// Whether what the selection names is there: a folder or a subscription may have gone, as one
+// removed in another window.
+export function isThere(
+  selection: Selection,
+  folders: ReadonlySet<string>,
+  present: ReadonlySet<string>,
+): boolean {
+  switch (selection.kind) {
+    case "folder":
+      return folders.has(selection.folderId);
+    case "subscription":
+      return present.has(selection.subscriptionId);
+    default:
+      return true;
+  }
+}
+
+// The selection a page opens with, once the items, the subscriptions and the folders are read:
+// the one remembered, where it is there still and holds the item open in the reader, if one is;
+// otherwise the item's subscription where it follows one, else its folder, else every item. A
+// folder or a subscription that is there no more holds nothing. The item open is seen as soon as
+// the reader has it on show, so that 新来源 holds it no more whichever comes first.
+export function openingSelection(
+  remembered: Selection,
+  opened: ItemEntry | undefined,
+  folders: ReadonlySet<string>,
+  present: ReadonlySet<string>,
+  seen: ReadonlySet<string>,
+): Selection {
+  const there = isThere(remembered, folders, present);
+  if (opened === undefined) {
+    return there ? remembered : ALL;
+  }
+  if (there && holds(remembered, opened, present, new Set(seen).add(opened.id))) {
+    return remembered;
+  }
+  const subscription = followed(opened, present);
+  if (subscription !== undefined) {
+    return { kind: "subscription", subscriptionId: subscription };
+  }
+  return opened.folder !== null && folders.has(opened.folder)
+    ? { kind: "folder", folderId: opened.folder }
+    : ALL;
+}
+
 // Whether the selection holds the item, whatever its media.
 export function holds(
   selection: Selection,
