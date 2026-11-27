@@ -1,3 +1,5 @@
+import pytest
+
 from infonium.anchor import Anchor
 from infonium.document import HTML_MEDIA_TYPE, Document, Paragraph, document_of
 from infonium.passage import Found, Lost, Passage, Standing
@@ -310,6 +312,101 @@ def test_a_sentence_put_in_again_beside_its_own_copy_is_not_taken_for_it() -> No
     assert not (isinstance(standing, Found) and standing.passage.anchors[0].block_number == 1), (
         f"the sentence was taken at the copy put in: {standing}"
     )
+
+
+# A table of the passage's row and the six rows after it, and a table that says them again
+# after rows of its own, as the third review of the mend built them.
+LEDGER_ROWS = [
+    row("r11", "4.5", "7", "12"),
+    row("r12", "0.3", "3.25", "7"),
+    row("r13", "12", "12", "4.5"),
+    row("r14", "3.25", "0.3", "0.3"),
+]
+FRESH_ROWS = [
+    row("r901", "905", "61.75", "88.1"),
+    row("r902", "0.004", "905", "905"),
+    row("r903", "61.75", "88.1", "0.004"),
+    row("r904", "88.1", "905", "61.75"),
+]
+OWN_ROW = row("r15", "4.5", "0.3", "7")
+ROWS_AFTER = [
+    row("r16", "7", "12", "3.25"),
+    row("r17", "0.3", "4.5", "12"),
+    row("r18", "3.25", "3.25", "0.3"),
+    row("r19", "12", "7", "7"),
+    row("r20", "4.5", "12", "0.3"),
+    row("r21", "7", "0.3", "4.5"),
+]
+OTHER_TABLE_ROWS = [
+    row("r31", "905", "88.1", "0.004"),
+    row("r32", "61.75", "905", "88.1"),
+    row("r33", "0.004", "0.004", "905"),
+    LEDGER_ROWS[3],
+]
+NIGHT = "The harbour keeper wrote the winter ledger by night, the keeper's night."
+CAFE = "A ferry crossing in fog was late and the café by the flood, the keeper's night."
+
+
+def renumbered(unit: Unit) -> Unit:
+    # The row with the first digit of its label one more: r16 becomes r26.
+    label = unit.words[0]
+    return row(f"r{int(label[1]) + 1}{label[2:]}", *unit.words[1:])
+
+
+def rows_said_again(own_row: Unit, third_table: list[Unit]) -> tuple[Revised, WordSpan]:
+    # The passage's row stands where it stood as own_row says, each row after it renumbered,
+    # the rows before it rewritten; another table says the row and the rows that followed it
+    # as they were, and a third table, where given, says the row once more.
+    first = [sentence(NIGHT), *LEDGER_ROWS, OWN_ROW, *ROWS_AFTER, sentence(CAFE)]
+    first_cuts = [cut(True), *table([*LEDGER_ROWS, OWN_ROW, *ROWS_AFTER]), cut(True)]
+    after = [renumbered(unit) for unit in ROWS_AFTER]
+    second = [
+        sentence(NIGHT),
+        *FRESH_ROWS,
+        own_row,
+        *after,
+        sentence(CAFE),
+        *OTHER_TABLE_ROWS,
+        OWN_ROW,
+        *ROWS_AFTER,
+        *third_table,
+    ]
+    second_cuts = [
+        cut(True),
+        *table([*FRESH_ROWS, own_row, *after]),
+        cut(True),
+        *table([*OTHER_TABLE_ROWS, OWN_ROW, *ROWS_AFTER]),
+        *(table(third_table) if third_table else []),
+    ]
+    origins: list[int | None] = [
+        0, None, None, None, None, 5, 6, 7, 8, 9, 10, 11, 12,
+        *[None] * (len(OTHER_TABLE_ROWS) + 1 + len(ROWS_AFTER) + len(third_table)),
+    ]  # fmt: skip
+    return revised(first, second, origins, first_cuts, second_cuts), whole(first, 5)
+
+
+def test_a_row_kept_among_renumbered_rows_is_not_taken_at_a_table_that_repeats_them() -> None:
+    # Each row after the own row changed by one digit: its side still stands, with a change in
+    # every quarter of it, and the other table keeps the side as it was.
+    revision, span = rows_said_again(OWN_ROW, [])
+    standing = judged(revision, span)
+    assert not (isinstance(standing, Found) and standing.passage.anchors[0].block_number == 3), (
+        f"the row was taken in the table that repeats its rows: {standing}"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "known limit: where the passage's own row is renumbered too, and its rows' side is "
+        "found again only through a quarter of it kept as it is, the table that repeats the "
+        "rows is taken for the row's place"
+    ),
+)
+def test_a_renumbered_row_is_not_found_at_a_table_that_repeats_its_rows() -> None:
+    third = [row("r51", "61.75", "61.75", "905"), OWN_ROW, row("r52", "0.004", "88.1", "88.1")]
+    revision, span = rows_said_again(row("r15", "5.5", "0.3", "7"), third)
+    judged(revision, span)
 
 
 def paragraphs(extractor: str, *texts: str) -> Document:
