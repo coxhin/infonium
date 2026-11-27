@@ -241,6 +241,7 @@
         "enum": [
           "overview",
           "guide",
+          "flash",
           "brief",
           "paper",
           "outline",
@@ -1658,6 +1659,7 @@
             "enum": [
               "overview",
               "guide",
+              "flash",
               "brief",
               "paper",
               "outline",
@@ -3016,6 +3018,7 @@
                     "brief": "#/components/schemas/RecipeChoice",
                     "custom": "#/components/schemas/CustomChoice",
                     "faq": "#/components/schemas/RecipeChoice",
+                    "flash": "#/components/schemas/RecipeChoice",
                     "guide": "#/components/schemas/RecipeChoice",
                     "outline": "#/components/schemas/RecipeChoice",
                     "overview": "#/components/schemas/RecipeChoice",

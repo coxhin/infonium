@@ -9,6 +9,7 @@ class DigestStyle(StrEnum):
     # by a recipe, then the reader's own.
     OVERVIEW = "overview"
     GUIDE = "guide"
+    FLASH = "flash"
     BRIEF = "brief"
     PAPER = "paper"
     OUTLINE = "outline"
@@ -19,6 +20,7 @@ class DigestStyle(StrEnum):
 RecipeStyle = Literal[
     DigestStyle.OVERVIEW,
     DigestStyle.GUIDE,
+    DigestStyle.FLASH,
     DigestStyle.BRIEF,
     DigestStyle.PAPER,
     DigestStyle.OUTLINE,
@@ -78,6 +80,38 @@ The second section is titled with the words for "Key topics" in the output langu
 a list. It holds three to six statements, one for each topic the document takes up, in the \
 order it takes them up. Each statement begins with the topic's name in bold and a colon, \
 then says what the document says about that topic in one or two sentences.
+""",
+    ),
+    # Its one section has a title, though the style's name stands in the row of styles above
+    # it, and the rules say that the title follows the statements. gpt-6.1-terra and gpt-6-luna
+    # write a section's title after its statements, and there at times never ended their reply
+    # but wrote white space: of two short sources, in 15 of 55 flashes whose rules did not say
+    # where the title goes, empty or this one, and in none of 54 whose rules said so.
+    DigestStyle.FLASH: Recipe(
+        name="快讯",
+        description=(
+            "1\N{EN DASH}3 句\N{FULLWIDTH COMMA}最要紧的事先说\N{FULLWIDTH COMMA}"
+            "再补一两处关键的数字或后果。仿新闻快讯的倒金字塔导语。适合扫一眼"
+            "\N{FULLWIDTH COMMA}决定读不读。"
+        ),
+        section_rules="""\
+Write one section. It is titled with the words for "News flash" in the output language (in \
+Chinese 快讯), and is a paragraph. After the statements, write the title, and only then end \
+the section. It holds one to three statements, one sentence each, written as a news flash \
+is: the most important thing first, in short sentences without asides, each of at most \
+about 60 characters in Chinese, or as short in another language.
+
+The first statement is the lead: the newest or most consequential thing the document \
+reports, with who did what, and when and where, as far as the document says. Of a document \
+that reports no event, such as a paper, an essay or a guide, it is the document's main \
+finding, claim or advice, not the method or the steps that lead to it. Call a person or an \
+organisation by the name the document gives them, not "the author" or "the agencies", \
+wherever the document gives one. Where it gives none, call them as the document does, such as \
+"the author" (in Chinese 作者), and never by a name from outside the document.
+
+Each further statement adds the detail that matters most after the lead, such as a key \
+number, a consequence or what comes next. Leave out background, history and anything the \
+lead already says.
 """,
     ),
     DigestStyle.BRIEF: Recipe(
