@@ -49,10 +49,15 @@ SUBSCRIPTION_FORMAT = 1
 POSTING_FORMAT = 1
 # The longest a feed whose polls fail waits for its next poll, however many failed in a row.
 LONGEST_WAIT_AFTER_FAILURES = timedelta(days=1)
+# What browsers and sites write before a feed's address: feed://host/path, or feed: and the
+# whole address, as feed:https://host/path.
+FEED_PREFIX = re.compile(r"^(?i:feed):")
 # An address that names how it is reached, as https://, rsshub:// and mailto: do; one that
-# names none is reached over HTTPS. A host followed by its port, as example.com:8080, names none.
+# names none is reached over HTTPS. A host followed by its port, as example.com:8080, names none,
+# and neither does an address that begins with // and its host.
 NAMED_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
 ASSUMED_SCHEME = "https://"
+HOST_FOLLOWS = "//"
 RSSHUB_ROUTE_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 NO_FEED_ADDRESS = (
     "{address} is neither a web address (http:// or https://) nor a route of RSSHub"
@@ -270,10 +275,16 @@ def instant_order(instant: datetime) -> int:
 
 
 def subscribed_address(address: str) -> str:
-    # The address that is looked into for a feed, for the one a reader gave: reached over
-    # HTTPS where it names no scheme. One that is then neither a web address nor a route of
-    # RSSHub leads to no feed, and nothing is fetched.
-    named = address if NAMED_SCHEME.match(address) else f"{ASSUMED_SCHEME}{address}"
+    # The address that is looked into for a feed, for the one a reader gave: the web address
+    # that one written for a feed (feed:) stands for, and reached over HTTPS where it names no
+    # scheme. One that is then neither a web address nor a route of RSSHub leads to no feed,
+    # and nothing is fetched.
+    unwrapped = FEED_PREFIX.sub("", address, count=1)
+    named = (
+        unwrapped
+        if NAMED_SCHEME.match(unwrapped)
+        else f"{ASSUMED_SCHEME}{unwrapped.removeprefix(HOST_FOLLOWS)}"
+    )
     if not re.fullmatch(WEB_ADDRESS_PATTERN, named) and not re.fullmatch(
         RSSHUB_ROUTE_PATTERN, named
     ):
