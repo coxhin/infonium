@@ -48,8 +48,9 @@
   cursor: default;
 }
 
-/* The folder an entry is in already, marked among the folders it can be moved to. */
-.popup [role="menuitemradio"]::before {
+/* The folder an entry is in already, marked among the folders it can be moved to; every item
+   keeps the mark's room, so that their words stand in one line. */
+.popup [role^="menuitem"]::before {
   content: "";
   flex: none;
   width: 0.8em;

@@ -213,7 +213,7 @@
   width: auto;
 }
 
-.sidebar input {
+.sidebar :is(.rename, .new-folder) input {
   width: 100%;
   min-width: 0;
   font: inherit;

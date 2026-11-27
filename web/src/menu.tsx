@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import "./menu.css";
 
@@ -29,23 +21,21 @@ export function openingOfContextMenu(opener: HTMLElement, x: number, y: number):
   return { opener, at: x === 0 && y === 0 ? undefined : { x, y } };
 }
 
-// Under the place it opens at, or above it where the window has no room below; never past an
-// edge of the window.
-function placed(opening: Opening, size: DOMRect): CSSProperties {
+// Puts the popup under the place it opens at, or above it where the window has no room below,
+// never past an edge of the window. It is placed before it is first drawn, so that it is never
+// seen elsewhere, and is visible, and so can take the keyboard, from the start.
+function place(popup: HTMLElement, opening: Opening): void {
+  popup.style.maxHeight = `${innerHeight - 2 * MARGIN}px`;
+  const size = popup.getBoundingClientRect();
   const box = opening.opener.getBoundingClientRect();
   const { x, below, above } =
     opening.at === undefined
       ? { x: box.left, below: box.bottom + 2, above: box.top - 2 }
       : { x: opening.at.x, below: opening.at.y, above: opening.at.y };
   const top =
-    below + size.height <= innerHeight - MARGIN
-      ? below
-      : Math.max(MARGIN, above - size.height);
-  return {
-    left: Math.max(MARGIN, Math.min(x, innerWidth - size.width - MARGIN)),
-    top,
-    maxHeight: innerHeight - 2 * MARGIN,
-  };
+    below + size.height <= innerHeight - MARGIN ? below : Math.max(MARGIN, above - size.height);
+  popup.style.left = `${Math.max(MARGIN, Math.min(x, innerWidth - size.width - MARGIN))}px`;
+  popup.style.top = `${top}px`;
 }
 
 function menuItems(own: HTMLElement): HTMLElement[] {
@@ -90,11 +80,10 @@ export function Popup({
   children: ReactNode;
 }) {
   const own = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<CSSProperties>({ visibility: "hidden" });
 
   useLayoutEffect(() => {
     if (own.current !== null) {
-      setStyle(placed(opening, own.current.getBoundingClientRect()));
+      place(own.current, opening);
     }
   }, [opening]);
 
@@ -142,7 +131,6 @@ export function Popup({
       aria-label={label}
       aria-modal={role === "dialog" ? true : undefined}
       tabIndex={-1}
-      style={style}
       onKeyDown={onKeyDown}
     >
       {children}
