@@ -4,24 +4,23 @@ import {
   useId,
   useRef,
   useState,
-  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
 import type { Browsing } from "./browsing";
-import { requestReason, type Folder, type Subscription } from "./client";
-import { draggedOver, endDrag, type Dragged } from "./dragging";
+import type { Folder, Subscription } from "./client";
+import { draggedOver } from "./dragging";
 import { FOLDER_NAME_LENGTH } from "./folders";
 import { Interruption } from "./interruption";
 import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
 import { usePress } from "./pressing";
+import { useSidebarDrop } from "./sidebardrop";
 import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_CHOICES,
   MEDIA_NAMES,
   keyOf,
-  selectionOfKey,
   type MediaChoice,
   type Order,
   type Selection,
@@ -136,12 +135,7 @@ function SidebarBody({
   const mediaName = useId();
   const [naming, setNaming] = useState(false);
   const [focusKey, setFocusKey] = useState<{ key: string }>();
-  // The folder what is dragged would go into, none where it would leave its folder, and nothing
-  // where no drag is over the sidebar.
-  const [dropOn, setDropOn] = useState<string | null>();
-  // Why the service refused the last drop, said at the sidebar's head, which stays in view
-  // whether the folder dropped on does or not.
-  const [dropRefusal, setDropRefusal] = useState<string>();
+  const drop = useSidebarDrop(browsing.placer);
   const { tally, media, order, selection, folders, subscriptions } = browsing;
   // A media chosen narrows the list column at once, and the tree, which may draw again
   // hundreds of rows, after it, in pieces that leave the page free to answer meanwhile.
@@ -196,64 +190,6 @@ function SidebarBody({
     }
   }
 
-  // Where what is dragged over the sidebar goes: into the folder it is over, a subscription
-  // under a folder counting as that folder, and anywhere else out of its folder; nowhere where
-  // it is already.
-  function dropOf(
-    event: DragEvent<HTMLElement>,
-  ): { dragged: Dragged; folderId: string | null } | undefined {
-    const dragged = draggedOver(event);
-    if (dragged === undefined || !(event.target instanceof Element)) {
-      return undefined;
-    }
-    const over = selectionOfKey(event.target.closest<HTMLElement>("li.folder")?.dataset.key ?? "");
-    const folderId = over?.kind === "folder" ? over.folderId : null;
-    return dragged.folder === folderId ? undefined : { dragged, folderId };
-  }
-
-  function onDragOver(event: DragEvent<HTMLElement>) {
-    const drop = dropOf(event);
-    setDropOn(drop?.folderId);
-    if (drop !== undefined) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-    }
-  }
-
-  function onDrop(event: DragEvent<HTMLElement>) {
-    const drop = dropOf(event);
-    setDropOn(undefined);
-    endDrag();
-    if (drop === undefined) {
-      return;
-    }
-    event.preventDefault();
-    const { dragged, folderId } = drop;
-    const doing =
-      folderId === null
-        ? "没有移出分类"
-        : `没有移到“${folderList.find((folder) => folder.id === folderId)?.name ?? ""}”`;
-    setDropRefusal(undefined);
-    browsing.placer
-      .place({
-        folder: folderId,
-        subscriptions: dragged.kind === "subscription" ? [dragged.id] : [],
-        items: dragged.kind === "item" ? [dragged.id] : [],
-      })
-      .catch((error: unknown) => setDropRefusal(`${doing}：${requestReason(error)}`));
-  }
-
-  // A drag that ends anywhere leaves nothing marked.
-  useEffect(() => {
-    const ended = () => setDropOn(undefined);
-    addEventListener("dragend", ended);
-    addEventListener("drop", ended);
-    return () => {
-      removeEventListener("dragend", ended);
-      removeEventListener("drop", ended);
-    };
-  }, []);
-
   // Over the list column, the press keeps the sidebar open as a column; in one column, and as a
   // column, it folds it.
   const folding =
@@ -266,7 +202,7 @@ function SidebarBody({
       ref={own}
       className="sidebar"
       data-overlaid={overlaid}
-      data-dropping={dropOn === null}
+      data-dropping={drop.over === null}
       aria-label="侧栏"
       onKeyDown={onKeyDown}
       onBlur={(event) => {
@@ -280,13 +216,9 @@ function SidebarBody({
           layout.close();
         }
       }}
-      onDragOver={onDragOver}
-      onDragLeave={(event) => {
-        if (!(event.relatedTarget instanceof Node && own.current?.contains(event.relatedTarget))) {
-          setDropOn(undefined);
-        }
-      }}
-      onDrop={onDrop}
+      onDragOver={drop.onDragOver}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
     >
       <fieldset className="media-choice">
         <legend className="heard">类型</legend>
@@ -304,10 +236,10 @@ function SidebarBody({
           </label>
         ))}
       </fieldset>
-      {dropOn === null && <p className="sidebar-said">放在这里，移出分类</p>}
-      {dropRefusal !== undefined && (
+      {drop.over === null && <p className="sidebar-said">放在这里，移出分类</p>}
+      {drop.refusal !== undefined && (
         <p className="sidebar-said status failed" role="alert">
-          {dropRefusal}
+          {drop.refusal}
         </p>
       )}
       <div className="sidebar-scroll">
@@ -323,7 +255,7 @@ function SidebarBody({
           heldIn={browsing.heldIn}
           folded={browsing.folded}
           focusKey={focusKey}
-          dropOn={dropOn ?? undefined}
+          dropOn={drop.over ?? undefined}
           placer={browsing.placer}
           onSelect={select}
           onFolded={browsing.fold}
