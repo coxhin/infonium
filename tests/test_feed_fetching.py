@@ -11,11 +11,12 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
-from infonium import guard, intake
+from infonium import guard
 from infonium.document import (
     FETCH_TIMEOUT_SECONDS,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
+    USER_AGENT,
     error_status,
     turned_away,
 )
@@ -59,7 +60,7 @@ IF_NONE_MATCH = "if-none-match"
 IF_MODIFIED_SINCE = "if-modified-since"
 ACCEPT = "accept"
 ACCEPT_ENCODING = "accept-encoding"
-USER_AGENT = "user-agent"
+USER_AGENT_HEADER = "user-agent"
 FEED_KINDS = ("application/rss+xml", "application/atom+xml", "application/feed+json")
 ANYTHING = "*/*"
 ASKED_CODINGS = frozenset({"gzip", "deflate", "identity"})
@@ -109,8 +110,8 @@ def test_a_poll_is_one_get_as_the_intake_makes_it_carrying_the_validators_it_hol
     [request] = feed_sites.requests
     headers = request.headers
     assert request.method == "GET", f"a poll asked for the feed with {request.method}"
-    assert headers.get(USER_AGENT) == intake.USER_AGENT, (
-        f"a poll asked as {headers.get(USER_AGENT)!r}, not with the intake's user agent"
+    assert headers.get(USER_AGENT_HEADER) == USER_AGENT, (
+        f"a poll asked as {headers.get(USER_AGENT_HEADER)!r}, not with the intake's user agent"
     )
     assert (headers.get(IF_NONE_MATCH), headers.get(IF_MODIFIED_SINCE)) == (
         held.etag,
@@ -475,18 +476,16 @@ def test_a_failure_of_the_connection_is_left_as_it_is_raised(
 LONG_ADDRESS = "https://feeds.test/" + "a" * ADDRESS_CHARACTERS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="not reached by the mend: a feed polled through a redirect to an address longer than "
-    "a feed's address may be is read there, where discovery refuses it",
-)
-def test_an_address_that_leads_to_one_longer_than_a_feeds_address_may_be_is_unreadable(
+def test_a_poll_of_a_feed_moved_to_an_address_longer_than_an_address_kept_is_read(
     feed_sites: FeedSites,
 ) -> None:
+    # A poll keeps no address, so the feed is read where it is moved to; only a discovery, which
+    # would keep the address, refuses it.
     feed_sites.serve(FEED, moved(LONG_ADDRESS))
     feed_sites.serve(LONG_ADDRESS, answered(RELATIVE_FEED, kind_of(RSS_KIND)))
-    with pytest.raises(UnreadableFeed):
-        fetched = fetched_feed(FEED, Validators())
-        pytest.fail(
-            f"a feed moved to an address of {len(LONG_ADDRESS)} characters was read as {fetched}"
-        )
+    fetched = fetched_feed(FEED, Validators())
+    expected = read_feed(RELATIVE_FEED, RSS_KIND, LONG_ADDRESS)
+    assert isinstance(fetched, Changed) and fetched.feed == expected, (
+        f"a poll of a feed moved to an address of {len(LONG_ADDRESS)} characters gave {fetched}, "
+        "not the feed read there"
+    )

@@ -189,17 +189,29 @@ INLINE_ELEMENTS = (
 
 @st.composite
 def marked_texts(draw: st.DrawFn, said_words: st.SearchStrategy[str] = words) -> Marked:
-    # Words, some in inline elements, some of their letters written as character references,
-    # with any white space between them; repeated many times at times, to be cut.
+    # Words with any white space between them, repeated many times at times, to be cut; marked up
+    # or not. Marked, one word or more stands in an inline element and some letters are written as
+    # character references, the signs of markup always. Not marked, the text holds no element, no
+    # reference and no sign of markup. Either way every form reads it as its words, an RSS title
+    # too (N1).
+    marked = draw(st.booleans())
     said = draw(st.lists(said_words, min_size=1, max_size=5))
+    if not marked:
+        said = [
+            "".join(letter for letter in word if letter not in SIGN_REFERENCES) or "a"
+            for word in said
+        ]
     said *= draw(st.sampled_from((1, 1, 1, 40, 90)))
     chance = Random(draw(st.integers(0, 2**32)))
+    wrapped = chance.randrange(len(said))
     pieces = [chance.choice(("", *GAPS))]
-    for word in said:
-        written = "".join(
-            written_letter(letter, chance.random(), chance.randrange(3)) for letter in word
+    for number, word in enumerate(said):
+        written = (
+            "".join(written_letter(letter, chance.random(), chance.randrange(3)) for letter in word)
+            if marked
+            else word
         )
-        if chance.random() < 0.3:
+        if marked and (number == wrapped or chance.random() < 0.3):
             name, attributes = chance.choice(INLINE_ELEMENTS)
             written = f"<{name}{attributes}>{written}</{name}>"
         pieces += [written, chance.choice(GAPS)]
