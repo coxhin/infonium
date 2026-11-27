@@ -272,20 +272,24 @@ def is_word_character(character: str) -> bool:
     )
 
 
-def is_word_end(text: str, offset: int) -> bool:
-    # Whether the offset lies between two words, or between a word and what is no word, so
-    # that a stretch ending there takes no word in part.
+def is_inside_word(text: str, offset: int) -> bool:
+    # Whether the offset lies between two characters of one word.
     inside = 0 < offset < len(text)
-    return not (inside and is_word_character(text[offset - 1]) and is_word_character(text[offset]))
+    return inside and is_word_character(text[offset - 1]) and is_word_character(text[offset])
+
+
+def is_word_end(text: str, offset: int) -> bool:
+    # Whether a stretch ending at the offset takes no word in part: the offset lies between
+    # two words, or between a word and what is no word. A stretch ending right after a point
+    # is whole, as a sentence's end before a footnote's number glued to it (1945.3) is.
+    return not is_inside_word(text, offset)
 
 
 def is_word_start(text: str, offset: int) -> bool:
-    # Whether a stretch beginning at the offset takes no word in part, as one ending there
-    # does not, and no number in part either: it begins neither at a number's point nor right
-    # after it, since the digits after the point of 88.1 are no word of their own. A stretch
-    # ending right after a point stays whole, as a sentence's end before a footnote's number
-    # glued to it (1945.3) is.
-    return is_word_end(text, offset) and not any(
+    # Whether a stretch beginning at the offset takes no word in part, and no number in part:
+    # it begins neither inside a word nor at a number's point or right after it, since the
+    # digits after the point of 88.1 are no word of their own.
+    return not is_inside_word(text, offset) and not any(
         0 < at < len(text) - 1
         and text[at] == DECIMAL_POINT
         and text[at - 1].isdigit()
@@ -1226,65 +1230,100 @@ def is_doubtless(
     # off than its neighbours: on one side at least, over twice RIVAL_SIDE letters; and on
     # both, where the other revision says it more often than its own did (a cell, in rows
     # like its own), since a copy said again beside the same letters on one side is not told
-    # from it by that side alone. A table's cell or row is told by one side alone where that
-    # side's letters stood beside no other place of its revision and stand beside no other
-    # place of the other (stands_beside_one_place), and no other copy of its letters stands
-    # within their reach of the place; its other side may be gone, or said again elsewhere as
-    # rows alike are. The place then stands where the passage stood against those letters,
-    # and no copy said again beside it took them from another: its copy is the passage's own,
-    # or one put in among its rows, between its own place and those letters, which no reading
-    # tells from it. Outside a table it is not so: a sentence said again and put in so, past
-    # that reach from the passage's own copy, reads as the passage kept beside one side, while
-    # the passage's own copy, whose sides both changed, is lost.
+    # from it by that side alone. A table's cell or row may yet be told by the one side it
+    # keeps (is_told_by_one_side).
     if passage.copies <= 1 and said_again <= 1:
         return True
-    reach = 2 * RIVAL_SIDE
-    wide = standing_sides(passage, marked, held, place, reach)
+    wide = standing_sides(passage, marked, held, place, 2 * RIVAL_SIDE)
     if said_alike <= passage.copies or all(wide):
         return any(wide)
-    if not any(wide) or not begins_in_table(passage, marked):
+    return any(wide) and is_told_by_one_side(passage, marked, held, place, wide.index(True))
+
+
+def is_told_by_one_side(
+    passage: MarkedLetters, marked: Spelling, held: Spelling, place: Stretch, kept: int
+) -> bool:
+    # Whether a table's cell or row that the other revision says more often than its own did
+    # is told at a place by the one of its sides, over twice RIVAL_SIDE letters, that the
+    # place keeps (kept: 0 the side before it, 1 the side after), its other side gone or said
+    # again elsewhere, as rows alike are. It is told there where:
+    # - no other copy of its letters stands within those letters of the place, as a copy said
+    #   again right beside it does, which takes that side from the other;
+    # - no other copy keeps the NEIGHBOURS letters that stood next to the passage on that side
+    #   (is_side_found), as the passage's own copy does whose farther letters changed, while
+    #   a copy said again elsewhere with the rows that followed it keeps them all: a side
+    #   standing with a quarter of its letters changed at most is a bound that the own copy
+    #   may just miss and another just pass;
+    # - those letters stood beside no other place of its revision, and stand beside no other
+    #   place of the other (stands_elsewhere), as they do where another table repeats the
+    #   rows around the passage, whose own row is renumbered or gone.
+    # Outside a table one side does not tell a place: a sentence said again and put in past
+    # that reach from the passage's own copy, against the side that copy lost, reads as the
+    # passage kept beside that side, while the passage's own copy, whose sides both changed,
+    # is lost. In a table such a copy stands among the passage's rows, between its own place
+    # and those letters, which no reading tells from it. What the tests do not tell: another
+    # place nearer the place than half the side's letters, and one where the side stands with
+    # a letter changed in each quarter of it (stands_elsewhere).
+    if not begins_in_table(passage, marked):
         return False
-    kept = wide.index(True)
+    reach = 2 * RIVAL_SIDE
     size = len(passage.letters)
-    copies = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
-    low = bisect_left(copies, place.start - reach - size + 1)
-    high = bisect_left(copies, place.end + reach)
+    held_copies = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
+    low = bisect_left(held_copies, place.start - reach - size + 1)
+    high = bisect_left(held_copies, place.end + reach)
+    near = edged_sides(marked.letters, passage.begin, passage.finish, NEIGHBOURS)[kept]
+    if any(copy != place.start for copy in held_copies[low:high]) or any(
+        copy != place.start
+        and is_side_found(
+            near, edged_sides(held.letters, copy, copy + size, NEIGHBOURS + NEIGHBOUR_CHANGES)[kept]
+        )
+        for copy in held_copies
+    ):
+        return False
+    # The side in the letters' order, and where it begins beside the passage and the place.
     side = edged_sides(marked.letters, passage.begin, passage.finish, reach)[kept]
-    return all(copy == place.start for copy in copies[low:high]) and all(
-        stands_beside_one_place(side, letters if kept else letters[::-1], reach)
-        for letters in (marked.letters, held.letters)
+    forward = side if kept else side[::-1]
+    return not any(
+        stands_elsewhere(forward, letters, edge + 1 if kept else edge + 1 - len(forward), reach)
+        for letters, edge in (
+            (marked.letters, (passage.begin, passage.finish)[kept]),
+            (held.letters, (place.start, place.end)[kept]),
+        )
     )
 
 
-@lru_cache(maxsize=OCCURRENCES_KEPT)
-def stands_beside_one_place(side: str, letters: str, reach: int) -> bool:
-    # Whether a side of a passage, reach letters read away from it as edged_sides gives them,
-    # stands beside one place of a revision at most, as standing_sides weighs it: a quarter of
-    # its letters changed at most. The revision's letters are read away from its places as the
-    # side is, and end in EDGE. Offsets within half the side's letters of the first offset of
-    # a place are that place, since the side shifted by a quarter of its letters either way
-    # may stand there still. Myers' count (end_distances) gives, at each letter, the fewest
-    # changes that make the side any letters ending there, no more than those that make it
-    # the reach letters ending there, so that only the offsets it lets through are weighed
-    # letter by letter. Kept for the sides asked last, since each place of a passage asks
-    # again.
-    text = letters + EDGE
-    bound = len(side) // 4
-    least = end_distances(side, text, ANYWHERE)
-    first: int | None = None
-    for start in range(len(text)):
-        end = min(start + reach, len(text))
-        if (
-            least[end - 1] > bound
-            or abs(end - start - len(side)) > bound
-            or changes_between(side, text[start:end]) > bound
-        ):
-            continue
-        if first is None:
-            first = start
-        elif start - first > 2 * bound:
-            return False
-    return True
+def stands_elsewhere(side: str, letters: str, start: int, reach: int) -> bool:
+    # Whether a side of a passage stands beside a place of a revision other than the one
+    # where it begins at start, as standing_sides weighs it: a quarter of its letters changed
+    # at most. The side is read in the letters' order, and the letters as EDGE, the
+    # revision's letters and EDGE again, which start counts in. A place nearer start than
+    # half the side's letters is that place, since the side shifted by a quarter of its
+    # letters either way stands there still. A side that reaches its revision's edge with
+    # more than a quarter fewer letters than reach stands only at an edge, as near it as at
+    # start.
+    # Places are looked for where a quarter of the side stands as it is, so that a place
+    # whose side has three letters changed at most is never missed, and the side is weighed
+    # against the letters around each with Myers' count: the fewest changes that make it any
+    # of them, no more than those that make it the letters beside a place there. Shorter
+    # pieces would find more places in a table, whose rows say the same numbers again, each
+    # to be weighed letter by letter.
+    quarter = len(side) // 4
+    if EDGE in side and reach - len(side) > quarter:
+        return False
+    text = EDGE + letters + EDGE
+    weighed: set[int] = set()
+    for offset in sorted({*range(0, len(side) - quarter, quarter), len(side) - quarter}):
+        piece = side[offset : offset + quarter]
+        at = text.find(piece)
+        while at >= 0:
+            begin = at - offset
+            if abs(begin - start) > 2 * quarter and begin not in weighed:
+                weighed.add(begin)
+                around = text[max(0, begin - quarter) : begin + len(side) + 2 * quarter]
+                if min(end_distances(side, around, ANYWHERE)) <= quarter:
+                    return True
+            at = text.find(piece, at + 1)
+    return False
 
 
 def one_place(
