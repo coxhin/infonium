@@ -32,9 +32,9 @@ these rules say "the document", they mean the document a statement cites.
 
 class DraftStatement(BaseModel):
     # A statement as a model writes it: its text and the passages it says it rests on. A
-    # model not held to the schema, as GLM's are, may leave out the citations of a statement
-    # that rests on none. The schema a model is told still requires them: its strict form
-    # lists every field, and a default made by a factory is not written into it.
+    # model not held to the schema may leave out the citations of a statement that rests on
+    # none. The schema a model is given still requires them: its strict form lists every
+    # field, and a default made by a factory is not written into it.
     text: str
     citations: list[Citation] = Field(default_factory=list)
 
