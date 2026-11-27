@@ -109,10 +109,11 @@ class Poller:
         watcher.add_done_callback(self.record_watch)
 
     def close(self) -> None:
-        # A poll that waits its turn stays under way in the library, and begins again when the
-        # service starts again.
+        # The watch ends its round first, so that it hands no posting to an intake that closes
+        # after it. A poll that waits its turn stays under way in the library, and begins again
+        # when the service starts again.
         self.stopped.set()
-        self.watching.shutdown(wait=False, cancel_futures=True)
+        self.watching.shutdown(wait=True, cancel_futures=True)
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def record_watch(self, finished: Future[None]) -> None:
