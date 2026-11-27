@@ -471,7 +471,7 @@ def test_listing_subscriptions_asks_the_library_the_same_however_many_there_are(
     )
 
 
-def test_a_page_of_postings_asks_the_library_the_same_however_many_are_listed_or_admitted(
+def test_a_page_of_postings_asks_the_library_the_same_however_many_it_holds_or_admitted(
     subscribing_app: App, feeds: FeedStandin, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = subscribing_app
@@ -479,15 +479,15 @@ def test_a_page_of_postings_asks_the_library_the_same_however_many_are_listed_or
     small = subscribed_with_items(app, feeds, "small", 60, admit=1)
     large = subscribed_with_items(app, feeds, "large", 2000, admit=10)
     counted = {
-        name: requests.statements(partial(postings_page, app, subscription))
-        for name, subscription in (
-            ("60 postings, 1 admitted", small),
-            ("2,000 postings, 10 admitted", large),
+        name: requests.statements(partial(postings_page, app, subscription, None, limit))
+        for name, subscription, limit in (
+            ("5 of 60 postings, 1 admitted", small, 5),
+            ("50 of 2,000 postings, 10 admitted", large, 50),
         )
     }
     assert len(set(counted.values())) == 1, (
-        f"S10, S16: a page of postings sent statements to the library by the postings or by the "
-        f"items admitted: {counted}"
+        "S10, S16: a page of postings sent statements to the library by the postings it holds, "
+        f"those listed or the items admitted: {counted}"
     )
 
 
