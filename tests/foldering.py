@@ -40,8 +40,10 @@ from tests.subscribing import answered, listed, missing_posting, served_feed, su
 FOLDERS = "/api/folders"
 PLACEMENTS = "/api/placements"
 ITEMS = "/api/items"
-# A folder's id that no owner's folder has.
+# A folder's id that no owner's folder has, and a subscription's id that no owner's subscription
+# has, as the origin of an item whose subscription was removed names it.
 NOWHERE_FOLDER = "d" * 64
+NOWHERE_SUBSCRIPTION = "c" * 64
 # What a made-up document was read by, and the snapshot it names, which no judgment asks for.
 EXTRACTOR = "made-up/1"
 SNAPSHOT = "0" * 64
@@ -326,6 +328,35 @@ def subscription_of(app: App, feeds: FeedStandin) -> str:
     # A subscription of the owner's, to a feed of its own whose one posting nothing reads.
     tag = uuid4().hex
     return str(subscribed(app, served_feed(feeds, tag, [missing_posting(tag)]), admit=0)["id"])
+
+
+def hand_added_origin(number: int) -> Origin:
+    # The origins of hand-added items in turn: a link, an upload, and a subscription that is not
+    # there.
+    return (link_origin, upload_origin, lambda: subscribed_origin(NOWHERE_SUBSCRIPTION))[
+        number % 3
+    ]()
+
+
+def library_arranged(
+    app: App, feeds: FeedStandin, owner: str, folders: int, following: list[int], hand_added: int
+) -> Arrangement:
+    # The owner's library, of the folders given, of a subscription for each count of following
+    # with as many items that follow it, and of the hand-added items given, of each origin in
+    # turn, everything in no folder; and where the rules have its subscriptions and items.
+    made = [made_folder(app, f"Folder {number}")["id"] for number in range(folders)]
+    origins: dict[str, str | None] = {}
+    subscriptions: list[str] = []
+    for count in following:
+        subscription = subscription_of(app, feeds)
+        subscriptions.append(subscription)
+        for _ in range(count):
+            origins[keep_web_item(app.store, owner, subscribed_origin(subscription))] = subscription
+    for number in range(hand_added):
+        origins[keep_web_item(app.store, owner, hand_added_origin(number))] = None
+    return Arrangement(
+        folders=made, subscriptions=dict.fromkeys(subscriptions), origins=origins, own={}
+    )
 
 
 def unchanged(app: App, before: Shown, what: str) -> None:
