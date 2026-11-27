@@ -40,9 +40,28 @@ function emptyText(selection: Selection, media: MediaChoice): string {
   }
 }
 
+// The lists besides the items that the list of a selection rests on: the subscriptions, which
+// tell the items that follow one, for 未分类, a folder and a subscription; and the folders, for a
+// folder. 全部 and 新来源 need the items alone.
+type ListName = "subscriptions" | "folders";
+const RESTS_ON: Record<Selection["kind"], ListName[]> = {
+  all: [],
+  new: [],
+  unfiled: ["subscriptions"],
+  folder: ["subscriptions", "folders"],
+  subscription: ["subscriptions"],
+};
+const LIST_NAMES: Record<ListName, string> = { subscriptions: "订阅", folders: "分类" };
+type Read = { loaded: Loaded<unknown>; readNow: () => void };
+
+function failure(read: Read): string {
+  return read.loaded.state === "failed" ? read.loaded.reason : "";
+}
+
 // The list column: under a head that names the selection and the media, the items the sidebar
 // selected, with adding by an address or a file where the selection takes it; or the
 // subscription selected, as its panel shows it, whatever the media; or the form that subscribes.
+// A list that rests on a list that cannot be read says so, and why, in place of a wrong list.
 // In one column, a press at its head opens the sidebar over the page.
 export function ListColumn({
   entries,
@@ -124,13 +143,21 @@ export function ListColumn({
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }
       : undefined;
-  // The lists the selection is drawn from are read first, and the selection the page opens with
-  // is decided; until then, it is being opened. Every item is listed at once: no list moves it.
+  const lists: Record<ListName, Read> = { subscriptions, folders };
+  const restsOn = RESTS_ON[selection.kind];
+  const unread = restsOn.filter((name) => lists[name].loaded.state === "failed");
+  // The selection the page opens with rests on both lists, and is decided once they are read;
+  // while one of them cannot be read, it waits, and the lists that can be shown meanwhile do not.
+  const deciding =
+    !browsing.opened &&
+    !(["subscriptions", "folders"] as const).some((name) => lists[name].loaded.state === "failed");
+  // A list is being opened while the lists it rests on are read, and while the selection the
+  // page opens with, which may move it, is decided. Every item is listed at once: no list moves
+  // it.
   const waiting =
     selection.kind !== "all" &&
-    (!browsing.opened ||
-      subscriptions.loaded.state === "loading" ||
-      folders.loaded.state === "loading");
+    unread.length === 0 &&
+    (deciding || restsOn.some((name) => lists[name].loaded.state === "loading"));
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
@@ -185,6 +212,14 @@ export function ListColumn({
           {subscriptions.loaded.state === "ready" && subscriptionList.length === 0 && (
             <SubscribingHint />
           )}
+        </div>
+      ) : unread.length > 0 ? (
+        <div className="list-view">
+          <p className="status failed">
+            这里的文章还列不出来，因为{unread.map((name) => LIST_NAMES[name]).join("和")}
+            没有读到：{unread.map((name) => failure(lists[name])).join("；")}
+            <button onClick={() => unread.forEach((name) => lists[name].readNow())}>重试</button>
+          </p>
         </div>
       ) : !waiting && selection.kind === "subscription" && browsing.pane !== undefined ? (
         <SubscriptionPane

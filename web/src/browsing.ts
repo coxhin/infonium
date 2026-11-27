@@ -115,10 +115,13 @@ export function useBrowsing(
     () => new Set(listedFolders.map((folder) => folder.id)),
     [listedFolders],
   );
-  const tally = useMemo(
-    () => tallied(listedEntries, media, present, seen),
-    [listedEntries, media, present, seen],
-  );
+  // The subscriptions tell which items in no folder are hand-added: until they are read, 未分类
+  // counts none.
+  const subscriptionsRead = subscriptions.loaded.state === "ready";
+  const tally = useMemo(() => {
+    const counted = tallied(listedEntries, media, present, seen);
+    return subscriptionsRead ? counted : { ...counted, freshUnfiled: 0 };
+  }, [listedEntries, media, present, seen, subscriptionsRead]);
   const occupied = useMemo(
     () =>
       new Set([
