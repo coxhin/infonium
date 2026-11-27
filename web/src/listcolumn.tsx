@@ -146,19 +146,19 @@ export function ListColumn({
       : undefined;
   const lists: Record<ListName, Read> = { subscriptions, folders };
   const restsOn = RESTS_ON[selection.kind];
-  const unread = restsOn.filter((name) => lists[name].loaded.state === "failed");
+  const unread = restsOn.filter((list) => lists[list].loaded.state === "failed");
   // The selection the page opens with rests on both lists, and is decided once they are read;
   // while one of them cannot be read, it waits, and the lists that can be shown meanwhile do not.
   const deciding =
     !browsing.opened &&
-    !(["subscriptions", "folders"] as const).some((name) => lists[name].loaded.state === "failed");
+    !(["subscriptions", "folders"] as const).some((list) => lists[list].loaded.state === "failed");
   // A list is being opened while the lists it rests on are read, and while the selection the
   // page opens with, which may move it, is decided. Every item is listed at once: no list moves
   // it.
   const waiting =
     selection.kind !== "all" &&
     unread.length === 0 &&
-    (deciding || restsOn.some((name) => lists[name].loaded.state === "loading"));
+    (deciding || restsOn.some((list) => lists[list].loaded.state === "loading"));
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
@@ -217,9 +217,9 @@ export function ListColumn({
       ) : unread.length > 0 ? (
         <div className="list-view">
           <p className="status failed">
-            这里的文章还列不出来，因为{unread.map((name) => LIST_NAMES[name]).join("和")}
-            没有读到：{unread.map((name) => failure(lists[name])).join("；")}
-            <button onClick={() => unread.forEach((name) => lists[name].readNow())}>重试</button>
+            这里的文章还列不出来，因为{unread.map((list) => LIST_NAMES[list]).join("和")}
+            没有读到：{unread.map((list) => failure(lists[list])).join("；")}
+            <button onClick={() => unread.forEach((list) => lists[list].readNow())}>重试</button>
           </p>
         </div>
       ) : !waiting && selection.kind === "subscription" && browsing.pane !== undefined ? (
