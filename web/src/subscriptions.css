@@ -5,6 +5,11 @@
   display: block;
 }
 
+/* Hidden while a subscription is open in place of the list. */
+.library .subscribe[hidden] {
+  display: none;
+}
+
 .subscribe .status:empty {
   margin: 0;
 }
