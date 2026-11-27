@@ -199,7 +199,7 @@
 }
 
 /* A folder's name, changed in its place: the field stands among the row's own parts; a refusal
-   of it goes under the row, which keeps its line. */
+   of it goes under the row, after the count and the ⋯, which keep their line. */
 .sidebar-tree .row:has(> .folder-name) {
   flex-wrap: wrap;
 }
@@ -209,6 +209,7 @@
 }
 
 .sidebar-tree .folder-name .status {
+  order: 1;
   margin: 0.1rem 0 0.2rem 1.45rem;
   font-weight: normal;
   white-space: normal;
