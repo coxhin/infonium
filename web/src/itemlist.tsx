@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -13,6 +14,7 @@ import { endDrag, startDrag } from "./dragging";
 import { isNew, itemTitle, originLabel } from "./entry";
 import type { Placer } from "./folders";
 import { Interruption } from "./interruption";
+import { keyboardIsNowhere, useKeyboardHolder } from "./keyboarding";
 import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
 import { MediaIcon, NO_MEDIA_NAME } from "./mediaicon";
@@ -71,10 +73,24 @@ function useRowsDrawn(total: number, listKey: string) {
 // The menu open of an item, and where it opened.
 type MenuOpen = { entry: ItemEntry; opening: Opening };
 
+// The row that holds the keyboard: its item, and whether on its link or on its ⋯.
+type HeldRow = { itemId: string; control: "link" | "menu" };
+
+function heldRowOf(element: Element): HeldRow | undefined {
+  const itemId = element.closest<HTMLElement>("li[data-item]")?.dataset.item;
+  return itemId === undefined
+    ? undefined
+    : { itemId, control: element.closest(".row-menu") === null ? "link" : "menu" };
+}
+
 // The items the selection lists, in the order the service gives them, each with the icon of its
 // media and where it came from, a subscription by its title. Above them, where the selection
 // takes them, adding by an address or a file. A hand-added item can be moved between folders by
-// its menu or by dragging it onto the sidebar; an item that follows its subscription says so.
+// its menu or by dragging it onto the sidebar; an item that follows its subscription says so. A
+// row that leaves the list with the keyboard in it, as one moved elsewhere or one of 新来源
+// seen, hands the keyboard to the row that stands in its place, or to the one before it at the
+// end of the list, on the same control where that row has it; to the list's head where none is
+// left.
 export function ItemList({
   entries,
   listed,
@@ -91,6 +107,7 @@ export function ItemList({
   subscriptionFolders,
   placer,
   onImported,
+  onEmptied,
 }: {
   entries: Loaded<ItemEntry[]>;
   listed: ItemEntry[];
@@ -111,12 +128,42 @@ export function ItemList({
   subscriptionFolders: ReadonlyMap<string, string>;
   placer: Placer;
   onImported: (entry: ItemEntry) => void;
+  // The last row has left the list with the keyboard in it.
+  onEmptied: () => void;
 }) {
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState<Importing>({ state: "idle" });
   const [menu, setMenu] = useState<MenuOpen>();
   const rows = useRowsDrawn(listed.length, listKey);
   const describedPrefix = useId();
+  const list = useRef<HTMLUListElement>(null);
+  const holder = useKeyboardHolder(list, heldRowOf);
+  const drawnList = useRef(listed);
+
+  useLayoutEffect(() => {
+    const before = drawnList.current;
+    drawnList.current = listed;
+    const held = holder.current;
+    if (held === undefined || !keyboardIsNowhere()) {
+      return;
+    }
+    const at = before.findIndex((entry) => entry.id === held.itemId);
+    const standing = listed.some((entry) => entry.id === held.itemId)
+      ? held.itemId
+      : at < 0
+        ? undefined
+        : listed[Math.min(at, listed.length - 1)]?.id;
+    if (standing === undefined) {
+      if (at >= 0) {
+        onEmptied();
+      }
+      return;
+    }
+    const row = list.current?.querySelector(`li[data-item="${CSS.escape(standing)}"]`);
+    const control =
+      held.control === "menu" ? (row?.querySelector<HTMLElement>(".row-menu") ?? null) : null;
+    (control ?? row?.querySelector<HTMLElement>("a"))?.focus();
+  });
 
   // An import into a folder is placed there once the service has answered it; the item is
   // opened either way, and a placing the service refused is said under the form.
@@ -239,7 +286,7 @@ export function ItemList({
       {interrupted && <Interruption refusal={refusal} />}
       {loaded && listed.length === 0 && <p className="status">{emptyText}</p>}
       {shown.length > 0 && (
-        <ul className="items">
+        <ul ref={list} className="items">
           {shown.map((entry) => {
             const fresh = isNew(entry, seen);
             const source = sourceName(entry);
@@ -247,7 +294,7 @@ export function ItemList({
             const following = followed(entry, present);
             const describedId = `${describedPrefix}${entry.id}`;
             return (
-              <li key={entry.id}>
+              <li key={entry.id} data-item={entry.id}>
                 <a
                   href={itemLink(entry.id)}
                   className={fresh ? "new" : undefined}

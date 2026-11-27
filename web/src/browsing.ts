@@ -18,6 +18,7 @@ import {
   type Held,
   type Placer,
 } from "./folders";
+import type { Landing } from "./keyboarding";
 import type { Watched } from "./loading";
 import {
   useFoldedFolders,
@@ -30,6 +31,7 @@ import {
   byName,
   followed,
   isThere,
+  keyOf,
   openingSelection,
   sameSelection,
   tallied,
@@ -76,6 +78,10 @@ export type Browsing = {
   subscribed: (subscription: Subscription) => Promise<void>;
   // A subscription removed here or elsewhere: its items are where it was.
   gone: (subscriptionId: string) => void;
+  // The row of the sidebar the keyboard is to land on, where it has nowhere else to be: a folder
+  // or a subscription just made, or what is selected once the subscription open is removed.
+  landing: Landing | undefined;
+  land: (key: string) => void;
 };
 
 function listedOf<Value>(watched: Watched<Value[]>): Value[] {
@@ -95,6 +101,8 @@ export function useBrowsing(
   const [folded, fold] = useFoldedFolders();
   const [subscribing, setSubscribing] = useState(false);
   const [pane, setPane] = useState<SubscriptionPlace>();
+  const [landing, setLanding] = useState<Landing>();
+  const land = useCallback((key: string) => setLanding({ key }), []);
 
   const listedEntries = listedOf(entries);
   const listedSubscriptions = listedOf(subscriptions);
@@ -252,12 +260,14 @@ export function useBrowsing(
         await readOnRefusal(place(placing));
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       }
-      keepSelection({ kind: "subscription", subscriptionId: subscription.id });
+      const chosen = { kind: "subscription", subscriptionId: subscription.id } as const;
+      keepSelection(chosen);
       setOpened(true);
       setSubscribing(false);
       setPane({ subscriptionId: subscription.id, sought: undefined, again });
+      land(keyOf(chosen));
     },
-    [present, selection, readOnRefusal, subscriptions.answer, entries.readNow, keepSelection],
+    [present, selection, readOnRefusal, subscriptions.answer, entries.readNow, keepSelection, land],
   );
 
   const gone = useCallback(
@@ -268,14 +278,15 @@ export function useBrowsing(
       );
       entries.readNow();
       if (sameSelection(selection, { kind: "subscription", subscriptionId })) {
-        select(
+        const chosen: Selection =
           folder === null || folder === undefined
             ? { kind: "unfiled" }
-            : { kind: "folder", folderId: folder },
-        );
+            : { kind: "folder", folderId: folder };
+        select(chosen);
+        land(keyOf(chosen));
       }
     },
-    [listedSubscriptions, subscriptions.answer, entries.readNow, selection, select],
+    [listedSubscriptions, subscriptions.answer, entries.readNow, selection, select, land],
   );
 
   return {
@@ -308,5 +319,7 @@ export function useBrowsing(
     dissolve,
     subscribed,
     gone,
+    landing,
+    land,
   };
 }

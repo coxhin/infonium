@@ -3,6 +3,7 @@ import type { Browsing } from "./browsing";
 import { requestReason, type ItemEntry, type Subscription } from "./client";
 import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
+import { keyboardIsNowhere, useOnLanding } from "./keyboarding";
 import type { Loaded } from "./loading";
 import type { SidebarLayout } from "./sidebarlayout";
 import {
@@ -106,6 +107,15 @@ export function ListColumn({
   const name = subscribing ? "订阅" : selectionName(selection, folderMap);
   const listKey = `${keyOf(selection)}|${media}`;
   const view = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  // In one column the sidebar is drawn only when opened: a row of it the keyboard is sent to, as
+  // that of a subscription just made, lands the keyboard on the press that opens it.
+  useOnLanding(browsing.landing, () => {
+    if (layout.width === "narrow" && !layout.overlaid && keyboardIsNowhere()) {
+      opener.current?.focus();
+    }
+  });
   // Another selection or media is listed from its top, not where the one before was scrolled.
   useLayoutEffect(() => {
     view.current?.scrollTo({ top: 0 });
@@ -136,6 +146,7 @@ export function ListColumn({
       <div className="list-brand">
         {layout.width === "narrow" && (
           <button
+            ref={opener}
             className="sidebar-opener"
             aria-label="打开侧栏"
             aria-expanded={layout.overlaid}
@@ -150,7 +161,7 @@ export function ListColumn({
         <h1>infonium</h1>
       </div>
       <div className="list-head">
-        <h2 dir="auto" title={name}>
+        <h2 ref={heading} tabIndex={-1} dir="auto" title={name}>
           {name}
         </h2>
         {!subscribing && selection.kind !== "subscription" && media !== "any" && (
@@ -211,6 +222,7 @@ export function ListColumn({
               subscriptionFolders={subscriptionFolders}
               placer={placer}
               onImported={onImported}
+              onEmptied={() => heading.current?.focus()}
             />
           )}
         </div>

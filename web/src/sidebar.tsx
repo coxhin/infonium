@@ -4,6 +4,7 @@ import type { Folder, Subscription } from "./client";
 import { draggedOver } from "./dragging";
 import { FolderNameField, type NameDone } from "./foldername";
 import { Interruption } from "./interruption";
+import { keyboardIsNowhere, useOnLanding, type Landing } from "./keyboarding";
 import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
 import { useSidebarDrop } from "./sidebardrop";
@@ -69,7 +70,6 @@ function SidebarBody({
   const makeButton = useRef<HTMLButtonElement>(null);
   const mediaName = useId();
   const [naming, setNaming] = useState(false);
-  const [focusKey, setFocusKey] = useState<{ key: string }>();
   const drop = useSidebarDrop(browsing.placer);
   const { tally, media, order, selection, folders, subscriptions } = browsing;
   // A media chosen narrows the list column at once, and the tree, which may draw again
@@ -123,7 +123,7 @@ function SidebarBody({
   function named(done: NameDone<Folder>) {
     setNaming(false);
     if (done.kind === "answered" && done.keyboard === "kept") {
-      setFocusKey({ key: keyOf({ kind: "folder", folderId: done.answer.id }) });
+      browsing.land(keyOf({ kind: "folder", folderId: done.answer.id }));
     } else if (done.kind === "given up") {
       makeButton.current?.focus();
     }
@@ -209,7 +209,7 @@ function SidebarBody({
           occupied={browsing.occupied}
           heldIn={browsing.heldIn}
           folded={browsing.folded}
-          focusKey={focusKey}
+          landing={browsing.landing}
           dropOn={drop.over ?? undefined}
           placer={browsing.placer}
           onSelect={select}
@@ -256,18 +256,27 @@ function SidebarBody({
 
 // The sidebar folded: the media's icons, the one chosen marked, and the count of new items; a
 // press opens the whole sidebar over the list column, and a drag that comes over it opens it to
-// be dropped on. Under them, the press that unfolds it.
+// be dropped on. Under them, the press that unfolds it. A row of the sidebar the keyboard is
+// sent to is not drawn while it is folded: the keyboard lands on the press that opens it, whose
+// tree takes it to the row selected.
 function Rail({
   media,
   fresh,
+  landing,
   layout,
 }: {
   media: MediaChoice;
   fresh: number;
+  landing: Landing | undefined;
   layout: SidebarLayout;
 }) {
   const openedByDrag = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
+  useOnLanding(landing, () => {
+    if (!layout.overlaid && keyboardIsNowhere()) {
+      opener.current?.focus();
+    }
+  });
 
   useEffect(() => {
     const ended = () => {
@@ -336,7 +345,12 @@ export function Sidebar({ browsing, layout }: { browsing: Browsing; layout: Side
   return (
     <div className="sidebar-place">
       {layout.width !== "narrow" && (
-        <Rail media={browsing.media} fresh={browsing.tally.fresh} layout={layout} />
+        <Rail
+          media={browsing.media}
+          fresh={browsing.tally.fresh}
+          landing={browsing.landing}
+          layout={layout}
+        />
       )}
       {layout.overlaid && (
         <>
