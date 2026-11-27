@@ -517,7 +517,7 @@ make protocol    # regenerate protocol/openapi.json and web/src/protocol.d.ts
 
 The HTTP protocol is defined by the models in `src/infonium`. `protocol/openapi.json` and `web/src/protocol.d.ts` are generated from them and never edited by hand.
 
-`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes about six and a half minutes. Three tests of where a passage stands after a second reading are marked as failing at times, each with the limit it stands for. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
+`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes about seven minutes. Three tests of where a passage stands after a second reading are marked as failing at times, each with the limit it stands for. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
 
 ```bash
 uv run pytest -m chrome    # Chrome or Chromium, by INFONIUM_BROWSER
