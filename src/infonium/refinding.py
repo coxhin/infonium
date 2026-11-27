@@ -10,7 +10,14 @@ from pydantic import BaseModel
 
 from infonium.anchor import REFERENCE_MARK, Anchor, is_invisible, plain_character
 from infonium.document import Block, Document, Table, TextRange, is_unspaced
-from infonium.edit_distance import Stretch, nearest_stretches, partings, prefix_distances
+from infonium.edit_distance import (
+    ANYWHERE,
+    Stretch,
+    end_distances,
+    nearest_stretches,
+    partings,
+    prefix_distances,
+)
 from infonium.passage import Found, Lost, Passage, Standing
 
 # A passage is looked for in another revision by its letters: the characters that
@@ -494,10 +501,14 @@ def sides_found(
     )
 
 
+def begins_in_table(passage: MarkedLetters, marked: Spelling) -> bool:
+    return bisect_right(marked.starts, passage.begin) - 1 in marked.tables
+
+
 def is_told_by_row(passage: MarkedLetters, marked: Spelling) -> bool:
     # Whether the passage is a table's cell, or cells of one row, whose row holds ROW_LETTERS
     # beside it at least.
-    if passage.rows or bisect_right(marked.starts, passage.begin) - 1 not in marked.tables:
+    if passage.rows or not begins_in_table(passage, marked):
         return False
     in_row = side_before(marked, passage.begin, NEIGHBOURS, marked.row_edges) + side_after(
         marked, passage.finish, NEIGHBOURS, marked.row_edges
@@ -1215,11 +1226,65 @@ def is_doubtless(
     # off than its neighbours: on one side at least, over twice RIVAL_SIDE letters; and on
     # both, where the other revision says it more often than its own did (a cell, in rows
     # like its own), since a copy said again beside the same letters on one side is not told
-    # from it by that side alone.
+    # from it by that side alone. A table's cell or row is told by one side alone where that
+    # side's letters stood beside no other place of its revision and stand beside no other
+    # place of the other (stands_beside_one_place), and no other copy of its letters stands
+    # within their reach of the place; its other side may be gone, or said again elsewhere as
+    # rows alike are. The place then stands where the passage stood against those letters,
+    # and no copy said again beside it took them from another: its copy is the passage's own,
+    # or one put in among its rows, between its own place and those letters, which no reading
+    # tells from it. Outside a table it is not so: a sentence said again and put in so, past
+    # that reach from the passage's own copy, reads as the passage kept beside one side, while
+    # the passage's own copy, whose sides both changed, is lost.
     if passage.copies <= 1 and said_again <= 1:
         return True
-    wide = standing_sides(passage, marked, held, place, 2 * RIVAL_SIDE)
-    return all(wide) if said_alike > passage.copies else any(wide)
+    reach = 2 * RIVAL_SIDE
+    wide = standing_sides(passage, marked, held, place, reach)
+    if said_alike <= passage.copies or all(wide):
+        return any(wide)
+    if not any(wide) or not begins_in_table(passage, marked):
+        return False
+    kept = wide.index(True)
+    size = len(passage.letters)
+    copies = occurrences(held.letters, passage.letters, OCCURRENCES_WEIGHED)
+    low = bisect_left(copies, place.start - reach - size + 1)
+    high = bisect_left(copies, place.end + reach)
+    side = edged_sides(marked.letters, passage.begin, passage.finish, reach)[kept]
+    return all(copy == place.start for copy in copies[low:high]) and all(
+        stands_beside_one_place(side, letters if kept else letters[::-1], reach)
+        for letters in (marked.letters, held.letters)
+    )
+
+
+@lru_cache(maxsize=OCCURRENCES_KEPT)
+def stands_beside_one_place(side: str, letters: str, reach: int) -> bool:
+    # Whether a side of a passage, reach letters read away from it as edged_sides gives them,
+    # stands beside one place of a revision at most, as standing_sides weighs it: a quarter of
+    # its letters changed at most. The revision's letters are read away from its places as the
+    # side is, and end in EDGE. Offsets within half the side's letters of the first offset of
+    # a place are that place, since the side shifted by a quarter of its letters either way
+    # may stand there still. Myers' count (end_distances) gives, at each letter, the fewest
+    # changes that make the side any letters ending there, no more than those that make it
+    # the reach letters ending there, so that only the offsets it lets through are weighed
+    # letter by letter. Kept for the sides asked last, since each place of a passage asks
+    # again.
+    text = letters + EDGE
+    bound = len(side) // 4
+    least = end_distances(side, text, ANYWHERE)
+    first: int | None = None
+    for start in range(len(text)):
+        end = min(start + reach, len(text))
+        if (
+            least[end - 1] > bound
+            or abs(end - start - len(side)) > bound
+            or changes_between(side, text[start:end]) > bound
+        ):
+            continue
+        if first is None:
+            first = start
+        elif start - first > 2 * bound:
+            return False
+    return True
 
 
 def one_place(
