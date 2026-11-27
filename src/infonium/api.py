@@ -3,6 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from functools import cache, partial
 from http import HTTPStatus
 from pathlib import PurePath
@@ -49,6 +50,7 @@ from infonium.document import (
     error_text,
 )
 from infonium.embedding import EmbeddingEngine
+from infonium.folder import FolderDraft, FolderName, FolderNameTaken, FollowsSubscription, Placing
 from infonium.framedpage import FramedPage, KeptPages
 from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
 from infonium.intake import Engines, Intake, NothingToReadAgain
@@ -325,14 +327,27 @@ class LinkImport(BaseModel):
     url: HttpUrl
 
 
+class Media(StrEnum):
+    # What an item is read as: told by the media type of the document it holds, or, while it
+    # holds none, of the file its reading keeps as it arrived. HTML is a web article, a PDF is
+    # a PDF, and sound or film is a recording.
+    WEB = "web"
+    PDF = "pdf"
+    RECORDING = "recording"
+
+
 class ItemEntry(BaseModel):
     # An item as a list shows it. It was seen when its reader first had its document on show;
     # an item that a subscription brought, that is read and was not seen yet, is new to its
-    # reader.
+    # reader. Its media is none while no file of it has arrived, or where the file is of
+    # another kind. Its folder is its subscription's while it follows its subscription, and
+    # that of its own placement otherwise.
     id: str
     origin: Origin
     reading: Reading
     seen: AwareDatetime | None
+    media: Media | None
+    folder: str | None
 
 
 class DocumentView(BaseModel):
@@ -552,6 +567,14 @@ class SubscriptionView(BaseModel):
     poll: Poll
     postings: int
     unseen: int
+    folder: str | None
+
+
+class FolderView(BaseModel):
+    # A folder of the sidebar, which holds subscriptions and items.
+    id: str
+    name: FolderName
+    added: AwareDatetime
 
 
 class AdmittedItem(Tagged):
@@ -596,6 +619,8 @@ app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(ScheduleStopped, explained(HTTPStatus.SERVICE_UNAVAILABLE))
+app.add_exception_handler(FolderNameTaken, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(FollowsSubscription, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -621,6 +646,10 @@ NO_FEED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Fa
 SCHEDULE_STOPPED: dict[int | str, dict[str, Any]] = {
     HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}
 }
+# Another folder of the owner's has the name asked for.
+NAME_TAKEN: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# An item named follows its subscription, and so is placed only with it.
+FOLLOWING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # How many postings a list of them holds unless more or fewer are asked for, and at most.
 POSTINGS_LISTED = 50
 MOST_POSTINGS_LISTED = 200
@@ -703,7 +732,14 @@ AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 def entry_of(seen: SeenItem) -> ItemEntry:
     item = seen.item
-    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading, seen=seen.seen)
+    return ItemEntry(
+        id=item.id,
+        origin=item.origin,
+        reading=item.reading,
+        seen=seen.seen,
+        media=None,
+        folder=None,
+    )
 
 
 def answered_entry(owner: str, item: Item) -> ItemEntry:
@@ -725,6 +761,7 @@ def subscription_view(counted: CountedSubscription) -> SubscriptionView:
         poll=subscription.poll,
         postings=counted.postings,
         unseen=counted.unseen,
+        folder=None,
     )
 
 
@@ -1283,6 +1320,40 @@ def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
 def remove_note(note_id: str, owner: Owner) -> None:
     with library_store().transaction(owner) as transaction:
         Notes(transaction).remove(note_id)
+
+
+@app.get("/api/folders")
+def list_folders(owner: Owner) -> list[FolderView]:
+    # The owner's folders, the one added first first.
+    raise NotImplementedError
+
+
+@app.post("/api/folders", responses=NAME_TAKEN)
+def make_folder(draft: FolderDraft, owner: Owner) -> FolderView:
+    # Keeps a folder of the name, which no other folder of the owner's may have.
+    raise NotImplementedError
+
+
+@app.patch("/api/folders/{folder_id}", responses=NOT_IN_LIBRARY | NAME_TAKEN)
+def rename_folder(folder_id: str, draft: FolderDraft, owner: Owner) -> FolderView:
+    # Gives the folder the name, which no other folder of the owner's may have. A folder
+    # renamed to its own name is answered unchanged.
+    raise NotImplementedError
+
+
+@app.delete("/api/folders/{folder_id}", responses=NOT_IN_LIBRARY, status_code=HTTPStatus.NO_CONTENT)
+def dissolve_folder(folder_id: str, owner: Owner) -> None:
+    # Removes the folder and every placement in it. Its subscriptions and items stay, in no
+    # folder.
+    raise NotImplementedError
+
+
+@app.put("/api/placements", responses=NOT_IN_LIBRARY | FOLLOWING, status_code=HTTPStatus.NO_CONTENT)
+def place(placing: Placing, owner: Owner) -> None:
+    # Places every subscription and item named in the folder, or in none. The whole request is
+    # refused, and nothing changes, where the folder, a subscription or an item is not the
+    # owner's, or where an item named follows its subscription.
+    raise NotImplementedError
 
 
 def schedule_running() -> None:

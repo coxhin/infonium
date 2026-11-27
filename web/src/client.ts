@@ -41,6 +41,9 @@ export type Follows = Schemas["Follows"];
 export type Poll = Subscription["poll"];
 export type Posting = Schemas["PostingView"];
 export type Admission = Posting["admission"];
+export type Media = Schemas["Media"];
+export type Folder = Schemas["FolderView"];
+export type Placing = Schemas["Placing"];
 // The anchors of a passage: one at least, of one document, in the order of its blocks.
 export type Anchors = [Anchor, ...Anchor[]];
 // What happens while a question is answered. The protocol lists these as the items of a
@@ -598,4 +601,37 @@ export function readPosting(subscriptionId: string, number: number): Promise<Pos
       params: { path: { subscription_id: subscriptionId, number } },
     }),
   );
+}
+
+// The owner's folders, the one added first first.
+export function listFolders(): Promise<Folder[]> {
+  return settled(api.GET("/api/folders"));
+}
+
+// Keeps a folder of the name, which no other folder of the owner's may have.
+export function makeFolder(name: string): Promise<Folder> {
+  return settled(api.POST("/api/folders", { body: { name } }));
+}
+
+// Gives the folder the name, which no other folder of the owner's may have.
+export function renameFolder(folderId: string, name: string): Promise<Folder> {
+  return settled(
+    api.PATCH("/api/folders/{folder_id}", {
+      params: { path: { folder_id: folderId } },
+      body: { name },
+    }),
+  );
+}
+
+// Removes the folder; its subscriptions and items stay, in no folder.
+export function dissolveFolder(folderId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/folders/{folder_id}", { params: { path: { folder_id: folderId } } }),
+  );
+}
+
+// Places every subscription and item named in the folder, or in none. The whole request is
+// refused, and nothing changes, where one of them cannot be placed so.
+export function place(placing: Placing): Promise<void> {
+  return done(api.PUT("/api/placements", { body: placing }));
 }
