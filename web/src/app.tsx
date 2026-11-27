@@ -425,6 +425,7 @@ export function App() {
         <ListColumn
           entries={entries.loaded}
           interrupted={entries.interrupted}
+          refusal={entries.refusal}
           selected={selected}
           seen={seen}
           onImported={openImported}

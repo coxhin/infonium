@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Subscription } from "./client";
+import { Interruption } from "./interruption";
 import { PostingList } from "./postinglist";
 import { SubscriptionHead } from "./subscriptionhead";
 import { useSubscriptionState } from "./subscriptionstate";
@@ -88,7 +89,7 @@ export function SubscriptionPane({
         <button ref={back} className="back quiet" onClick={onBack}>
           ← 全部订阅
         </button>
-        {state.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
+        {state.interrupted && <Interruption refusal={state.refusal} />}
       </div>
       <div className="list-view" ref={view}>
         {loaded.state === "loading" && <p className="status">正在打开…</p>}

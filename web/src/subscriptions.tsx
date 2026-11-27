@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { subscribe, type Subscription } from "./client";
+import { Interruption } from "./interruption";
 import type { Watched } from "./loading";
 import { NewCount } from "./newmarks";
 import { usePress } from "./pressing";
@@ -202,7 +203,7 @@ export function SubscriptionsPanel({
             <button onClick={subscriptions.readNow}>重试</button>
           </p>
         )}
-        {subscriptions.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
+        {subscriptions.interrupted && <Interruption refusal={subscriptions.refusal} />}
         {loaded.state === "ready" && (
           <SubscriptionList subscriptions={loaded.value} onOpen={onOpen} />
         )}

@@ -98,14 +98,22 @@ function refusalText(refusal: Refusal | undefined): string {
 }
 
 // The service answered a request with a status other than success, so it did nothing of what
-// was asked. The status tells the kinds of refusal apart where a reader is told them apart.
+// was asked. The status tells the kinds of refusal apart where a reader is told them apart;
+// explained, whether the answer said why, as the service's own answers do and a gateway's do not.
 export class Refused extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly explained: boolean,
   ) {
     super(message);
   }
+}
+
+// What a request was answered with is a Failure where the service refused it, and the bare
+// text of a page where a gateway did.
+function refused(refusal: Refusal | undefined, response: Response): Refused {
+  return new Refused(refusalText(refusal), response.status, refusal?.detail !== undefined);
 }
 
 async function settled<Data>(
@@ -113,36 +121,37 @@ async function settled<Data>(
 ): Promise<Data> {
   const { data, error, response } = await request;
   if (data === undefined) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
   return data;
 }
 
 // The statuses a gateway answers with when the service behind it does not answer. The service
-// itself answers 502 only where a model call failed, which a request that calls no model never
-// meets.
+// answers 502 itself where a model call failed, which a request that calls no model never
+// meets, and 503 where the subscriptions' schedule has stopped, saying why.
 const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
 const UNANSWERED = "连不上服务";
 
-// Why a request that calls no model failed, as the reader is told it: a service that did not
-// answer is said as such rather than by the gateway's bare refusal.
-export function requestReason(error: unknown): string {
-  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
-    ? UNANSWERED
-    : reasonOf(error);
-}
-
-// Whether a request that calls no model failed because the service did not answer it: the
+// Whether a request that calls no model failed because the service did not answer it: a
 // gateway said so, or no answer came at all.
 export function isUnanswered(error: unknown): boolean {
-  return error instanceof Refused ? UNANSWERED_STATUSES.has(error.status) : true;
+  return error instanceof Refused
+    ? UNANSWERED_STATUSES.has(error.status) && !error.explained
+    : true;
+}
+
+// Why a request that calls no model failed, as the reader is told it: a service that did not
+// answer is said as such rather than by the gateway's bare refusal, and one that refused says
+// why in its own words.
+export function requestReason(error: unknown): string {
+  return error instanceof Refused && isUnanswered(error) ? UNANSWERED : reasonOf(error);
 }
 
 // A request that answers with nothing when it succeeds.
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;
   if (!response.ok) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
 }
 
@@ -167,7 +176,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");

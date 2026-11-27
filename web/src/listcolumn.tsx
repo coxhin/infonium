@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isUnanswered, listSubscriptions, type ItemEntry, type Subscription } from "./client";
 import { isBeingRead } from "./entry";
+import { Interruption } from "./interruption";
 import { ItemList } from "./itemlist";
 import { LIST_INTERVAL_MS, useWatched, type Loaded } from "./loading";
 import { NewCount } from "./newmarks";
@@ -58,6 +59,7 @@ function withSubscription(listed: Subscription[], read: Subscription): Subscript
 export function ListColumn({
   entries,
   interrupted,
+  refusal,
   selected,
   seen,
   onImported,
@@ -65,6 +67,8 @@ export function ListColumn({
 }: {
   entries: Loaded<ItemEntry[]>;
   interrupted: boolean;
+  // Why reading the list of items again failed, where the service said so.
+  refusal: string | undefined;
   selected: string | undefined;
   // The items told as seen from this page.
   seen: ReadonlySet<string>;
@@ -156,7 +160,7 @@ export function ListColumn({
         ))}
       </div>
       {place === undefined && (interrupted || subscriptions.interrupted) && (
-        <p className="status failed">连接不上服务，正在重试…</p>
+        <Interruption refusal={subscriptions.refusal ?? refusal} />
       )}
       <div
         id={panelId("items")}
@@ -168,6 +172,7 @@ export function ListColumn({
         <ItemList
           entries={entries}
           interrupted={interrupted}
+          refusal={refusal}
           selected={selected}
           seen={seen}
           subscriptionTitles={subscriptionTitles}

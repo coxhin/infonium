@@ -34,6 +34,9 @@ export function useLoaded<Value>(load: () => Promise<Value>, key: string): Loade
 export type Watched<Value> = {
   loaded: Loaded<Value>;
   interrupted: boolean;
+  // While the watch is interrupted, why, where the service said so in refusing a refreshed
+  // value; nothing where it did not answer.
+  refusal: string | undefined;
   // Watches again from a value the service has just given, as when it was asked to start
   // what makes the value unsettled; the value is on show at once and stays on show meanwhile.
   watchFrom: (value: Value) => void;
@@ -60,7 +63,11 @@ export type Refreshing = {
   unanswered: (error: unknown) => boolean;
 };
 
-type Watch<Value> = { loaded: Loaded<Value>; interrupted: boolean };
+type Watch<Value> = {
+  loaded: Loaded<Value>;
+  interrupted: boolean;
+  refusal: string | undefined;
+};
 
 // Like useLoaded, and loads again at intervals for as long as the value is unsettled, and, with
 // refreshing, while it is settled. The value on show stays until the next one arrives. A load
@@ -76,6 +83,7 @@ export function useWatched<Value>(
   const [watched, setWatched] = useState<Watch<Value>>({
     loaded: { state: "loading" },
     interrupted: false,
+    refusal: undefined,
   });
   const [round, setRound] = useState(0);
   // The key whose value is on show, which a watch begun again for the same key keeps.
@@ -124,7 +132,11 @@ export function useWatched<Value>(
           if (current) {
             onShow = true;
             shownFor.current = key;
-            setWatched({ loaded: { state: "ready", value }, interrupted: false });
+            setWatched({
+              loaded: { state: "ready", value },
+              interrupted: false,
+              refusal: undefined,
+            });
             if (unsettled(value)) {
               timer = setTimeout(watch, WATCH_INTERVAL_MS);
             } else if (refreshing !== undefined) {
@@ -135,19 +147,24 @@ export function useWatched<Value>(
         },
         (error: unknown) => {
           if (current && (onShow || refreshing?.unanswered(error) === true)) {
-            setWatched((before) => ({ loaded: before.loaded, interrupted: true }));
+            const refusal =
+              refreshing === undefined || refreshing.unanswered(error)
+                ? undefined
+                : reasonOf(error);
+            setWatched((before) => ({ loaded: before.loaded, interrupted: true, refusal }));
             timer = setTimeout(watch, WATCH_INTERVAL_MS);
           } else if (current) {
             setWatched({
               loaded: { state: "failed", reason: reasonOf(error) },
               interrupted: false,
+              refusal: undefined,
             });
           }
         },
       );
     }
     if (!onShow) {
-      setWatched({ loaded: { state: "loading" }, interrupted: false });
+      setWatched({ loaded: { state: "loading" }, interrupted: false, refusal: undefined });
     }
     if (refreshing !== undefined) {
       document.addEventListener("visibilitychange", onVisibility);
@@ -169,7 +186,7 @@ export function useWatched<Value>(
   const watchFrom = useCallback(
     (value: Value) => {
       shownFor.current = key;
-      setWatched({ loaded: { state: "ready", value }, interrupted: false });
+      setWatched({ loaded: { state: "ready", value }, interrupted: false, refusal: undefined });
       setRound((before) => before + 1);
     },
     [key],

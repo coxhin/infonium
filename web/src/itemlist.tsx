@@ -1,6 +1,7 @@
 import { useId, useState, type ChangeEvent, type FormEvent } from "react";
 import { importLink, importUpload, type ItemEntry } from "./client";
 import { isNew, itemTitle, originLabel } from "./entry";
+import { Interruption } from "./interruption";
 import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
 import { NewDot, NewHeard } from "./newmarks";
@@ -46,6 +47,7 @@ function narrowed(entries: ItemEntry[], narrowing: Narrowing): ItemEntry[] {
 export function ItemList({
   entries,
   interrupted,
+  refusal,
   selected,
   seen,
   subscriptionTitles,
@@ -53,6 +55,8 @@ export function ItemList({
 }: {
   entries: Loaded<ItemEntry[]>;
   interrupted: boolean;
+  // Why reading the list again failed, where the service said so.
+  refusal: string | undefined;
   selected: string | undefined;
   seen: ReadonlySet<string>;
   subscriptionTitles: ReadonlyMap<string, string>;
@@ -122,7 +126,7 @@ export function ItemList({
       </label>
       {importing.state === "failed" && <p className="status failed">{importing.reason}</p>}
       {entries.state === "failed" && <p className="status failed">{entries.reason}</p>}
-      {interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
+      {interrupted && <Interruption refusal={refusal} />}
       {entries.state === "ready" && entries.value.length > 0 && (
         <fieldset className="narrowing">
           <legend className="heard">显示哪些文章</legend>
