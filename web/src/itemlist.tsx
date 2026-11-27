@@ -24,11 +24,15 @@ import { PlaceMenu } from "./placemenu";
 import { MEDIA_NAMES, followed } from "./sidebarselection";
 import "./heard.css";
 
+// What came of the last import: nothing to tell, one under way, one refused, one not placed in
+// the folder selected because the service refused it, or one that the library held already in
+// another folder, where it stays.
 type Importing =
   | { state: "idle" }
   | { state: "running" }
   | { state: "failed"; reason: string }
-  | { state: "unplaced"; reason: string };
+  | { state: "unplaced"; reason: string }
+  | { state: "elsewhere"; folderId: string };
 
 const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
   underway: " · 读取中…",
@@ -73,6 +77,29 @@ function useRowsDrawn(total: number, listKey: string) {
 // The menu open of an item, and where it opened.
 type MenuOpen = { entry: ItemEntry; opening: Opening };
 
+// Of an address imported that the library held already in another folder: that it stays there,
+// by the folder's name, with the press that opens the folder.
+function ElsewhereSaid({
+  folderId,
+  placer,
+  onOpen,
+}: {
+  folderId: string;
+  placer: Placer;
+  onOpen: (folderId: string) => void;
+}) {
+  const name = placer.folders.find((folder) => folder.id === folderId)?.name;
+  const called = name === undefined ? "另一个分类" : `分类“${name}”`;
+  return (
+    <p className="status" role="status">
+      这一篇已经在{called}里，没有移到这里。
+      <button className="quiet" onClick={() => onOpen(folderId)}>
+        打开{called}
+      </button>
+    </p>
+  );
+}
+
 // The row that holds the keyboard: its item, and whether on its link or on its ⋯.
 type HeldRow = { itemId: string; control: "link" | "menu" };
 
@@ -108,6 +135,7 @@ export function ItemList({
   placer,
   onImported,
   onEmptied,
+  onOpenFolder,
 }: {
   entries: Loaded<ItemEntry[]>;
   listed: ItemEntry[];
@@ -130,6 +158,7 @@ export function ItemList({
   onImported: (entry: ItemEntry) => void;
   // The last row has left the list with the keyboard in it.
   onEmptied: () => void;
+  onOpenFolder: (folderId: string) => void;
 }) {
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState<Importing>({ state: "idle" });
@@ -166,7 +195,8 @@ export function ItemList({
   });
 
   // An import into a folder is placed there once the service has answered it; the item is
-  // opened either way, and a placing the service refused is said under the form.
+  // opened either way, and a placing the service refused is said under the form. An address the
+  // library held already in another folder stays there, as the form says.
   async function imported(importingItem: Promise<ItemEntry>) {
     const into = importInto;
     setImporting({ state: "running" });
@@ -177,8 +207,13 @@ export function ItemList({
       setImporting({ state: "failed", reason: reasonOf(error) });
       return;
     }
-    if (into === undefined) {
+    if (into === undefined || entry.folder === into.folderId) {
       setImporting({ state: "idle" });
+      onImported(entry);
+      return;
+    }
+    if (entry.folder !== null) {
+      setImporting({ state: "elsewhere", folderId: entry.folder });
       onImported(entry);
       return;
     }
@@ -279,6 +314,9 @@ export function ItemList({
             <p className="status failed" role="alert">
               {importing.reason}
             </p>
+          )}
+          {importing.state === "elsewhere" && (
+            <ElsewhereSaid folderId={importing.folderId} placer={placer} onOpen={onOpenFolder} />
           )}
         </>
       )}

@@ -258,6 +258,7 @@ export function ListColumn({
               placer={placer}
               onImported={onImported}
               onEmptied={() => heading.current?.focus()}
+              onOpenFolder={(folderId) => browsing.select({ kind: "folder", folderId })}
             />
           )}
         </div>
