@@ -11,8 +11,9 @@ import {
 
 // What the browser remembers of the sidebar: the selection, the media, the order, the folders
 // folded, and whether the sidebar is folded. Each is read once, when the app opens, and kept
-// again whenever it changes. Another window of the app keeps choices of its own: a selection
-// made in one does not move the other.
+// again whenever it changes. The windows of one browser share what it keeps: a window opened or
+// loaded again starts from the choices made last in any of them, while a window that stays open
+// is not moved by a choice made in another.
 const SELECTION_KEY = "infonium.selection";
 const MEDIA_KEY = "infonium.media";
 const ORDER_KEY = "infonium.sidebarOrder";
