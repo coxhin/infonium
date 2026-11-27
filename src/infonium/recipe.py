@@ -83,13 +83,10 @@ then says what the document says about that topic in one or two sentences.
 """,
     ),
     # Its one section has a title, though the style's name stands in the row of styles above
-    # it. The rules do not say where the title goes: a draft's section names it heading, which
-    # sorts before the statements, since through the relay a reply's keys come in alphabetical
-    # order. Named title, it fell due after the statements, and there gpt-6.1-terra and
-    # gpt-6-luna at times never ended their reply but wrote white space: of two short sources,
-    # in 15 of 55 flashes whose rules did not say where the title goes, and in none of 54 whose
-    # rules said that it follows the statements. Named heading and left unsaid, none of 24
-    # flashes ran away, against 4 of 24 named title at the same time.
+    # it, and the rules say that the title follows the statements. gpt-6.1-terra and gpt-6-luna
+    # write a section's title after its statements, and there at times never ended their reply
+    # but wrote white space: of two short sources, in 15 of 55 flashes whose rules did not say
+    # where the title goes, empty or this one, and in none of 54 whose rules said so.
     DigestStyle.FLASH: Recipe(
         name="快讯",
         description=(
@@ -99,9 +96,10 @@ then says what the document says about that topic in one or two sentences.
         ),
         section_rules="""\
 Write one section. It is titled with the words for "News flash" in the output language (in \
-Chinese 快讯), and is a paragraph. It holds one to three statements, one sentence each, \
-written as a news flash is: the most important thing first, in short sentences without \
-asides, each of at most about 60 characters in Chinese, or as short in another language.
+Chinese 快讯), and is a paragraph. After the statements, write the title, and only then end \
+the section. It holds one to three statements, one sentence each, written as a news flash \
+is: the most important thing first, in short sentences without asides, each of at most \
+about 60 characters in Chinese, or as short in another language.
 
 The first statement is the lead: the newest or most consequential thing the document \
 reports, with who did what, and when and where, as far as the document says. Of a document \
