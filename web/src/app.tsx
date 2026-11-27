@@ -18,7 +18,7 @@ import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { LIST_INTERVAL_MS, reasonOf, useWatched, type Loaded, type Watched } from "./loading";
 import { isBeingRead } from "./entry";
 import { useRevisions } from "./itemrevisions";
-import { useNavigation } from "./navigation";
+import { useBrowsing } from "./browsing";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
 import type { Seat } from "./seat";
@@ -395,9 +395,10 @@ function useSeeing(seated: Seat | undefined, entries: Watched<ItemEntry[]>): Rea
   return seen;
 }
 
-// The sidebar and the list column, which share what the sidebar has selected. Their state is
-// kept here, apart from the reader's, so that a press in either draws these two columns alone.
-function Browsing({
+// The sidebar and the list column, which share the state of browsing: what the sidebar has
+// selected, and what it is drawn from. It is kept here, apart from the reader's, so that a press
+// in either draws these two columns alone.
+function BrowsingColumns({
   entries,
   seen,
   selected,
@@ -409,18 +410,18 @@ function Browsing({
   onImported: (entry: ItemEntry) => void;
 }) {
   const [openedAtStart] = useState(selected);
-  const navigation = useNavigation(entries, seen, openedAtStart);
+  const browsing = useBrowsing(entries, seen, openedAtStart);
   const layout = useSidebarLayout();
   return (
     <>
-      <Sidebar navigation={navigation} layout={layout} />
+      <Sidebar browsing={browsing} layout={layout} />
       <ListColumn
         entries={entries.loaded}
         interrupted={entries.interrupted}
         refusal={entries.refusal}
         selected={selected}
         seen={seen}
-        navigation={navigation}
+        browsing={browsing}
         layout={layout}
         onImported={onImported}
         onChanged={entries.readNow}
@@ -459,7 +460,12 @@ export function App() {
   return (
     <SeatingProvider value={seating}>
       <div className="app">
-        <Browsing entries={entries} seen={seen} selected={selected} onImported={openImported} />
+        <BrowsingColumns
+          entries={entries}
+          seen={seen}
+          selected={selected}
+          onImported={openImported}
+        />
         {selected === undefined ? (
           <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
         ) : (

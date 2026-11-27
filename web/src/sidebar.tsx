@@ -8,11 +8,12 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { requestReason, type Folder } from "./client";
+import type { Browsing } from "./browsing";
+import { requestReason, type Folder, type Subscription } from "./client";
 import { draggedOver, endDrag, type Dragged } from "./dragging";
 import { Interruption } from "./interruption";
+import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
-import type { Navigation } from "./navigation";
 import { FOLDER_NAME_LENGTH } from "./placemenu";
 import { usePress } from "./pressing";
 import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
@@ -21,6 +22,7 @@ import {
   MEDIA_NAMES,
   keyOf,
   selectionOfKey,
+  type MediaChoice,
   type Order,
   type Selection,
 } from "./sidebarselection";
@@ -88,8 +90,13 @@ function NewFolderField({
 
 // The sidebar's own failures: a list it could not read, with why and a way to try again, and a
 // service that does not answer.
-function ListFailures({ navigation }: { navigation: Navigation }) {
-  const { folders, subscriptions } = navigation;
+function ListFailures({
+  folders,
+  subscriptions,
+}: {
+  folders: Watched<Folder[]>;
+  subscriptions: Watched<Subscription[]>;
+}) {
   return (
     <>
       {folders.loaded.state === "failed" && (
@@ -117,11 +124,11 @@ function ListFailures({ navigation }: { navigation: Navigation }) {
 // outside the folders, a subscription or an item leaves its folder.
 function SidebarBody({
   overlaid,
-  navigation,
+  browsing,
   layout,
 }: {
   overlaid: boolean;
-  navigation: Navigation;
+  browsing: Browsing;
   layout: SidebarLayout;
 }) {
   const own = useRef<HTMLElement>(null);
@@ -135,7 +142,7 @@ function SidebarBody({
   // Why the service refused the last drop, said at the sidebar's head, which stays in view
   // whether the folder dropped on does or not.
   const [dropRefusal, setDropRefusal] = useState<string>();
-  const { tally, media, order, selection, folders, subscriptions } = navigation;
+  const { tally, media, order, selection, folders, subscriptions } = browsing;
   // A media chosen narrows the list column at once, and the tree, which may draw again
   // hundreds of rows, after it, in pieces that leave the page free to answer meanwhile.
   const treeMedia = useDeferredValue(media);
@@ -169,14 +176,14 @@ function SidebarBody({
   }, [overlaid, layout.close]);
 
   function select(chosen: Selection) {
-    navigation.select(chosen);
+    browsing.select(chosen);
     if (overlaid) {
       layout.close();
     }
   }
 
   function subscribe() {
-    navigation.startSubscribing();
+    browsing.startSubscribing();
     if (overlaid) {
       layout.close();
     }
@@ -227,7 +234,7 @@ function SidebarBody({
         ? "没有移出分类"
         : `没有移到“${folderList.find((folder) => folder.id === folderId)?.name ?? ""}”`;
     setDropRefusal(undefined);
-    navigation.placer
+    browsing.placer
       .place({
         folder: folderId,
         subscriptions: dragged.kind === "subscription" ? [dragged.id] : [],
@@ -290,7 +297,7 @@ function SidebarBody({
               name={mediaName}
               value={choice}
               checked={media === choice}
-              onChange={() => navigation.chooseMedia(choice)}
+              onChange={() => browsing.chooseMedia(choice)}
             />
             <MediaIcon media={choice} />
             <span>{MEDIA_NAMES[choice]}</span>
@@ -304,7 +311,7 @@ function SidebarBody({
         </p>
       )}
       <div className="sidebar-scroll">
-        <ListFailures navigation={navigation} />
+        <ListFailures folders={folders} subscriptions={subscriptions} />
         <SidebarTree
           selection={selection}
           tally={treeTally}
@@ -312,22 +319,22 @@ function SidebarBody({
           order={order}
           folders={folderList}
           subscriptions={subscriptionList}
-          occupied={navigation.occupied}
-          heldIn={navigation.heldIn}
-          folded={navigation.folded}
+          occupied={browsing.occupied}
+          heldIn={browsing.heldIn}
+          folded={browsing.folded}
           focusKey={focusKey}
           dropOn={dropOn ?? undefined}
-          placer={navigation.placer}
+          placer={browsing.placer}
           onSelect={select}
-          onFolded={navigation.fold}
-          onRename={navigation.rename}
-          onDissolve={navigation.dissolve}
+          onFolded={browsing.fold}
+          onRename={browsing.rename}
+          onDissolve={browsing.dissolve}
         />
       </div>
       <div className="sidebar-foot">
         {naming ? (
           <NewFolderField
-            onMake={navigation.placer.make}
+            onMake={browsing.placer.make}
             onDone={(made) => {
               setNaming(false);
               if (made === undefined) {
@@ -349,7 +356,7 @@ function SidebarBody({
           <select
             aria-label="分类和订阅的排列"
             value={order}
-            onChange={(event) => navigation.chooseOrder(event.target.value as Order)}
+            onChange={(event) => browsing.chooseOrder(event.target.value as Order)}
           >
             {(Object.keys(ORDER_NAMES) as Order[]).map((each) => (
               <option key={each} value={each}>
@@ -374,8 +381,15 @@ function SidebarBody({
 // The sidebar folded: the media's icons, the one chosen marked, and the count of new items; a
 // press opens the whole sidebar over the list column, and a drag that comes over it opens it to
 // be dropped on. Under them, the press that unfolds it.
-function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarLayout }) {
-  const { media, tally } = navigation;
+function Rail({
+  media,
+  fresh,
+  layout,
+}: {
+  media: MediaChoice;
+  fresh: number;
+  layout: SidebarLayout;
+}) {
   const openedByDrag = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
 
@@ -394,7 +408,7 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
     };
   }, [layout.close]);
 
-  const told = `打开侧栏：${MEDIA_NAMES[media]}${tally.fresh > 0 ? `，${tally.fresh} 篇新来源` : ""}`;
+  const told = `打开侧栏：${MEDIA_NAMES[media]}${fresh > 0 ? `，${fresh} 篇新来源` : ""}`;
   return (
     <div className="rail">
       <button
@@ -419,9 +433,9 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
             <MediaIcon media={choice} />
           </span>
         ))}
-        {tally.fresh > 0 && (
+        {fresh > 0 && (
           <span className="new-count" aria-hidden="true">
-            {tally.fresh}
+            {fresh}
           </span>
         )}
       </button>
@@ -439,17 +453,19 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
 
 // The sidebar where the layout puts it: a column; or a rail, and over the list column when it
 // is opened; or, in one column, nothing until a press opens it over the page.
-export function Sidebar({ navigation, layout }: { navigation: Navigation; layout: SidebarLayout }) {
+export function Sidebar({ browsing, layout }: { browsing: Browsing; layout: SidebarLayout }) {
   if (layout.pinned) {
-    return <SidebarBody overlaid={false} navigation={navigation} layout={layout} />;
+    return <SidebarBody overlaid={false} browsing={browsing} layout={layout} />;
   }
   return (
     <div className="sidebar-place">
-      {layout.width !== "narrow" && <Rail navigation={navigation} layout={layout} />}
+      {layout.width !== "narrow" && (
+        <Rail media={browsing.media} fresh={browsing.tally.fresh} layout={layout} />
+      )}
       {layout.overlaid && (
         <>
           {layout.width === "narrow" && <div className="scrim" aria-hidden="true" />}
-          <SidebarBody overlaid navigation={navigation} layout={layout} />
+          <SidebarBody overlaid browsing={browsing} layout={layout} />
         </>
       )}
     </div>

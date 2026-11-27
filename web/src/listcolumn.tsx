@@ -1,9 +1,9 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Browsing } from "./browsing";
 import { requestReason, type ItemEntry, type Subscription } from "./client";
 import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
 import type { Loaded } from "./loading";
-import type { Navigation } from "./navigation";
 import type { SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_NAMES,
@@ -49,7 +49,7 @@ export function ListColumn({
   refusal,
   selected,
   seen,
-  navigation,
+  browsing,
   layout,
   onImported,
   onChanged,
@@ -61,13 +61,13 @@ export function ListColumn({
   selected: string | undefined;
   // The items told as seen from this page.
   seen: ReadonlySet<string>;
-  navigation: Navigation;
+  browsing: Browsing;
   layout: SidebarLayout;
   onImported: (entry: ItemEntry) => void;
   // What the library holds has changed by a press in the column.
   onChanged: () => void;
 }) {
-  const { selection, media, present, subscriptions, folders, placer } = navigation;
+  const { selection, media, present, subscriptions, folders, placer } = browsing;
   const [unplaced, setUnplaced] = useState<string>();
   const folderMap = useMemo(
     () =>
@@ -102,7 +102,7 @@ export function ListColumn({
     [entries, selection, media, present, seen],
   );
 
-  const subscribing = navigation.subscribing;
+  const subscribing = browsing.subscribing;
   const name = subscribing ? "订阅" : selectionName(selection, folderMap);
   const listKey = `${keyOf(selection)}|${media}`;
   const view = useRef<HTMLDivElement>(null);
@@ -118,13 +118,13 @@ export function ListColumn({
   // is decided; until then, it is being opened. Every item is listed at once: no list moves it.
   const waiting =
     selection.kind !== "all" &&
-    (!navigation.opened ||
+    (!browsing.opened ||
       subscriptions.loaded.state === "loading" ||
       folders.loaded.state === "loading");
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
-    navigation.subscribed(subscription).then(
+    browsing.subscribed(subscription).then(
       () => onChanged(),
       (error: unknown) =>
         setUnplaced(`已订阅，但没有放进分类“${importInto?.name ?? ""}”：${requestReason(error)}`),
@@ -157,7 +157,7 @@ export function ListColumn({
           <span className="list-media">{MEDIA_NAMES[media]}</span>
         )}
         {subscribing && (
-          <button className="quiet" onClick={navigation.stopSubscribing}>
+          <button className="quiet" onClick={browsing.stopSubscribing}>
             取消
           </button>
         )}
@@ -175,19 +175,19 @@ export function ListColumn({
             <SubscribingHint />
           )}
         </div>
-      ) : !waiting && selection.kind === "subscription" && navigation.pane !== undefined ? (
+      ) : !waiting && selection.kind === "subscription" && browsing.pane !== undefined ? (
         <SubscriptionPane
-          key={navigation.pane.subscriptionId}
-          subscriptionId={navigation.pane.subscriptionId}
-          sought={navigation.pane.sought}
-          again={navigation.pane.again}
+          key={browsing.pane.subscriptionId}
+          subscriptionId={browsing.pane.subscriptionId}
+          sought={browsing.pane.sought}
+          again={browsing.pane.again}
           selected={selected}
           seen={seen}
           shown
           onView={(subscription) =>
             subscriptions.replace((before) => withSubscription(before, subscription))
           }
-          onGone={navigation.gone}
+          onGone={browsing.gone}
           onChanged={onChanged}
         />
       ) : (

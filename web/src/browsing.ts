@@ -40,7 +40,10 @@ import {
 } from "./sidebarselection";
 import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptions";
 
-export type Navigation = {
+// The state of browsing the library, which the sidebar and the list column share: the lists the
+// sidebar is drawn from, what it has selected and how, its counts, and what moves subscriptions
+// and items between folders.
+export type Browsing = {
   subscriptions: Watched<Subscription[]>;
   folders: Watched<Folder[]>;
   selection: Selection;
@@ -79,11 +82,11 @@ function listedOf<Value>(watched: Watched<Value[]>): Value[] {
   return watched.loaded.state === "ready" ? watched.loaded.value : [];
 }
 
-export function useNavigation(
+export function useBrowsing(
   entries: Watched<ItemEntry[]>,
   seen: ReadonlySet<string>,
   openedAtStart: string | undefined,
-): Navigation {
+): Browsing {
   const subscriptions = useSubscriptions(entries.loaded, seen, entries.readNow);
   const folders = useFolders();
   const [selection, keepSelection] = useRememberedSelection();
