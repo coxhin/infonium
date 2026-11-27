@@ -408,4 +408,10 @@ main > .status {
     border: 0;
     border-bottom: 1px solid var(--line);
   }
+
+  /* The list column is at most this high, its views scrolling inside it, so that an item it
+     opens shows right under it and the list keeps its place while the item is read. */
+  .app > .library {
+    max-height: 60vh;
+  }
 }

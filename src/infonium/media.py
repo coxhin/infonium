@@ -99,7 +99,7 @@ FETCHER = [sys.executable, lineage.RUN_AS_MODULE, __spec__.name]
 # YTDLP_NO_PLUGINS; the ffmpeg it starts is given the same. Driven as here, yt-dlp reads no
 # configuration file, and its cache is a folder of the fetch.
 FETCHER_TAKES = re.compile(
-    "|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES, r"YTDLP_\w+"))
+    "|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES, lineage.YTDLP_SETTINGS))
 )
 FETCH_REPORT_FILE = "fetch.json"
 # How long the process that started the fetcher lets pass between two looks at whether it

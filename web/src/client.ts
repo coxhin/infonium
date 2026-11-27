@@ -36,6 +36,11 @@ export type NoteEntry = Schemas["NoteEntry"];
 export type Note = Schemas["NoteView"];
 export type NoteDraft = Schemas["NoteDraft"];
 export type LinkedPassage = Schemas["LinkedPassage"];
+export type Subscription = Schemas["SubscriptionView"];
+export type Follows = Schemas["Follows"];
+export type Poll = Subscription["poll"];
+export type Posting = Schemas["PostingView"];
+export type Admission = Posting["admission"];
 // The anchors of a passage: one at least, of one document, in the order of its blocks.
 export type Anchors = [Anchor, ...Anchor[]];
 // What happens while a question is answered. The protocol lists these as the items of a
@@ -93,14 +98,22 @@ function refusalText(refusal: Refusal | undefined): string {
 }
 
 // The service answered a request with a status other than success, so it did nothing of what
-// was asked. The status tells the kinds of refusal apart where a reader is told them apart.
+// was asked. The status tells the kinds of refusal apart where a reader is told them apart;
+// explained, whether the answer said why, as the service's own answers do and a gateway's do not.
 export class Refused extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly explained: boolean,
   ) {
     super(message);
   }
+}
+
+// What a request was answered with is a Failure where the service refused it, and the bare
+// text of a page where a gateway did.
+function refused(refusal: Refusal | undefined, response: Response): Refused {
+  return new Refused(refusalText(refusal), response.status, refusal?.detail !== undefined);
 }
 
 async function settled<Data>(
@@ -108,30 +121,37 @@ async function settled<Data>(
 ): Promise<Data> {
   const { data, error, response } = await request;
   if (data === undefined) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
   return data;
 }
 
 // The statuses a gateway answers with when the service behind it does not answer. The service
-// itself answers 502 only where a model call failed, which a request that calls no model never
-// meets.
+// answers 502 itself where a model call failed, which a request that calls no model never
+// meets, and 503 where the subscriptions' schedule has stopped, saying why.
 const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
 const UNANSWERED = "连不上服务";
 
+// Whether a request that calls no model failed because the service did not answer it: a
+// gateway said so, or no answer came at all.
+export function isUnanswered(error: unknown): boolean {
+  return error instanceof Refused
+    ? UNANSWERED_STATUSES.has(error.status) && !error.explained
+    : true;
+}
+
 // Why a request that calls no model failed, as the reader is told it: a service that did not
-// answer is said as such rather than by the gateway's bare refusal.
+// answer is said as such rather than by the gateway's bare refusal, and one that refused says
+// why in its own words.
 export function requestReason(error: unknown): string {
-  return error instanceof Refused && UNANSWERED_STATUSES.has(error.status)
-    ? UNANSWERED
-    : reasonOf(error);
+  return error instanceof Refused && isUnanswered(error) ? UNANSWERED : reasonOf(error);
 }
 
 // A request that answers with nothing when it succeeds.
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;
   if (!response.ok) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
 }
 
@@ -156,7 +176,7 @@ async function* eventLines(
 ): AsyncGenerator<ChatEvent> {
   const { data, error, response } = await reached(request);
   if (!response.ok) {
-    throw new Refused(refusalText(error), response.status);
+    throw refused(error, response);
   }
   if (data === undefined || data === null) {
     throw new Error("服务没有送来任何内容");
@@ -489,5 +509,93 @@ export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): 
 export function removeNote(noteId: string): Promise<void> {
   return done(
     reached(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
+}
+
+// The reader has the item's document on show; the first time is kept as when it was seen.
+export function seeItem(itemId: string): Promise<ItemEntry> {
+  return settled(api.PUT("/api/items/{item_id}/seen", { params: { path: { item_id: itemId } } }));
+}
+
+// The subscriptions, the one added last first.
+export function listSubscriptions(): Promise<Subscription[]> {
+  return settled(api.GET("/api/subscriptions"));
+}
+
+// Subscribes to the feed the address leads to and admits as many of its newest postings as
+// given. An address that leads to no feed that can be read is refused with the reason (400).
+export function subscribe(address: string, admit: number): Promise<Subscription> {
+  return settled(api.POST("/api/subscriptions", { body: { address, admit } }));
+}
+
+export function readSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.GET("/api/subscriptions/{subscription_id}", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Sets how the subscription follows its feed from now on.
+export function chooseFollows(subscriptionId: string, follows: Follows): Promise<Subscription> {
+  return settled(
+    api.PUT("/api/subscriptions/{subscription_id}/follows", {
+      params: { path: { subscription_id: subscriptionId } },
+      body: { follows },
+    }),
+  );
+}
+
+// Starts a poll of the subscription's feed now; its end is read from the subscription.
+export function pollSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.POST("/api/subscriptions/{subscription_id}/poll", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Takes every item of the subscription's postings that is read and not seen for seen now.
+export function seeSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.PUT("/api/subscriptions/{subscription_id}/seen", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Removes the subscription and the list of its postings; the items it brought stay.
+export function unsubscribe(subscriptionId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/subscriptions/{subscription_id}", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// The postings the subscription lists, the newest first: those older than the posting of the
+// number given, or the newest of all, as many as the limit at most.
+export function listPostings(
+  subscriptionId: string,
+  before: number | undefined,
+  limit: number,
+): Promise<Posting[]> {
+  return settled(
+    api.GET("/api/subscriptions/{subscription_id}/postings", {
+      params: {
+        path: { subscription_id: subscriptionId },
+        query: before === undefined ? { limit } : { before, limit },
+      },
+    }),
+  );
+}
+
+// Has the posting read at the reader's word: admitted now where it is not, read again where
+// its item's reading failed.
+export function readPosting(subscriptionId: string, number: number): Promise<Posting> {
+  return settled(
+    api.POST("/api/subscriptions/{subscription_id}/postings/{number}/reading", {
+      params: { path: { subscription_id: subscriptionId, number } },
+    }),
   );
 }

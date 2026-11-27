@@ -26,7 +26,7 @@ from infonium.htmlpage import (
     STYLE_ATTRIBUTE,
     drop_dialogs,
 )
-from infonium.library import Link, Origin, Upload
+from infonium.library import Link, Origin, Subscribed, Upload
 
 # What a page holds that would run, send or load another page where it is shown. The headers
 # the page is served with forbid all of this to the browser; taking it out of the page itself
@@ -243,7 +243,7 @@ def base_address(page: html.HtmlElement, origin: Origin) -> str:
     named = [str(address).strip() for address in NAMED_ADDRESSES(page)]
     own_base = [str(address).strip() for address in OWN_BASE(page)][:1]
     match origin:
-        case Link(url=asked):
+        case Link(url=asked) | Subscribed(url=asked):
             own = [
                 urljoin(asked, address)
                 for address in named
@@ -262,7 +262,7 @@ def heading_address(origin: Origin) -> str:
     # The address the extractor was given, as far as it is kept: it tells marks that lead
     # to a heading's own place from links to elsewhere.
     match origin:
-        case Link(url=asked):
+        case Link(url=asked) | Subscribed(url=asked):
             return asked
         case Upload(name=name):
             return name

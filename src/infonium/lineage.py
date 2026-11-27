@@ -22,11 +22,13 @@ RUN_AS_MODULE = "-m"
 # Each program infonium starts takes of infonium's environment the variables its rule names: a
 # pattern that a whole name matches, made of these parts where they serve the program. The
 # PATH, on which a program is found and finds the programs it starts; the locale and the time
-# zone, in which a program writes; and the proxies, which Python's urllib takes from every
-# variable whose name ends in _proxy, in any case.
+# zone, in which a program writes; the proxies, which Python's urllib takes from every
+# variable whose name ends in _proxy, in any case; and yt-dlp's own settings, such as
+# YTDLP_NO_PLUGINS, for a program that drives yt-dlp.
 SEARCH_PATH = "PATH"
 LOCALE = r"LANG|LANGUAGE|LC_\w+|TZ"
 PROXIES = r"(?i:\w+_proxy)"
+YTDLP_SETTINGS = r"YTDLP_\w+"
 # Whatever its rule names, no program takes infonium's own settings, under the prefix Settings
 # reads them by, or those of the model client it holds, nor a variable named like a key, a
 # token, a password or another secret.
