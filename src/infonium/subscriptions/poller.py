@@ -1,11 +1,11 @@
 import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Event, Lock
 
 import sqlalchemy
-from pydantic import AwareDatetime, BaseModel
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from infonium.intake import Intake
 from infonium.library import (
@@ -47,18 +47,29 @@ from infonium.subscriptions.subscription import (
 # How many polls run at once; the others wait their turn.
 POLLS_AT_ONCE = 2
 SCHEDULE_STOPPED = (
-    "the schedule of subscriptions stopped on a fault, and no feed is polled and no posting"
-    " admitted until infonium starts again: {reason}"
+    "the schedule of subscriptions stopped at {at} on a fault of infonium's own ({kind}), and no"
+    " feed is polled and no posting admitted; infonium's log holds the fault, and infonium must"
+    " be started again once it is mended"
 )
 
 logger = logging.getLogger(__name__)
 
 
 class ScheduleStopped(Exception):
-    # The poller's watch stopped on a fault of infonium's own. Every operation on subscriptions
-    # is refused with it until infonium starts again, so that a reader is told where they look,
-    # not shown polls that were due long ago. The cause is kept as the cause.
+    # The schedule of subscriptions stopped on a fault of infonium's own. Every operation on
+    # subscriptions is refused with it until infonium starts again, so that a reader is told
+    # where they look, not shown polls that were due long ago. Its sentence is fixed, with when
+    # and the kind of the fault: the fault's own text may hold the rows of whichever owner's a
+    # statement wrote, so it goes to the log alone, and is kept as the cause.
     pass
+
+
+class ScheduleFault(BaseModel):
+    # A fault the schedule stopped on, and when, by the system's clock: the poller's own may be
+    # what failed.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    at: AwareDatetime
+    fault: BaseException
 
 
 class BegunPoll(BaseModel):
@@ -121,8 +132,9 @@ class Poller:
         # it, and no callback of a future takes it.
         self.turn = Lock()
         self.stopped = Event()
-        # No watch runs until the poller starts.
-        self.watcher: Future[None] = Future()
+        # The faults the schedule stopped on; every operation on subscriptions is refused with
+        # the first.
+        self.faults: list[ScheduleFault] = []
 
     def start(self) -> None:
         # Polls that the service's stopping cut off begin again, and the watch begins.
@@ -130,18 +142,29 @@ class Poller:
             cut_off = underway_polls(every_owner)
         for owned in cut_off:
             self.poll_in_background(owned.owner, owned.subscription)
-        self.watcher = self.watching.submit(self.watch)
-        self.watcher.add_done_callback(self.record_watch)
+        self.watching.submit(self.watch).add_done_callback(self.record_watch)
 
     def raise_failure(self) -> None:
-        # A watch that stopped on a fault fails every operation on subscriptions after it, as
-        # the index's worker fails every search.
-        if self.watcher.done() and not self.watcher.cancelled():
-            failure = self.watcher.exception()
-            if failure is not None:
-                raise ScheduleStopped(
-                    SCHEDULE_STOPPED.format(reason=failure_reason(failure))
-                ) from failure
+        # Once the schedule has stopped on a fault, every operation on subscriptions fails with
+        # it, as the index's worker fails every search.
+        for stop in self.faults[:1]:
+            raise ScheduleStopped(
+                SCHEDULE_STOPPED.format(
+                    at=stop.at.isoformat(timespec="seconds"), kind=type(stop.fault).__name__
+                )
+            ) from stop.fault
+
+    def stop_on(self, fault: BaseException) -> None:
+        # The schedule stops on a fault: the watch ends at its next round, and every operation
+        # on subscriptions is refused from now on. The fault is logged here, once. This takes
+        # no lock, for it may run in a thread that holds the turn.
+        self.faults.append(ScheduleFault(at=datetime.now(UTC), fault=fault))
+        self.stopped.set()
+        logger.error(
+            "the schedule of subscriptions stopped; every operation on subscriptions is refused"
+            " until infonium starts again",
+            exc_info=fault,
+        )
 
     def close(self) -> None:
         # The watch ends its round first, so that it hands no posting to an intake that closes
@@ -152,14 +175,9 @@ class Poller:
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def record_watch(self, finished: Future[None]) -> None:
-        # Takes no lock: it may run in a thread that holds the turn.
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
-            logger.error(
-                "the schedule of subscriptions stopped; every operation on subscriptions is"
-                " refused until infonium starts again",
-                exc_info=error,
-            )
+            self.stop_on(error)
 
     def watch(self) -> None:
         # At each watch the polls that are due begin, and the posting that has waited longest
