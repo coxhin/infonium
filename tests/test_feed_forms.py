@@ -8,7 +8,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 import pytest
-from hypothesis import given, reject, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
@@ -565,12 +565,7 @@ def changed(content: bytes, made: list[tuple[str, int, int, bytes]]) -> bytes:
 def test_any_bytes_end_in_a_feed_or_unreadable_feed(
     served: ServedFeed, made: list[tuple[str, int, int, bytes]]
 ) -> None:
-    # The AttributeError that test_a_broken_feed_with_an_id_outside_its_postings_ends_in_a_feed_
-    # or_unreadable_feed judges is set aside here, so that any other end still fails this one.
-    try:
-        read_or_refused(changed(served.content, made), served.declared, served.address)
-    except AttributeError:
-        reject()
+    read_or_refused(changed(served.content, made), served.declared, served.address)
 
 
 # Broken feeds whose loose reading meets an id outside any posting: two made small, and one the
@@ -584,13 +579,6 @@ IDS_OUTSIDE_POSTINGS = (
 )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AttributeError,
-    reason="F7 and F9 as amended, not reached by the mends: a broken feed whose loose reading "
-    "meets an id outside any posting raises AttributeError ('LooseFeedParserKeepingIds' object "
-    "has no attribute 'guidislink')",
-)
 @pytest.mark.parametrize("content", IDS_OUTSIDE_POSTINGS)
 def test_a_broken_feed_with_an_id_outside_its_postings_ends_in_a_feed_or_unreadable_feed(
     content: bytes,

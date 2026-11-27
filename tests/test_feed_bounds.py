@@ -168,11 +168,6 @@ SENT_ATTACHMENTS = 20_000
 BOUNDED_ATTACHMENTS = 1_000
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F8 as amended, not reached by the mends: the attachments of a JSON Feed item are "
-    "read one by one, all of them: 20,000 make 38,000 calls more than 1,000",
-)
 def test_of_one_json_feed_item_the_attachments_read_are_bounded() -> None:
     sent, bounded = attached(SENT_ATTACHMENTS), attached(BOUNDED_ATTACHMENTS)
     addresses = [posting.address for posting in read_feed(sent, "", ADDRESS).postings]
