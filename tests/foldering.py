@@ -182,6 +182,12 @@ class Arrangement(BaseModel):
     def follows(self, item: str) -> bool:
         return self.origins[item] in self.subscriptions
 
+    def following(self) -> list[str]:
+        return [item for item in self.origins if self.follows(item)]
+
+    def hand_added(self) -> list[str]:
+        return [item for item in self.origins if not self.follows(item)]
+
     def folder_of(self, item: str) -> str | None:
         subscription = self.origins[item]
         if subscription is not None and subscription in self.subscriptions:
@@ -353,10 +359,32 @@ def library_arranged(
         for _ in range(count):
             origins[keep_web_item(app.store, owner, subscribed_origin(subscription))] = subscription
     for number in range(hand_added):
-        origins[keep_web_item(app.store, owner, hand_added_origin(number))] = None
+        origin = hand_added_origin(number)
+        origins[keep_web_item(app.store, owner, origin)] = (
+            origin.subscription if isinstance(origin, Subscribed) else None
+        )
     return Arrangement(
         folders=made, subscriptions=dict.fromkeys(subscriptions), origins=origins, own={}
     )
+
+
+def arranged_as(app: App, arrangement: Arrangement, beginning: list[int | None]) -> Arrangement:
+    # The library with each of its subscriptions, then each of its hand-added items, placed in
+    # the folder drawn for it by its place among the folders, or in none, one placing each;
+    # where the rules then have everything.
+    for named, drawn in zip(
+        [*arrangement.subscriptions, *arrangement.hand_added()], beginning, strict=True
+    ):
+        folder = None if drawn is None else arrangement.folders[drawn]
+        subscriptions = [named] if named in arrangement.subscriptions else []
+        items = [] if subscriptions else [named]
+        placed(app, folder, subscriptions, items)
+        arrangement = arrangement.placing(folder, subscriptions, items)
+    assert shown_now(app) == arrangement.shown(), (
+        "S5, S7, S8: the subscriptions and hand-added items placed one by one are not where "
+        "they were placed"
+    )
+    return arrangement
 
 
 def unchanged(app: App, before: Shown, what: str) -> None:

@@ -12,11 +12,12 @@ from infonium.folder import FOLDER_NAME_LENGTH
 from tests.feed_standin import FeedStandin
 from tests.foldering import (
     NOWHERE_FOLDER,
-    Arrangement,
+    arranged_as,
     dissolve_folder,
     folders_listed,
     keep_web_item,
     kept_names,
+    library_arranged,
     link_origin,
     long_names,
     made_folder,
@@ -29,9 +30,8 @@ from tests.foldering import (
     subscribed_origin,
     subscription_of,
     unchanged,
-    upload_origin,
 )
-from tests.notebook import NOWHERE_ITEM, instant, refusal
+from tests.notebook import instant, refusal
 from tests.service import App, as_owner, new_owner
 
 # The judgments of S1 to S4 and S10 of the service's brief of the sidebar, through the service's
@@ -332,65 +332,42 @@ def test_renaming_or_dissolving_a_folder_the_owner_does_not_have_is_answered_404
 # S4: a folder dissolved.
 
 
-SUBSCRIPTIONS_KEPT = 2
-HAND_ADDED_KEPT = 3
 FOLDERS_MADE = 3
-placements = st.none() | st.integers(0, FOLDERS_MADE - 1)
+# What the subscriptions of a drawn library hold: as many items that follow each as each number.
+FOLLOWING = [1, 1]
+HAND_ADDED_KEPT = 3
+folders_drawn = st.none() | st.integers(0, FOLDERS_MADE - 1)
 
 
 @given(
-    subscriptions_in=st.lists(placements, min_size=SUBSCRIPTIONS_KEPT, max_size=SUBSCRIPTIONS_KEPT),
-    items_in=st.lists(placements, min_size=HAND_ADDED_KEPT, max_size=HAND_ADDED_KEPT),
+    beginning=st.lists(
+        folders_drawn,
+        min_size=len(FOLLOWING) + HAND_ADDED_KEPT,
+        max_size=len(FOLLOWING) + HAND_ADDED_KEPT,
+    ),
     dissolved=st.integers(0, FOLDERS_MADE - 1),
 )
-@example(subscriptions_in=[0, 1], items_in=[0, None, 0], dissolved=0)
+@example(beginning=[0, 1, 0, None, 0], dissolved=0)
 @FEW_EXAMPLES
 def test_a_dissolved_folder_is_gone_and_what_it_held_stays_in_no_folder(
-    subscribing_app: App,
-    feeds: FeedStandin,
-    subscriptions_in: list[int | None],
-    items_in: list[int | None],
-    dissolved: int,
+    subscribing_app: App, feeds: FeedStandin, beginning: list[int | None], dissolved: int
 ) -> None:
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
-        folders = [made_folder(app, f"Folder {number}")["id"] for number in range(FOLDERS_MADE)]
-        subscriptions = [subscription_of(app, feeds) for _ in range(SUBSCRIPTIONS_KEPT)]
-        origins: dict[str, str | None] = {
-            keep_web_item(app.store, owner, subscribed_origin(subscription)): subscription
-            for subscription in subscriptions
-        }
-        for origin in (link_origin(), upload_origin(), subscribed_origin(NOWHERE_ITEM)):
-            origins[keep_web_item(app.store, owner, origin)] = None
-        hand_added = [item for item, subscription in origins.items() if subscription is None]
-        arrangement = Arrangement(
-            folders=folders,
-            subscriptions=dict.fromkeys(subscriptions),
-            origins=origins,
-            own={},
-        )
-        for subscription, chosen in zip(subscriptions, subscriptions_in, strict=True):
-            folder = None if chosen is None else folders[chosen]
-            placed(app, folder, [subscription], [])
-            arrangement = arrangement.placing(folder, [subscription], [])
-        for item, chosen in zip(hand_added, items_in, strict=True):
-            folder = None if chosen is None else folders[chosen]
-            placed(app, folder, [], [item])
-            arrangement = arrangement.placing(folder, [], [item])
-        assert shown_now(app) == arrangement.shown(), (
-            "S5, S7, S8: the subscriptions and items placed are not where they were placed"
-        )
-        response = dissolve_folder(app, folders[dissolved])
+        arrangement = library_arranged(app, feeds, owner, FOLDERS_MADE, FOLLOWING, HAND_ADDED_KEPT)
+        arrangement = arranged_as(app, arrangement, beginning)
+        folder = arrangement.folders[dissolved]
+        response = dissolve_folder(app, folder)
         assert response.status_code == HTTPStatus.NO_CONTENT, (
             f"S4: dissolving a folder of the owner's was answered {response.status_code}"
         )
-        assert shown_now(app) == arrangement.dissolving(folders[dissolved]).shown(), (
+        assert shown_now(app) == arrangement.dissolving(folder).shown(), (
             "S4: once a folder is dissolved, it is still listed, or what it held is not in no "
             "folder, or something it did not hold moved, or a subscription or an item is gone"
         )
         before = shown_now(app)
-        again = dissolve_folder(app, folders[dissolved])
+        again = dissolve_folder(app, folder)
         assert again.status_code == HTTPStatus.NOT_FOUND, (
             f"S4: dissolving a folder dissolved already was answered {again.status_code}, not 404"
         )

@@ -12,6 +12,7 @@ from tests.foldering import (
     NOWHERE_FOLDER,
     NOWHERE_SUBSCRIPTION,
     Arrangement,
+    arranged_as,
     dissolve_folder,
     entries,
     keep_web_item,
@@ -92,44 +93,18 @@ SUBSCRIPTION_STRANGERS = frozenset(
 )
 
 
-def hand_added_of(arrangement: Arrangement) -> list[str]:
-    return [item for item, subscription in arrangement.origins.items() if subscription is None]
-
-
-def following_of(arrangement: Arrangement) -> list[str]:
-    return [item for item in arrangement.origins if arrangement.follows(item)]
-
-
 def named_by(
     arrangement: Arrangement, drawn: tuple[int | None, list[int], list[int]]
 ) -> tuple[str | None, list[str], list[str]]:
     # The folder, subscriptions and hand-added items a drawn placing names, by their ids.
     folder, subscriptions, items = drawn
     every_subscription = list(arrangement.subscriptions)
-    hand_added = hand_added_of(arrangement)
+    hand_added = arrangement.hand_added()
     return (
         None if folder is None else arrangement.folders[folder],
         [every_subscription[at] for at in subscriptions],
         [hand_added[at] for at in items],
     )
-
-
-def arranged_as(app: App, arrangement: Arrangement, beginning: list[int | None]) -> Arrangement:
-    # The library with each of its subscriptions, then each of its hand-added items, placed in
-    # the folder drawn for it, one placing each; where the rules then have everything.
-    for named, drawn in zip(
-        [*arrangement.subscriptions, *hand_added_of(arrangement)], beginning, strict=True
-    ):
-        folder = None if drawn is None else arrangement.folders[drawn]
-        subscriptions = [named] if named in arrangement.subscriptions else []
-        items = [] if subscriptions else [named]
-        placed(app, folder, subscriptions, items)
-        arrangement = arrangement.placing(folder, subscriptions, items)
-    assert shown_now(app) == arrangement.shown(), (
-        "S5, S7, S8: the subscriptions and hand-added items placed one by one are not where "
-        "they were placed"
-    )
-    return arrangement
 
 
 # S5: placing.
@@ -163,8 +138,8 @@ def test_placing_puts_every_subscription_and_item_named_in_the_folder_or_in_none
                 arrangement.folders,
                 arrangement.subscriptions,
             ), "S5: a subscription placed is not in the folder it was placed in, or another moved"
-            assert {item: shown.items[item] for item in hand_added_of(arrangement)} == {
-                item: arrangement.folder_of(item) for item in hand_added_of(arrangement)
+            assert {item: shown.items[item] for item in arrangement.hand_added()} == {
+                item: arrangement.folder_of(item) for item in arrangement.hand_added()
             }, (
                 "S5: a hand-added item placed is not in the folder it was placed in, or another "
                 "moved"
@@ -266,7 +241,7 @@ def test_a_placing_that_names_an_item_following_its_subscription_is_refused_whol
         arrangement = arranged_as(app, arrangement, beginning)
         before = shown_now(app)
         folder, subscriptions, items = named_by(arrangement, placing)
-        items.insert(position % (len(items) + 1), following_of(arrangement)[follower])
+        items.insert(position % (len(items) + 1), arrangement.following()[follower])
         response = place(app, folder, subscriptions, items)
         assert response.status_code == HTTPStatus.CONFLICT, (
             "S5: a placing that names an item following its subscription was answered "
