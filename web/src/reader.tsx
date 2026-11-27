@@ -280,9 +280,10 @@ function translatedRanges(anchor: Anchor, source: string): Range[] {
 
 // Makes a passage glow where it is on show, and brings into view where its start is: in its
 // source blocks where they are on show, and where only a block's translation is, in the
-// sentences of the translation that stand for the passage. Where a recording's lines are on
-// show, the lines marked as pointed at are brought into view. Every anchor is checked against
-// the source first, so that a passage whose quoted text is no longer there is refused.
+// sentences of the translation that stand for the passage. Where neither is, as where a
+// recording's lines are on show, the parts marked as pointed at glow whole. Every anchor is
+// checked against the source first, so that a passage whose quoted text is no longer there is
+// refused.
 export function showPassage(anchors: Anchors): void {
   const sources = anchors.map((anchor) => ({ anchor, range: rangeOfAnchor(anchor) }));
   const shown = sources.flatMap(({ anchor, range }) => {
@@ -291,24 +292,32 @@ export function showPassage(anchors: Anchors): void {
       ? [range]
       : translatedRanges(anchor, textOf(blockElement));
   });
-  glowOver(shown);
-  const first = shown[0];
+  const glowing =
+    shown.length > 0
+      ? shown
+      : anchors.flatMap((anchor) =>
+          [...document.querySelectorAll(pointedSelector(anchor))].map(contentsOf),
+        );
+  glowOver(glowing);
+  const first = glowing[0];
   if (first !== undefined) {
     bringIntoView(first);
-    return;
-  }
-  const lines = pointedTranslationOf(anchors[0]);
-  if (lines !== null) {
-    const place = document.createRange();
-    place.selectNodeContents(lines);
-    bringIntoView(place);
   }
 }
 
+function contentsOf(element: Element): Range {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  return range;
+}
+
+// The parts of a block's translation or of its lines marked as pointed at.
+function pointedSelector(anchor: Anchor): string {
+  return `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] :is([${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"], [${LINES_ATTRIBUTE}="${anchor.block_number}"]) .${POINTED_CLASS}`;
+}
+
 function pointedTranslationOf(anchor: Anchor): Element | null {
-  return document.querySelector(
-    `[${DOCUMENT_ATTRIBUTE}="${anchor.document_id}"] :is([${TRANSLATION_ATTRIBUTE}="${anchor.block_number}"], [${LINES_ATTRIBUTE}="${anchor.block_number}"]) .${POINTED_CLASS}`,
-  );
+  return document.querySelector(pointedSelector(anchor));
 }
 
 // Where a passage is on show: its source block, where that is on show, or else the parts of

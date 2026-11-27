@@ -132,7 +132,7 @@ function UnplacedNote({
 
 // A web article as the page it was read from, kept and inert, in the frame: in its source, its
 // translation in the place of each block's text, or each block followed by its translation. A
-// passage pointed at is marked and brought into view in the frame, and one whose blocks have no
+// passage pointed at glows and is brought into view in the frame, and one whose blocks have no
 // element of their own in the page is said to be lost. The reader's highlights are drawn in
 // the page, and what the reader selects or presses in it is handed over. The frame shows
 // nothing but this item's page: anything else it comes to hold is a failure, said in its place.
@@ -313,7 +313,7 @@ export function WebpageView({
         onLost(lookups.find((lookup) => !lookup.found)?.reason ?? UNPLACED);
       }
     } else {
-      framed.mark(places);
+      framed.mark(places, first);
       if (first) {
         bringIntoFrame(frame.current, framed.view, start.passage);
         following.follow(start.passage);
