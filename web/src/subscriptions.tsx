@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   isUnanswered,
   listSubscriptions,
@@ -51,13 +51,16 @@ export function useSubscriptions(
   seen: ReadonlySet<string>,
   onPolled: () => void,
 ): Watched<Subscription[]> {
-  const readingSubscribed =
-    entries.state === "ready"
-      ? entries.value
-          .filter((entry) => entry.origin.kind === "subscribed" && isBeingRead(entry))
-          .map((entry) => entry.id)
-          .join(" ")
-      : "";
+  const readingSubscribed = useMemo(
+    () =>
+      entries.state === "ready"
+        ? entries.value
+            .filter((entry) => entry.origin.kind === "subscribed" && isBeingRead(entry))
+            .map((entry) => entry.id)
+            .join(" ")
+        : "",
+    [entries],
+  );
   const subscriptions = useWatched(
     listSubscriptions,
     "subscriptions",

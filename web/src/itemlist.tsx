@@ -138,7 +138,7 @@ export function ItemList({
     try {
       await placer.place({ folder: into.folderId, subscriptions: [], items: [entry.id] });
       setImporting({ state: "idle" });
-      onImported({ ...entry, folder: into.folderId });
+      onImported(entry);
     } catch (error) {
       setImporting({
         state: "unplaced",

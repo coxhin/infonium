@@ -17,20 +17,23 @@ import { SubscribeForm, SubscribingHint, withSubscription } from "./subscription
 import { SubscriptionPane } from "./subscriptionpane";
 import "./listcolumn.css";
 
-// What the list says where a selection lists nothing, of every media or of one.
+// What the list says where a selection lists nothing, of every media or of one. A media named in
+// Latin letters stands a space apart from the Chinese around it, as the interface writes PDF
+// elsewhere, and from no punctuation.
 function emptyText(selection: Selection, media: MediaChoice): string {
-  const of = media === "any" ? "文章" : MEDIA_NAMES[media];
+  const name = media === "any" ? "文章" : MEDIA_NAMES[media];
+  const of = /^[A-Za-z]/.test(name) ? ` ${name} ` : name;
   switch (selection.kind) {
     case "all":
       return media === "any"
         ? "粘贴一个网址或上传一个文件，它会出现在这里。"
-        : `文库里没有${of}。`;
+        : `文库里没有${of.trimEnd()}。`;
     case "new":
       return `没有新来源：订阅带来、还没打开看过的${of}会列在这里。`;
     case "unfiled":
       return `不在任何分类里、手动添加的${of}会列在这里。`;
     case "folder":
-      return `这个分类里还没有${of}。可以把订阅或文章拖到侧栏的这个分类上，或用它们的菜单“移到分类…”。`;
+      return `这个分类里还没有${of.trimEnd()}。可以把订阅或文章拖到侧栏的这个分类上，或用它们的菜单“移到分类…”。`;
     case "subscription":
       return "";
   }
@@ -78,10 +81,6 @@ export function ListColumn({
   );
   const subscriptionList: Subscription[] =
     subscriptions.loaded.state === "ready" ? subscriptions.loaded.value : [];
-  const subscriptionMap = useMemo(
-    () => new Map(subscriptionList.map((subscription) => [subscription.id, subscription])),
-    [subscriptionList],
-  );
   const subscriptionTitles = useMemo(
     () => new Map(subscriptionList.map((subscription) => [subscription.id, subscription.title])),
     [subscriptionList],
@@ -104,7 +103,7 @@ export function ListColumn({
   );
 
   const subscribing = navigation.subscribing;
-  const name = subscribing ? "订阅" : selectionName(selection, folderMap, subscriptionMap);
+  const name = subscribing ? "订阅" : selectionName(selection, folderMap);
   const importInto: ImportInto =
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }

@@ -1,4 +1,4 @@
-import type { Folder, ItemEntry, Media, Subscription } from "./client";
+import type { Folder, ItemEntry, Media } from "./client";
 import { isNew } from "./entry";
 
 // What the sidebar has selected, which the list column shows: every item, the new ones, the
@@ -125,7 +125,7 @@ export type Tally = {
   holdingFolders: ReadonlySet<string>;
 };
 
-function added(counts: Map<string, number>, key: string): void {
+function countOne(counts: Map<string, number>, key: string): void {
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
@@ -155,12 +155,12 @@ export function tallied(
     if (isFresh) {
       fresh += 1;
       if (subscription !== undefined) {
-        added(freshOfSubscription, subscription);
+        countOne(freshOfSubscription, subscription);
       }
       // A folder counts every new item in it: those of its subscriptions, and those whose
       // subscription was removed, which stay new until they are seen.
       if (entry.folder !== null) {
-        added(freshInFolder, entry.folder);
+        countOne(freshInFolder, entry.folder);
       }
     }
   }
@@ -185,17 +185,13 @@ export function ordered<Named>(
   );
 }
 
-// What the list column calls the selection.
-export function selectionName(
-  selection: Selection,
-  folders: ReadonlyMap<string, Folder>,
-  subscriptions: ReadonlyMap<string, Subscription>,
-): string {
+// What the list column's head calls the selection: a subscription's panel names it below.
+export function selectionName(selection: Selection, folders: ReadonlyMap<string, Folder>): string {
   switch (selection.kind) {
     case "folder":
       return folders.get(selection.folderId)?.name ?? "分类";
     case "subscription":
-      return subscriptions.get(selection.subscriptionId)?.title ?? "订阅";
+      return "订阅";
     default:
       return FIXED_NAMES[selection.kind];
   }
