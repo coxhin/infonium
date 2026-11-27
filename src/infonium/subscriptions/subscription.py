@@ -1,4 +1,5 @@
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -19,6 +20,7 @@ from infonium.library import (
     SeenItem,
     attempt_kind,
     field_path,
+    item_identity,
     item_table,
     metadata,
     origin_kind,
@@ -314,17 +316,30 @@ def first_of_each_key(feed: Feed) -> list[Posting]:
     return list(firsts.values())
 
 
+def admission_anew(
+    posting: Posting, place: int, awaited: int, since: datetime, held: Mapping[str, str]
+) -> Admission:
+    # What has come of a posting when its subscription comes to list it, at its place among
+    # the new ones, the newest first: one whose address the library holds an item of already
+    # is admitted as that item, and nothing is read for it; of the others, the first as many
+    # as are awaited wait.
+    if posting.key in held:
+        return Admitted(item=held[posting.key])
+    return Awaited(since=since) if place < awaited else Unadmitted()
+
+
 def listed_anew(
-    postings: list[Posting], highest: int, awaited: int, since: datetime
+    postings: list[Posting], highest: int, awaited: int, since: datetime, held: Mapping[str, str]
 ) -> list[ListedPosting]:
     # Postings that a subscription comes to list, in the order the feed lists them, numbered on
     # from the highest number it lists so that the first the feed lists gets the highest. The
-    # newest of them, as many as are awaited, wait to be admitted from the time given.
+    # newest of them, as many as are awaited, wait to be admitted from the time given, but for
+    # those the library holds already, by their keys, which are admitted as the items it holds.
     return [
         ListedPosting(
             number=highest + len(postings) - place,
             posting=posting,
-            admission=Awaited(since=since) if place < awaited else Unadmitted(),
+            admission=admission_anew(posting, place, awaited, since, held),
         )
         for place, posting in enumerate(postings)
     ]
@@ -512,7 +527,8 @@ class Subscriptions:
     def list_feed(self, subscription_id: str, feed: Feed, awaited: int, since: datetime) -> int:
         # The feed's postings that the subscription does not list yet are listed, the newest of
         # them, as many as are awaited, waiting to be admitted from the time given; how many
-        # they are. A posting listed already stays as it is, whatever the feed says of it now.
+        # they are. One whose address the library holds an item of is listed as that item. A
+        # posting listed already stays as it is, whatever the feed says of it now.
         listed = self.of_subscription(subscription_id)
         known = set(
             self.connection.execute(sqlalchemy.select(posting_table.c.key).where(*listed)).scalars()
@@ -524,11 +540,22 @@ class Subscriptions:
         ).scalar_one()
         new = [posting for posting in first_of_each_key(feed) if posting.key not in known]
         if new:
+            # The item each new posting would be, by its address, and which of those the
+            # library holds: a posting of something the reader has already is that item.
+            items = {posting.key: item_identity(self.owner, posting.address) for posting in new}
+            in_library = set(
+                self.connection.execute(
+                    sqlalchemy.select(item_table.c.id).where(
+                        item_table.c.owner == self.owner, item_table.c.id.in_(items.values())
+                    )
+                ).scalars()
+            )
+            held = {key: item for key, item in items.items() if item in in_library}
             self.connection.execute(
                 sqlalchemy.insert(posting_table),
                 [
                     posting_row(subscription_id, self.owner, posting)
-                    for posting in listed_anew(new, highest, awaited, since)
+                    for posting in listed_anew(new, highest, awaited, since, held)
                 ],
             )
         return len(new)

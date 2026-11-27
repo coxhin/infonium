@@ -292,6 +292,13 @@ def test_a_posting_whose_address_the_library_holds_is_admitted_as_that_item_as_i
     assert items[0]["origin"] == before[reading_item]["origin"], (
         "S8: admitting a posting as an item being read changed its origin"
     )
+    # The other owner's posting waits its turn and is then read for them; this owner's postings
+    # are admitted without any reading, so their admission says nothing of when that one is.
+    waited_for(
+        lambda: app.site.hits[page_path(read.key)],
+        lambda hits: hits >= 2,
+        "the reading of the other owner's posting",
+    )
     assert app.site.hits[page_path(read.key)] == 2, (
         "S8: a posting whose address the library holds was read again, or another owner's was "
         "not read for them"
