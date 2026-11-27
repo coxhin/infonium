@@ -586,9 +586,9 @@ class OwnerTransaction:
 
 
 class AcrossOwners:
-    # Reads the rows of every owner in one transaction. It runs a select and nothing else, so
-    # nothing is written through it; each row it gives names its owner, and any work on the
-    # row is done in a transaction held to that owner.
+    # Reads the rows of every owner in one transaction: its one method runs the select it is
+    # given, and only a select, and answers its rows. Each row names its owner, and any work on
+    # the row is done in a transaction held to that owner.
     def __init__(self, connection: sqlalchemy.Connection) -> None:
         self.connection = connection
 
