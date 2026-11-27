@@ -160,7 +160,7 @@ export function useNavigation(
   }, [entries.loaded, subscriptions.loaded, folders.loaded]);
 
   // A folder or a subscription selected that is there no more, as one removed in another window,
-  // gives way to every item.
+  // gives way to every item. The form that subscribes stays where it is open, with what it says.
   useEffect(() => {
     const missing =
       (selection.kind === "folder" &&
@@ -170,7 +170,7 @@ export function useNavigation(
         subscriptions.loaded.state === "ready" &&
         !present.has(selection.subscriptionId));
     if (missing) {
-      select(ALL);
+      keepSelection(ALL);
     }
   }, [selection, folders.loaded, subscriptions.loaded]);
 
@@ -223,17 +223,15 @@ export function useNavigation(
     [readOnRefusal, folders.answer],
   );
 
+  // A folder dissolved while selected gives way to every item, as one missing does.
   const dissolve = useCallback(
     async (folderId: string) => {
       await readOnRefusal(dissolveFolder(folderId));
       folders.answer((before) => before.filter((folder) => folder.id !== folderId));
       entries.answer((before) => outOfFolder(before, folderId));
       subscriptions.answer((before) => outOfFolder(before, folderId));
-      if (sameSelection(selection, { kind: "folder", folderId })) {
-        select(ALL);
-      }
     },
-    [readOnRefusal, folders.answer, entries.answer, subscriptions.answer, selection, select],
+    [readOnRefusal, folders.answer, entries.answer, subscriptions.answer],
   );
 
   const subscribed = useCallback(

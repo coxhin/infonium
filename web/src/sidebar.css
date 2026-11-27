@@ -273,6 +273,19 @@ li:focus-within > .row-menu,
   }
 }
 
+/* Under a finger, rows and their ⋯ are as tall as a finger is wide. */
+@media (pointer: coarse) {
+  .sidebar-tree .row {
+    min-height: 2.75rem;
+  }
+
+  .row-menu,
+  .row-menu-room {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+}
+
 .sidebar-foot {
   flex: none;
   display: flex;

@@ -125,3 +125,10 @@
   color: var(--muted);
   cursor: default;
 }
+
+/* Under a finger, the items of a menu are as tall as a finger is wide. */
+@media (pointer: coarse) {
+  .popup [role^="menuitem"] {
+    min-height: 2.75rem;
+  }
+}
