@@ -84,7 +84,7 @@ then says what the document says about that topic in one or two sentences.
     ),
     # Its one section has no title: the style's name stands in the row of styles above it. The
     # rules say where the empty title goes, since gpt-6.1-terra, which writes it after the
-    # statements, at times wrote white space there without end (10 of 29 flashes of two short
+    # statements, at times wrote white space there without end (10 of 33 flashes of two short
     # sources), and did not once told so (0 of 12).
     DigestStyle.FLASH: Recipe(
         name="快讯",
