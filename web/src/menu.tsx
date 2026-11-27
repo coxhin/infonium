@@ -10,6 +10,15 @@ export type Opening = { opener: HTMLElement; at: { x: number; y: number } | unde
 // How far a popup keeps from the edges of the window, in pixels.
 const MARGIN = 8;
 const MENU_ITEM = '[role^="menuitem"]:not([aria-disabled="true"])';
+// What Tab moves to in a question: its fields and presses, in the order they stand.
+const TABBABLE = [
+  "button:not(:disabled)",
+  "input:not(:disabled)",
+  "select:not(:disabled)",
+  "textarea:not(:disabled)",
+  "a[href]",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
 
 export function openingAt(opener: HTMLElement): Opening {
   return { opener, at: undefined };
@@ -61,10 +70,21 @@ function movedInMenu(event: KeyboardEvent<HTMLElement>, own: HTMLElement): boole
   return true;
 }
 
+// Moves the keyboard in a question, by Tab and Shift+Tab, to the part after or before the one it
+// is on, round the ends, so that it stays in the question until the question is left.
+function tabbedInQuestion(event: KeyboardEvent<HTMLElement>, own: HTMLElement): void {
+  const parts = [...own.querySelectorAll<HTMLElement>(TABBABLE)];
+  const at = parts.indexOf(document.activeElement as HTMLElement);
+  const step = event.shiftKey ? -1 : 1;
+  const next = at < 0 ? (event.shiftKey ? parts.length - 1 : 0) : at + step;
+  parts[(next + parts.length) % parts.length]?.focus();
+}
+
 // A popup over the page, beside what opened it: a menu, or a question asked before a press is
 // sent. The keyboard goes to its first item, or to the button marked autoFocus, or stays in the
-// field that took it. Escape or Tab leaves it for the control that opened it; a press outside it
-// leaves it where the press was.
+// field that took it. Escape leaves it for the control that opened it, and so does Tab a menu;
+// in a question, Tab and Shift+Tab go round its parts. A press outside it leaves it where the
+// press was.
 export function Popup({
   opening,
   role,
@@ -114,10 +134,16 @@ export function Popup({
   }, []);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape" || event.key === "Tab") {
+    if (event.key === "Escape" || (event.key === "Tab" && role === "menu")) {
       event.preventDefault();
       event.stopPropagation();
       onLeave(true);
+      return;
+    }
+    if (event.key === "Tab" && own.current !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      tabbedInQuestion(event, own.current);
       return;
     }
     const inField = event.target instanceof HTMLInputElement;
