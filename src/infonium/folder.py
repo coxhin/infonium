@@ -64,7 +64,7 @@ subscription_placement_table = sqlalchemy.Table(
         sqlalchemy.ForeignKey(subscription_table.c.id),
         primary_key=True,
     ),
-    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False, index=True),
     sqlalchemy.Column(
         "folder_id",
         sqlalchemy.String,
@@ -80,7 +80,7 @@ item_placement_table = sqlalchemy.Table(
     sqlalchemy.Column(
         "item_id", sqlalchemy.String, sqlalchemy.ForeignKey(item_table.c.id), primary_key=True
     ),
-    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False, index=True),
     sqlalchemy.Column(
         "folder_id",
         sqlalchemy.String,
@@ -138,10 +138,6 @@ class Placed(BaseModel):
     # item that has a placement of its own with its folder.
     subscriptions: dict[str, str | None]
     items: dict[str, str]
-
-    def subscription_folder(self, subscription_id: str) -> str | None:
-        # A subscription removed since the reading has no placement either.
-        return self.subscriptions.get(subscription_id)
 
     def item_folder(self, item: Item) -> str | None:
         # An item that follows its subscription is in its subscription's folder, whatever
@@ -264,15 +260,6 @@ class Folders:
             items={item: folder for item, folder in items},
         )
 
-    def owned_items(self, item_ids: list[str]) -> dict[str, Item]:
-        # The owner's items of the ids given, by their ids.
-        bodies = self.connection.execute(
-            sqlalchemy.select(item_table.c.body).where(
-                item_table.c.owner == self.owner, item_table.c.id.in_(item_ids)
-            )
-        ).scalars()
-        return {item.id: item for item in (Item.model_validate_json(body) for body in bodies)}
-
     def place(self, placing: Placing) -> None:
         # Every subscription and item named is placed in the folder, or in none. The whole
         # placing is refused, and nothing changes, where the folder, a subscription or an item
@@ -285,7 +272,12 @@ class Folders:
         for subscription_id in subscription_ids:
             if subscription_id not in placed.subscriptions:
                 raise missing_subscription(subscription_id)
-        items = self.owned_items(item_ids)
+        bodies = self.connection.execute(
+            sqlalchemy.select(item_table.c.body).where(
+                item_table.c.owner == self.owner, item_table.c.id.in_(item_ids)
+            )
+        ).scalars()
+        items = {item.id: item for item in (Item.model_validate_json(body) for body in bodies)}
         for item_id in item_ids:
             if item_id not in items:
                 raise missing_item(item_id)
@@ -297,31 +289,31 @@ class Folders:
                         item=origin.called, subscription=subscription.title
                     )
                 )
-        self.put(subscription_placement_table.c.subscription_id, subscription_ids, placing.folder)
-        self.put(item_placement_table.c.item_id, item_ids, placing.folder)
-
-    def put(
-        self, placed: sqlalchemy.Column[str], placed_ids: list[str], folder: str | None
-    ) -> None:
-        # The placements of those named, by the column of their table that names them, give
-        # way to placements in the folder, or to none.
-        placements = placed.table
-        self.connection.execute(
-            sqlalchemy.delete(placements).where(
-                placements.c.owner == self.owner, placed.in_(placed_ids)
-            )
+        self.replace_placements(
+            subscription_placement_table.c.subscription_id, subscription_ids, placing.folder
         )
-        if folder is not None and placed_ids:
+        self.replace_placements(item_placement_table.c.item_id, item_ids, placing.folder)
+
+    def replace_placements(
+        self, naming: sqlalchemy.Column[str], ids: list[str], folder: str | None
+    ) -> None:
+        # The placements of those whose ids are given, in the column of their table that names
+        # them, give way to placements in the folder, or to none.
+        placements = naming.table
+        self.connection.execute(
+            sqlalchemy.delete(placements).where(placements.c.owner == self.owner, naming.in_(ids))
+        )
+        if folder is not None and ids:
             self.connection.execute(
                 sqlalchemy.insert(placements),
                 [
                     {
-                        placed.name: placed_id,
+                        naming.name: placed_id,
                         placements.c.owner.name: self.owner,
                         placements.c.folder_id.name: folder,
                         placements.c.format.name: PLACEMENT_FORMAT,
                     }
-                    for placed_id in placed_ids
+                    for placed_id in ids
                 ],
             )
 
@@ -340,7 +332,7 @@ class Folders:
                 item_table.c.owner == self.owner, origin_subscription == subscription_id
             )
         ).scalars()
-        self.put(item_placement_table.c.item_id, list(brought), folder)
+        self.replace_placements(item_placement_table.c.item_id, list(brought), folder)
         self.connection.execute(
             sqlalchemy.delete(subscription_placement_table).where(
                 subscription_placement_table.c.owner == self.owner,

@@ -797,7 +797,8 @@ def subscription_view(counted: CountedSubscription, placed: Placed) -> Subscript
         poll=subscription.poll,
         postings=counted.postings,
         unseen=counted.unseen,
-        folder=placed.subscription_folder(subscription.id),
+        # A subscription removed since the placements were read has no placement either.
+        folder=placed.subscriptions.get(subscription.id),
     )
 
 

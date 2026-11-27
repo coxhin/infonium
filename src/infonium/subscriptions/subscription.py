@@ -655,7 +655,10 @@ class Subscriptions:
         )
 
     def remove(self, subscription_id: str) -> None:
-        # The subscription goes with the postings it lists; the items they brought stay.
+        # The subscription goes with the postings it lists; the items they brought stay. It is
+        # removed only after `Folders.release`, in the same transaction: the library's file
+        # refuses to remove a subscription that has its placement, and only `release` takes the
+        # placements of their own from the items it brought where it is in no folder.
         self.connection.execute(
             sqlalchemy.delete(posting_table).where(*self.of_subscription(subscription_id))
         )
