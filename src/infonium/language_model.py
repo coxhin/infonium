@@ -15,7 +15,6 @@ from openai import (
     Omit,
     OpenAI,
     OpenAIError,
-    Stream,
     omit,
     pydantic_function_tool,
     pydantic_responses_function_tool,
@@ -83,8 +82,6 @@ RUNAWAY_ENDED = (
 )
 SENT_AGAIN = "and sent again"
 NO_ATTEMPT_LEFT = "with no attempt left"
-# Where a request tells the endpoint how many times the openai client has sent it again.
-RETRY_COUNT_HEADER = "x-stainless-retry-count"
 # The most calls of tools run in one round; the model is told so of the calls beyond.
 MOST_CALLS_PER_ROUND = 4
 ENDLESS_TOOL_USE = "the model gave no answer within the {rounds} requests a reply may take"
@@ -427,12 +424,6 @@ def is_last_request(request: int, tools: Sequence[Tool[Any]]) -> bool:
     return bool(tools) and request == REPLY_ROUNDS - 1
 
 
-def retries_taken(stream: Stream[Any]) -> int:
-    # How many times the openai client sent a request again, after failures, before the
-    # endpoint took it, as the client told the endpoint.
-    return int(stream.response.request.headers.get(RETRY_COUNT_HEADER, 0))
-
-
 # One sending of a request of a reply by the given client, timed by the given clock.
 type Sending[Output: BaseModel] = Callable[
     [OpenAI, RequestClock], Generator[Written, None, Answered[Output]]
@@ -606,9 +597,11 @@ class ChatCompletionsLanguageModel(LanguageModel):
         held_to_json = not isinstance(form, Omit)
         white_space = WhiteSpaceRun()
         # The reply is parsed here, not by the openai package, so that a reply cut short or
-        # not of the form asked for fails as the model's failure.
+        # not of the form asked for fails as the model's failure. The endpoint's answer is
+        # taken raw, as it tells how many times the client sent the request again after a
+        # failure.
         with ending.requesting():
-            stream = client.chat.completions.create(
+            answer = client.chat.completions.with_raw_response.create(
                 model=self.name,
                 messages=sent,
                 response_format=form,
@@ -624,6 +617,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
                 stream=True,
                 stream_options={"include_usage": True},
             )
+        stream = answer.parse()
         clock.opened()
         # An endpoint that fails the reply in the middle of its stream says so in a data line
         # that holds an error object, which the openai package raises as its bare APIError:
@@ -643,7 +637,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
                         if choice.delta.content:
                             content += choice.delta.content
                             if held_to_json and white_space.ran_away(choice.delta.content):
-                                raise RunawayReply(len(content), retries_taken(stream))
+                                raise RunawayReply(len(content), answer.retries_taken)
                             yield Written(request=request, text=content)
         except (APIStatusError, APIConnectionError):
             raise
@@ -770,9 +764,11 @@ class ResponsesLanguageModel(LanguageModel):
         # and send the input as a list, so it takes that form. Nothing reads the reply at the
         # endpoint again, so it is not stored there, and a call of a tool goes back to the
         # model with the conversation sent again in full. The reply is parsed here, after
-        # the events that say it was refused, failed or cut short.
+        # the events that say it was refused, failed or cut short. The endpoint's answer is
+        # taken raw, as it tells how many times the client sent the request again after a
+        # failure.
         with ending.requesting():
-            stream = client.responses.create(
+            answer = client.responses.with_raw_response.create(
                 model=self.name,
                 instructions=instructions,
                 input=sent,
@@ -795,6 +791,7 @@ class ResponsesLanguageModel(LanguageModel):
                 store=False,
                 stream=True,
             )
+        stream = answer.parse()
         clock.opened()
         # A data line that the openai package cannot read as JSON is the endpoint's failure.
         try:
@@ -807,7 +804,7 @@ class ResponsesLanguageModel(LanguageModel):
                         case ResponseTextDeltaEvent(item_id=item, delta=delta):
                             texts[item] += delta
                             if white_space[item].ran_away(delta):
-                                raise RunawayReply(len(texts[item]), retries_taken(stream))
+                                raise RunawayReply(len(texts[item]), answer.retries_taken)
                             yield Written(request=request, text=texts[item])
                         case ResponseTextDoneEvent(text=text):
                             done.append(text)
