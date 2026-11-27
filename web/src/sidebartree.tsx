@@ -266,9 +266,13 @@ export function SidebarTree({
     openMenu,
     fold,
     rename: onRename,
-    renamed: (key) => {
+    // The field gives the keyboard back to the folder's row where it had it, left by Enter or
+    // Escape; where the reader took the keyboard elsewhere, it stays there.
+    renamed: (key, done) => {
       setRenaming(undefined);
-      requestAnimationFrame(() => rowElement(key)?.focus());
+      if (done.kind === "given up" || (done.kind === "answered" && done.keyboard === "kept")) {
+        rowElement(key)?.focus();
+      }
     },
   };
   const latest = useRef(current);
@@ -282,7 +286,7 @@ export function SidebarTree({
       openMenu: (key, opening) => latest.current.openMenu(key, opening),
       fold: (folderId, folding) => latest.current.fold(folderId, folding),
       rename: (folderId, name) => latest.current.rename(folderId, name),
-      renamed: (key) => latest.current.renamed(key),
+      renamed: (key, done) => latest.current.renamed(key, done),
     }),
     [],
   );

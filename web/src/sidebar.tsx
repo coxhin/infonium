@@ -118,13 +118,23 @@ function SidebarBody({
     }
   }
 
-  // A folder made takes the keyboard to its row; a name given up, back to ＋ 分类.
+  // A folder made by Enter takes the keyboard to its row, and a name given up gives it back to
+  // ＋ 分类; where the reader has taken the keyboard elsewhere, it stays there.
   function named(done: NameDone<Folder>) {
     setNaming(false);
-    if (done.kind === "answered") {
+    if (done.kind === "answered" && done.keyboard === "kept") {
       setFocusKey({ key: keyOf({ kind: "folder", folderId: done.answer.id }) });
+    } else if (done.kind === "given up") {
+      makeButton.current?.focus();
+    }
+  }
+
+  // ＋ 分类 opens the field, or goes back to the one open, with what was typed in it.
+  function startNaming() {
+    if (naming) {
+      own.current?.querySelector<HTMLElement>(".sidebar-foot .folder-name input")?.focus();
     } else {
-      requestAnimationFrame(() => makeButton.current?.focus());
+      setNaming(true);
     }
   }
 
@@ -209,23 +219,15 @@ function SidebarBody({
         />
       </div>
       <div className="sidebar-foot">
-        {naming ? (
-          <FolderNameField
-            asked={{ kind: "new" }}
-            onSend={browsing.placer.make}
-            onDone={named}
-            onBlur={({ typed, press }) =>
-              typed.trim() === "" && press.state === "idle" && named({ kind: "given up" })
-            }
-          />
-        ) : (
-          <div className="foot-row">
-            <button ref={makeButton} onClick={() => setNaming(true)}>
-              ＋ 分类
-            </button>
-            <button onClick={subscribe}>＋ 订阅</button>
-          </div>
+        {naming && (
+          <FolderNameField asked={{ kind: "new" }} onSend={browsing.placer.make} onDone={named} />
         )}
+        <div className="foot-row">
+          <button ref={makeButton} onClick={startNaming}>
+            ＋ 分类
+          </button>
+          <button onClick={subscribe}>＋ 订阅</button>
+        </div>
         <div className="foot-row">
           <select
             aria-label="分类和订阅的排列"

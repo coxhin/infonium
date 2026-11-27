@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Folder } from "./client";
-import { FolderNameField } from "./foldername";
+import { FolderNameField, type NameDone } from "./foldername";
 import { MenuItem, Popup, type Opening } from "./menu";
 import { usePress } from "./pressing";
 
@@ -41,16 +41,20 @@ export function PlaceMenu({
     );
   }
 
+  // A folder made is moved into; a name given up closes the menu. The keyboard's leaving the field
+  // for another place in the menu leaves the field as it is; a press outside closes the menu.
+  function named(done: NameDone<Folder>) {
+    if (done.kind === "answered") {
+      placeIn(done.answer.id);
+    } else if (done.kind === "given up") {
+      onLeave(true);
+    }
+  }
+
   return (
     <Popup opening={opening} role="menu" label={`移动“${what}”`} onLeave={onLeave}>
       {naming ? (
-        <FolderNameField
-          asked={{ kind: "new" }}
-          waiting={asking}
-          onSend={onMake}
-          onDone={(done) => (done.kind === "answered" ? placeIn(done.answer.id) : onLeave(true))}
-          onBlur={() => undefined}
-        />
+        <FolderNameField asked={{ kind: "new" }} waiting={asking} onSend={onMake} onDone={named} />
       ) : (
         <>
           <p className="menu-heading" aria-hidden="true">

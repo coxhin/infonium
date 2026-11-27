@@ -1,7 +1,7 @@
 import { memo, type DragEvent, type ReactNode } from "react";
 import type { Folder, Subscription } from "./client";
 import { endDrag, startDrag } from "./dragging";
-import { FolderNameField } from "./foldername";
+import { FolderNameField, type NameDone } from "./foldername";
 import { openingAt, openingOfContextMenu, type Opening } from "./menu";
 import { FIXED_NAMES, keyOf } from "./sidebarselection";
 import { stateWord } from "./subscriptions";
@@ -37,7 +37,7 @@ export type RowActions = {
   openMenu: (key: string, opening: Opening) => void;
   fold: (folderId: string, folding: boolean) => void;
   rename: (folderId: string, name: string) => Promise<void>;
-  renamed: (key: string) => void;
+  renamed: (key: string, done: NameDone<void>) => void;
 };
 
 // A row's ⋯, which the keyboard reaches by Tab from the row it stands on.
@@ -330,8 +330,7 @@ export const FolderRow = memo(function FolderRow({
         <FolderNameField
           asked={{ kind: "rename", folder }}
           onSend={(name) => actions.rename(folder.id, name)}
-          onDone={() => actions.renamed(key)}
-          onBlur={({ press, send }) => press.state === "idle" && send()}
+          onDone={(done) => actions.renamed(key, done)}
         />
       ) : (
         <span className="name" dir="auto" title={folder.name}>
