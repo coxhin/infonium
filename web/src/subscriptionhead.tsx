@@ -102,7 +102,7 @@ function Unsubscribe({
       <span className="confirm-choices">
         <button
           className="danger"
-          disabled={press.state === "asking"}
+          aria-disabled={press.state === "asking"}
           onClick={() => ask(() => unsubscribe(subscription.id), onRemoved)}
         >
           {press.state === "asking" ? "正在取消…" : "取消订阅"}
@@ -138,6 +138,7 @@ export function SubscriptionHead({
   // The choice sent and not yet answered is shown as made.
   const [asked, setAsked] = useState<Follows>();
   const followsId = useId();
+  const title = useRef<HTMLHeadingElement>(null);
   const underway = subscription.poll.kind === "underway" || polling.press.state === "asking";
 
   useEffect(() => {
@@ -146,14 +147,29 @@ export function SubscriptionHead({
     }
   }, [following.press.state]);
 
+  // A choice made while the one before is unanswered is not sent, and the choice shown goes
+  // back to the one asked.
   function choose(follows: Follows) {
-    setAsked(follows);
-    following.ask(() => chooseFollows(subscription.id, follows), onAnswer);
+    if (following.press.state !== "asking") {
+      setAsked(follows);
+      following.ask(() => chooseFollows(subscription.id, follows), onAnswer);
+    }
+  }
+
+  // The press is gone once nothing is new, so the keyboard is given to the head.
+  function seeAll() {
+    seeing.ask(
+      () => seeSubscription(subscription.id),
+      (answer) => {
+        onSeenAll(answer);
+        title.current?.focus({ preventScroll: true });
+      },
+    );
   }
 
   return (
     <header className="subscription-head">
-      <h2 title={subscription.title}>
+      <h2 title={subscription.title} ref={title} tabIndex={-1}>
         {subscription.site === null ? (
           subscription.title
         ) : (
@@ -167,16 +183,15 @@ export function SubscriptionHead({
       <PollLine subscription={subscription} now={now} />
       <div className="subscription-controls">
         <button
-          disabled={underway}
-          onClick={() => polling.ask(() => pollSubscription(subscription.id), onAnswer)}
+          aria-disabled={underway}
+          onClick={() =>
+            !underway && polling.ask(() => pollSubscription(subscription.id), onAnswer)
+          }
         >
           {underway ? "正在检查…" : "立即检查"}
         </button>
         {subscription.unseen > 0 && (
-          <button
-            disabled={seeing.press.state === "asking"}
-            onClick={() => seeing.ask(() => seeSubscription(subscription.id), onSeenAll)}
-          >
+          <button aria-disabled={seeing.press.state === "asking"} onClick={seeAll}>
             全部标为已读
           </button>
         )}
@@ -190,7 +205,7 @@ export function SubscriptionHead({
         <select
           id={followsId}
           value={asked ?? subscription.follows}
-          disabled={following.press.state === "asking"}
+          aria-disabled={following.press.state === "asking"}
           onChange={(event) => choose(event.target.value as Follows)}
         >
           {(Object.keys(FOLLOWS_NAMES) as Follows[]).map((follows) => (

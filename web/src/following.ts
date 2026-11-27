@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { reasonOf, type Loaded } from "./loading";
+import { isUnanswered, requestReason } from "./client";
+import type { Loaded } from "./loading";
 
 // As often as the list of items has always been read while one of them is being read
 // (useWatched).
@@ -25,6 +26,8 @@ type Follow<Value> = { loaded: Loaded<Value>; interrupted: boolean };
 
 // Like useWatched, and reads the value again also while it is settled: every minute while the
 // page is visible, and at once when a page that was hidden past its minute comes on show again.
+// A first reading that the service does not answer is tried again as a later one is, with the
+// following marked interrupted; one the service refuses is a failure, tried again when asked.
 // A value that is not shown is not followed, and is read again as soon as it is shown. The
 // load and the test of being unsettled are the latest given, so that they may read what was
 // drawn since the following began. A value read for one key stays on show while it is read
@@ -93,11 +96,14 @@ export function useFollowed<Value>(
             : setTimeout(read, BUSY_INTERVAL_MS);
         },
         (error: unknown) => {
-          if (current && onShow) {
+          if (current && (onShow || isUnanswered(error))) {
             setFollow((before) => ({ loaded: before.loaded, interrupted: true }));
             timer = setTimeout(read, BUSY_INTERVAL_MS);
           } else if (current) {
-            setFollow({ loaded: { state: "failed", reason: reasonOf(error) }, interrupted: false });
+            setFollow({
+              loaded: { state: "failed", reason: requestReason(error) },
+              interrupted: false,
+            });
           }
         },
       );

@@ -61,9 +61,11 @@ export function OpenedSubscription({
     }
   }, [value?.kind]);
 
-  // The keyboard, left on a control that is gone, is given to the way back.
+  // The keyboard, left on the control in the column that opened the subscription, which is gone
+  // or hidden now, is given to the way back; one at work elsewhere stays there.
   useLayoutEffect(() => {
-    if (document.activeElement === document.body) {
+    const column = back.current?.closest("nav");
+    if (document.activeElement === document.body || column?.contains(document.activeElement)) {
       back.current?.focus({ preventScroll: true });
     }
   }, []);

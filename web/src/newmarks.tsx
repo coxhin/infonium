@@ -11,9 +11,14 @@ export function NewCount({ count }: { count: number }) {
   );
 }
 
-// The mark of a new item, before its title; a screen reader hears it after the title.
+// The mark of a new item, before its title, which a line never parts from the title's first
+// letter; a screen reader hears it after the title.
 export function NewDot() {
-  return <span className="new-dot" aria-hidden="true" />;
+  return (
+    <span className="new-dot" aria-hidden="true">
+      {"●⁠"}
+    </span>
+  );
 }
 
 export function NewHeard() {

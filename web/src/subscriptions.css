@@ -5,6 +5,16 @@
   display: block;
 }
 
+.subscribe .status:empty {
+  margin: 0;
+}
+
+/* A press whose answer is awaited keeps the keyboard, and asks nothing more. */
+.library button[aria-disabled="true"] {
+  cursor: default;
+  color: var(--muted);
+}
+
 .subscribe-row {
   display: flex;
   gap: 0.4rem;

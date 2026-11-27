@@ -132,6 +132,12 @@ export function requestReason(error: unknown): string {
     : reasonOf(error);
 }
 
+// Whether a request that calls no model failed because the service did not answer it: the
+// gateway said so, or no answer came at all.
+export function isUnanswered(error: unknown): boolean {
+  return error instanceof Refused ? UNANSWERED_STATUSES.has(error.status) : true;
+}
+
 // A request that answers with nothing when it succeeds.
 async function done(request: Promise<{ error?: Refusal; response: Response }>): Promise<void> {
   const { error, response } = await request;

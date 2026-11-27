@@ -87,6 +87,24 @@
   overflow-wrap: anywhere;
 }
 
+/* Where an item came from stays on one line, cut where it is long, as a subscription's title
+   may be; the whole is on hover. */
+.library li a small {
+  display: flex;
+}
+
+.library li a .source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library li a .attempt {
+  flex: none;
+  white-space: pre;
+}
+
 .library li a.new {
   font-weight: 600;
 }

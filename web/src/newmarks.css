@@ -15,13 +15,11 @@
 }
 
 .new-dot {
-  display: inline-block;
-  width: 0.45em;
-  height: 0.45em;
-  margin: 0 0.4em 0.12em 0;
-  border-radius: 50%;
-  background: var(--accent);
-  vertical-align: middle;
+  margin-right: 0.35em;
+  color: var(--accent);
+  font-family: system-ui, sans-serif;
+  font-size: 0.6em;
+  vertical-align: 0.15em;
 }
 
 /* Heard by a screen reader, not seen. */

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { readPosting, type Posting, type Subscription } from "./client";
 import { isNew } from "./entry";
 import { itemLink } from "./links";
@@ -26,6 +26,7 @@ function PostingRow({
   onPosting: (posting: Posting) => void;
 }) {
   const { press, ask } = usePress();
+  const row = useRef<HTMLLIElement>(null);
   const { admission } = posting;
   const published = posting.published !== null && (
     <Moment at={posting.published} told={toldDay(posting.published, now)} />
@@ -35,7 +36,7 @@ function PostingRow({
     const item = admission.item;
     const fresh = isNew(item, seen);
     return (
-      <li data-item={item.id}>
+      <li data-item={item.id} ref={row} tabIndex={-1}>
         <a
           href={itemLink(item.id)}
           className={fresh ? "posting new" : "posting"}
@@ -53,8 +54,15 @@ function PostingRow({
     );
   }
 
+  // The press is gone once the posting is admitted, so the keyboard is kept on its row.
   function readNow() {
-    ask(() => readPosting(subscriptionId, posting.number), onPosting);
+    ask(
+      () => readPosting(subscriptionId, posting.number),
+      (answer) => {
+        onPosting(answer);
+        row.current?.focus({ preventScroll: true });
+      },
+    );
   }
 
   let state: ReactNode;
@@ -62,7 +70,7 @@ function PostingRow({
   switch (admission.kind) {
     case "unadmitted":
       action = (
-        <button disabled={press.state === "asking"} onClick={readNow}>
+        <button aria-disabled={press.state === "asking"} onClick={readNow}>
           读取
         </button>
       );
@@ -79,7 +87,7 @@ function PostingRow({
           </span>
         );
         action = (
-          <button disabled={press.state === "asking"} onClick={readNow}>
+          <button aria-disabled={press.state === "asking"} onClick={readNow}>
             重试
           </button>
         );
@@ -89,7 +97,11 @@ function PostingRow({
       break;
   }
   return (
-    <li data-item={admission.kind === "admitted" ? admission.item.id : undefined}>
+    <li
+      data-item={admission.kind === "admitted" ? admission.item.id : undefined}
+      ref={row}
+      tabIndex={-1}
+    >
       <div className="posting">
         <span className="posting-title" title={posting.title}>
           {posting.title}
@@ -150,7 +162,11 @@ export function PostingList({
         ))}
       </ul>
       {left > 0 && (
-        <button className="older" disabled={older.state === "reading"} onClick={onOlder}>
+        <button
+          className="older"
+          aria-disabled={older.state === "reading"}
+          onClick={() => older.state !== "reading" && onOlder()}
+        >
           {older.state === "reading"
             ? "正在载入…"
             : `载入更早的 ${Math.min(left, POSTINGS_AT_A_TIME)} 条（还有 ${left} 条）`}

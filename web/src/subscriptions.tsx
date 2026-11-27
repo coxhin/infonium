@@ -26,7 +26,15 @@ function stateWord(subscription: Subscription): string | undefined {
   return subscription.poll.kind === "failed" ? "检查失败" : undefined;
 }
 
-function SubscribeForm({ onSubscribed }: { onSubscribed: (subscription: Subscription) => void }) {
+// The form stays while a subscription is open in place of the list, so that the number chosen
+// and what was last said are there when the reader comes back.
+function SubscribeForm({
+  shown,
+  onSubscribed,
+}: {
+  shown: boolean;
+  onSubscribed: (subscription: Subscription) => void;
+}) {
   const [address, setAddress] = useState("");
   const [admitted, setAdmitted] = useState(ADMITTED_AT_FIRST);
   const { press, ask } = usePress();
@@ -46,7 +54,7 @@ function SubscribeForm({ onSubscribed }: { onSubscribed: (subscription: Subscrip
   }
 
   return (
-    <form className="subscribe" onSubmit={submit}>
+    <form className="subscribe" hidden={!shown} onSubmit={submit}>
       <label className="heard" htmlFor={fieldId}>
         要订阅的地址
       </label>
@@ -64,7 +72,7 @@ function SubscribeForm({ onSubscribed }: { onSubscribed: (subscription: Subscrip
           value={address}
           onChange={(event) => setAddress(event.target.value)}
         />
-        <button disabled={asking}>{asking ? "订阅中…" : "订阅"}</button>
+        <button aria-disabled={asking}>{asking ? "订阅中…" : "订阅"}</button>
       </div>
       <p id={hintId} className="hint">
         订阅源（RSS、Atom、JSON Feed）、播客、YouTube 频道、网站的页面，或 rsshub:// 路由
@@ -84,11 +92,10 @@ function SubscribeForm({ onSubscribed }: { onSubscribed: (subscription: Subscrip
         </select>
         条
       </label>
-      {asking && (
-        <p className="status" role="status">
-          正在查找并读取订阅源，可能要半分钟…
-        </p>
-      )}
+      {/* Stays in the page while it says nothing, so that what it comes to say is read out. */}
+      <p className="status" role="status">
+        {asking && "正在查找并读取订阅源，可能要半分钟…"}
+      </p>
       {press.state === "refused" && (
         <p className="status failed" role="alert">
           {press.reason}
@@ -108,12 +115,17 @@ function SubscriptionList({
   onOpen: (subscriptionId: string) => void;
 }) {
   const list = useRef<HTMLUListElement>(null);
-  // Back from a subscription, the keyboard is given to its row.
+  // Back from a subscription, the keyboard is given to its row, or to the first where it is
+  // gone.
   useLayoutEffect(() => {
-    if (left !== undefined && document.activeElement === document.body) {
-      list.current
-        ?.querySelector<HTMLButtonElement>(`[data-subscription="${CSS.escape(left)}"]`)
-        ?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) {
+      const row =
+        left === undefined
+          ? null
+          : list.current?.querySelector<HTMLButtonElement>(
+              `[data-subscription="${CSS.escape(left)}"]`,
+            );
+      (row ?? list.current?.querySelector("button"))?.focus({ preventScroll: true });
     }
   }, []);
 
@@ -181,35 +193,36 @@ export function SubscriptionsPanel({
   onGone: (subscriptionId: string) => void;
   onChanged: () => void;
 }) {
-  if (opened !== undefined) {
-    return (
-      <OpenedSubscription
-        key={opened.subscriptionId}
-        subscriptionId={opened.subscriptionId}
-        sought={opened.sought}
-        selected={selected}
-        seen={seen}
-        shown={shown}
-        onBack={onBack}
-        onView={onView}
-        onGone={onGone}
-        onChanged={onChanged}
-      />
-    );
-  }
   const { loaded } = subscriptions;
   return (
     <>
-      <SubscribeForm onSubscribed={onSubscribed} />
-      {loaded.state === "failed" && (
-        <p className="status failed">
-          订阅没有读到：{loaded.reason}
-          <button onClick={subscriptions.readNow}>重试</button>
-        </p>
-      )}
-      {subscriptions.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
-      {loaded.state === "ready" && (
-        <SubscriptionList subscriptions={loaded.value} left={left} onOpen={onOpen} />
+      <SubscribeForm shown={opened === undefined} onSubscribed={onSubscribed} />
+      {opened !== undefined ? (
+        <OpenedSubscription
+          key={opened.subscriptionId}
+          subscriptionId={opened.subscriptionId}
+          sought={opened.sought}
+          selected={selected}
+          seen={seen}
+          shown={shown}
+          onBack={onBack}
+          onView={onView}
+          onGone={onGone}
+          onChanged={onChanged}
+        />
+      ) : (
+        <>
+          {loaded.state === "failed" && (
+            <p className="status failed">
+              订阅没有读到：{loaded.reason}
+              <button onClick={subscriptions.readNow}>重试</button>
+            </p>
+          )}
+          {subscriptions.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
+          {loaded.state === "ready" && (
+            <SubscriptionList subscriptions={loaded.value} left={left} onOpen={onOpen} />
+          )}
+        </>
       )}
     </>
   );

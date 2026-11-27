@@ -65,7 +65,8 @@ type Place = { tab: ColumnTab; opened: Opened | undefined };
 const AT_ITEMS: Place = { tab: "items", opened: undefined };
 
 // Where the column stands when the app opens with an item: at the subscription that brought it,
-// with it marked, or at the list of items. Nothing while the lists that tell it are read.
+// with it marked, or at the list of items. Nothing while the lists that tell it are read, and a
+// tab pressed meanwhile decides it.
 function placeAtOpening(
   selected: string,
   entries: Loaded<ItemEntry[]>,
@@ -206,6 +207,7 @@ function ItemsPanel({
         <ul>
           {shown.map((entry) => {
             const fresh = isNew(entry, seen);
+            const source = sourceName(entry);
             return (
               <li key={entry.id}>
                 <a
@@ -217,8 +219,10 @@ function ItemsPanel({
                   {itemTitle(entry)}
                   {fresh && <NewHeard />}
                   <small>
-                    {sourceName(entry)}
-                    {ATTEMPT_NOTES[entry.reading.attempt.kind]}
+                    <span className="source" title={source}>
+                      {source}
+                    </span>
+                    <span className="attempt">{ATTEMPT_NOTES[entry.reading.attempt.kind]}</span>
                   </small>
                 </a>
               </li>
@@ -343,13 +347,16 @@ export function Library({
             role="tab"
             aria-selected={place?.tab === name}
             aria-controls={panelId(name)}
-            onClick={() => place !== undefined && go({ ...place, tab: name })}
+            onClick={() => go({ tab: name, opened: place?.opened })}
           >
             {TAB_NAMES[name]}
             {name === "subscriptions" && unseen > 0 && <NewCount count={unseen} />}
           </button>
         ))}
       </div>
+      {place === undefined && (interrupted || subscriptions.interrupted) && (
+        <p className="status failed">连接不上服务，正在重试…</p>
+      )}
       <div
         id={panelId("items")}
         role="tabpanel"
