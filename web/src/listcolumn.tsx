@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { requestReason, type ItemEntry, type Subscription } from "./client";
 import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
@@ -104,6 +104,12 @@ export function ListColumn({
 
   const subscribing = navigation.subscribing;
   const name = subscribing ? "订阅" : selectionName(selection, folderMap);
+  const listKey = `${keyOf(selection)}|${media}`;
+  const view = useRef<HTMLDivElement>(null);
+  // Another selection or media is listed from its top, not where the one before was scrolled.
+  useLayoutEffect(() => {
+    view.current?.scrollTo({ top: 0 });
+  }, [listKey]);
   const importInto: ImportInto =
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }
@@ -182,14 +188,14 @@ export function ListColumn({
           onChanged={onChanged}
         />
       ) : (
-        <div className="list-view">
+        <div className="list-view" ref={view}>
           {waiting ? (
             <p className="status">正在打开…</p>
           ) : (
             <ItemList
               entries={entries}
               listed={listedEntries}
-              listKey={`${keyOf(selection)}|${media}`}
+              listKey={listKey}
               importable={selection.kind !== "new"}
               importInto={importInto}
               emptyText={emptyText(selection, media)}
