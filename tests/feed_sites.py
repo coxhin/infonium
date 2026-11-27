@@ -34,19 +34,26 @@ def not_found(request: httpx.Request) -> httpx.Response:
 class FeedSites:
     def __init__(self) -> None:
         self.answers: dict[str, Answer] = {}
+        self.hosts: dict[str, Answer] = {}
         self.requests: list[httpx.Request] = []
 
     def serve(self, address: str, answer: Answer) -> None:
         self.answers[str(httpx.URL(address))] = answer
 
+    def serve_everywhere_at(self, host: str, answer: Answer) -> None:
+        # An answer for every address at the host that is not served otherwise.
+        self.hosts[host] = answer
+
     def forget(self) -> None:
         # The sites as they were before a test scripted them, for each example of a property.
         self.answers.clear()
+        self.hosts.clear()
         self.requests.clear()
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return self.answers.get(str(request.url), not_found)(request)
+        everywhere = self.hosts.get(request.url.host, not_found)
+        return self.answers.get(str(request.url), everywhere)(request)
 
     def asked(self) -> list[str]:
         return [str(request.url) for request in self.requests]

@@ -1,5 +1,6 @@
 import gzip
 import random
+import sys
 import tempfile
 import time
 import zlib
@@ -12,7 +13,7 @@ from threading import Thread
 import httpx
 import psutil
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from infonium.subscriptions import program
 from infonium.subscriptions.discovery import discovered_feed
@@ -21,6 +22,7 @@ from infonium.subscriptions.fetcher import Validators, fetched_feed
 from infonium.subscriptions.program import discovered_apart, polled_apart
 from tests.conftest import PROXY_VARIABLES
 from tests.feed_server import (
+    RSSHUB_ERROR,
     ScriptedHandler,
     ScriptedServer,
     broken_off,
@@ -43,6 +45,9 @@ PORT = 9146
 CLOSED_PORT = 9149
 CLOSED = f"http://127.0.0.1:{CLOSED_PORT}"
 RSS_KIND = "application/rss+xml"
+RSSHUB_SETTING = "INFONIUM_RSSHUB_BASE_URL"
+RSSHUB_ENGINE = "engines/rsshub"
+KEY_SETTING = "INFONIUM_RSSHUB_ACCESS_KEY"
 # The time the program may take, lowered by the name the module gives it so that a trickle
 # meets it in seconds; the program starts in a quarter of a second on a quiet machine.
 LOWERED_FETCHER_SECONDS = 6.0
@@ -375,3 +380,137 @@ def test_apart_polls_leave_the_services_memory_and_open_files_as_they_were(
         f"{POLLS_FOR_GROWTH} polls apart left the service's process with {files_grown} more "
         "open files"
     )
+
+
+# N7 and N12: an instance that does not answer a poll of a route.
+
+
+def test_apart_an_rsshub_that_does_not_answer_a_poll_of_a_route_is_told_as_such(
+    server: ScriptedServer,
+) -> None:
+    told = refused_apart(
+        lambda: polled_apart("rsshub://night/trains", Validators(), CLOSED),
+        "a poll apart of a route of a silent RSSHub",
+    )
+    assert all(said in told for said in (CLOSED, "RSSHub", RSSHUB_SETTING, RSSHUB_ENGINE)), (
+        f"a poll apart of a route of a silent RSSHub was told as {told!r}, not as RSSHub not "
+        f"answering at {CLOSED}, with {RSSHUB_SETTING} and {RSSHUB_ENGINE}"
+    )
+    assert "rsshub://" not in told, (
+        f"a poll apart of a route of a silent RSSHub was told as {told!r}, which advises a route"
+    )
+
+
+# N2: a fetcher that ends without an answer.
+
+ENDINGS_WITHOUT_AN_ANSWER = {
+    "with status 0": [sys.executable, "-c", "pass"],
+    "with status 3": [sys.executable, "-c", "import sys; sys.exit(3)"],
+}
+
+
+@pytest.mark.parametrize("operation", sorted(OPERATIONS))
+@pytest.mark.parametrize("ending", sorted(ENDINGS_WITHOUT_AN_ANSWER))
+def test_apart_a_fetcher_that_ends_without_an_answer_ends_in_unreadable_feed_alone(
+    server: ScriptedServer, monkeypatch: pytest.MonkeyPatch, ending: str, operation: str
+) -> None:
+    server.scripts["/feed.xml"] = conditional(FEED, ETAG)
+    monkeypatch.setattr(program, "FETCHER", ENDINGS_WITHOUT_AN_ANSWER[ending])
+    at = server.address("/feed.xml")
+    refused_apart(lambda: OPERATIONS[operation](at), f"a {operation} apart by a fetcher {ending}")
+
+
+# N8: a key for RSSHub. The key is a word that stands nowhere else, so that finding it tells it
+# leaked; the instance holds every request to it.
+KEY = "quorvex-zindlap-9146"
+OTHER_KEY = "mertusk-plovane-9147"
+SITE_PORT = 9147
+ROUTE = "/night/trains"
+
+
+@pytest.fixture
+def site(server: ScriptedServer) -> Iterator[ScriptedServer]:
+    # A site of its own, beside the instance of RSSHub that the server plays.
+    with scripted_server(SITE_PORT) as scripted:
+        yield scripted
+
+
+def assert_key_nowhere(capfd: pytest.CaptureFixture[str], what: str, *said: str) -> None:
+    out, err = capfd.readouterr()
+    for text in (*said, out, err):
+        assert KEY not in text, f"{what} let the key out: {text[:400]!r}"
+
+
+def test_apart_every_request_to_rsshub_carries_its_key_and_none_to_another_host_does(
+    server: ScriptedServer, site: ScriptedServer, capfd: pytest.CaptureFixture[str]
+) -> None:
+    server.key = KEY
+    server.scripts[ROUTE] = conditional(FEED, ETAG)
+    server.scripts["/api/radar/rules"] = sent(b"{}", "application/json")
+    site.scripts["/"] = sent(BARE_PAGE, "text/html")
+    instance, key = server.address(""), SecretStr(KEY)
+    found = discovered_apart(f"rsshub:/{ROUTE}", instance, key)
+    polled = polled_apart(f"rsshub:/{ROUTE}", Validators(), instance, key)
+    told = refused_apart(
+        lambda: discovered_apart(site.address("/"), instance, key), "a discovery of the site"
+    )
+    keyed = [heard for heard in server.heard if f"key={KEY}" in heard]
+    assert keyed == server.heard and len(keyed) >= 3, (
+        f"RSSHub heard {server.heard}, not every request with its key: the route at a discovery, "
+        "at a poll, and the rules"
+    )
+    assert any(heard.startswith("/api/radar/rules") for heard in keyed), (
+        f"RSSHub heard {server.heard}, without a request for its rules"
+    )
+    assert site.heard and not any(KEY in heard for heard in site.heard), (
+        f"the site heard {site.heard}: the key went to another host"
+    )
+    assert_key_nowhere(
+        capfd, "a discovery and a poll apart with a key", found.address, repr(polled), told
+    )
+
+
+def answer_echoing_the_request(handler: ScriptedHandler) -> None:
+    # RSSHub's page of an error that quotes the address it was asked, key and all, as a route's
+    # error may.
+    page = RSSHUB_ERROR.format(message=f"FetchError: {handler.path} failed", route=ROUTE)
+    sent(page.encode(), "text/html; charset=utf-8", 503)(handler)
+
+
+KEYED_FAILURES: dict[str, Callable[[ScriptedServer], tuple[str, SecretStr | None]]] = {
+    "a silent instance": lambda s: (CLOSED, SecretStr(KEY)),
+    "a route whose error quotes the request": lambda s: (
+        s.scripts.update({ROUTE: answer_echoing_the_request}) or s.address(""),
+        SecretStr(KEY),
+    ),
+    "a route broken off": lambda s: (
+        s.scripts.update({ROUTE: broken_off(FEED_OPENING, RSS_KIND, 64 * 1024)}) or s.address(""),
+        SecretStr(KEY),
+    ),
+    "a key the instance refuses": lambda s: (s.address(""), SecretStr(OTHER_KEY)),
+    "no key where the instance asks for one": lambda s: (s.address(""), None),
+}
+KEY_STEPS: dict[str, Callable[[str, SecretStr | None], object]] = {
+    "discovery": lambda instance, key: discovered_apart(f"rsshub:/{ROUTE}", instance, key),
+    "poll": lambda instance, key: polled_apart(f"rsshub:/{ROUTE}", Validators(), instance, key),
+}
+
+
+@pytest.mark.parametrize("step", sorted(KEY_STEPS))
+@pytest.mark.parametrize("failure", sorted(KEYED_FAILURES))
+def test_apart_the_key_for_rsshub_is_in_no_sentence_whatever_fails(
+    server: ScriptedServer, capfd: pytest.CaptureFixture[str], failure: str, step: str
+) -> None:
+    server.key = KEY
+    instance, key = KEYED_FAILURES[failure](server)
+    what = f"a {step} apart of a route with {failure}"
+    told = refused_apart(lambda: KEY_STEPS[step](instance, key), what)
+    assert_key_nowhere(capfd, what, told)
+    if failure == "a key the instance refuses":
+        assert KEY_SETTING in told and "refus" in told, (
+            f"{what} was told as {told!r}, not as RSSHub refusing the key {KEY_SETTING} gives it"
+        )
+    if failure == "no key where the instance asks for one":
+        assert KEY_SETTING in told and "key" in told, (
+            f"{what} was told as {told!r}, not as RSSHub asking for a key {KEY_SETTING} gives none"
+        )
