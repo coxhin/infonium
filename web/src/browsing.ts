@@ -40,7 +40,7 @@ import {
   type Selection,
   type Tally,
 } from "./sidebarselection";
-import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptions";
+import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptionlist";
 
 // The state of browsing the library, which the sidebar and the list column share: the lists the
 // sidebar is drawn from, what it has selected and how, its counts, and what moves subscriptions

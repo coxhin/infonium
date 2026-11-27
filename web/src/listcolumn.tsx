@@ -14,7 +14,8 @@ import {
   type MediaChoice,
   type Selection,
 } from "./sidebarselection";
-import { SubscribeForm, SubscribingHint, withSubscription } from "./subscriptions";
+import { withSubscription } from "./subscriptionlist";
+import { SubscribeForm, SubscribingHint } from "./subscriptions";
 import { SubscriptionPane } from "./subscriptionpane";
 import "./listcolumn.css";
 
