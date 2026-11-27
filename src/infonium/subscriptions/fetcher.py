@@ -7,7 +7,7 @@ from http import HTTPStatus
 from threading import Event, Thread
 from types import MappingProxyType
 from typing import Annotated, Literal
-from urllib.parse import unquote_plus
+from urllib.parse import unquote
 
 import httpx
 from pydantic import BaseModel, Field
@@ -79,13 +79,16 @@ HIDDEN_NAMES: set[str] = set()
 HTTPX_LOG = "httpx"
 # What is hidden goes to the server first asked and to no other. A redirect that leads to another
 # server and holds it in its address, as a server that writes the address it was asked into the
-# one it redirects to does, is not followed. The address is looked through as it is written and
-# with its escapes undone, twice over: an address written into another's query is escaped again.
+# one it redirects to does, is not followed. The address and what is hidden are compared as they
+# read once every escape is undone, however many times over, as an address written into
+# another's query is escaped again, and with a plus sign as the space a query writes with one:
+# an address may escape some of a key's characters and leave the others as they are.
 LEADS_AWAY = (
     "{source} redirects to {target} with the key in the address, and infonium gives the key to"
     " {server} alone"
 )
-ESCAPES_UNDONE = 2
+PLUS = "+"
+SPACE = " "
 
 
 class Oversized(UnreadableFeed):
@@ -211,12 +214,18 @@ def server_of(url: httpx.URL) -> str:
     return f"{url.scheme}://{url.netloc.decode()}"
 
 
+def read_through(written: str) -> str:
+    # A text as it reads with its escapes undone until none is left, each undoing leaving it
+    # shorter, and a plus sign as a space.
+    while (read := unquote(written)) != written:
+        written = read
+    return written.replace(PLUS, SPACE)
+
+
 def holds_hidden(url: httpx.URL, hidden: Mapping[str, str]) -> bool:
     # Whether an address holds what is hidden, under whatever name and wherever in it.
-    readings = [str(url)]
-    for _ in range(ESCAPES_UNDONE):
-        readings.append(unquote_plus(readings[-1]))
-    return any(value in reading for value in hidden.values() for reading in readings)
+    address = read_through(str(url))
+    return any(read_through(value) in address for value in hidden.values())
 
 
 def sent_back(value: str | None) -> str | None:
