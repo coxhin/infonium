@@ -10,6 +10,7 @@ from infonium.document import OVERDUE_SOURCE
 from infonium.intake import CONTENT_TYPE, PAGE_MEDIA_TYPES, UNDECLARED, declared_media_type
 from infonium.reasons import failure_reason
 from infonium.subscriptions.feed import (
+    ADDRESS_CHARACTERS,
     GIVE_A_FEED,
     UnreadableFeed,
     WebAddress,
@@ -33,12 +34,16 @@ from infonium.subscriptions.fetcher import (
 RSSHUB_SCHEME = "rsshub://"
 ROUTE_APART = "/"
 
-# A page is fetched as a feed is, within less; one discovery, of however many fetches, within
-# a minute. A fetch is not begun once that minute is over, and a body is read no further, but a
-# server that falls silent is waited for as long as any fetch waits.
+# A page is fetched as a feed is, within less; one discovery within a minute and eight
+# requests, each a fetch with the redirects it follows. A fetch is not begun once either is
+# spent, and a body is read no further once the minute is over, but a server that falls silent
+# is waited for as long as any fetch waits. Of the requests, one is kept for a route of RSSHub
+# where nothing else leads to a feed.
 PAGE_LIMIT_BYTES = 5 * 1024**2
 PAGE_LIMIT_SECONDS = 30.0
 DISCOVERY_LIMIT_SECONDS = 60.0
+MOST_REQUESTS = 8
+KEPT_FOR_RSSHUB = 1
 
 # The feeds a page names by links of its head, of which the first few are tried in the order
 # the page names them. A link is taken wherever it stands, as a page that is not well-formed
@@ -55,10 +60,11 @@ FEED_KINDS = frozenset(
     {"application/rss+xml", "application/atom+xml", "application/feed+json", "application/json"}
 )
 
-# Where a page names no feed, the feed of its site is looked for where feeds commonly are. Of
-# the pages of 10 sites that named none, this found the feeds of 3 (danluu.com at /atom.xml,
-# sspai.com at /feed, stratechery.com at /feed), and none of paulgraham.com, arxiv.org,
-# reddit.com, bbc.com, 36kr.com, xiaoyuzhoufm.com and space.bilibili.com.
+# Where none of the feeds a page names reads, as where it names none, the feed of its site is
+# looked for where feeds commonly are. Of the pages of 10 sites that named none, this found the
+# feeds of 3 (danluu.com at /atom.xml, sspai.com at /feed, stratechery.com at /feed), and none
+# of paulgraham.com, arxiv.org, reddit.com, bbc.com, 36kr.com, xiaoyuzhoufm.com and
+# space.bilibili.com.
 COMMON_FEED_PATHS = ("/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml", "/index.xml")
 
 # YouTube keeps the feed of a channel and of a playlist at an address of its own, by the
@@ -87,10 +93,20 @@ NOT_AN_ADDRESS = (
     "{address} is neither a web address nor a route of RSSHub: give an address that begins with"
     " http:// or https://, or a route as " + RSSHUB_SCHEME + "<route>"
 )
-NAMES_NO_FEED = "{address} is a web page that names no feed; " + GIVE_A_FEED
+NAMES_NO_FEED = (
+    "{address} is a web page that names no feed, and none was found where its site would keep"
+    " one; " + GIVE_A_FEED
+)
 # Of named feeds that cannot be read, the reason the first could not is told, as the feed a
 # page names first is the one it gives as its own.
-NAMED_FEEDS_UNREADABLE = "the feeds that {address} names cannot be read, the first as {reason}"
+NAMED_FEEDS_UNREADABLE = (
+    "{address} names feeds that cannot be read, and none was found where its site would keep"
+    " one; the first it names: {reason}"
+)
+UNKEPT_ADDRESS = (
+    "{address} leads on to an address of more than {most} characters, which infonium does not"
+    " keep; " + GIVE_A_FEED
+)
 SILENT_RSSHUB = (
     "RSSHub at {instance} did not answer ({reason}); INFONIUM_RSSHUB_BASE_URL names the instance"
 )
@@ -108,6 +124,25 @@ class Discovered(BaseModel):
     fetched: Changed
 
 
+class Allowance:
+    # What one discovery may still do: how many requests it may still make, and the time on the
+    # monotonic clock by which it ends.
+    def __init__(self) -> None:
+        self.requests = MOST_REQUESTS
+        self.ends = time.monotonic() + DISCOVERY_LIMIT_SECONDS
+
+    def left(self, feeds: list[str], kept: int) -> list[str]:
+        # The first of the feeds given that may still be asked for, with as many requests as
+        # given kept back for later.
+        return feeds[: max(self.requests - kept, 0)]
+
+    def spend(self, address: str) -> None:
+        # One request taken, to the address given.
+        if time.monotonic() > self.ends:
+            raise UnreadableFeed(OVERDUE_SOURCE.format(source=address))
+        self.requests -= 1
+
+
 class ApplePodcastsShow(BaseModel):
     feed: str | None = Field(default=None, alias="feedUrl")
 
@@ -116,12 +151,12 @@ class ApplePodcastsLookup(BaseModel):
     results: list[ApplePodcastsShow] = []
 
 
-def fetched_answer(address: str, ends: float) -> Answer:
+def fetched_answer(address: str, allowance: Allowance) -> Answer:
     # What an address answers with, held to a page's bounds where it declares a page and to a
     # feed's otherwise, and to the time the discovery ends by.
+    allowance.spend(address)
     began = time.monotonic()
-    if began > ends:
-        raise UnreadableFeed(OVERDUE_SOURCE.format(source=address))
+    ends = allowance.ends
     with answer_to(address, Validators()) as response:
         page = (
             declared_media_type(response.headers.get(CONTENT_TYPE, UNDECLARED)) in PAGE_MEDIA_TYPES
@@ -132,9 +167,15 @@ def fetched_answer(address: str, ends: float) -> Answer:
         return answer_of(response, content)
 
 
-def feed_at(address: str, ends: float) -> Discovered:
-    answer = fetched_answer(address, ends)
+def discovered_of(answer: Answer, asked: str) -> Discovered:
+    # The feed an answer holds, where infonium keeps the address it came from.
+    if not web_addresses([answer.address], answer.address):
+        raise UnreadableFeed(UNKEPT_ADDRESS.format(address=asked, most=ADDRESS_CHARACTERS))
     return Discovered(address=answer.address, fetched=changed(answer))
+
+
+def feed_at(address: str, allowance: Allowance) -> Discovered:
+    return discovered_of(fetched_answer(address, allowance), address)
 
 
 def named_feeds(answer: Answer) -> list[str]:
@@ -153,19 +194,6 @@ def named_feeds(answer: Answer) -> list[str]:
     return list(dict.fromkeys(web_addresses(named, (base or [answer.address])[0])))
 
 
-def first_readable(feeds: list[str], page: str, ends: float, unread: str) -> Discovered:
-    # The first of the feeds that a page leads to that reads as a feed. A feed that cannot be
-    # fetched or read is passed over for the next. Where none reads, the reader is told the
-    # sentence given, of the page and of the reason the first could not be read.
-    reasons: list[str] = []
-    for feed in feeds:
-        try:
-            return feed_at(feed, ends)
-        except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL) as failure:
-            reasons.append(failure_reason(failure))
-    raise UnreadableFeed(unread.format(address=page, reason=reasons[0]))
-
-
 def channel_feeds(answer: Answer) -> list[str]:
     # The feed of the YouTube channel whose page is the one answered, by the id in its
     # canonical link.
@@ -175,28 +203,32 @@ def channel_feeds(answer: Answer) -> list[str]:
     return [YOUTUBE_FEED.format(query=urlencode({CHANNEL_ID: channel})) for channel in channels]
 
 
-def discovered_at(address: str, ends: float) -> Discovered:
-    # The feed itself, or the first feed that a page names; where it names none, on YouTube the
-    # feed of the channel whose id the page carries, and elsewhere the first feed of its site
-    # where feeds commonly are.
-    answer = fetched_answer(address, ends)
+def discovered_at(address: str, allowance: Allowance) -> Discovered:
+    # The feed itself, or the first that reads of the feeds a page names and then of the places
+    # where its site would keep one: on YouTube the feed of the channel whose id the page
+    # carries, elsewhere the places where feeds commonly are. A feed that cannot be fetched or
+    # read is passed over for the next.
+    answer = fetched_answer(address, allowance)
     host = urlsplit(answer.address).hostname
     if host == YOUTUBE_CONSENT_HOST:
         raise UnreadableFeed(YOUTUBE_CONSENT.format(address=address))
     if not is_page(answer.content, answer.declared):
-        return Discovered(address=answer.address, fetched=changed(answer))
-    named = named_feeds(answer)
-    if named:
-        tried = named[:NAMED_FEEDS_TRIED]
-        return first_readable(tried, answer.address, ends, NAMED_FEEDS_UNREADABLE)
-    unnamed = (
+        return discovered_of(answer, address)
+    named = named_feeds(answer)[:NAMED_FEEDS_TRIED]
+    elsewhere = (
         channel_feeds(answer)
         if host in YOUTUBE_HOSTS
         else [urljoin(answer.address, path) for path in COMMON_FEED_PATHS]
     )
-    if not unnamed:
-        raise UnreadableFeed(NAMES_NO_FEED.format(address=answer.address))
-    return first_readable(unnamed, answer.address, ends, NAMES_NO_FEED)
+    reasons: list[str] = []
+    for feed in allowance.left([*named, *elsewhere], KEPT_FOR_RSSHUB):
+        try:
+            return feed_at(feed, allowance)
+        except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL) as failure:
+            reasons.append(failure_reason(failure))
+    if named:
+        raise UnreadableFeed(NAMED_FEEDS_UNREADABLE.format(address=address, reason=reasons[0]))
+    raise UnreadableFeed(NAMES_NO_FEED.format(address=address))
 
 
 def youtube_feed(address: str) -> list[str]:
@@ -211,8 +243,8 @@ def youtube_feed(address: str) -> list[str]:
     return []
 
 
-def apple_podcasts_feed(address: str, show: str, ends: float) -> Discovered:
-    lookup = fetched_answer(APPLE_LOOKUP.format(show=show), ends)
+def apple_podcasts_feed(address: str, show: str, allowance: Allowance) -> Discovered:
+    lookup = fetched_answer(APPLE_LOOKUP.format(show=show), allowance)
     try:
         shows = ApplePodcastsLookup.model_validate_json(lookup.content).results
     except ValidationError as failure:
@@ -220,13 +252,13 @@ def apple_podcasts_feed(address: str, show: str, ends: float) -> Discovered:
     feeds = web_addresses([show.feed for show in shows if show.feed], lookup.address)
     if not feeds:
         raise UnreadableFeed(NO_APPLE_FEED.format(address=address))
-    return feed_at(feeds[0], ends)
+    return feed_at(feeds[0], allowance)
 
 
-def rsshub_feed(route: str, rsshub: str, ends: float) -> Discovered:
+def rsshub_feed(route: str, rsshub: str, allowance: Allowance) -> Discovered:
     instance = rsshub.rstrip(ROUTE_APART)
     try:
-        return feed_at(instance + ROUTE_APART + route.lstrip(ROUTE_APART), ends)
+        return feed_at(instance + ROUTE_APART + route.lstrip(ROUTE_APART), allowance)
     except httpx.TransportError as failure:
         reason = failure_reason(failure)
         raise UnreadableFeed(SILENT_RSSHUB.format(instance=rsshub, reason=reason)) from failure
@@ -236,11 +268,10 @@ def discovered_feed(address: str, rsshub: str) -> Discovered:
     # The feed that an address a reader gave leads to: the feed itself, a page that names its
     # feed, a show or a channel whose site keeps its feed elsewhere, or a route of the RSSHub
     # instance at the address given. Shows on Apple Podcasts, and YouTube's channels and
-    # playlists named by their ids, are found by their addresses alone. One discovery makes 7
-    # requests at most: a page and the six places of a site's feed.
-    ends = time.monotonic() + DISCOVERY_LIMIT_SECONDS
+    # playlists named by their ids, are found by their addresses alone.
+    allowance = Allowance()
     if address.startswith(RSSHUB_SCHEME):
-        return rsshub_feed(address.removeprefix(RSSHUB_SCHEME), rsshub, ends)
+        return rsshub_feed(address.removeprefix(RSSHUB_SCHEME), rsshub, allowance)
     if not web_addresses([address], address):
         raise UnreadableFeed(NOT_AN_ADDRESS.format(address=address))
     parts = urlsplit(address)
@@ -248,7 +279,7 @@ def discovered_feed(address: str, rsshub: str) -> Discovered:
     shows = APPLE_SHOW.findall(parts.path) if host == APPLE_PODCASTS_HOST else []
     kept = youtube_feed(address) if host in YOUTUBE_HOSTS else []
     if shows:
-        return apple_podcasts_feed(address, shows[-1], ends)
+        return apple_podcasts_feed(address, shows[-1], allowance)
     if kept:
-        return feed_at(kept[0], ends)
-    return discovered_at(address, ends)
+        return feed_at(kept[0], allowance)
+    return discovered_at(address, allowance)
