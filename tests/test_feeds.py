@@ -8,7 +8,7 @@ from functools import partial
 from xml.sax.saxutils import escape
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from infonium.subscriptions.feed import (
@@ -24,7 +24,6 @@ from tests.feed_writing import (
     BASES,
     CLIMBING_BASES,
     DAY_NAMES,
-    FAULT_EXAMPLES,
     JSON_FEED_VERSIONS,
     MONTH_NAMES,
     POSTING_ELEMENTS,
@@ -636,27 +635,10 @@ def test_a_title_or_summary_that_is_a_whole_html_document_never_fails_the_readin
     )
 
 
-DOCUMENT_FORMS = [
-    pytest.param(
-        FeedForm.RSS,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="the amended F4 against N1, not reached by the mends: an RSS title or summary "
-            "that is a whole HTML document, an empty one or a bare doctype is kept as written, "
-            "where Atom's is read as its text",
-        ),
-    ),
-    FeedForm.ATOM,
-]
-
-
-@pytest.mark.parametrize("form", DOCUMENT_FORMS)
-@settings(FAULT_EXAMPLES)
-@given(data=st.data())
-def test_a_title_or_summary_that_is_a_whole_html_document_reads_as_its_text_or_nothing(
-    form: FeedForm, data: st.DataObject
+@given(served=served_feeds(feeds_titled_by_documents(), st.just(FeedForm.ATOM)))
+def test_an_atom_title_or_summary_that_is_a_whole_html_document_reads_as_its_text_or_nothing(
+    served: ServedFeed,
 ) -> None:
-    served = data.draw(served_feeds(feeds_titled_by_documents(), st.just(form)))
     expected = expected_postings(served.said, served.form, served.address)
     for posting, said, plain in zip(
         postings_read(served), served.said.postings, expected, strict=True
@@ -705,18 +687,6 @@ RULED_TEXTS = {
 }
 
 
-DESCRIBED_AS_MARKUP = pytest.mark.xfail(
-    strict=True,
-    reason="N1, not reached by the mends: an RSS or RDF description that is no markup is read "
-    "as markup where it calls a posting without a title: 'Why Vec<T> is fast' becomes 'Why Vec "
-    "is fast'",
-)
-RULED_DESCRIPTIONS = [
-    written if written.startswith("<em>") else pytest.param(written, marks=DESCRIBED_AS_MARKUP)
-    for written in sorted(RULED_TEXTS)
-]
-
-
 @pytest.mark.parametrize("form", sorted(RSS_WRITERS))
 @pytest.mark.parametrize("written", sorted(RULED_TEXTS))
 def test_an_rss_title_is_markup_only_where_it_is_markup(written: str, form: str) -> None:
@@ -725,17 +695,6 @@ def test_an_rss_title_is_markup_only_where_it_is_markup(written: str, form: str)
     assert [feed.title, feed.postings[0].title] == [expected, expected], (
         f"an {form} feed and posting titled {written!r} were read as {feed.title!r} and "
         f"{feed.postings[0].title!r}, not as {expected!r}"
-    )
-
-
-@pytest.mark.parametrize("form", sorted(RSS_WRITERS))
-@pytest.mark.parametrize("written", RULED_DESCRIPTIONS)
-def test_an_rss_description_is_markup_only_where_it_is_markup(written: str, form: str) -> None:
-    expected = RULED_TEXTS[written]
-    [posting] = read_feed(RSS_WRITERS[form]("A feed", None, written), "", ADDRESS).postings
-    assert posting.title == expected, (
-        f"an {form} posting without a title, described {written!r}, was called "
-        f"{posting.title!r}, not {expected!r}"
     )
 
 
@@ -761,16 +720,81 @@ def test_an_rss_title_with_no_element_that_closes_and_no_reference_is_kept_as_wr
     )
 
 
-@pytest.mark.xfail(strict=True, reason=DESCRIBED_AS_MARKUP.kwargs["reason"])
-@settings(FAULT_EXAMPLES)
-@given(description=unmarked_writing, form=rss_forms)
-def test_an_rss_description_with_no_element_that_closes_and_no_reference_is_kept_as_written(
+# Descriptions as RSS writes them, which name a posting without a title, and what each is
+# read as: HTML, whatever it looks like (T1).
+HTML_DESCRIPTIONS = {
+    "one<br>two": "one two",
+    '<img src="https://feeds.test/a.png" /> Night trains': "Night trains",
+    "<p>Seen <b>and</b> heard</p>": "Seen and heard",
+}
+
+
+@pytest.mark.parametrize("form", sorted(RSS_WRITERS))
+@pytest.mark.parametrize("written", sorted(HTML_DESCRIPTIONS))
+def test_an_rss_description_is_read_as_html_whatever_it_looks_like(written: str, form: str) -> None:
+    [posting] = read_feed(RSS_WRITERS[form]("A feed", None, written), "", ADDRESS).postings
+    expected = HTML_DESCRIPTIONS[written]
+    assert posting.title == expected, (
+        f"an {form} posting without a title, described {written!r}, was called "
+        f"{posting.title!r}, not {expected!r}: a description is HTML"
+    )
+
+
+description_words = st.lists(
+    st.text(st.characters(categories=("L", "N", "P", "S"), exclude_characters="<&"), min_size=1),
+    min_size=1,
+    max_size=30,
+)
+plain_descriptions = description_words.map(WORD_GAP.join)
+# What stands between words of a description: a gap, or a line break, which no element closes.
+BREAKS = (" ", "<br>", "<br/>", " <br /> ")
+PICTURE = '<img src="https://feeds.test/a.png" /> '
+
+
+@st.composite
+def descriptions_broken_into_lines(draw: st.DrawFn) -> tuple[str, list[str]]:
+    words = draw(description_words)
+    written = words[0] + "".join(draw(st.sampled_from(BREAKS)) + word for word in words[1:])
+    return (PICTURE if draw(st.booleans()) else "") + written, words
+
+
+@given(described=descriptions_broken_into_lines(), form=rss_forms)
+def test_an_rss_description_of_lines_and_a_picture_is_called_by_its_words(
+    described: tuple[str, list[str]], form: str
+) -> None:
+    description, words = described
+    [posting] = read_feed(RSS_WRITERS[form]("A feed", None, description), "", ADDRESS).postings
+    called = WORD_GAP.join(words)
+    assert is_cut_from(posting.title, called, SUMMARY_TITLE_CHARACTERS), (
+        f"an {form} posting without a title, described {description!r}, was called "
+        f"{posting.title!r}, not {called!r} cut at {SUMMARY_TITLE_CHARACTERS}: a description "
+        "is HTML"
+    )
+
+
+@given(description=plain_descriptions, form=rss_forms)
+def test_an_rss_description_with_no_markup_sign_is_called_as_written(
     description: str, form: str
 ) -> None:
     [posting] = read_feed(RSS_WRITERS[form]("A feed", None, description), "", ADDRESS).postings
-    assert is_cut_from(posting.title, description, SUMMARY_TITLE_CHARACTERS), (
-        f"an {form} posting without a title, described {description!r}, was called "
-        f"{posting.title!r}"
+    written = WORD_GAP.join(description.split())
+    assert is_cut_from(posting.title, written, SUMMARY_TITLE_CHARACTERS), (
+        f"an {form} posting without a title, described {description!r}, which holds no < and no "
+        f"&, was called {posting.title!r}, not as written, cut at {SUMMARY_TITLE_CHARACTERS}"
+    )
+
+
+@pytest.mark.parametrize("form", sorted(RSS_WRITERS))
+@pytest.mark.parametrize("document", DOCUMENTS)
+def test_an_rss_description_that_is_a_whole_html_document_reads_as_its_text_or_nothing(
+    document: str, form: str
+) -> None:
+    written = document.format(words="Night trains")
+    [posting] = read_feed(RSS_WRITERS[form]("A feed", None, written), "", ADDRESS).postings
+    expected = "Night trains" if "{words}" in document else "https://feeds.test/p/1"
+    assert posting.title == expected, (
+        f"an {form} posting without a title, described {written!r}, was called "
+        f"{posting.title!r}, not {expected!r}: a description that is a document is HTML"
     )
 
 
