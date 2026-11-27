@@ -1091,7 +1091,7 @@ def common_paths_asked(sites: FeedSites) -> list[str]:
 def test_a_youtube_page_that_asks_for_consent_tells_the_reader_to_give_the_channels_id(
     feed_sites: FeedSites,
 ) -> None:
-    address = "https://www.youtube.com/@nighttrains"
+    address = "https://www.youtube.com/nighttrains"
     feed_sites.serve(address, moved(CONSENT, 302))
     feed_sites.serve(CONSENT, answered(CONSENT_PAGE, kind_of(HTML)))
     told = refusal(address, RSSHUB, f"the channel {address} that YouTube answered with consent")
@@ -1215,13 +1215,13 @@ def refusals(sites: FeedSites) -> dict[str, tuple[str, str]]:
     sites.serve(
         APPLE_LOOKUP.format(show="7"), answered(lookup_answer([]), kind_of("text/javascript"))
     )
-    sites.serve("https://www.youtube.com/@nighttrains", moved(CONSENT, 302))
+    sites.serve("https://www.youtube.com/nighttrains", moved(CONSENT, 302))
     sites.serve(CONSENT, answered(CONSENT_PAGE, kind_of(HTML)))
     return {
         "a page that names no feed": ("https://blog.test/about", RSSHUB),
         "a picture": ("https://blog.test/logo.png", RSSHUB),
         "a show Apple names no feed of": ("https://podcasts.apple.com/us/podcast/x/id7", RSSHUB),
-        "a channel whose page asks for consent": ("https://www.youtube.com/@nighttrains", RSSHUB),
+        "a channel whose page asks for consent": ("https://www.youtube.com/nighttrains", RSSHUB),
         "an address of no web": ("ftp://files.test/feed.xml", RSSHUB),
     }
 

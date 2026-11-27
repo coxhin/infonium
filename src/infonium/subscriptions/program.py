@@ -33,8 +33,11 @@ from infonium.subscriptions.fetcher import Fetched, Validators, fetched_feed, sh
 # against another site's bytes, which may inflate, trickle, or make a parser or a pattern
 # grow. The service parses, matches and inflates none of them.
 FETCHER = [sys.executable, lineage.RUN_AS_MODULE, __spec__.name]
-# It takes, of infonium's environment, the PATH, the locale and the proxies, which httpx reads.
-FETCHER_TAKES = re.compile("|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES)))
+# It takes, of infonium's environment, the PATH, the locale, the proxies, which httpx and yt-dlp
+# read, and yt-dlp's own settings, as the fetcher of media pages does.
+FETCHER_TAKES = re.compile(
+    "|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES, lineage.YTDLP_SETTINGS))
+)
 # The most data it may hold, its start among it: 20 MiB of unclosed elements took feedparser
 # 37 s and 3.2 GiB. The bound is on data, not on address space, of which a program reserves
 # many times what it uses. And the longest it may run: a poll's or a discovery's own minute,
@@ -114,8 +117,8 @@ DISCOVERY_ANSWER = TypeAdapter(Annotated[Found | Refused, Field(discriminator="k
 
 
 def nothing_left() -> None:
-    # The fetcher starts no program, so once its service is gone it has nothing to end but
-    # itself.
+    # Once its service is gone, the fetcher has nothing of its own to end: lineage ends what it
+    # started, as the `file` that Python runs in loading yt-dlp, and the fetcher ends itself.
     return None
 
 

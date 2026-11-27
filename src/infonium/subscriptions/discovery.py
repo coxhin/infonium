@@ -141,11 +141,24 @@ YOUTUBE_FEED = "https://www.youtube.com/feeds/videos.xml?{query}"
 CHANNEL_ID = "channel_id"
 PLAYLIST_ID = "playlist_id"
 PLAYLIST = "list"
-CHANNEL_PATH = re.compile(r"/channel/(UC[\w-]{22})(?:[/?#]|$)")
+CHANNEL_SHAPE = r"UC[0-9A-Za-z_-]{22}"
+CHANNEL_PATH = re.compile(rf"/channel/({CHANNEL_SHAPE})(?:[/?#]|$)")
 CANONICAL = "//link[@rel='canonical']/@href"
 # Where YouTube asks a person in some regions to agree to its use of cookies, in place of the
 # page asked for, before it shows any page.
 YOUTUBE_CONSENT_HOST = "consent.youtube.com"
+# There, a channel named by its handle or an older name (/@…, /c/…, /user/…) is found through
+# yt-dlp, which passes that page by its own means. It is asked for the channel's id by its
+# extractor of YouTube's channels alone, which reads one page of the channel and lists none of
+# its videos (no entry of the playlist it makes of them is asked for); it keeps no cache folder,
+# and gives up a request or makes it again as it does in fetching a media page. Its requests are
+# its own, outside the discovery's; its time and memory are the fetcher's. A channel so found
+# took 1.0 to 1.4 s, the fetcher holding 90 to 96 MiB at its peak; a handle YouTube does not
+# know, 1.4 to 1.7 s and eight requests of yt-dlp's, each failed one made again three times.
+NAMED_CHANNEL_PATH = re.compile(r"/(?:@|c/|user/)[^/]+")
+CHANNEL_EXTRACTOR = "youtube:tab"
+NO_ENTRY = "0"
+YTDLP_ERROR = "ERROR:"
 
 # A show on Apple Podcasts keeps its feed where its publisher serves it, which Apple's lookup
 # names by the show's number.
@@ -209,8 +222,12 @@ RULES_OUTGROWN = "RSSHub's rules at {instance} hold more than infonium reads"
 NO_APPLE_FEED = "Apple Podcasts names no feed of the show at {address}"
 YOUTUBE_CONSENT = (
     "YouTube answered {address} with its page that asks for consent to cookies, which names no"
-    " feed; a channel is found by its address with its id, as https://www.youtube.com/channel/UC…"
+    " feed; a channel is found by its address with its handle or its id, as"
+    " https://www.youtube.com/@… or https://www.youtube.com/channel/UC…"
 )
+# What yt-dlp said is told after the sentence, where it said something.
+NO_CHANNEL = "YouTube names no channel at {address}"
+TOLD_WITH = "{sentence}: {said}"
 
 
 class RSSHubFault(UnreadableFeed):
@@ -236,6 +253,11 @@ class ApplePodcastsShow(BaseModel):
 
 class ApplePodcastsLookup(BaseModel):
     results: list[ApplePodcastsShow] = []
+
+
+class NamedChannel(BaseModel):
+    # What yt-dlp reports of a channel, under yt-dlp's name: its id.
+    channel_id: Annotated[str, StringConstraints(pattern=rf"^{CHANNEL_SHAPE}$")]
 
 
 def with_advice(sentence: str) -> str:
@@ -350,22 +372,72 @@ def named_feeds(answer: Answer) -> list[str]:
     return list(dict.fromkeys(web_addresses(named, (base or [answer.address])[0])))
 
 
+def channel_feed(channel: str) -> str:
+    # The feed YouTube keeps of the channel whose id is given.
+    return YOUTUBE_FEED.format(query=urlencode({CHANNEL_ID: channel}))
+
+
 def channel_feeds(answer: Answer) -> list[str]:
     # The feed of the YouTube channel whose page is the one answered, by the id in its
     # canonical link.
     page = trafilatura.load_html(answer.content)
     canonical = [str(address) for address in page.xpath(CANONICAL)] if page is not None else []
     channels = [found[1] for address in canonical if (found := CHANNEL_PATH.search(address))]
-    return [YOUTUBE_FEED.format(query=urlencode({CHANNEL_ID: channel})) for channel in channels]
+    return [channel_feed(channel) for channel in channels]
+
+
+def is_named_channel(address: str) -> bool:
+    # Whether an address is of a YouTube channel named by its handle or an older name.
+    parts = urlsplit(address)
+    return parts.hostname in YOUTUBE_HOSTS and bool(NAMED_CHANNEL_PATH.match(parts.path))
+
+
+def named_channel(address: str) -> str:
+    # The id of the channel that an address names by its handle or an older name, as yt-dlp
+    # finds it. Where yt-dlp fails, or what it reports holds no id of a channel's shape, the
+    # address is refused, with what yt-dlp said on one line, without its prefix and colours.
+    # Loaded here, as loading yt-dlp at the fetcher's start would cost every poll 0.09 s.
+    import yt_dlp.utils
+
+    from infonium.media import REQUEST_RETRIES, SILENCE_LIMIT_SECONDS, UNCOLOURED
+
+    refused = NO_CHANNEL.format(address=address)
+    try:
+        with yt_dlp.YoutubeDL(
+            # yt-dlp takes False for no cache folder, where its stubs allow only a folder's path.
+            {  # type: ignore[arg-type]
+                "allowed_extractors": [re.escape(CHANNEL_EXTRACTOR)],
+                "playlist_items": NO_ENTRY,
+                "cachedir": False,
+                "socket_timeout": SILENCE_LIMIT_SECONDS,
+                "extractor_retries": REQUEST_RETRIES,
+                "color": {"stderr": UNCOLOURED, "stdout": UNCOLOURED},
+                "quiet": True,
+            }
+        ) as finder:
+            found = finder.extract_info(address, download=False)
+    except yt_dlp.utils.DownloadError as failure:
+        uncoloured = yt_dlp.utils.remove_terminal_sequences(str(failure)).strip()
+        said = WORD_GAP.join(uncoloured.removeprefix(YTDLP_ERROR).split())
+        told = TOLD_WITH.format(sentence=refused, said=said) if said else refused
+        raise UnreadableFeed(told) from failure
+    try:
+        return NamedChannel.model_validate(found).channel_id
+    except ValidationError as failure:
+        raise UnreadableFeed(refused) from failure
 
 
 def discovered_at(address: str, allowance: Allowance) -> Discovered:
     # The feed itself, or the first that reads of the feeds a page names and then of the places
     # where its site would keep one: on YouTube the feed of the channel whose id the page
     # carries, elsewhere the places where feeds commonly are. A feed that cannot be fetched or
-    # read is passed over for the next.
+    # read is passed over for the next. Where YouTube answers with its page that asks for
+    # consent, the feed is that of the channel the address names by its handle or an older
+    # name, found through yt-dlp; any other address is refused there.
     answer = fetched_answer(address, allowance)
     host = urlsplit(answer.address).hostname
+    if host == YOUTUBE_CONSENT_HOST and is_named_channel(address):
+        return feed_at(channel_feed(named_channel(address)), allowance)
     if host == YOUTUBE_CONSENT_HOST:
         raise UnreadableFeed(YOUTUBE_CONSENT.format(address=address))
     if not is_page(answer.content, answer.declared):
@@ -397,7 +469,7 @@ def youtube_feed(address: str) -> list[str]:
     if playlists:
         return [YOUTUBE_FEED.format(query=urlencode({PLAYLIST_ID: playlists[0]}))]
     if channel:
-        return [YOUTUBE_FEED.format(query=urlencode({CHANNEL_ID: channel[1]}))]
+        return [channel_feed(channel[1])]
     return []
 
 
