@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { readPosting, type Posting, type Subscription } from "./client";
 import { isNew } from "./entry";
 import { itemLink } from "./links";
@@ -7,6 +7,14 @@ import { usePress } from "./pressing";
 import { POSTINGS_AT_A_TIME, type OlderReading } from "./subscriptionstate";
 import { Moment, toldDay, useNow } from "./when";
 import "./heard.css";
+
+// A posting's row takes the keyboard where the row's press went away once answered; Enter there
+// does what the row offers now: opens its item, or presses 读取 or 重试.
+function actOnEnter(event: KeyboardEvent<HTMLLIElement>) {
+  if (event.key === "Enter" && event.target === event.currentTarget) {
+    event.currentTarget.querySelector<HTMLElement>("a, button")?.click();
+  }
+}
 
 // A posting the list shows, and what has come of it: its item, read, as a link to the reader;
 // its item being read, or failed with the reason and a press to try again; waiting its turn; or
@@ -38,7 +46,7 @@ function PostingRow({
     const item = admission.item;
     const fresh = isNew(item, seen);
     return (
-      <li data-item={item.id} ref={row} tabIndex={-1}>
+      <li data-item={item.id} ref={row} tabIndex={-1} onKeyDown={actOnEnter}>
         <a
           href={itemLink(item.id)}
           className={fresh ? "posting new" : "posting"}
@@ -100,7 +108,7 @@ function PostingRow({
   }
   const item = admission.kind === "admitted" ? admission.item.id : undefined;
   return (
-    <li data-item={item} ref={row} tabIndex={-1}>
+    <li data-item={item} ref={row} tabIndex={-1} onKeyDown={actOnEnter}>
       <div className="posting" aria-current={item !== undefined && item === selected}>
         <span className="posting-title" title={posting.title}>
           {posting.title}

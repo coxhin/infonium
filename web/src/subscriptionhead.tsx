@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   chooseFollows,
   pollSubscription,
+  requestReason,
   seeSubscription,
   unsubscribe,
   type Follows,
@@ -117,6 +118,62 @@ function Unsubscribe({
   );
 }
 
+type FollowsChoice = {
+  // The choice the reader made last, while the service does not hold it yet.
+  wanted: Follows | undefined;
+  // Why the service refused the last choice it was sent.
+  refusal: string | undefined;
+  choose: (follows: Follows) => void;
+};
+
+// How the subscription follows its feed, as the reader chooses it. One choice is sent at a time,
+// and a choice made meanwhile, the last of them, is sent once the one before is answered, so that
+// however fast the choices come the service ends up holding the last one, which is on show until
+// it does. Each answer is put on show as it comes.
+function useFollowsChoice(
+  subscriptionId: string,
+  onAnswer: (subscription: Subscription) => void,
+): FollowsChoice {
+  const [wanted, setWanted] = useState<Follows>();
+  const [refusal, setRefusal] = useState<string>();
+  const sending = useRef(false);
+  const latest = useRef<Follows>(undefined);
+
+  function send(follows: Follows) {
+    sending.current = true;
+    chooseFollows(subscriptionId, follows).then(
+      (answer) => {
+        onAnswer(answer);
+        answered(follows, undefined);
+      },
+      (error: unknown) => answered(follows, requestReason(error)),
+    );
+  }
+
+  function answered(sent: Follows, reason: string | undefined) {
+    sending.current = false;
+    setRefusal(reason);
+    const later = latest.current;
+    if (later !== undefined && later !== sent) {
+      send(later);
+      return;
+    }
+    latest.current = undefined;
+    setWanted(undefined);
+  }
+
+  function choose(follows: Follows) {
+    latest.current = follows;
+    setWanted(follows);
+    setRefusal(undefined);
+    if (!sending.current) {
+      send(follows);
+    }
+  }
+
+  return { wanted, refusal, choose };
+}
+
 // The head of an open subscription: its title, linking to its site; how its latest poll stands;
 // a poll now; how it follows its feed; taking its new items for seen; and removing it.
 export function SubscriptionHead({
@@ -134,43 +191,26 @@ export function SubscriptionHead({
   onRemoved: () => void;
 }) {
   const polling = usePress();
-  const choosing = usePress();
   const seeing = usePress();
-  // The choice sent and not yet answered is shown as made.
-  const [asked, setAsked] = useState<Follows>();
+  const choice = useFollowsChoice(subscription.id, onAnswer);
   const followsId = useId();
-  const title = useRef<HTMLHeadingElement>(null);
+  const check = useRef<HTMLButtonElement>(null);
   const underway = subscription.poll.kind === "underway" || polling.press.state === "asking";
 
-  useEffect(() => {
-    if (choosing.press.state !== "asking") {
-      setAsked(undefined);
-    }
-  }, [choosing.press.state]);
-
-  // A choice made while the one before is unanswered is not sent, and the choice shown goes
-  // back to the one asked.
-  function choose(follows: Follows) {
-    if (choosing.press.state !== "asking") {
-      setAsked(follows);
-      choosing.ask(() => chooseFollows(subscription.id, follows), onAnswer);
-    }
-  }
-
-  // The press is gone once nothing is new, so the keyboard is given to the head.
+  // The press is gone once nothing is new, so the keyboard is given to the press beside it.
   function seeAll() {
     seeing.ask(
       () => seeSubscription(subscription.id),
       (answer) => {
         onSeenAll(answer);
-        title.current?.focus({ preventScroll: true });
+        check.current?.focus({ preventScroll: true });
       },
     );
   }
 
   return (
     <header className="subscription-head">
-      <h2 title={subscription.title} ref={title} tabIndex={-1}>
+      <h2 title={subscription.title}>
         {subscription.site === null ? (
           subscription.title
         ) : (
@@ -184,6 +224,7 @@ export function SubscriptionHead({
       <PollLine subscription={subscription} now={now} />
       <div className="subscription-controls">
         <button
+          ref={check}
           aria-disabled={underway}
           onClick={() =>
             !underway && polling.ask(() => pollSubscription(subscription.id), onAnswer)
@@ -205,9 +246,8 @@ export function SubscriptionHead({
         </label>
         <select
           id={followsId}
-          value={asked ?? subscription.follows}
-          aria-disabled={choosing.press.state === "asking"}
-          onChange={(event) => choose(event.target.value as Follows)}
+          value={choice.wanted ?? subscription.follows}
+          onChange={(event) => choice.choose(event.target.value as Follows)}
         >
           {(Object.keys(FOLLOWS_NAMES) as Follows[]).map((follows) => (
             <option key={follows} value={follows}>
@@ -216,7 +256,11 @@ export function SubscriptionHead({
           ))}
         </select>
       </div>
-      <Refusal press={choosing.press} doing="没有改变更新方式" />
+      {choice.refusal !== undefined && (
+        <p className="status failed" role="alert">
+          没有改变更新方式：{choice.refusal}
+        </p>
+      )}
       <Unsubscribe subscription={subscription} onRemoved={onRemoved} />
     </header>
   );

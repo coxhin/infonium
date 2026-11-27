@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const WATCH_INTERVAL_MS = 1500;
+export const WATCH_INTERVAL_MS = 1500;
 // How often a list on show is read again while nothing on it is under way, so that what came
 // meanwhile, as postings a scheduled poll brought, appears without a reload.
 export const LIST_INTERVAL_MS = 60_000;
+// How long a refreshed value that the service refused, saying why, waits to be asked again: a
+// refusal the service explains, as that of a schedule that stopped, lasts, and is not asked
+// about every 1.5 seconds.
+const REFUSED_INTERVAL_MS = 60_000;
 
 export type Loaded<Value> =
   | { state: "loading" }
@@ -53,12 +57,13 @@ export type Watched<Value> = {
 };
 
 // How a value is read again while it is settled, for one that shows what changes without a
-// press of the reader's: at the interval given while the page is visible, and at once when a
-// page that was hidden past it is shown again; not at all while the value is not shown, and at
-// once when it is shown again. Its first load is also tried again where it failed for want of
-// an answer, as the caller tells such a failure.
-export type Refreshing = {
-  interval: number;
+// press of the reader's: after the interval the value read last gives, while the page is
+// visible, and at once when a page that was hidden past it is shown again; not at all while the
+// value is not shown, and at once when it is shown again. Its first load is also tried again
+// where it failed for want of an answer, as the caller tells such a failure; a load the service
+// refused, saying why, is tried again after a minute.
+export type Refreshing<Value> = {
+  interval: (value: Value) => number;
   shown: boolean;
   unanswered: (error: unknown) => boolean;
 };
@@ -78,7 +83,7 @@ export function useWatched<Value>(
   load: () => Promise<Value>,
   key: string,
   unsettled: (value: Value) => boolean,
-  refreshing?: Refreshing,
+  refreshing?: Refreshing<Value>,
 ): Watched<Value> {
   const [watched, setWatched] = useState<Watch<Value>>({
     loaded: { state: "loading" },
@@ -141,7 +146,7 @@ export function useWatched<Value>(
               timer = setTimeout(watch, WATCH_INTERVAL_MS);
             } else if (refreshing !== undefined) {
               waiting = true;
-              timer = setTimeout(refreshWhenVisible, refreshing.interval);
+              timer = setTimeout(refreshWhenVisible, refreshing.interval(value));
             }
           }
         },
@@ -152,7 +157,10 @@ export function useWatched<Value>(
                 ? undefined
                 : reasonOf(error);
             setWatched((before) => ({ loaded: before.loaded, interrupted: true, refusal }));
-            timer = setTimeout(watch, WATCH_INTERVAL_MS);
+            timer = setTimeout(
+              watch,
+              refusal === undefined ? WATCH_INTERVAL_MS : REFUSED_INTERVAL_MS,
+            );
           } else if (current) {
             setWatched({
               loaded: { state: "failed", reason: reasonOf(error) },
