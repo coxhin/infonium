@@ -726,7 +726,7 @@ export interface components {
          * DigestStyle
          * @enum {string}
          */
-        DigestStyle: "overview" | "guide" | "brief" | "paper" | "outline" | "faq" | "custom";
+        DigestStyle: "overview" | "guide" | "flash" | "brief" | "paper" | "outline" | "faq" | "custom";
         /** DigestStyleView */
         DigestStyleView: {
             /** Custom */
@@ -1341,7 +1341,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            style: "brief" | "faq" | "guide" | "outline" | "overview" | "paper";
+            style: "brief" | "faq" | "flash" | "guide" | "outline" | "overview" | "paper";
         };
         /** Revision */
         Revision: {
