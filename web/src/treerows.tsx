@@ -12,7 +12,7 @@ import { endDrag, startDrag } from "./dragging";
 import { openingAt, openingOfContextMenu, type Opening } from "./menu";
 import { FOLDER_NAME_LENGTH } from "./placemenu";
 import { usePress } from "./pressing";
-import { FIXED_NAMES, keyOf } from "./selection";
+import { FIXED_NAMES, keyOf } from "./sidebarselection";
 import { stateWord } from "./subscriptions";
 
 // The rows of the sidebar's tree, each drawn again only when its own values change: the fixed

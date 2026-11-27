@@ -7,7 +7,7 @@ import {
   type MediaChoice,
   type Order,
   type Selection,
-} from "./selection";
+} from "./sidebarselection";
 
 // What the browser remembers of the sidebar: the selection, the media, the order, the folders
 // folded, and whether the sidebar is folded. Each is read once, when the app opens, and kept

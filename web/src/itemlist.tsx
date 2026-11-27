@@ -19,7 +19,7 @@ import { MediaIcon, NO_MEDIA_NAME } from "./mediaicon";
 import { isMenuKey, openingAt, openingOfContextMenu, type Opening } from "./menu";
 import { NewDot, NewHeard } from "./newmarks";
 import { PlaceMenu } from "./placemenu";
-import { MEDIA_NAMES, followed } from "./selection";
+import { MEDIA_NAMES, followed } from "./sidebarselection";
 import "./heard.css";
 
 type Importing =

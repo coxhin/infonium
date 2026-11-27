@@ -37,7 +37,7 @@ import {
   type Order,
   type Selection,
   type Tally,
-} from "./selection";
+} from "./sidebarselection";
 import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptions";
 
 export type Navigation = {

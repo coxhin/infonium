@@ -20,7 +20,7 @@ import {
   type Order,
   type Selection,
   type Tally,
-} from "./selection";
+} from "./sidebarselection";
 import {
   FIXED,
   FixedRow,

@@ -7,7 +7,7 @@ import {
   type Subscription,
 } from "./client";
 import { LIST_INTERVAL_MS, useWatched, type Watched } from "./loading";
-import { followed } from "./selection";
+import { followed } from "./sidebarselection";
 
 // What moves subscriptions and items between folders, for the menus and the drags of both
 // columns: the folders by name, a placing sent to the service, and a folder made. Each answers

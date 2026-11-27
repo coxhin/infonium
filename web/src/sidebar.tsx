@@ -15,6 +15,7 @@ import { MediaIcon } from "./mediaicon";
 import type { Navigation } from "./navigation";
 import { FOLDER_NAME_LENGTH } from "./placemenu";
 import { usePress } from "./pressing";
+import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_CHOICES,
   MEDIA_NAMES,
@@ -22,8 +23,7 @@ import {
   selectionOfKey,
   type Order,
   type Selection,
-} from "./selection";
-import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
+} from "./sidebarselection";
 import { SidebarTree } from "./sidebartree";
 import "./heard.css";
 import "./sidebar.css";

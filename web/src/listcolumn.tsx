@@ -4,6 +4,7 @@ import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
 import type { Loaded } from "./loading";
 import type { Navigation } from "./navigation";
+import type { SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_NAMES,
   keyOf,
@@ -11,8 +12,7 @@ import {
   selectionName,
   type MediaChoice,
   type Selection,
-} from "./selection";
-import type { SidebarLayout } from "./sidebarlayout";
+} from "./sidebarselection";
 import { SubscribeForm, SubscribingHint, withSubscription } from "./subscriptions";
 import { SubscriptionPane } from "./subscriptionpane";
 import "./listcolumn.css";
