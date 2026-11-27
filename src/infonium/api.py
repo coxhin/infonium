@@ -104,10 +104,9 @@ from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
-from infonium.subscriptions.discovery import discovered_feed
 from infonium.subscriptions.feed import UnreadableFeed
-from infonium.subscriptions.fetcher import fetched_feed
 from infonium.subscriptions.poller import Poller
+from infonium.subscriptions.program import discovered_apart, polled_apart
 from infonium.subscriptions.subscription import (
     AdmissionKind,
     Awaited,
@@ -202,8 +201,8 @@ def poller() -> Poller:
     return Poller(
         store=library_store(),
         intake=intake(),
-        discovered=discovered_feed,
-        fetched=fetched_feed,
+        discovered=discovered_apart,
+        fetched=partial(polled_apart, rsshub=settings.rsshub_base_url),
         rsshub=settings.rsshub_base_url,
         clock=partial(datetime.now, UTC),
         interval=timedelta(minutes=settings.poll_minutes),

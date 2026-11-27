@@ -25,6 +25,14 @@ FRAGMENT = "#"
 QUERY = "?"
 ANY_VALUE = "*"
 SOURCE_PART = re.compile(r":(?P<parameter>\w+)(?P<optional>\?)?|\*(?P<rest>\w*)")
+# A source's pattern is matched in time linear in the path, as the path is matched part by part
+# but at a wildcard, which may take parts of the path: of the 8,329 sources RSSHub published,
+# none holds two wildcards, 4 hold parameters that may be left out, two at most, and 6 a
+# parameter and a wildcard in one part of the path (as /:category*), whose meaning is unsure.
+# A source with more of these is passed over.
+MOST_WILDCARDS = 1
+MOST_LEFT_OUT = 2
+MOST_IN_A_PART = 1
 # A parameter of a route stands as a part of its path of its own, and may be left out where it
 # ends with a question mark.
 ROUTE_PARAMETER = re.compile(r"/:(?P<name>\w+)(?P<optional>\?)?")
@@ -103,10 +111,34 @@ def parameters_of(path: str) -> list[str]:
     ]
 
 
+def path_and_query(source: str) -> tuple[str, str]:
+    # A source's path and its query, which begins at the first question mark that does not mark
+    # a parameter as one that may be left out.
+    taken = 0
+    for found in [*SOURCE_PART.finditer(source), None]:
+        mark = source.find(QUERY, taken, found.start() if found else len(source))
+        if mark >= 0:
+            return source[:mark], source[mark + 1 :]
+        taken = found.end() if found else len(source)
+    return source, ""
+
+
+def is_linear(path: str) -> bool:
+    # Whether a source's path is of the shape whose pattern is matched in linear time.
+    found = list(SOURCE_PART.finditer(path))
+    wildcards = [part for part in found if part["parameter"] is None]
+    left_out = [part for part in found if part["optional"]]
+    crowded = any(
+        len(SOURCE_PART.findall(part)) > MOST_IN_A_PART for part in path.split(PATH_APART)
+    )
+    return len(wildcards) <= MOST_WILDCARDS and len(left_out) <= MOST_LEFT_OUT and not crowded
+
+
 def source_rules(rule: RadarRule) -> list[SourceRule]:
     # The sources of a rule that an address alone can give its route: those within a page's
     # path and query, whose parameters are named once, each as a name a pattern can give a
-    # group, and give every parameter the route may not leave out.
+    # group, and give every parameter the route may not leave out, and whose pattern is matched
+    # in linear time. A wildcard takes any character, a line break among them.
     if not isinstance(rule.target, str):
         return []
     needed = {
@@ -114,15 +146,15 @@ def source_rules(rule: RadarRule) -> list[SourceRule]:
     }
     usable = []
     for source in rule.source:
-        written, _, query = source.partition(QUERY)
+        written, query = path_and_query(source)
         path = written.removesuffix(PATH_APART) or PATH_APART
         given = parameters_of(path)
         named = len(set(given)) == len(given) and all(name.isidentifier() for name in given)
-        if FRAGMENT in source or not named or not needed <= set(given):
+        if FRAGMENT in source or not named or not needed <= set(given) or not is_linear(path):
             continue
         usable.append(
             SourceRule(
-                path=re.compile(source_path_pattern(path)),
+                path=re.compile(source_path_pattern(path), re.DOTALL),
                 spelled=spelled_out(path),
                 query=dict(parse_qsl(query)),
                 title=rule.title,
