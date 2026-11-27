@@ -26,8 +26,8 @@ from infonium.subscriptions.fetcher import Fetched, Validators, fetched_feed, un
 FETCHER = [sys.executable, lineage.RUN_AS_MODULE, __spec__.name]
 # It takes, of infonium's environment, the PATH, the locale and the proxies, which httpx reads.
 FETCHER_TAKES = re.compile("|".join((lineage.SEARCH_PATH, lineage.LOCALE, lineage.PROXIES)))
-# The most data it may hold, its start among it: elements nested millions deep took feedparser
-# a minute and 3.2 GB. The bound is on data, not on address space, of which a program reserves
+# The most data it may hold, its start among it: 20 MiB of unclosed elements took feedparser
+# 37 s and 3.2 GiB. The bound is on data, not on address space, of which a program reserves
 # many times what it uses. And the longest it may run: a poll's or a discovery's own minute,
 # and room to start and to answer.
 FETCHER_MEMORY_BYTES = 512 * 1024**2
