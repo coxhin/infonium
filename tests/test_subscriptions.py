@@ -106,6 +106,17 @@ after_no_host = st.one_of(
     st.from_regex(r"[a-z0-9=&]{0,12}", fullmatch=True).map(lambda query: f"?{query}"),
     st.from_regex(r"[a-z0-9]{0,12}", fullmatch=True).map(lambda fragment: f"#{fragment}"),
 )
+# What may stand where a host is not: a port, a user with or without a password, or both.
+users = st.from_regex(r"[a-z]{1,8}", fullmatch=True)
+ports = st.integers(0, 65535).map(str)
+hostless_authorities = st.one_of(
+    st.just(""),
+    st.just("@"),
+    ports.map(lambda port: f":{port}"),
+    users.map(lambda user: f"{user}@"),
+    st.tuples(users, users).map(lambda user: f"{user[0]}:{user[1]}@"),
+    st.tuples(users, ports).map(lambda user: f"{user[0]}@:{user[1]}"),
+)
 unsubscribable_addresses = st.one_of(
     st.sampled_from(("https://", "http://")),
     st.tuples(
@@ -360,23 +371,35 @@ class WithoutAHost(StrEnum):
     FEED = "feed:"
 
 
-@given(begins=st.sampled_from(WithoutAHost), word=feed_words, after=after_no_host)
-@example(begins=WithoutAHost.SLASHES, word="feed", after="/example.com/rss")
-@example(begins=WithoutAHost.FEED, word="feed", after="/rss")
-@example(begins=WithoutAHost.HTTPS, word="feed", after="/rss")
-@example(begins=WithoutAHost.HTTP, word="feed", after="?x")
-@example(begins=WithoutAHost.HTTPS, word="feed", after="#x")
-@example(begins=WithoutAHost.FEED, word="feed", after="")
-@example(begins=WithoutAHost.FEED_SLASHES, word="feed", after="")
-@example(begins=WithoutAHost.SLASHES, word="feed", after="")
-@example(begins=WithoutAHost.HTTPS, word="feed", after=":8080/rss")
-@example(begins=WithoutAHost.HTTPS, word="feed", after="@/rss")
-@example(begins=WithoutAHost.HTTPS, word="feed", after="user@/rss")
+@given(
+    begins=st.sampled_from(WithoutAHost),
+    word=feed_words,
+    authority=hostless_authorities,
+    after=after_no_host,
+)
+@example(begins=WithoutAHost.SLASHES, word="feed", authority="", after="/example.com/rss")
+@example(begins=WithoutAHost.FEED, word="feed", authority="", after="/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", authority="", after="/rss")
+@example(begins=WithoutAHost.HTTP, word="feed", authority="", after="?x")
+@example(begins=WithoutAHost.HTTPS, word="feed", authority="", after="#x")
+@example(begins=WithoutAHost.FEED, word="feed", authority="", after="")
+@example(begins=WithoutAHost.FEED_SLASHES, word="feed", authority="", after="")
+@example(begins=WithoutAHost.SLASHES, word="feed", authority="", after="")
+@example(begins=WithoutAHost.HTTPS, word="feed", authority="", after=":8080/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", authority="", after="@/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", authority="", after="user@/rss")
 @EXAMPLES
 def test_a_web_address_that_names_no_host_is_refused_before_anything_is_looked_for(
-    subscribing_app: App, feeds: FeedStandin, begins: WithoutAHost, word: str, after: str
+    subscribing_app: App,
+    feeds: FeedStandin,
+    begins: WithoutAHost,
+    word: str,
+    authority: str,
+    after: str,
 ) -> None:
-    address = f"{begins.replace('feed', word)}{after}"
+    # A port or a user stands where a host would, after two slashes; feed: alone has none.
+    before_host = "" if begins == WithoutAHost.FEED else authority
+    address = f"{begins.replace('feed', word)}{before_host}{after}"
     response = subscribe(subscribing_app, address, admit=0)
     assert response.status_code in {HTTPStatus.BAD_REQUEST, HTTPStatus.UNPROCESSABLE_ENTITY}, (
         f"S21: a web address that names no host ({address!r}) was not refused: "

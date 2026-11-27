@@ -225,9 +225,7 @@ class FeedStandin:
             if feed_address not in self.served:
                 raise UnreadableFeed(NO_FEED.format(address=address))
             feed = self.served[feed_address]
-        # A feed's address may be a route of RSSHub, as the feeds part was ruled to give it,
-        # which the contract's Discovered, of a web address, does not take.
-        return Discovered.model_construct(
+        return Discovered(
             address=feed_address,
             fetched=Changed(feed=feed, validators=self.validators_of(feed_address)),
         )
