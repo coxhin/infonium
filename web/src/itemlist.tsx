@@ -4,6 +4,7 @@ import { isNew, itemTitle, originLabel } from "./entry";
 import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
 import { NewDot, NewHeard } from "./newmarks";
+import "./heard.css";
 
 type Importing = { state: "idle" } | { state: "running" } | { state: "failed"; reason: string };
 

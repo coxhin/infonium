@@ -9,6 +9,7 @@ import {
 } from "./client";
 import { usePress, type Press } from "./pressing";
 import { Moment, toldAhead, toldPast } from "./when";
+import "./heard.css";
 
 const FOLLOWS_NAMES: Record<Follows, string> = {
   reads: "自动读取新条目",
@@ -133,7 +134,7 @@ export function SubscriptionHead({
   onRemoved: () => void;
 }) {
   const polling = usePress();
-  const following = usePress();
+  const choosing = usePress();
   const seeing = usePress();
   // The choice sent and not yet answered is shown as made.
   const [asked, setAsked] = useState<Follows>();
@@ -142,17 +143,17 @@ export function SubscriptionHead({
   const underway = subscription.poll.kind === "underway" || polling.press.state === "asking";
 
   useEffect(() => {
-    if (following.press.state !== "asking") {
+    if (choosing.press.state !== "asking") {
       setAsked(undefined);
     }
-  }, [following.press.state]);
+  }, [choosing.press.state]);
 
   // A choice made while the one before is unanswered is not sent, and the choice shown goes
   // back to the one asked.
   function choose(follows: Follows) {
-    if (following.press.state !== "asking") {
+    if (choosing.press.state !== "asking") {
       setAsked(follows);
-      following.ask(() => chooseFollows(subscription.id, follows), onAnswer);
+      choosing.ask(() => chooseFollows(subscription.id, follows), onAnswer);
     }
   }
 
@@ -205,7 +206,7 @@ export function SubscriptionHead({
         <select
           id={followsId}
           value={asked ?? subscription.follows}
-          aria-disabled={following.press.state === "asking"}
+          aria-disabled={choosing.press.state === "asking"}
           onChange={(event) => choose(event.target.value as Follows)}
         >
           {(Object.keys(FOLLOWS_NAMES) as Follows[]).map((follows) => (
@@ -215,7 +216,7 @@ export function SubscriptionHead({
           ))}
         </select>
       </div>
-      <Refusal press={following.press} doing="没有改变更新方式" />
+      <Refusal press={choosing.press} doing="没有改变更新方式" />
       <Unsubscribe subscription={subscription} onRemoved={onRemoved} />
     </header>
   );

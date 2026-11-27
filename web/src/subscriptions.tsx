@@ -1,9 +1,10 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { subscribe, type Subscription } from "./client";
-import type { Followed } from "./following";
+import type { Watched } from "./loading";
 import { NewCount } from "./newmarks";
 import { usePress } from "./pressing";
-import { OpenedSubscription } from "./subscriptionpane";
+import { SubscriptionPane } from "./subscriptionpane";
+import "./heard.css";
 import "./subscriptions.css";
 
 // How many of the newest postings a new subscription may have read at once, and how many unless
@@ -11,9 +12,9 @@ import "./subscriptions.css";
 const ADMITTED_CHOICES = [0, 1, 3, 5, 10];
 const ADMITTED_AT_FIRST = 3;
 
-// A subscription open in the list column, and the item it was opened at, whose posting it
-// looks for, if any.
-export type Opened = { subscriptionId: string; sought: string | undefined };
+// The place in the list column of the subscription open there: which one, and the item it was
+// opened at, whose posting it looks for, if any.
+export type SubscriptionPlace = { subscriptionId: string; sought: string | undefined };
 
 // A word on how a subscription stands, where a reader must know it.
 function stateWord(subscription: Subscription): string | undefined {
@@ -26,15 +27,7 @@ function stateWord(subscription: Subscription): string | undefined {
   return subscription.poll.kind === "failed" ? "检查失败" : undefined;
 }
 
-// The form stays while a subscription is open in place of the list, so that the number chosen
-// and what was last said are there when the reader comes back.
-function SubscribeForm({
-  shown,
-  onSubscribed,
-}: {
-  shown: boolean;
-  onSubscribed: (subscription: Subscription) => void;
-}) {
+function SubscribeForm({ onSubscribed }: { onSubscribed: (subscription: Subscription) => void }) {
   const [address, setAddress] = useState("");
   const [admitted, setAdmitted] = useState(ADMITTED_AT_FIRST);
   const { press, ask } = usePress();
@@ -54,7 +47,7 @@ function SubscribeForm({
   }
 
   return (
-    <form className="subscribe" hidden={!shown} onSubmit={submit}>
+    <form className="subscribe" onSubmit={submit}>
       <label className="heard" htmlFor={fieldId}>
         要订阅的地址
       </label>
@@ -107,28 +100,11 @@ function SubscribeForm({
 
 function SubscriptionList({
   subscriptions,
-  left,
   onOpen,
 }: {
   subscriptions: Subscription[];
-  left: string | undefined;
   onOpen: (subscriptionId: string) => void;
 }) {
-  const list = useRef<HTMLUListElement>(null);
-  // Back from a subscription, the keyboard is given to its row, or to the first where it is
-  // gone.
-  useLayoutEffect(() => {
-    if (document.activeElement === document.body) {
-      const row =
-        left === undefined
-          ? null
-          : list.current?.querySelector<HTMLButtonElement>(
-              `[data-subscription="${CSS.escape(left)}"]`,
-            );
-      (row ?? list.current?.querySelector("button"))?.focus({ preventScroll: true });
-    }
-  }, []);
-
   if (subscriptions.length === 0) {
     return (
       <p className="status">
@@ -138,7 +114,7 @@ function SubscriptionList({
     );
   }
   return (
-    <ul className="subscription-list" aria-label="订阅" ref={list}>
+    <ul className="subscription-list" aria-label="订阅">
       {subscriptions.map((subscription) => {
         const word = stateWord(subscription);
         return (
@@ -163,8 +139,10 @@ function SubscriptionList({
   );
 }
 
-// The tab of subscriptions: subscribing to an address, the subscriptions, the one added last
-// first, and one of them open in place of the list.
+// The tab of subscriptions: subscribing to an address and the subscriptions, the one added last
+// first, in a view that scrolls; and one of them open in its place. The view stays while a
+// subscription is open, hidden, so that it is at the place it was scrolled to, with the number
+// chosen and what was last said, when the reader comes back.
 export function SubscriptionsPanel({
   subscriptions,
   opened,
@@ -179,8 +157,8 @@ export function SubscriptionsPanel({
   onGone,
   onChanged,
 }: {
-  subscriptions: Followed<Subscription[]>;
-  opened: Opened | undefined;
+  subscriptions: Watched<Subscription[]>;
+  opened: SubscriptionPlace | undefined;
   // The subscription the reader went back to the list from.
   left: string | undefined;
   selected: string | undefined;
@@ -194,11 +172,43 @@ export function SubscriptionsPanel({
   onChanged: () => void;
 }) {
   const { loaded } = subscriptions;
+  const view = useRef<HTMLDivElement>(null);
+  const open = opened !== undefined;
+  const wasOpen = useRef(open);
+  // Back from a subscription, the keyboard, left on a control that is gone, is given to the
+  // subscription's row, or to the first where it is gone.
+  useLayoutEffect(() => {
+    if (wasOpen.current && !open && document.activeElement === document.body) {
+      const row =
+        left === undefined
+          ? null
+          : view.current?.querySelector<HTMLButtonElement>(
+              `[data-subscription="${CSS.escape(left)}"]`,
+            );
+      (row ?? view.current?.querySelector(".subscription-list button"))?.focus({
+        preventScroll: true,
+      });
+    }
+    wasOpen.current = open;
+  }, [open]);
+
   return (
     <>
-      <SubscribeForm shown={opened === undefined} onSubscribed={onSubscribed} />
-      {opened !== undefined ? (
-        <OpenedSubscription
+      <div className="list-view" ref={view} hidden={open}>
+        <SubscribeForm onSubscribed={onSubscribed} />
+        {loaded.state === "failed" && (
+          <p className="status failed">
+            订阅没有读到：{loaded.reason}
+            <button onClick={subscriptions.readNow}>重试</button>
+          </p>
+        )}
+        {subscriptions.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
+        {loaded.state === "ready" && (
+          <SubscriptionList subscriptions={loaded.value} onOpen={onOpen} />
+        )}
+      </div>
+      {opened !== undefined && (
+        <SubscriptionPane
           key={opened.subscriptionId}
           subscriptionId={opened.subscriptionId}
           sought={opened.sought}
@@ -210,19 +220,6 @@ export function SubscriptionsPanel({
           onGone={onGone}
           onChanged={onChanged}
         />
-      ) : (
-        <>
-          {loaded.state === "failed" && (
-            <p className="status failed">
-              订阅没有读到：{loaded.reason}
-              <button onClick={subscriptions.readNow}>重试</button>
-            </p>
-          )}
-          {subscriptions.interrupted && <p className="status failed">连接不上服务，正在重试…</p>}
-          {loaded.state === "ready" && (
-            <SubscriptionList subscriptions={loaded.value} left={left} onOpen={onOpen} />
-          )}
-        </>
       )}
     </>
   );

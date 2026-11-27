@@ -1,5 +1,6 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  isUnanswered,
   listItems,
   readAgain,
   readDocument,
@@ -12,10 +13,9 @@ import {
   type Revision,
 } from "./client";
 import { ArrivedPages } from "./arrival";
-import { useFollowed, type Followed } from "./following";
-import { Library } from "./library";
+import { ListColumn } from "./listcolumn";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
-import { reasonOf, useWatched, type Loaded } from "./loading";
+import { LIST_INTERVAL_MS, reasonOf, useWatched, type Loaded, type Watched } from "./loading";
 import { isBeingRead } from "./entry";
 import { useRevisions } from "./itemrevisions";
 import { ReadItem, type ReadEntry } from "./reading";
@@ -364,11 +364,11 @@ function ItemPane({
 // Tells the service, once for each item, when a read item's document is first on show in the
 // reader, which seats only a document; an item the list says was seen already is not told again.
 // What the service answers is put in the list at once, and the items told are handed to the list
-// column, for what it shows as new to follow.
-function useSeeing(seated: Seat | undefined, entries: Followed<ItemEntry[]>): ReadonlySet<string> {
+// column, for what it shows as new to change with it.
+function useSeeing(seated: Seat | undefined, entries: Watched<ItemEntry[]>): ReadonlySet<string> {
   const [seen, setSeen] = useState<ReadonlySet<string>>(new Set());
   const told = useRef(new Set<string>());
-  const { loaded, replace } = entries;
+  const { loaded, answer } = entries;
   useEffect(() => {
     if (seated === undefined || told.current.has(seated.itemId)) {
       return;
@@ -382,7 +382,7 @@ function useSeeing(seated: Seat | undefined, entries: Followed<ItemEntry[]>): Re
     told.current.add(itemId);
     seeItem(itemId).then(
       (entry) => {
-        replace((before) => before.map((held) => (held.id === entry.id ? entry : held)));
+        answer((before) => before.map((held) => (held.id === entry.id ? entry : held)));
         setSeen((before) => new Set(before).add(itemId));
       },
       // Not told this time; the next time the item is on show, it is told again.
@@ -397,8 +397,13 @@ export function App() {
   const selected = linked?.itemId;
   const [imports, setImports] = useState(0);
   // The list is read again at once after an import, a reading started again in the reader, and
-  // a press in the list column that changes what the library holds.
-  const entries = useFollowed(listItems, "items", (listed) => listed.some(isBeingRead), true);
+  // a press in the list column that changes what the library holds; and every minute while
+  // nothing in it is under way, for what subscriptions brought meanwhile.
+  const entries = useWatched(listItems, "items", (listed) => listed.some(isBeingRead), {
+    interval: LIST_INTERVAL_MS,
+    shown: true,
+    unanswered: isUnanswered,
+  });
   const { seating, seated, unshown, pointer } = useSeating();
   const seen = useSeeing(seated?.itemId === selected ? seated : undefined, entries);
 
@@ -417,7 +422,7 @@ export function App() {
   return (
     <SeatingProvider value={seating}>
       <div className="app">
-        <Library
+        <ListColumn
           entries={entries.loaded}
           interrupted={entries.interrupted}
           selected={selected}

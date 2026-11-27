@@ -5,11 +5,6 @@
   display: block;
 }
 
-/* Hidden while a subscription is open in place of the list. */
-.library .subscribe[hidden] {
-  display: none;
-}
-
 .subscribe .status:empty {
   margin: 0;
 }
@@ -96,7 +91,27 @@
   overflow-wrap: anywhere;
 }
 
-.opened-subscription .back {
+/* An open subscription: the way back, which stays in place, and under it its head and its
+   postings, which scroll. */
+.subscription-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.subscription-pane .pane-bar {
+  flex: none;
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.subscription-pane .pane-bar .status {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+}
+
+.subscription-pane .back {
   margin-left: -0.5rem;
   color: var(--muted);
   border-color: transparent;
@@ -104,7 +119,7 @@
 }
 
 .subscription-head h2 {
-  margin: 0.5rem 0 0.3rem;
+  margin: 0 0 0.3rem;
   font-size: 1.05rem;
   line-height: 1.35;
 }
@@ -213,6 +228,12 @@
   color: var(--muted);
 }
 
+/* The posting whose item is open in the reader, while that item is not read, marked as a read
+   one's link is. */
+.postings li:has(> div.posting[aria-current="true"]) {
+  background: var(--paper);
+}
+
 .postings .posting-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -237,7 +258,7 @@
   color: var(--failure);
 }
 
-.opened-subscription .older {
+.subscription-pane .older {
   display: block;
   width: 100%;
   margin: 0.6rem 0 0;

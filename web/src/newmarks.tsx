@@ -1,3 +1,4 @@
+import "./heard.css";
 import "./newmarks.css";
 
 // How many new items there are, as a small count beside a name; a screen reader hears what it

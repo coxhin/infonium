@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  isUnanswered,
   listPostings,
   readSubscription,
   Refused,
@@ -8,7 +9,7 @@ import {
   type Subscription,
 } from "./client";
 import { isBeingRead } from "./entry";
-import { useFollowed, type Followed } from "./following";
+import { LIST_INTERVAL_MS, useWatched, type Watched } from "./loading";
 
 // How many postings are read at a time: the newest when a subscription is opened, and as many
 // older ones each time the reader asks for more.
@@ -20,11 +21,11 @@ const MOST_AT_ONCE = 200;
 const SOUGHT_AMONG = 1000;
 const NOT_FOUND = 404;
 
-// An open subscription as the list column shows it: the subscription, and the postings read of
-// it so far, the newest first, which run without a gap from the newest to the oldest read; or
-// that it is gone, removed elsewhere.
-export type OpenSubscription =
-  | { kind: "open"; subscription: Subscription; postings: Posting[] }
+// The state of the subscription open in the list column: the subscription, and the postings
+// read of it so far, the newest first, which run without a gap from the newest to the oldest
+// read; or that it is gone, removed elsewhere.
+export type SubscriptionState =
+  | { kind: "present"; subscription: Subscription; postings: Posting[] }
   | { kind: "gone" };
 
 export type OlderReading =
@@ -35,11 +36,11 @@ const IDLE: OlderReading = { state: "idle" };
 
 // Whether what is listed is under way: a poll, a posting that waits to be handed to the library,
 // or an item being read.
-function isUnsettled(open: OpenSubscription): boolean {
+function isUnsettled(state: SubscriptionState): boolean {
   return (
-    open.kind === "open" &&
-    (open.subscription.poll.kind === "underway" ||
-      open.postings.some(
+    state.kind === "present" &&
+    (state.subscription.poll.kind === "underway" ||
+      state.postings.some(
         ({ admission }) =>
           admission.kind === "awaited" ||
           (admission.kind === "admitted" && isBeingRead(admission.item)),
@@ -94,23 +95,44 @@ function withOlder(fresh: Posting[], held: Posting[], floor: number): Posting[] 
   return [...fresh, ...held.filter((posting) => posting.number < floor)];
 }
 
-export type FollowedSubscription = Followed<OpenSubscription> & {
+// Postings held, and below them those of a page of older ones that are older than the oldest
+// held when the page was asked for.
+function withPage(held: Posting[], page: Posting[], oldest: number): Posting[] {
+  return [...held, ...page.filter((posting) => posting.number < oldest)];
+}
+
+function withPosting(state: SubscriptionState, posting: Posting): SubscriptionState {
+  return state.kind === "present"
+    ? {
+        ...state,
+        postings: state.postings.map((held) => (held.number === posting.number ? posting : held)),
+      }
+    : state;
+}
+
+export type SubscriptionWatch = Watched<SubscriptionState> & {
   older: OlderReading;
   readOlder: () => void;
+  // What the service answered a press on the subscription, or on one of its postings, with,
+  // put in what is on show when it arrives: the subscription's own fields, or the one posting.
+  answerSubscription: (subscription: Subscription) => void;
+  answerPosting: (posting: Posting) => void;
 };
 
-// An open subscription, followed: read again every 1.5 seconds while something on it is under
+// The open subscription's state, read again every 1.5 seconds while something on it is under
 // way and every minute otherwise, while it is on show. A reading again keeps the place the
-// reader went down to: it reads every posting from the newest down to the oldest held. The
-// first reading, of a subscription opened at an item, reads on until that item's posting is
-// among those read.
-export function useOpenSubscription(
+// reader went down to: it reads every posting from the newest down to the oldest held, and puts
+// them above the older ones read meanwhile. The first reading, of a subscription opened at an
+// item, reads on until that item's posting is among those read.
+export function useSubscriptionState(
   subscriptionId: string,
   sought: string | undefined,
   shown: boolean,
-): FollowedSubscription {
+): SubscriptionWatch {
+  // The postings on show, as far as this page knows them; a page of older ones is held at once,
+  // before it is drawn, for a reading that arrives meanwhile to keep it.
   const held = useRef<Posting[] | undefined>(undefined);
-  const load = useCallback(async (): Promise<OpenSubscription> => {
+  const load = useCallback(async (): Promise<SubscriptionState> => {
     const before = held.current;
     const floor = before?.at(-1)?.number;
     try {
@@ -123,7 +145,7 @@ export function useOpenSubscription(
           : postingsDownTo(subscriptionId, floor, before.length),
       ]);
       const postings = floor === undefined ? fresh : withOlder(fresh, held.current ?? [], floor);
-      return { kind: "open", subscription, postings };
+      return { kind: "present", subscription, postings };
     } catch (error) {
       if (error instanceof Refused && error.status === NOT_FOUND) {
         return { kind: "gone" };
@@ -131,14 +153,18 @@ export function useOpenSubscription(
       throw error;
     }
   }, [subscriptionId, sought]);
-  const followed = useFollowed(load, subscriptionId, isUnsettled, shown);
+  const watched = useWatched(load, subscriptionId, isUnsettled, {
+    interval: LIST_INTERVAL_MS,
+    shown,
+    unanswered: isUnanswered,
+  });
   held.current =
-    followed.loaded.state === "ready" && followed.loaded.value.kind === "open"
-      ? followed.loaded.value.postings
+    watched.loaded.state === "ready" && watched.loaded.value.kind === "present"
+      ? watched.loaded.value.postings
       : undefined;
 
   const [older, setOlder] = useState<OlderReading>(IDLE);
-  const { replace } = followed;
+  const { replace, answer } = watched;
   const readOlder = useCallback(() => {
     const oldest = held.current?.at(-1);
     if (oldest === undefined) {
@@ -148,20 +174,26 @@ export function useOpenSubscription(
     listPostings(subscriptionId, oldest.number, POSTINGS_AT_A_TIME).then(
       (page) => {
         setOlder(IDLE);
-        replace((open) =>
-          open.kind === "open"
-            ? {
-                ...open,
-                postings: [
-                  ...open.postings,
-                  ...page.filter((posting) => posting.number < oldest.number),
-                ],
-              }
-            : open,
+        if (held.current !== undefined) {
+          held.current = withPage(held.current, page, oldest.number);
+        }
+        replace((state) =>
+          state.kind === "present"
+            ? { ...state, postings: withPage(state.postings, page, oldest.number) }
+            : state,
         );
       },
       (error: unknown) => setOlder({ state: "failed", reason: requestReason(error) }),
     );
   }, [subscriptionId, replace]);
-  return { ...followed, older, readOlder };
+  const answerSubscription = useCallback(
+    (subscription: Subscription) =>
+      answer((state) => (state.kind === "present" ? { ...state, subscription } : state)),
+    [answer],
+  );
+  const answerPosting = useCallback(
+    (posting: Posting) => answer((state) => withPosting(state, posting)),
+    [answer],
+  );
+  return { ...watched, older, readOlder, answerSubscription, answerPosting };
 }

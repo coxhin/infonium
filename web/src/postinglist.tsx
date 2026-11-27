@@ -3,13 +3,15 @@ import { readPosting, type Posting, type Subscription } from "./client";
 import { isNew } from "./entry";
 import { itemLink } from "./links";
 import { NewDot, NewHeard } from "./newmarks";
-import { POSTINGS_AT_A_TIME, type OlderReading } from "./postinglist";
 import { usePress } from "./pressing";
+import { POSTINGS_AT_A_TIME, type OlderReading } from "./subscriptionstate";
 import { Moment, toldDay, useNow } from "./when";
+import "./heard.css";
 
 // A posting the list shows, and what has come of it: its item, read, as a link to the reader;
 // its item being read, or failed with the reason and a press to try again; waiting its turn; or
-// only listed, with a press that has it read now.
+// only listed, with a press that has it read now. The posting whose item is open in the reader
+// is marked, whatever its reading.
 function PostingRow({
   subscriptionId,
   posting,
@@ -96,13 +98,10 @@ function PostingRow({
       }
       break;
   }
+  const item = admission.kind === "admitted" ? admission.item.id : undefined;
   return (
-    <li
-      data-item={admission.kind === "admitted" ? admission.item.id : undefined}
-      ref={row}
-      tabIndex={-1}
-    >
-      <div className="posting">
+    <li data-item={item} ref={row} tabIndex={-1}>
+      <div className="posting" aria-current={item !== undefined && item === selected}>
         <span className="posting-title" title={posting.title}>
           {posting.title}
         </span>
