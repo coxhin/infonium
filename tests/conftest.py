@@ -175,9 +175,10 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
-    # The service's own providers of its translator and of its models, called anew for each
-    # start.
+    # The service's own providers of its translator, its poller and its models, called anew for
+    # each start.
     made_translator = api.translator.__wrapped__
+    made_poller = api.poller.__wrapped__
     made_language_model = api.language_model.__wrapped__
     made_answering_model = api.answering_model.__wrapped__
     made_glm_pace = api.glm_pace.__wrapped__
@@ -219,6 +220,8 @@ def start_app(
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)
+        polling = made_poller()
+        monkeypatch.setattr(api, "poller", lambda: polling)
         client = TestClient(api.app)
         client.__enter__()
         started.append(App(client, store, site, model, index))
