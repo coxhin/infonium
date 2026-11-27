@@ -148,6 +148,10 @@ ID = "id"
 HREF = "href"
 LINKS = "links"
 PERMALINK = "guidislink"
+# What feedparser's parser of XML ends with where a feed is not well-formed: an error of the
+# XML, or, where an element's name holds what expat parts a name's namespace from it with, the
+# ValueError of feedparser's taking the name apart. The loose parser then reads the feed.
+NOT_WELL_FORMED = (SAXException, ValueError)
 # feedparser takes each element's base anew, joining it to the base around it: given the feed's
 # address, that cost a second for 40,000 elements and 1 GiB more for 6.9 million unclosed ones.
 # It is given the address only where the feed names a base of its own, in an attribute xml:base
@@ -335,15 +339,16 @@ class ParsedChannel(BaseModel):
 class ParsedFeed(BaseModel):
     # What feedparser reads of a feed of RSS or Atom. Its version is empty where it recognised
     # neither. Its postings are read one at a time, as far as they are kept. Where the feed is
-    # not well-formed, what its XML parser found wrong is given as a SAXException; feedparser
-    # also gives other exceptions here, of the encoding, which leave the feed well-formed.
+    # not well-formed, what its XML parser found wrong is given here as NOT_WELL_FORMED names
+    # it; feedparser also gives other exceptions here, of the encoding, which leave the feed
+    # well-formed.
     version: ParsedString = ""
     feed: ParsedChannel
     entries: SkipValidation[list[dict[str, object]]]
     bozo_exception: SkipValidation[object] = None
 
     def is_broken(self) -> bool:
-        return isinstance(self.bozo_exception, SAXException)
+        return isinstance(self.bozo_exception, NOT_WELL_FORMED)
 
 
 class JsonFeedAttachment(BaseModel):
@@ -659,7 +664,7 @@ def feedparser_result(data: bytes, base: str) -> Any:
     source.setByteStream(BytesIO(data))
     try:
         reader.parse(source)
-    except SAXException as failure:
+    except NOT_WELL_FORMED as failure:
         result[BOZO] = True
         result[BOZO_EXCEPTION] = parser.exc or failure
         parser = LOOSE_PARSER(base, None, DEFAULT_ENCODING, entities)
