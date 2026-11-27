@@ -23,6 +23,7 @@ import { NOTE_GUTTER, NoteDown, statementTaking } from "./notedown";
 import { plainWords } from "./statementwords";
 import type { Seat } from "./seat";
 import "./chat.css";
+import "./heard.css";
 
 export type ScopeKind = Scope["kind"];
 const SCOPE_NAMES: Record<ScopeKind, string> = { item: "本文", library: "整个库" };
