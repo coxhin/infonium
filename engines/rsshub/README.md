@@ -46,6 +46,8 @@ Start the engine again with `docker compose up -d`, and set `INFONIUM_RSSHUB_ACC
 
 The key goes to the address that `INFONIUM_RSSHUB_BASE_URL` names and to no other server. Where that address redirects to another, as from `http://` to `https://` of one host, and the redirect carries the key, infonium does not follow it and shows where it leads; name that address in the setting.
 
+Where a proxy is set with `HTTP_PROXY` or `ALL_PROXY`, name 127.0.0.1 in `NO_PROXY`, as for MinerU: infonium would otherwise ask RSSHub through the proxy, which would be sent the key and, on another machine, could not reach RSSHub here.
+
 Whoever may use Docker on the machine can read the container's settings, the key among them.
 
 Without a key, put no token of an account into RSSHub on such a machine.
