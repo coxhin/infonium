@@ -118,6 +118,13 @@ type MenuOpen =
   | { kind: "folder"; key: string; folder: Folder; opening: Opening }
   | { kind: "subscription"; key: string; subscription: Subscription; opening: Opening };
 
+// The count of new items each fixed entry shows.
+const FIXED_COUNTS: Record<(typeof FIXED)[number]["kind"], (tally: Tally) => number> = {
+  all: () => 0,
+  new: (tally) => tally.fresh,
+  unfiled: (tally) => tally.freshUnfiled,
+};
+
 // The one of the keys under a folder that is the key looked for, if it is among them.
 function among(keys: string[], key: string | undefined): string | undefined {
   return key !== undefined && keys.includes(key) ? key : undefined;
@@ -411,9 +418,8 @@ export function SidebarTree({
           <FixedRow
             key={kind}
             kind={kind}
-            // Only 新来源 is counted: 全部 would show the same number, and the hand-added items
-            // under 未分类 are new only where their subscription was removed.
-            fresh={kind === "new" ? tally.fresh : 0}
+            // 全部 is not counted: it would show the same number as 新来源.
+            fresh={FIXED_COUNTS[kind](tally)}
             selected={kind === selectedKey}
             tabbable={kind === tabKey}
             actions={actions}

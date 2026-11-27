@@ -161,11 +161,13 @@ export function listed(
 }
 
 // What the sidebar counts and keeps, of the items of a media: how many are new, in all, of
-// each subscription and in each folder; and which subscriptions and folders hold any.
+// each subscription, in each folder and of the hand-added items in no folder; and which
+// subscriptions and folders hold any.
 export type Tally = {
   fresh: number;
   freshOfSubscription: ReadonlyMap<string, number>;
   freshInFolder: ReadonlyMap<string, number>;
+  freshUnfiled: number;
   holdingSubscriptions: ReadonlySet<string>;
   holdingFolders: ReadonlySet<string>;
 };
@@ -181,6 +183,7 @@ export function tallied(
   seen: ReadonlySet<string>,
 ): Tally {
   let fresh = 0;
+  let freshUnfiled = 0;
   const freshOfSubscription = new Map<string, number>();
   const freshInFolder = new Map<string, number>();
   const holdingSubscriptions = new Set<string>();
@@ -203,13 +206,23 @@ export function tallied(
         countOne(freshOfSubscription, subscription);
       }
       // A folder counts every new item in it: those of its subscriptions, and those whose
-      // subscription was removed, which stay new until they are seen.
+      // subscription was removed, which stay new until they are seen. So does 未分类, of the
+      // items a removed subscription in no folder brought.
       if (entry.folder !== null) {
         countOne(freshInFolder, entry.folder);
+      } else if (subscription === undefined) {
+        freshUnfiled += 1;
       }
     }
   }
-  return { fresh, freshOfSubscription, freshInFolder, holdingSubscriptions, holdingFolders };
+  return {
+    fresh,
+    freshOfSubscription,
+    freshInFolder,
+    freshUnfiled,
+    holdingSubscriptions,
+    holdingFolders,
+  };
 }
 
 export function byName(one: string, other: string): number {
