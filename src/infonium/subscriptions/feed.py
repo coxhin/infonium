@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from email.message import Message
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
-from functools import partial
 from io import BytesIO
 from itertools import islice
 from typing import Annotated
@@ -160,8 +159,11 @@ SURROGATE_ESCAPE = re.compile(
 WHOLE_PAIR_ESCAPE_CHARACTERS = 10
 REPLACEMENT_ESCAPE = "\\ufffd"
 
-# A time as feedparser reads it, in UTC: the fields of time.struct_time.
-StructTime = tuple[int, int, int, int, int, int, int, int, int]
+# How a time is read: as RFC 3339 and ISO 8601 write it, then as RFC 822 does, in the zone it
+# is written in. feedparser's own reading of the other ways feeds write a time is not used: it
+# fills in a year, a month or a day that a time leaves out from the clock, and 71 real feeds
+# wrote no time that only it could read.
+TIME_READERS = (datetime.fromisoformat, parsedate_to_datetime)
 
 
 class Posting(BaseModel):
@@ -199,21 +201,15 @@ class GivenText(BaseModel):
     kind: TextKind
 
 
-class GivenTime(BaseModel):
-    # A time as a feed writes it, and the time feedparser read in it, in UTC, where it read one.
-    written: str
-    parsed: StructTime | None
-
-
 class Listing(BaseModel):
     # One posting as a feed lists it, whatever the feed's format: its id, the addresses it may
     # be read at in the order they are preferred (its recordings, then its pages), its title,
-    # the texts that summarise it, and the times it was published and last updated.
+    # the texts that summarise it, and the times it was published and last updated, as written.
     id: str
     addresses: list[str]
     title: GivenText | None
     summaries: list[GivenText]
-    times: list[GivenTime]
+    times: list[str]
 
 
 def nothing_as_empty(value: object) -> object:
@@ -246,9 +242,7 @@ class ParsedEntry(BaseModel):
     summary_detail: ParsedText | None = None
     content: list[ParsedText] = []
     published: ParsedString = ""
-    published_parsed: StructTime | None = None
     updated: ParsedString = ""
-    updated_parsed: StructTime | None = None
 
 
 class ParsedChannel(BaseModel):
@@ -382,18 +376,12 @@ def web_addresses(given: list[str], base: str) -> list[str]:
     ]
 
 
-def moment_of(given: GivenTime) -> datetime | None:
-    # A time is read as RFC 3339 and ISO 8601 write it, then as RFC 822 does, in the zone it is
-    # written in; feedparser reads the other ways feeds write a time, in UTC. A time that none
-    # of them can read, or that lies beyond the years Python counts, is none.
-    readings = [
-        partial(datetime.fromisoformat, given.written),
-        partial(parsedate_to_datetime, given.written),
-        *([partial(datetime, *given.parsed[:6], tzinfo=UTC)] if given.parsed is not None else []),
-    ]
-    for reading in readings:
+def moment_of(written: str) -> datetime | None:
+    # A time that no reader can read, or that lies beyond the years Python counts, is none; one
+    # written without a zone is in UTC.
+    for reader in TIME_READERS:
         try:
-            moment = reading()
+            moment = reader(written)
         except (ValueError, OverflowError):
             continue
         return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
@@ -461,10 +449,7 @@ def listing_of_entry(entry: ParsedEntry) -> Listing:
         addresses=[*recordings, *pages, entry.link],
         title=given_text(entry.title_detail) if entry.title_detail is not None else None,
         summaries=[given_text(text) for text in [entry.summary_detail, *entry.content] if text],
-        times=[
-            GivenTime(written=entry.published, parsed=entry.published_parsed),
-            GivenTime(written=entry.updated, parsed=entry.updated_parsed),
-        ],
+        times=[entry.published, entry.updated],
     )
 
 
@@ -521,11 +506,7 @@ def listing_of_item(item: JsonFeedItem) -> Listing:
         addresses=[*recordings, item.url or "", item.external_url or ""],
         title=GivenText(value=item.title, kind=TextKind.PLAIN) if item.title else None,
         summaries=[GivenText(value=value, kind=kind) for value, kind in summaries if value],
-        times=[
-            GivenTime(written=written, parsed=None)
-            for written in [item.date_published, item.date_modified]
-            if written
-        ],
+        times=[written for written in [item.date_published, item.date_modified] if written],
     )
 
 
