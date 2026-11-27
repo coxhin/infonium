@@ -32,6 +32,7 @@ from infonium.chat import (
 )
 from infonium.citing import numbered_blocks
 from infonium.digest import (
+    ChosenStyle,
     Digest,
     DraftDigest,
     Section,
@@ -92,6 +93,7 @@ from infonium.model_connection import Ending, Pace
 from infonium.note import Edition, NoteDraft, Notes, ShownNote, StaleDraft
 from infonium.passage import Passage, PassageNotHeld, Standing, held_passage
 from infonium.reasons import failure_reason
+from infonium.recipe import CUSTOM_DESCRIPTION, CUSTOM_NAME, RECIPES, DigestStyle
 from infonium.refinding import standing_in
 from infonium.revalidation import Revalidation
 from infonium.revision import Revision, RevisionNumber, Revisions
@@ -297,10 +299,24 @@ class DocumentView(BaseModel):
 
 
 class DigestView(BaseModel):
+    # A digest of the document an item holds, in the style it was written in; the
+    # instructions are those the reader wrote for a custom one, and none of any other.
+    style: DigestStyle
+    instructions: str | None
     model: str
+    written: AwareDatetime
     input_tokens: int
     output_tokens: int
     sections: list[Section]
+
+
+class DigestStyleView(BaseModel):
+    # A style a reader may choose a digest in, with its name and what its digest holds; a
+    # custom one is written by the reader's own instructions.
+    id: DigestStyle
+    name: str
+    description: str
+    custom: bool
 
 
 class TranslationView(BaseModel):
@@ -614,21 +630,27 @@ def translation_view(standing: TranslationStanding) -> TranslationView:
 
 def digest_view(digest: Digest) -> DigestView:
     return DigestView(
+        style=digest.chosen.style,
+        instructions=digest.chosen.instructions,
         model=digest.model,
+        written=digest.written,
         input_tokens=digest.input_tokens,
         output_tokens=digest.output_tokens,
         sections=digest.sections,
     )
 
 
-def written_digest(holding: Holding, owner: str, model: LanguageModel) -> Digest:
+def written_digest(
+    holding: Holding, owner: str, chosen: ChosenStyle, model: LanguageModel
+) -> Digest:
     completion = model.structured(
-        instructions=digest_instructions(settings.language),
+        instructions=digest_instructions(settings.language, chosen),
         prompt=numbered_blocks(holding.title, holding.document),
         output=DraftDigest,
     )
     digest = Digest(
         document_id=holding.document.id,
+        chosen=chosen,
         model=model.name,
         written=datetime.now(UTC),
         input_tokens=completion.input_tokens,
@@ -748,22 +770,44 @@ def document_picture(document_id: str, name: str, owner: Owner) -> FileResponse:
     )
 
 
+@app.get("/api/digest-styles")
+def digest_styles() -> list[DigestStyleView]:
+    # The styles a reader may choose a digest in, in the order they are offered.
+    return [
+        DigestStyleView(id=style, name=CUSTOM_NAME, description=CUSTOM_DESCRIPTION, custom=True)
+        if style is DigestStyle.CUSTOM
+        else DigestStyleView(
+            id=style, name=RECIPES[style].name, description=RECIPES[style].description, custom=False
+        )
+        for style in DigestStyle
+    ]
+
+
+@app.get("/api/items/{item_id}/digests", responses=NOT_IN_LIBRARY)
+def item_digests(item_id: str, owner: Owner) -> list[DigestView]:
+    # The digests kept of the document the item holds now, one of each style written, in the
+    # order the styles are offered. Nothing is written: an item without a document, or whose
+    # document has no digest yet, has none.
+    with library_store().library(owner) as library:
+        match library.item(item_id).reading:
+            case Read(document=document_id):
+                kept = library.kept_digests(document_id)
+            case _:
+                kept = []
+    return [digest_view(digest) for digest in kept]
+
+
 @app.post("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
-def rewrite_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
+def write_digest(
+    item_id: str, chosen: ChosenStyle, owner: Owner, model: ChosenModel = None
+) -> DigestView:
+    # Writes the digest of the item's document in the style chosen with the model chosen, and
+    # keeps it in place of the one of that style kept before. A digest that cannot be written
+    # leaves that one as it was.
     with library_store().library(owner) as library:
         holding = library.holding(item_id)
-    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
-
-
-@app.put("/api/items/{item_id}/digest", responses=NOT_IN_LIBRARY | UPSTREAM_FAILED | UNREACHABLE)
-def ensure_digest(item_id: str, owner: Owner, model: ChosenModel = None) -> DigestView:
-    # The digest kept, whatever model wrote it, or one written by the model chosen.
-    with library_store().library(owner) as library:
-        holding = library.holding(item_id)
-        kept = library.kept_digests(holding.document.id)
-    if kept:
-        return digest_view(kept[0])
-    return digest_view(written_digest(holding, owner, language_model(answering_with(model))))
+    model_asked = language_model(answering_with(model))
+    return digest_view(written_digest(holding, owner, chosen, model_asked))
 
 
 @app.get("/api/items/{item_id}/translation", responses=NOT_IN_LIBRARY)

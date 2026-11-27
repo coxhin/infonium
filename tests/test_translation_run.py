@@ -31,7 +31,7 @@ from tests.model_standin import (
     Reply,
     Responder,
 )
-from tests.service import LEDGER, REVISED, SITE, App
+from tests.service import LEDGER, OVERVIEW, REVISED, SITE, App
 from tests.translation_standin import (
     RECORDING,
     SECTION_END,
@@ -1147,11 +1147,12 @@ def test_a_translation_changes_nothing_of_the_item_its_document_and_digest(app: 
     app.model.reset(translating())
     item_id = app.read("/ledger")
     paths = [f"/api/items/{item_id}", f"/api/items/{item_id}/document"]
-    digest = app.client.put(f"/api/items/{item_id}/digest").json()
+    digest = app.client.post(f"/api/items/{item_id}/digest", json=OVERVIEW).json()
     before = [app.client.get(path).json() for path in paths]
     translated_whole(app, item_id)
     after = [app.client.get(path).json() for path in paths]
-    assert (after, app.client.put(f"/api/items/{item_id}/digest").json()) == (before, digest), (
+    kept_digests = app.client.get(f"/api/items/{item_id}/digests").json()
+    assert (after, kept_digests) == (before, [digest]), (
         "translating an item changed its entry, document or digest"
     )
 

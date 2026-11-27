@@ -12,6 +12,11 @@ export type PagePlace = Schemas["PagePlace"];
 export type TimePlace = Schemas["TimePlace"];
 export type Style = Schemas["Style"];
 export type Digest = Schemas["DigestView"];
+export type DigestStyle = Schemas["DigestStyle"];
+export type StyleOffer = Schemas["DigestStyleView"];
+// A built-in style is sent without instructions: openapi-fetch's type of a request's body
+// refuses every value of a property that can only be null, as theirs is in the protocol.
+export type ChosenStyle = Omit<Schemas["RecipeChoice"], "instructions"> | Schemas["CustomChoice"];
 export type Anchor = Schemas["Anchor"];
 export type Statement = Schemas["Statement"];
 export type Translation = Schemas["TranslationView"];
@@ -216,28 +221,73 @@ export function readModels(): Promise<ModelsOffered> {
   return settled(api.GET("/api/models"));
 }
 
-export function rewriteDigest(itemId: string, model: string | undefined): Promise<Digest> {
+// The styles a digest may be written in, in the order they are offered.
+export function readDigestStyles(): Promise<StyleOffer[]> {
+  return settled(api.GET("/api/digest-styles"));
+}
+
+// The digests kept of the document the item holds now, one of each style written; nothing is
+// written.
+export function readDigests(itemId: string): Promise<Digest[]> {
   return settled(
-    api.POST("/api/items/{item_id}/digest", {
-      params: { path: { item_id: itemId }, query: chosen(model) },
-    }),
+    api.GET("/api/items/{item_id}/digests", { params: { path: { item_id: itemId } } }),
   );
 }
 
-// Writing a digest takes a model call, so views that ask for the same item's digest while one
-// request is under way share that request. A digest kept is given whatever model is chosen.
-const digestsUnderWay = new Map<string, Promise<Digest>>();
+// A writing of a digest that failed: the style it asked, with the instructions of a custom one,
+// and why it failed.
+export type FailedWriting = { state: "failed"; asked: ChosenStyle; reason: string };
+// What a writing of a digest comes to: the digest, written and kept, or a failure.
+export type WritingEnd = { state: "written"; digest: Digest } | FailedWriting;
+type DigestUnderWay = { state: "writing"; end: Promise<WritingEnd> };
+// A digest asked for that the service has not kept: its writing under way, or the last one,
+// which failed.
+export type DigestWriting = DigestUnderWay | FailedWriting;
 
-export function ensureDigest(itemId: string, model: string | undefined): Promise<Digest> {
-  const underWay =
-    digestsUnderWay.get(itemId) ??
-    settled(
-      api.PUT("/api/items/{item_id}/digest", {
-        params: { path: { item_id: itemId }, query: chosen(model) },
-      }),
-    ).finally(() => digestsUnderWay.delete(itemId));
-  digestsUnderWay.set(itemId, underWay);
-  return underWay;
+// Writing a digest takes a model call, so views that ask for the same item's digest of the same
+// style while one request is under way share that request. A writing that fails stays, with
+// why, until the item's digest of that style is asked for again, so that a view that opens
+// later shows it. The writings are kept by item, then by style.
+const writingsByItem = new Map<string, Map<DigestStyle, DigestWriting>>();
+
+// The item's digests asked for and not kept, by style: each one's writing under way, or the last
+// one, which failed.
+export function digestWritings(itemId: string): ReadonlyMap<DigestStyle, DigestWriting> {
+  return new Map(writingsByItem.get(itemId));
+}
+
+// Writes the item's digest of the style chosen with the model, in place of the one of that
+// style kept before.
+export function writeDigest(
+  itemId: string,
+  style: ChosenStyle,
+  model: string | undefined,
+): DigestUnderWay {
+  const writings = writingsByItem.get(itemId) ?? new Map<DigestStyle, DigestWriting>();
+  writingsByItem.set(itemId, writings);
+  const before = writings.get(style.style);
+  if (before?.state === "writing") {
+    return before;
+  }
+  const end = settled(
+    api.POST("/api/items/{item_id}/digest", {
+      params: { path: { item_id: itemId }, query: chosen(model) },
+      body: style,
+    }),
+  ).then(
+    (digest): WritingEnd => ({ state: "written", digest }),
+    (error: unknown): WritingEnd => ({ state: "failed", asked: style, reason: reasonOf(error) }),
+  );
+  end.then((ended) => {
+    if (ended.state === "written") {
+      writings.delete(style.style);
+    } else {
+      writings.set(style.style, ended);
+    }
+  });
+  const writing: DigestUnderWay = { state: "writing", end };
+  writings.set(style.style, writing);
+  return writing;
 }
 
 export function readTranslation(itemId: string): Promise<Translation> {

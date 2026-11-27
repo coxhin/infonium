@@ -15,8 +15,9 @@ from filelock import FileLock
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, TypeAdapter
 from sqlalchemy.dialects import sqlite
 
-from infonium.digest import Digest
+from infonium.digest import Digest, EarlierDigest, RecipeChoice, Section, SectionForm
 from infonium.document import HTML_MEDIA_TYPE, Document, Figure, KeptPicture, MediaType, Tagged
+from infonium.recipe import DigestStyle
 
 # The one user of a self-hosted library. Item ids hash the owner, so a deployment that adds
 # accounts keeps this id for that first user.
@@ -35,6 +36,12 @@ BODY_FORMAT = 3
 EARLIER_DOCUMENT_FORMAT = 1
 # The form of a revision's row: its number and when it was read, beside its document and item.
 REVISION_FORMAT = 1
+# A digest's row took the form of the library's bodies up to form 3, one digest a document.
+# Form 4 keeps one of each style, and gives a digest its style and each of its sections a form.
+DIGEST_FORMAT = 4
+# Where the digests kept before they had styles wait, while the library opens, to be written
+# into the table that took their table's name.
+EARLIER_DIGEST_TABLE = "earlier_digest"
 FIRST_REVISION = 1
 # A reading that the service's stopping cut off this many times is given up.
 READING_STARTS = 3
@@ -110,8 +117,17 @@ digest_table = sqlalchemy.Table(
         sqlalchemy.ForeignKey(document_table.c.id),
         primary_key=True,
     ),
+    sqlalchemy.Column("style", sqlalchemy.String, primary_key=True),
     sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
+    sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
+)
+# The digest table as a library kept it before digests had styles, under the name it is given
+# while it waits. It is no table of a library made now.
+earlier_digest_table = sqlalchemy.Table(
+    EARLIER_DIGEST_TABLE,
+    sqlalchemy.MetaData(),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
 )
 
@@ -361,6 +377,16 @@ def replacing_insert(
     )
 
 
+def digest_row(digest: Digest, owner: str) -> dict[sqlalchemy.Column[Any], str | int]:
+    return {
+        digest_table.c.document_id: digest.document_id,
+        digest_table.c.style: digest.chosen.style,
+        digest_table.c.owner: owner,
+        digest_table.c.format: DIGEST_FORMAT,
+        digest_table.c.body: digest.model_dump_json(),
+    }
+
+
 def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
     # What every connection to the library's file is given before it is used: the settings,
     # and sqlite-vec's functions over vectors, for the index of blocks. No other extension can
@@ -406,11 +432,52 @@ def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
             body=sqlalchemy.func.json_set(document_table.c.body, MEDIA_TYPE_PATH, HTML_MEDIA_TYPE)
         )
     )
-    for table in (document_table, digest_table):
-        connection.execute(
-            sqlalchemy.update(table).where(table.c.format < BODY_FORMAT).values(format=BODY_FORMAT)
-        )
+    connection.execute(
+        sqlalchemy.update(document_table)
+        .where(document_table.c.format < BODY_FORMAT)
+        .values(format=BODY_FORMAT)
+    )
     number_unnumbered_documents(connection)
+    give_digests_styles(connection)
+
+
+def give_digests_styles(connection: sqlalchemy.Connection) -> None:
+    # A library kept before digests had styles keeps one digest a document, in a table keyed
+    # by document alone. That table steps aside for one keyed by document and style, and each
+    # of its digests is written into the new one as the overview it was written as, every
+    # section a list, before it goes. A step is taken only where the steps before it were, so
+    # that an opening cut off on the way is taken up by the next where it stopped.
+    columns = sqlalchemy.inspect(connection).get_columns(digest_table.name)
+    if digest_table.c.style.name not in {column["name"] for column in columns}:
+        connection.execute(
+            sqlalchemy.text(f'ALTER TABLE "{digest_table.name}" RENAME TO "{EARLIER_DIGEST_TABLE}"')
+        )
+        digest_table.create(connection)
+    if sqlalchemy.inspect(connection).has_table(EARLIER_DIGEST_TABLE):
+        kept = connection.execute(
+            sqlalchemy.select(earlier_digest_table.c.owner, earlier_digest_table.c.body)
+        ).all()
+        rows: list[dict[str, str | int]] = []
+        for owner, body in kept:
+            earlier = EarlierDigest.model_validate_json(body)
+            digest = Digest(
+                document_id=earlier.document_id,
+                chosen=RecipeChoice(style=DigestStyle.OVERVIEW),
+                model=earlier.model,
+                written=earlier.written,
+                input_tokens=earlier.input_tokens,
+                output_tokens=earlier.output_tokens,
+                sections=[
+                    Section(
+                        title=section.title, form=SectionForm.LIST, statements=section.statements
+                    )
+                    for section in earlier.sections
+                ],
+            )
+            rows.append({column.name: value for column, value in digest_row(digest, owner).items()})
+        if rows:
+            connection.execute(sqlite.insert(digest_table).on_conflict_do_nothing(), rows)
+        earlier_digest_table.drop(connection)
 
 
 def number_unnumbered_documents(connection: sqlalchemy.Connection) -> None:
@@ -555,17 +622,8 @@ class Library:
         return given
 
     def keep_digest(self, digest: Digest) -> None:
-        self.connection.execute(
-            replacing_insert(
-                digest_table,
-                {
-                    digest_table.c.document_id: digest.document_id,
-                    digest_table.c.owner: self.owner,
-                    digest_table.c.format: BODY_FORMAT,
-                    digest_table.c.body: digest.model_dump_json(),
-                },
-            )
-        )
+        # In place of the digest of the same document and style, if one is kept.
+        self.connection.execute(replacing_insert(digest_table, digest_row(digest, self.owner)))
 
     def items(self) -> list[Item]:
         bodies = self.connection.execute(
@@ -645,12 +703,17 @@ class Library:
                 return arrival[0]
 
     def kept_digests(self, document_id: str) -> list[Digest]:
+        # One of each style kept, in the order the styles are offered.
         bodies = self.connection.execute(
             sqlalchemy.select(digest_table.c.body).where(
                 digest_table.c.owner == self.owner, digest_table.c.document_id == document_id
             )
         ).scalars()
-        return [Digest.model_validate_json(body) for body in bodies]
+        styles = list(DigestStyle)
+        return sorted(
+            (Digest.model_validate_json(body) for body in bodies),
+            key=lambda digest: styles.index(digest.chosen.style),
+        )
 
 
 class LibraryStore:

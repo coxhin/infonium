@@ -19,7 +19,7 @@ from infonium.library import (
 )
 from tests.model_standin import STANDIN_MODEL
 from tests.pdf_engine_standin import PDF_DATA
-from tests.service import READER, SITE, App, article, stand
+from tests.service import OVERVIEW, READER, SITE, App, article, stand
 
 # The smallest file that is a picture by its bytes.
 PNG = bytes.fromhex(
@@ -53,7 +53,7 @@ def test_a_digest_keeps_the_citations_found_in_the_document(app: App) -> None:
     item_id = app.link(f"{SITE}/reader").json()["id"]
     app.settled(item_id)
     blocks = app.client.get(f"/api/items/{item_id}/document").json()["blocks"]
-    digest = app.client.put(f"/api/items/{item_id}/digest").json()
+    digest = app.client.post(f"/api/items/{item_id}/digest", json=OVERVIEW).json()
     quoted, misnumbered, made_up = digest["sections"][0]["statements"]
     [anchor] = quoted["anchors"]
     assert (
@@ -69,13 +69,13 @@ def test_a_digest_keeps_the_citations_found_in_the_document(app: App) -> None:
 def test_the_same_page_given_again_is_the_same_item_document_and_digest(app: App) -> None:
     first = app.link(f"{SITE}/reader").json()
     read = app.settled(first["id"])
-    digest = app.client.put(f"/api/items/{first['id']}/digest").json()
+    digest = app.client.post(f"/api/items/{first['id']}/digest", json=OVERVIEW).json()
     again = app.link(f"{SITE}/reader#some-section").json()
     reread = app.settled(again["id"])
-    kept = app.client.put(f"/api/items/{first['id']}/digest").json()
+    kept = app.client.get(f"/api/items/{first['id']}/digests").json()
     assert again["id"] == first["id"], "the page given with a fragment became another item"
     assert reread["reading"] == read["reading"], "reading the same page again changed it"
-    assert (kept, len(app.model.asked())) == (digest, 1), "the kept digest was written anew"
+    assert (kept, len(app.model.asked())) == ([digest], 1), "the digest was not kept as written"
 
 
 def test_an_address_imported_many_times_at_once_is_fetched_once(app: App) -> None:
@@ -107,7 +107,7 @@ def test_a_file_uploaded_many_times_at_once_is_read_once(app: App) -> None:
 def test_a_reread_that_fails_keeps_the_document_and_digest(app: App) -> None:
     item_id = app.link(f"{SITE}/flaky").json()["id"]
     good = app.settled(item_id)
-    digest = app.client.put(f"/api/items/{item_id}/digest").json()
+    digest = app.client.post(f"/api/items/{item_id}/digest", json=OVERVIEW).json()
     app.link(f"{SITE}/flaky")
     bad = app.settled(item_id)
     assert stand(bad) == "read/failed", f"a failed reread did not end failed: {bad['reading']}"
@@ -119,9 +119,9 @@ def test_a_reread_that_fails_keeps_the_document_and_digest(app: App) -> None:
         good["reading"]["document"],
     ), "a failed reread lost the document read before"
     still = app.client.get(f"/api/items/{item_id}/document")
-    kept = app.client.put(f"/api/items/{item_id}/digest").json()
+    kept = app.client.get(f"/api/items/{item_id}/digests").json()
     assert still.status_code == 200, "the document read before is no longer served"
-    assert (kept, len(app.model.asked())) == (digest, 1), "the digest was written anew"
+    assert (kept, len(app.model.asked())) == ([digest], 1), "a failed reread changed the digest"
 
 
 def test_a_link_never_read_ends_failed_without_a_document(app: App) -> None:

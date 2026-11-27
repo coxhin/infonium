@@ -24,6 +24,7 @@ import {
   type Text,
 } from "./notekeeping";
 import { noteName, openedNote, openNote } from "./notelist";
+import type { WordsPiece } from "./statementwords";
 
 // What is put into a note from elsewhere in the app, the one way to put it there, and the one
 // way to ask for a note to be shown.
@@ -34,7 +35,7 @@ export type Cited = { anchors: Anchors; itemId: string };
 // A statement infonium wrote, of a digest or an answer, with the passages it cites; or a
 // passage quoted from a source, with what the reader noted on it, empty where nothing was.
 export type Excerpt =
-  | { kind: "statement"; text: string; cited: Cited[] }
+  | { kind: "statement"; words: WordsPiece[]; cited: Cited[] }
   | { kind: "quote"; cited: Cited; comment: string };
 
 // Where an excerpt went: the note, and what it is called.
@@ -101,7 +102,7 @@ function written(
           passageId,
           excerpt.comment,
         )
-      : statementMarkdown(excerpt.text, [...linked.keys()]);
+      : statementMarkdown(excerpt.words, [...linked.keys()]);
   return { markdown, linked };
 }
 

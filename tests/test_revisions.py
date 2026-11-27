@@ -36,6 +36,7 @@ from tests.pdf_engine_standin import PDF_DATA
 from tests.service import (
     FILLER,
     LEDGER,
+    OVERVIEW,
     POLL_SECONDS,
     REVISED,
     SITE,
@@ -380,7 +381,7 @@ def test_a_reading_again_that_fails_keeps_the_document_and_everything_kept_for_i
     name = uuid4().hex
     item = app.read_page(name, FORMS[0])
     document = served_document(app, item)
-    digest = app.client.put(f"/api/items/{item}/digest").json()
+    digest = app.client.post(f"/api/items/{item}/digest", json=OVERVIEW).json()
     marked = marked_view(app, item, phrase_passage(app, item, [(LEDGER[2], "forty-one nights")]))
     listed = revisions_of(app, item)
     del app.site.pages[name]
@@ -394,8 +395,8 @@ def test_a_reading_again_that_fails_keeps_the_document_and_everything_kept_for_i
         "R5: a failed reading changed the item's document"
     )
     assert revisions_of(app, item) == listed, "R1, R5: a failed reading changed the revisions"
-    kept = app.client.put(f"/api/items/{item}/digest").json()
-    assert (kept, len(app.model.asked())) == (digest, 1), "R5: a failed reading lost the digest"
+    kept = app.client.get(f"/api/items/{item}/digests").json()
+    assert (kept, len(app.model.asked())) == ([digest], 1), "R5: a failed reading lost the digest"
     assert highlights_of(app, item) == [marked], "R5: a failed reading changed a highlight"
 
 

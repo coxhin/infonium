@@ -16,8 +16,10 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from infonium import api
+from infonium.digest import SectionForm
 from infonium.document import HTML_MEDIA_TYPE, Paragraph, document_of
 from infonium.library import Item, LibraryStore, Link, Read, Settled, item_identity
+from infonium.recipe import DigestStyle
 from infonium.search import BlockIndex
 from tests.model_standin import Asked, ModelStandin, Reply
 from tests.unix_server import unix_server
@@ -37,6 +39,8 @@ POLL_SECONDS = 0.05
 LOWERED_FETCH_SECONDS = 1.0
 LOWERED_FETCH_BYTES = 4 * 1024**2
 MADE_UP_QUOTE = "This sentence was never written anywhere in the source at all."
+# What asks for a digest in the style digests were written in before a reader chose one.
+OVERVIEW = {"style": DigestStyle.OVERVIEW}
 # How a request gives a document to the model: JSON with a list of its blocks.
 USER_ROLE = "user"
 BLOCKS_KEY = "blocks"
@@ -191,9 +195,8 @@ def digest_reply(asked: Asked) -> Reply:
         {"text": "Misnumbered.", "citations": [{"block_number": number + 2, "quote": quote}]},
         {"text": "Made up.", "citations": [{"block_number": number, "quote": MADE_UP_QUOTE}]},
     ]
-    return Reply(
-        pieces=[json.dumps({"sections": [{"title": "Summary", "statements": statements}]})]
-    )
+    sections = [{"title": "Summary", "form": SectionForm.LIST, "statements": statements}]
+    return Reply(pieces=[json.dumps({"sections": sections})])
 
 
 class Source(BaseModel):

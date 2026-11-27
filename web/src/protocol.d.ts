@@ -23,6 +23,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/digest-styles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Digest Styles */
+        get: operations["digest_styles_api_digest_styles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{document_id}/pictures/{name}": {
         parameters: {
             query?: never;
@@ -136,10 +153,26 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Ensure Digest */
-        put: operations["ensure_digest_api_items__item_id__digest_put"];
-        /** Rewrite Digest */
-        post: operations["rewrite_digest_api_items__item_id__digest_post"];
+        put?: never;
+        /** Write Digest */
+        post: operations["write_digest_api_items__item_id__digest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/digests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Item Digests */
+        get: operations["item_digests_api_items__item_id__digests_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -516,16 +549,52 @@ export interface components {
             /** Turns */
             turns: components["schemas"]["Turn"][];
         };
+        /** CustomChoice */
+        CustomChoice: {
+            /**
+             * Instructions
+             * @description The reader's own instructions for the digest they want: its structure, length, tone and focus. infonium's rules of citing, of the language and of its punctuation hold whatever they say.
+             */
+            instructions: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            style: "custom";
+        };
+        /**
+         * DigestStyle
+         * @enum {string}
+         */
+        DigestStyle: "overview" | "guide" | "brief" | "paper" | "outline" | "faq" | "custom";
+        /** DigestStyleView */
+        DigestStyleView: {
+            /** Custom */
+            custom: boolean;
+            /** Description */
+            description: string;
+            id: components["schemas"]["DigestStyle"];
+            /** Name */
+            name: string;
+        };
         /** DigestView */
         DigestView: {
             /** Input Tokens */
             input_tokens: number;
+            /** Instructions */
+            instructions: string | null;
             /** Model */
             model: string;
             /** Output Tokens */
             output_tokens: number;
             /** Sections */
             sections: components["schemas"]["Section"][];
+            style: components["schemas"]["DigestStyle"];
+            /**
+             * Written
+             * Format: date-time
+             */
+            written: string;
         };
         /** DocumentView */
         DocumentView: {
@@ -1025,6 +1094,16 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** RecipeChoice */
+        RecipeChoice: {
+            /** Instructions */
+            instructions?: null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            style: "brief" | "faq" | "guide" | "outline" | "overview" | "paper";
+        };
         /** Revision */
         Revision: {
             /** Document */
@@ -1052,11 +1131,17 @@ export interface components {
         };
         /** Section */
         Section: {
+            form: components["schemas"]["SectionForm"];
             /** Statements */
             statements: components["schemas"]["Statement"][];
             /** Title */
             title: string;
         };
+        /**
+         * SectionForm
+         * @enum {string}
+         */
+        SectionForm: "list" | "paragraph";
         /** Segment */
         Segment: {
             /**
@@ -1425,6 +1510,26 @@ export interface operations {
             };
         };
     };
+    digest_styles_api_digest_styles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DigestStyleView"][];
+                };
+            };
+        };
+    };
     document_picture_api_documents__document_id__pictures__name__get: {
         parameters: {
             query?: never;
@@ -1771,7 +1876,7 @@ export interface operations {
             };
         };
     };
-    ensure_digest_api_items__item_id__digest_put: {
+    write_digest_api_items__item_id__digest_post: {
         parameters: {
             query?: {
                 /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
@@ -1783,7 +1888,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeChoice"] | components["schemas"]["CustomChoice"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1832,12 +1941,9 @@ export interface operations {
             };
         };
     };
-    rewrite_digest_api_items__item_id__digest_post: {
+    item_digests_api_items__item_id__digests_get: {
         parameters: {
-            query?: {
-                /** @description The model to ask, one of those GET /api/models offers; without one, the default of the operation */
-                model?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 item_id: string;
@@ -1852,7 +1958,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DigestView"];
+                    "application/json": components["schemas"]["DigestView"][];
                 };
             };
             /** @description Not Found */
@@ -1871,24 +1977,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Bad Gateway */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Failure"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };
