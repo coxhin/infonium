@@ -25,7 +25,7 @@ from infonium.document import (
     error_text,
     turned_away,
 )
-from infonium.subscriptions.feed import Feed, UnreadableFeed, read_feed
+from infonium.subscriptions.feed import SPACE, Feed, UnreadableFeed, read_feed
 
 # The most a feed may hold, counted as the bytes it inflates to, and the longest a poll may
 # take in all: its status, its headers and every redirect among it. A poll follows as many
@@ -88,7 +88,6 @@ LEADS_AWAY = (
     " {server} alone"
 )
 PLUS = "+"
-SPACE = " "
 
 
 class Oversized(UnreadableFeed):
