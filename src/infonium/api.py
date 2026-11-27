@@ -615,6 +615,11 @@ NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": 
 STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
 # An address that cannot be subscribed to: it leads to no feed, or its feed cannot be read.
 NO_FEED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
+# The schedule of subscriptions stopped on a fault, until infonium starts again: what every
+# operation on subscriptions may be answered.
+SCHEDULE_STOPPED: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}
+}
 # How many postings a list of them holds unless more or fewer are asked for, and at most.
 POSTINGS_LISTED = 50
 MOST_POSTINGS_LISTED = 200
@@ -1285,8 +1290,8 @@ def schedule_running() -> None:
     poller().raise_failure()
 
 
-# The operations on subscriptions.
-subscriptions = APIRouter(dependencies=[Depends(schedule_running)])
+# The operations on subscriptions, each of which may be answered that the schedule stopped.
+subscriptions = APIRouter(dependencies=[Depends(schedule_running)], responses=SCHEDULE_STOPPED)
 
 
 @subscriptions.get("/api/subscriptions")

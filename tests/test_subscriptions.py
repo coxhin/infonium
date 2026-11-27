@@ -98,6 +98,14 @@ SCHEMES_AFTER_FEED = (
     "javascript:alert(1)",
     "data:text/plain,feed",
 )
+# What may follow a host that is not there: nothing, a path, a query or a fragment.
+segments = st.from_regex(r"([a-z0-9._~-]{1,12}(/[a-z0-9._~-]{1,12}){0,2})?", fullmatch=True)
+after_no_host = st.one_of(
+    st.just(""),
+    segments.map(lambda path: f"/{path}"),
+    st.from_regex(r"[a-z0-9=&]{0,12}", fullmatch=True).map(lambda query: f"?{query}"),
+    st.from_regex(r"[a-z0-9]{0,12}", fullmatch=True).map(lambda fragment: f"#{fragment}"),
+)
 unsubscribable_addresses = st.one_of(
     st.sampled_from(("https://", "http://")),
     st.tuples(
@@ -334,6 +342,45 @@ def test_feed_before_another_scheme_is_refused_before_anything_is_looked_for(
     )
     assert feeds.calls_of(FeedFunction.DISCOVERED) == [], (
         f"S19: feed: before a scheme that is not the web's ({address!r}) was looked for"
+    )
+    kept_nothing(subscribing_app)
+
+
+# S21: a web address that names no host.
+
+
+class WithoutAHost(StrEnum):
+    # What a web address without a host may begin with, before what follows the host.
+    HTTPS = "https://"
+    HTTP = "http://"
+    SLASHES = "//"
+    FEED_SLASHES = "feed://"
+    FEED_HTTPS = "feed:https://"
+    FEED_HTTP = "feed:http://"
+    FEED = "feed:"
+
+
+@given(begins=st.sampled_from(WithoutAHost), word=feed_words, after=after_no_host)
+@example(begins=WithoutAHost.SLASHES, word="feed", after="/example.com/rss")
+@example(begins=WithoutAHost.FEED, word="feed", after="/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", after="/rss")
+@example(begins=WithoutAHost.HTTP, word="feed", after="?x")
+@example(begins=WithoutAHost.HTTPS, word="feed", after="#x")
+@example(begins=WithoutAHost.FEED, word="feed", after="")
+@example(begins=WithoutAHost.FEED_SLASHES, word="feed", after="")
+@example(begins=WithoutAHost.SLASHES, word="feed", after="")
+@EXAMPLES
+def test_a_web_address_that_names_no_host_is_refused_before_anything_is_looked_for(
+    subscribing_app: App, feeds: FeedStandin, begins: WithoutAHost, word: str, after: str
+) -> None:
+    address = f"{begins.replace('feed', word)}{after}"
+    response = subscribe(subscribing_app, address, admit=0)
+    assert response.status_code in {HTTPStatus.BAD_REQUEST, HTTPStatus.UNPROCESSABLE_ENTITY}, (
+        f"S21: a web address that names no host ({address!r}) was not refused: "
+        f"{response.status_code} {response.text[:200]}"
+    )
+    assert feeds.calls_of(FeedFunction.DISCOVERED) == [], (
+        f"S21: a web address that names no host ({address!r}) was looked for"
     )
     kept_nothing(subscribing_app)
 
@@ -944,7 +991,32 @@ def test_owners_of_subscriptions_to_one_feed_each_have_their_own_postings_items_
 
 # S18: a schedule that has stopped is told.
 
-STOPPED_CLOCK = "the clock of the test stopped the schedule"
+# The text of the fault that stops the schedule holds a mark that no sentence of the service
+# holds, as a fault of the library holds one reader's rows.
+FAULT_MARK = f"rows-of-one-reader-{uuid4().hex}"
+# The words by which a sentence says that the schedule stopped.
+SCHEDULE_WORDS = ("schedule", "stopped")
+
+
+class ClockOfTheTestFailed(Exception):
+    # What stops the poller's watch, by a name no other error of the service has.
+    pass
+
+
+def stopped_answers(app: App, owner: str, feed: str, kept: str) -> dict[str, httpx2.Response]:
+    # The nine operations on subscriptions as the owner given asks them, those on an id both
+    # of the subscription kept and of none.
+    with as_owner(owner):
+        answers: dict[str, httpx2.Response] = {
+            "the list": app.client.get(SUBSCRIPTIONS),
+            "subscribing": subscribe(app, feed, 0),
+        }
+        for operation, asked in SUBSCRIPTION_OPERATIONS.items():
+            for subscription, named in ((kept, "a subscription"), (NOWHERE_ITEM, "none")):
+                answers[f"{operation} of {named}"] = asked(app, subscription)
+    return answers
+
+
 ITEM_OPERATIONS: dict[str, Callable[[App, str], httpx2.Response]] = {
     "the list of items": lambda app, item: app.client.get("/api/items"),
     "one item": lambda app, item: app.client.get(f"/api/items/{item}"),
@@ -982,29 +1054,36 @@ def test_a_schedule_that_stopped_on_a_fault_is_told_by_every_operation_on_subscr
         for operation, asked in ITEM_OPERATIONS.items()
         if operation != "seeing an item"
     }
-    feeds.clock.fail(RuntimeError(STOPPED_CLOCK))
+    feeds.clock.fail(ClockOfTheTestFailed(f"the statement failed with {FAULT_MARK}"))
     waited_for(
         lambda: app.client.get(SUBSCRIPTIONS).status_code,
         lambda status: status == HTTPStatus.SERVICE_UNAVAILABLE,
         "S18: the list of subscriptions refused once the schedule stopped on a fault",
     )
-    after: dict[str, httpx2.Response] = {
-        "the list": app.client.get(SUBSCRIPTIONS),
-        "subscribing": subscribe(app, later_feed, 0),
-    }
-    for operation, asked in SUBSCRIPTION_OPERATIONS.items():
-        for subscription, named in ((kept, "a subscription"), (NOWHERE_ITEM, "none")):
-            after[f"{operation} of {named}"] = asked(app, subscription)
-    assert len(after) == 16, "the operations judged are not the nine of S18"
-    for operation, response in after.items():
-        assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE, (
-            f"S18: once the schedule stopped on a fault, {operation} was answered "
-            f"{response.status_code}, not 503: {response.text[:200]}"
-        )
-        assert STOPPED_CLOCK in response.json().get("detail", ""), (
-            f"S18: once the schedule stopped on a fault, {operation} was refused without the "
-            f"reason: {response.text[:200]}"
-        )
+    details: set[str] = set()
+    for owner in (LOCAL_OWNER, new_owner()):
+        after = stopped_answers(app, owner, later_feed, kept)
+        assert len(after) == 16, "the operations judged are not the nine of S18"
+        for operation, response in after.items():
+            assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE, (
+                f"S18: once the schedule stopped on a fault, {operation} was answered "
+                f"{response.status_code}, not 503: {response.text[:200]}"
+            )
+            detail = str(response.json().get("detail", ""))
+            assert FAULT_MARK not in detail, (
+                f"S18: once the schedule stopped on a fault, {operation} told the fault's own text"
+            )
+            assert ClockOfTheTestFailed.__name__ in detail and all(
+                word in detail.casefold() for word in SCHEDULE_WORDS
+            ), (
+                f"S18: once the schedule stopped on a fault, {operation} was not refused with a "
+                f"sentence that the schedule stopped on a fault of its type: {detail}"
+            )
+            details.add(detail)
+    assert len(details) == 1, (
+        "S18: the operations on subscriptions, asked by two owners, are not refused with one and "
+        f"the same sentence once the schedule stopped: {sorted(details)}"
+    )
     assert feeds.calls_of(FeedFunction.DISCOVERED, later_feed) == [], (
         "S18: subscribing once the schedule stopped looked for the feed"
     )
