@@ -305,7 +305,3 @@ def is_underway(app: App, address: str) -> bool:
 
 def admission_of(posting: dict[str, Any]) -> str:
     return str(posting["admission"]["kind"])
-
-
-def by_number(postings: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    return {posting["number"]: posting for posting in postings}

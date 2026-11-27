@@ -69,8 +69,8 @@ class Clock:
 
 
 class Hold:
-    # The next call of a feed function for an address waits here until the test lets it go.
-    # One that the test never lets go fails as a cut connection when the test ends.
+    # The next poll of a feed waits here until the test lets it go. One that the test never
+    # lets go fails as a cut connection when the test ends.
     def __init__(self) -> None:
         self.reached = Event()
         self.released = Event()
@@ -128,7 +128,6 @@ class FeedStandin:
         self.planned_polls: defaultdict[str, deque[Planned]] = defaultdict(deque)
         self.planned_discoveries: defaultdict[str, deque[BaseException]] = defaultdict(deque)
         self.poll_holds: dict[str, Hold] = {}
-        self.discovery_holds: dict[str, Hold] = {}
         self.held: list[Hold] = []
         self.calls: list[FeedCall] = []
         self.running: Counter[str] = Counter()
@@ -155,10 +154,6 @@ class FeedStandin:
             self.served[address] = feed
             self.versions[address] += 1
 
-    def stop_serving(self, address: str) -> None:
-        with self.lock:
-            del self.served[address]
-
     def lead(self, address: str, feed: str) -> None:
         # The address is a page, a show or a channel whose feed is served elsewhere.
         with self.lock:
@@ -180,13 +175,6 @@ class FeedStandin:
         hold = Hold()
         with self.lock:
             self.poll_holds[address] = hold
-            self.held.append(hold)
-        return hold
-
-    def hold_discovery(self, address: str) -> Hold:
-        hold = Hold()
-        with self.lock:
-            self.discovery_holds[address] = hold
             self.held.append(hold)
         return hold
 
@@ -222,9 +210,6 @@ class FeedStandin:
             )
             planned = self.planned_discoveries[address]
             failure = planned.popleft() if planned else None
-            hold = self.discovery_holds.pop(address, None)
-        if hold is not None:
-            hold.wait()
         if failure is not None:
             raise failure
         with self.lock:
@@ -266,8 +251,6 @@ class FeedStandin:
                     return answer
                 case _:
                     with self.lock:
-                        if address not in self.served:
-                            raise UnreadableFeed(NO_FEED.format(address=address))
                         feed = self.served[address]
                     return Changed(feed=feed, validators=self.validators_of(address))
         finally:
