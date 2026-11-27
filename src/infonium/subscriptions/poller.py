@@ -4,7 +4,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Event, Lock
 
-import httpx
 import sqlalchemy
 from pydantic import AwareDatetime, BaseModel
 
@@ -47,8 +46,6 @@ from infonium.subscriptions.subscription import (
 
 # How many polls run at once; the others wait their turn.
 POLLS_AT_ONCE = 2
-# The failures of a poll that lie with the feed or the way to it, not with infonium.
-FEED_FAILURES = (UnreadableFeed, httpx.HTTPError)
 SCHEDULE_STOPPED = (
     "the schedule of subscriptions stopped on a fault, and no feed is polled and no posting"
     " admitted until infonium starts again: {reason}"
@@ -245,6 +242,8 @@ class Poller:
 
     def keep_failure(self, begun: BegunPoll, error: Exception) -> None:
         # A poll that failed is kept as failed, unless its subscription was removed meanwhile.
+        # A feed that cannot be read, the way to it included, fails as UnreadableFeed and is
+        # logged with its reason; anything else raised is a fault, logged with its traceback.
         with self.turn, self.store.transaction(begun.owner) as transaction:
             subscriptions = Subscriptions(transaction)
             failing = polled(subscriptions, begun)
@@ -254,7 +253,7 @@ class Poller:
                 )
                 subscriptions.keep(subscription.model_copy(update={"poll": failed}))
         for subscription in failing:
-            if isinstance(error, FEED_FAILURES):
+            if isinstance(error, UnreadableFeed):
                 logger.warning("polling %s failed: %s", subscription.feed, failure_reason(error))
             else:
                 logger.error("polling %s failed", subscription.feed, exc_info=error)

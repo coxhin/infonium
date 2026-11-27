@@ -9,7 +9,6 @@ from pathlib import PurePath
 from typing import Annotated, Any, Literal
 from urllib.parse import urldefrag, urlsplit
 
-import httpx
 import openai
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -596,14 +595,6 @@ app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(ScheduleStopped, explained(HTTPStatus.SERVICE_UNAVAILABLE))
-# A failure of httpx is answered by every endpoint as the reader's bad request, since a handler
-# cannot be held to one endpoint: an address the reader gave that cannot be reached, or that
-# httpx cannot ask. Today only subscribing lets one through, while it looks for the feed. An
-# endpoint added later whose own upstream may fail through httpx, which is no fault of the
-# reader's request, gives that failure an exception of its own kind and a handler of its own,
-# as the model's failures are answered 502.
-app.add_exception_handler(httpx.HTTPError, explained(HTTPStatus.BAD_REQUEST))
-app.add_exception_handler(httpx.InvalidURL, explained(HTTPStatus.BAD_REQUEST))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
