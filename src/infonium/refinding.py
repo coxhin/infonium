@@ -1268,8 +1268,10 @@ def is_told_by_one_side(
     # each quarter of it (stands_elsewhere). So a row is found at a copy in another table
     # that repeats the rows after it, where its own row was renumbered, the rows after that
     # renumbered too, a letter in each quarter, and a third copy of the row stands elsewhere
-    # (the review's adv7). Looking at eighths of the side would see that place, at a hundred
-    # times the cost on a document of words.
+    # (test_a_renumbered_row_is_not_found_at_a_table_that_repeats_its_rows, an expected
+    # failure). Looking at eighths of the side would see that place, but in a probe of a
+    # million letters of a few words said over and over, a search took about a hundred times
+    # as long (0.73 s against 7 ms).
     if not begins_in_table(passage, marked):
         return False
     reach = 2 * RIVAL_SIDE
