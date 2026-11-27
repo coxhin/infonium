@@ -258,7 +258,10 @@ def exchanged(
     headers = request_headers(validators)
     HIDDEN_NAMES.update(hidden)
     with httpx.Client(timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False) as client:
-        first = client.build_request(GET, address, headers=headers, params=hidden)
+        # The hidden query is added to the address's own: httpx, given a query apart, would
+        # take it in place of the address's.
+        first = client.build_request(GET, address, headers=headers)
+        first.url = first.url.copy_merge_params(hidden)
         request = first
         while True:
             allowance.spend(shown(request.url, hidden))
