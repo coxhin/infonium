@@ -8,7 +8,8 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.163.0",
-    "feedparser>=6.0.14",
+    # Exactly: reading a feed drives two of its parsers' own methods, which another version may change.
+    "feedparser==6.0.14",
     "filelock>=4.2.10",
     "filetype>=1.2.0",
     "httpx>=0.28.1",
