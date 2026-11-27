@@ -8,13 +8,13 @@ You need Docker.
 docker compose up -d
 ```
 
-This starts RSSHub at <http://127.0.0.1:1200>, where infonium looks for it, and starts it again after a restart of the machine until you stop it. The image weighs 124 MiB to download and 638 MB on disk; it has no browser. The running engine held 243 MiB of memory idle, 335 MiB after reading the feeds of 22 routes, and 342 MiB after 24 sites' own addresses more. It takes no processor time while no one asks it anything.
+This starts RSSHub at <http://127.0.0.1:1200>, where infonium looks for it, and starts it again after a restart of the machine until you stop it. The image weighs 124 MiB to download and 638 MB on disk; it has no browser. The running engine held 257 MiB of memory idle, 368 MiB after reading the feeds of 22 routes, and 339 MiB after the addresses of 25 sites besides; under a key, 210, 367 and 322 MiB. It takes no processor time while no one asks it anything.
 
 ## Subscribing
 
-Subscribe to a route as `rsshub://` followed by the route: `rsshub://bilibili/user/video/946974`. infonium keeps the subscription as that route, and asks for its feed at the instance that `INFONIUM_RSSHUB_BASE_URL` names at each poll, so that moving RSSHub to another port or machine keeps every subscription.
+Subscribe to a route as `rsshub://` followed by the route: `rsshub://bilibili/user/video/946974`. infonium keeps the subscription as that route, and asks for its feed at the instance that `INFONIUM_RSSHUB_BASE_URL` names at each poll, so that moving RSSHub to another port or machine keeps every subscription. A route is kept written one way: `rsshub://youtube/user/@veritasium` and `rsshub://youtube/user/%40veritasium` are one subscription.
 
-You can also give the site's own address, as `https://space.bilibili.com/946974`. Where infonium finds no feed of the site by its own means, it matches the address against the rules RSSHub publishes for its browser extension, at `/api/radar/rules`, and subscribes to the first route they give for it, which is kept as a route as above. The rules cover 1,585 sites; of their 6,734 rules, infonium can use 6,473, those whose route follows from a page's address alone.
+You can also give the site's own address, as `https://t.me/s/durov`. Where infonium finds no feed of the site by its own means, it matches the address against the rules RSSHub publishes for its browser extension, at `/api/radar/rules`, and subscribes to the route of the rule that matches it best, which is kept as a route as above. Where several rules match it equally well, as for a Bilibili space or a GitHub repository's page, infonium subscribes to none of them: it names their routes, eight at most, and you give the one you want. The rules cover 1,585 sites; of their 6,734 rules, infonium can use 6,473, those whose route follows from a page's address alone.
 
 The routes are listed at <https://docs.rsshub.app/routes/>, each with the site and the address of its own that it stands for.
 
@@ -28,11 +28,23 @@ TWITTER_AUTH_TOKEN=the token of your account
 
 and start the engine again with `docker compose up -d`. git keeps no `.env`.
 
-A few routes, such as Douyin's, need a browser, which this image leaves out; RSSHub answers them with an error. Bilibili's videos of a user asked for one at times: of three starts of RSSHub, the route gave its feed at once after one, at the second request after another, and not at all after the third.
+A few routes, such as Douyin's, need a browser, which this image leaves out; RSSHub answers them with an error. Bilibili's videos of a user asked for one now and then: over six starts of RSSHub, the route gave its feed at some requests and asked for a browser at others.
 
 ## Another port
 
-To use another port, name it: `RSSHUB_PORT=1300 docker compose up -d`, and set `INFONIUM_RSSHUB_BASE_URL=http://127.0.0.1:1300` for infonium. The port is published on 127.0.0.1 only: RSSHub asks no one who they are.
+To use another port, name it: `RSSHUB_PORT=1300 docker compose up -d`, and set `INFONIUM_RSSHUB_BASE_URL=http://127.0.0.1:1300` for infonium. The port is published on 127.0.0.1 only.
+
+## On a machine that others use
+
+RSSHub answers whoever reaches its port, and on 127.0.0.1 that is every user and every program on this machine. Without a key, any of them can read any route through it, with the tokens of your accounts that `.env` gives it, as you would. On a machine that others use, give RSSHub a key, and infonium the same key. In `.env`, readable by you alone (`chmod 600 .env`):
+
+```
+ACCESS_KEY=a long random key
+```
+
+Start the engine again with `docker compose up -d`, and set `INFONIUM_RSSHUB_ACCESS_KEY` to the same key for infonium. RSSHub then answers only a request that carries the key in its query (`?key=`), its rules among them. infonium sends it with every request it makes to RSSHub, at a poll and at a discovery, and shows it in no address, sentence or log. Where infonium gives no key, or another, it shows that RSSHub refused it.
+
+Without a key, put no token of an account into RSSHub on such a machine.
 
 ## Stopping it
 
