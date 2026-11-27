@@ -36,6 +36,7 @@ from infonium.subscriptions.fetcher import (
     Answer,
     Changed,
     Fetched,
+    LedAway,
     Limit,
     Oversized,
     Unchanged,
@@ -83,8 +84,7 @@ ESCAPED_IN_QUERY = frozenset("&=+#%")
 # discovery's minute, and hold 8 MiB, which the fetcher makes ready within its memory: beside a
 # page of 5 MiB, 8.7 MiB of rules shaped as RSSHub's took 3.4 s and 232 MiB, and 8 MiB of short
 # rules of one site 5.9 s and 390 MiB. Rules that hold more are told as RSSHub's. An instance
-# that does not answer costs a discovery one refused connection, and leaves what it finds as it
-# is.
+# that does not answer costs a discovery one refused connection.
 RULES_ADDRESS = RSSHUB_SCHEME + RADAR_RULES_PATH.removeprefix(ROUTE_APART)
 RULES_LIMIT_BYTES = 8 * 1024**2
 RULES_LIMIT_SECONDS = 30.0
@@ -159,6 +159,11 @@ GIVE_A_FEED = (
     "give the address of a feed, or a route of RSSHub as " + RSSHUB_SCHEME + "<route>, instead"
 )
 WITH_ADVICE = "{sentence}; " + GIVE_A_FEED
+# Where a fault of the instance kept its rules from being asked, the reader is told it after why
+# the address leads to no feed, and is advised a feed alone: a route would meet the same fault.
+NO_FEED_NOR_ROUTE = (
+    "{refusal}; give the address of a feed instead. No route of RSSHub was looked for: {fault}"
+)
 NOT_AN_ADDRESS = "{address} is neither a web address nor a route of RSSHub"
 NAMES_NO_FEED = (
     "{address} is a web page that names no feed, and none was found where its site would keep one"
@@ -197,6 +202,9 @@ NOT_REACHED = (httpx.ConnectError, httpx.ConnectTimeout, httpx.UnsupportedProtoc
 ROUTE_BROKEN_OFF = "RSSHub at {instance} did not finish answering the route {route} ({reason})"
 KEY_REFUSED = "RSSHub at {instance} refused the key that INFONIUM_RSSHUB_ACCESS_KEY gives it"
 KEY_MISSING = "RSSHub at {instance} asks for a key, and INFONIUM_RSSHUB_ACCESS_KEY gives none"
+# The key goes to the instance alone: where the instance redirects to another server and writes
+# the key into that address, the redirect is not followed, and the reader is told where it leads.
+KEY_KEPT = "{said}; INFONIUM_RSSHUB_BASE_URL names the instance the key is for"
 RULES_OUTGROWN = "RSSHub's rules at {instance} hold more than infonium reads"
 NO_APPLE_FEED = "Apple Podcasts names no feed of the show at {address}"
 YOUTUBE_CONSENT = (
@@ -428,12 +436,15 @@ def asked_of_rsshub(
     limit_of: Callable[[int, str], Limit],
 ) -> Answer:
     # What the RSSHub instance at the address given answers a route's address with, asked with
-    # its key. An instance that does not answer, and one that refuses the key, are told as
-    # what they are; the address with the key is in no sentence.
+    # its key. An instance that does not answer, one that refuses the key, and one that would
+    # lead the key away to another server, are told as what they are; the address with the key
+    # is in no sentence.
     instance = rsshub.rstrip(ROUTE_APART)
     asked = served_at(address, rsshub)
     try:
         answer = answer_within(asked, validators, allowance, limit_of, rsshub_query(key))
+    except LedAway as failure:
+        raise RSSHubFault(KEY_KEPT.format(said=failure)) from failure
     except NOT_REACHED as failure:
         reason = FAILED.format(kind=type(failure).__name__, said=error_text(failure))
         raise SilentRSSHub(SILENT_RSSHUB.format(instance=instance, reason=reason)) from failure
@@ -503,13 +514,11 @@ def rules_of(rsshub: str, key: str | None, ends: float) -> HeldRules:
 
 
 def radar_routes(address: str, rsshub: str, key: str | None, ends: float) -> list[RadarRoute]:
-    # The routes RSSHub's rules give for an address; none where the instance does not answer,
-    # or answers with what is not its rules. A key it refuses, and rules that hold more than
-    # infonium reads, are told.
+    # The routes RSSHub's rules give for an address; none where the instance answers with what
+    # is not its rules. An instance that does not answer, a key it refuses, and rules that hold
+    # more than infonium reads, are told.
     try:
         rules = rules_of(rsshub, key, ends)
-    except SilentRSSHub:
-        return []
     except RSSHubFault:
         raise
     except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL, ValidationError):
@@ -535,6 +544,24 @@ def best_routes(address: str, found: list[RadarRoute]) -> list[str]:
     return [route_address(route.route) for route in best]
 
 
+def routes_by_rules(
+    address: str, rsshub: str, key: str | None, ends: float, refusal: Exception
+) -> list[str]:
+    # The route RSSHub's rules give for an address that its site's own means refused, for the
+    # reason given. Where a fault of the instance kept its rules from being asked, the reader is
+    # told why the address leads to no feed, and the fault. Where the site itself was not
+    # reached, an instance that does not answer gives no route, and another fault is told alone.
+    try:
+        return best_routes(address, radar_routes(address, rsshub, key, ends))
+    except RSSHubFault as fault:
+        if isinstance(refusal, UnreadableFeed):
+            said = NO_FEED_NOR_ROUTE.format(refusal=refusal, fault=fault)
+            raise RSSHubFault(said) from fault
+        if isinstance(fault, SilentRSSHub):
+            return []
+        raise
+
+
 def found_at(address: str, allowance: Allowance) -> Discovered:
     # The feed an address leads to by its site's own means: a show on Apple Podcasts, a channel
     # or a playlist of YouTube named by its id, the feed itself, or a page that leads to one.
@@ -552,8 +579,9 @@ def found_at(address: str, allowance: Allowance) -> Discovered:
 def found_by_rules(address: str, rsshub: str, key: str | None) -> Discovered:
     # The feed an address leads to by the rules above; where none of them leads to a feed, as
     # where the site turns infonium away, the route of the rule of RSSHub that matches the
-    # address best, and where none matches it, why the rest found no feed. The site's own means
-    # and RSSHub's route have requests of their own, and the minute in common.
+    # address best, and where none matches it, why the rest found no feed; where a fault of the
+    # instance kept its rules from being asked, that as well. The site's own means and RSSHub's
+    # route have requests of their own, and the minute in common.
     ends = ends_in(DISCOVERY_LIMIT_SECONDS)
     if len(address) > ADDRESS_CHARACTERS:
         shown = address[:SHOWN_OF_LONG_ADDRESS] + TITLE_CUT_SHORT
@@ -568,8 +596,8 @@ def found_by_rules(address: str, rsshub: str, key: str | None) -> Discovered:
     try:
         site = Allowance(requests=MOST_REQUESTS - KEPT_FOR_RSSHUB, ends=ends)
         return found_at(address, site)
-    except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL):
-        routes = best_routes(address, radar_routes(address, rsshub, key, ends))
+    except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL) as refusal:
+        routes = routes_by_rules(address, rsshub, key, ends, refusal)
         if not routes:
             raise
     return routed_feed(routes[0], rsshub, key, Allowance(requests=KEPT_FOR_RSSHUB, ends=ends))
@@ -581,8 +609,8 @@ def discovered_feed(address: str, rsshub: str, key: str | None = None) -> Discov
     # instance at the address given, asked with its key where it is given one. Shows on Apple
     # Podcasts, and YouTube's channels and playlists named by their ids, are found by their
     # addresses alone. Whichever rule refuses the address, the reader is told what they may give
-    # instead, but where the instance itself is at fault. A failure to connect is left as httpx
-    # raises it.
+    # instead; where the instance itself is at fault, that is told, and no route is advised. A
+    # failure to connect is left as httpx raises it.
     try:
         return found_by_rules(address, rsshub, key)
     except RSSHubFault:

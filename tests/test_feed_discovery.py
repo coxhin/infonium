@@ -574,12 +574,6 @@ def test_rules_served_behind_a_redirect_are_not_followed(feed_sites: FeedSites) 
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="N7, not reached by the mends: a discovery that reached RSSHub's rules, where the "
-    "instance does not answer, is told as a page that names no feed, with the advice to give a "
-    "route, not as RSSHub not answering",
-)
 @pytest.mark.parametrize("kind", SILENT_KINDS)
 def test_an_rsshub_instance_that_does_not_answer_a_discovery_at_its_rules_is_told_as_such(
     feed_sites: FeedSites, kind: type[httpx.TransportError]

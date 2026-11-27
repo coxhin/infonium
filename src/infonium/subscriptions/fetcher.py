@@ -7,6 +7,7 @@ from http import HTTPStatus
 from threading import Event, Thread
 from types import MappingProxyType
 from typing import Annotated, Literal
+from urllib.parse import unquote_plus
 
 import httpx
 from pydantic import BaseModel, Field
@@ -76,10 +77,24 @@ TOO_MANY_REQUESTS = "{source} leads on through more redirects than infonium foll
 NOTHING_HIDDEN: Mapping[str, str] = MappingProxyType({})
 HIDDEN_NAMES: set[str] = set()
 HTTPX_LOG = "httpx"
+# What is hidden goes to the server first asked and to no other. A redirect that leads to another
+# server and holds it in its address, as a server that writes the address it was asked into the
+# one it redirects to does, is not followed. The address is looked through as it is written and
+# with its escapes undone, twice over: an address written into another's query is escaped again.
+LEADS_AWAY = (
+    "{source} redirects to {target} with the key in the address, and infonium gives the key to"
+    " {server} alone"
+)
+ESCAPES_UNDONE = 2
 
 
 class Oversized(UnreadableFeed):
     # An answer that holds more than its bound.
+    pass
+
+
+class LedAway(UnreadableFeed):
+    # A redirect that would take what is hidden to another server than the one it is for.
     pass
 
 
@@ -191,6 +206,19 @@ def same_server(url: httpx.URL, other: httpx.URL) -> bool:
     return (url.scheme, url.host, url.port) == (other.scheme, other.host, other.port)
 
 
+def server_of(url: httpx.URL) -> str:
+    # The server an address is asked of, as it is told: its scheme, its host and its port.
+    return f"{url.scheme}://{url.netloc.decode()}"
+
+
+def holds_hidden(url: httpx.URL, hidden: Mapping[str, str]) -> bool:
+    # Whether an address holds what is hidden, under whatever name and wherever in it.
+    readings = [str(url)]
+    for _ in range(ESCAPES_UNDONE):
+        readings.append(unquote_plus(readings[-1]))
+    return any(value in reading for value in hidden.values() for reading in readings)
+
+
 def sent_back(value: str | None) -> str | None:
     # A validator as it can be sent back: visible ASCII, as a header is written; one that holds
     # another byte would break every later poll before it is sent, and is not kept.
@@ -251,9 +279,10 @@ def exchanged(
 ) -> Answer:
     # One GET of an address, made as a source's fetch is made, by infonium's user agent and
     # given up once the server is silent for as long. Redirects are followed one at a time,
-    # each a request of the allowance. A guard's check is refused as the site turning infonium
-    # away. The answer is read within the limit its status and the kind it declares are held
-    # to, and the allowance's time.
+    # each a request of the allowance, but one that would take what is hidden to another
+    # server. A guard's check is refused as the site turning infonium away. The answer is read
+    # within the limit its status and the kind it declares are held to, and the allowance's
+    # time.
     began = time.monotonic()
     headers = request_headers(validators)
     HIDDEN_NAMES.update(hidden)
@@ -271,6 +300,14 @@ def exchanged(
                     request = response.next_request
                     if same_server(request.url, first.url):
                         request.url = request.url.copy_merge_params(hidden)
+                    elif holds_hidden(request.url, hidden):
+                        raise LedAway(
+                            LEADS_AWAY.format(
+                                source=shown(response.url, hidden),
+                                target=server_of(request.url),
+                                server=server_of(first.url),
+                            )
+                        )
                     continue
                 if guard.is_guarded(response.headers):
                     raise UnreadableFeed(turned_away(address))

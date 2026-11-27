@@ -44,6 +44,10 @@ ACCESS_KEY=a long random key
 
 Start the engine again with `docker compose up -d`, and set `INFONIUM_RSSHUB_ACCESS_KEY` to the same key for infonium. RSSHub then answers only a request that carries the key in its query (`?key=`), its rules among them. infonium sends it with every request it makes to RSSHub, at a poll and at a discovery, and shows it in no address, sentence or log. Where infonium gives no key, or another, it shows that RSSHub refused it.
 
+The key goes to the address that `INFONIUM_RSSHUB_BASE_URL` names and to no other server. Where that address redirects to another, as from `http://` to `https://` of one host, and the redirect carries the key, infonium does not follow it and shows where it leads; name that address in the setting.
+
+Whoever may use Docker on the machine can read the container's settings, the key among them.
+
 Without a key, put no token of an account into RSSHub on such a machine.
 
 ## Stopping it
