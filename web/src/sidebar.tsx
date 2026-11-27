@@ -191,7 +191,6 @@ function SidebarBody({
           </label>
         ))}
       </fieldset>
-      {drop.over === null && <p className="sidebar-said">放在这里，移出分类</p>}
       {drop.refusal !== undefined && (
         <p className="sidebar-said status failed" role="alert">
           {drop.refusal}
@@ -219,6 +218,7 @@ function SidebarBody({
         />
       </div>
       <div className="sidebar-foot">
+        {drop.over === null && <p className="drop-out">放在这里，移出分类</p>}
         {naming && (
           <FolderNameField asked={{ kind: "new" }} onSend={browsing.placer.make} onDone={named} />
         )}
