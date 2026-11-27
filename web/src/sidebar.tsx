@@ -131,8 +131,12 @@ function SidebarBody({
   // The folder what is dragged would go into, none where it would leave its folder, and nothing
   // where no drag is over the sidebar.
   const [dropOn, setDropOn] = useState<string | null>();
-  const [dropRefusal, setDropRefusal] = useState<{ folderId: string | null; reason: string }>();
+  // Why the service refused the last drop, said at the sidebar's head, which stays in view
+  // whether the folder dropped on does or not.
+  const [dropRefusal, setDropRefusal] = useState<string>();
   const { tally, media, order, selection, folders, subscriptions } = navigation;
+  const folderList = folders.loaded.state === "ready" ? folders.loaded.value : [];
+  const subscriptionList = subscriptions.loaded.state === "ready" ? subscriptions.loaded.value : [];
 
   // Opened over the page, the sidebar takes the keyboard to its tree.
   useEffect(() => {
@@ -213,6 +217,10 @@ function SidebarBody({
     }
     event.preventDefault();
     const { dragged, folderId } = drop;
+    const doing =
+      folderId === null
+        ? "没有移出分类"
+        : `没有移到“${folderList.find((folder) => folder.id === folderId)?.name ?? ""}”`;
     setDropRefusal(undefined);
     navigation.placer
       .place({
@@ -220,7 +228,7 @@ function SidebarBody({
         subscriptions: dragged.kind === "subscription" ? [dragged.id] : [],
         items: dragged.kind === "item" ? [dragged.id] : [],
       })
-      .catch((error: unknown) => setDropRefusal({ folderId, reason: requestReason(error) }));
+      .catch((error: unknown) => setDropRefusal(`${doing}：${requestReason(error)}`));
   }
 
   // A drag that ends anywhere leaves nothing marked.
@@ -234,8 +242,6 @@ function SidebarBody({
     };
   }, []);
 
-  const folderList = folders.loaded.state === "ready" ? folders.loaded.value : [];
-  const subscriptionList = subscriptions.loaded.state === "ready" ? subscriptions.loaded.value : [];
   // Over the list column, the press keeps the sidebar open as a column; in one column, and as a
   // column, it folds it.
   const folding =
@@ -286,6 +292,12 @@ function SidebarBody({
           </label>
         ))}
       </fieldset>
+      {dropOn === null && <p className="sidebar-said">放在这里，移出分类</p>}
+      {dropRefusal !== undefined && (
+        <p className="sidebar-said status failed" role="alert">
+          {dropRefusal}
+        </p>
+      )}
       <div className="sidebar-scroll">
         <ListFailures navigation={navigation} />
         <SidebarTree
@@ -300,19 +312,12 @@ function SidebarBody({
           folded={navigation.folded}
           focusKey={focusKey}
           dropOn={dropOn ?? undefined}
-          dropRefusal={dropRefusal}
           placer={navigation.placer}
           onSelect={select}
           onFolded={navigation.fold}
           onRename={navigation.rename}
           onDissolve={navigation.dissolve}
         />
-        {dropOn === null && <p className="drop-out">放在这里，移出分类</p>}
-        {dropRefusal?.folderId === null && (
-          <p className="status failed" role="alert">
-            没有移出分类：{dropRefusal.reason}
-          </p>
-        )}
       </div>
       <div className="sidebar-foot">
         {naming ? (

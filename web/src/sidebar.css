@@ -174,12 +174,8 @@
   font-weight: 600;
 }
 
-.sidebar-tree li > .status {
-  margin: 0.1rem 0.5rem 0.3rem 1.6rem;
-}
-
 /* A folder that takes what is dragged over it, and the sidebar, outside the folders, that takes
-   it out of its folder. */
+   it out of its folder; what is said of a drop stands under the media, in view. */
 .sidebar-tree li.dropping > .row {
   background: var(--paper);
   outline: 2px dashed var(--accent);
@@ -191,11 +187,15 @@
   outline-offset: -4px;
 }
 
-.sidebar .drop-out {
-  margin: 0.5rem 0.6rem;
+.sidebar .sidebar-said {
+  flex: none;
+  margin: 0 0.7rem 0.5rem;
   font-size: 0.8rem;
   color: var(--accent);
-  text-align: center;
+}
+
+.sidebar .sidebar-said.failed {
+  color: var(--failure);
 }
 
 /* A folder's name, changed in its place; a refusal of it goes under the row, which keeps its

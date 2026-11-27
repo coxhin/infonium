@@ -79,7 +79,7 @@ button:disabled {
   height: 100vh;
 }
 
-.app[data-sidebar="column"] {
+.app:has(> .sidebar) {
   grid-template-columns: 13rem 17rem minmax(0, 1fr) 24rem;
 }
 

@@ -13,7 +13,7 @@ function heldText(folder: Folder, held: Held): string {
   ].filter((part) => part !== undefined);
   return parts.length === 0
     ? `解散分类“${folder.name}”？它是空的。`
-    : `解散分类“${folder.name}”？其中的 ${parts.join("和 ")} 都会留下，只是不再属于任何分类。`;
+    : `解散分类“${folder.name}”？其中的 ${parts.join("和 ")}都会留下，只是不再属于任何分类。`;
 }
 
 // A folder's menu: renaming it, which the sidebar does in the folder's place, and dissolving

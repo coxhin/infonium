@@ -174,21 +174,34 @@ export function useNavigation(
     }
   }, [selection, folders.loaded, subscriptions.loaded]);
 
+  // What the service refuses may rest on something this page shows that is there no more, as a
+  // folder dissolved in another window: the lists are read again, and the refusal is said.
+  const readOnRefusal = useCallback(
+    <Answer>(asking: Promise<Answer>): Promise<Answer> =>
+      asking.catch((error: unknown) => {
+        entries.readNow();
+        subscriptions.readNow();
+        folders.readNow();
+        throw error;
+      }),
+    [entries.readNow, subscriptions.readNow, folders.readNow],
+  );
+
   const placer = useMemo<Placer>(
     () => ({
       folders: [...listedFolders].sort((one, other) => byName(one.name, other.name)),
       place: async (placing: Placing) => {
-        await place(placing);
+        await readOnRefusal(place(placing));
         entries.answer((before) => entriesPlaced(before, placing, present));
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       },
       make: async (name: string) => {
-        const folder = await makeFolder(name);
+        const folder = await readOnRefusal(makeFolder(name));
         folders.answer((before) => withFolder(before, folder));
         return folder;
       },
     }),
-    [listedFolders, present, entries.answer, subscriptions.answer, folders.answer],
+    [listedFolders, present, readOnRefusal, entries.answer, subscriptions.answer, folders.answer],
   );
 
   const heldIn = useCallback(
@@ -204,15 +217,15 @@ export function useNavigation(
 
   const rename = useCallback(
     async (folderId: string, name: string) => {
-      const folder = await renameFolder(folderId, name);
+      const folder = await readOnRefusal(renameFolder(folderId, name));
       folders.answer((before) => withFolder(before, folder));
     },
-    [folders.answer],
+    [readOnRefusal, folders.answer],
   );
 
   const dissolve = useCallback(
     async (folderId: string) => {
-      await dissolveFolder(folderId);
+      await readOnRefusal(dissolveFolder(folderId));
       folders.answer((before) => before.filter((folder) => folder.id !== folderId));
       entries.answer((before) => outOfFolder(before, folderId));
       subscriptions.answer((before) => outOfFolder(before, folderId));
@@ -220,7 +233,7 @@ export function useNavigation(
         select(ALL);
       }
     },
-    [folders.answer, entries.answer, subscriptions.answer, selection, select],
+    [readOnRefusal, folders.answer, entries.answer, subscriptions.answer, selection, select],
   );
 
   const subscribed = useCallback(
@@ -240,14 +253,14 @@ export function useNavigation(
           subscriptions: [subscription.id],
           items: [],
         };
-        await place(placing);
+        await readOnRefusal(place(placing));
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       }
       keepSelection({ kind: "subscription", subscriptionId: subscription.id });
       setSubscribing(false);
       setPane({ subscriptionId: subscription.id, sought: undefined, again });
     },
-    [present, selection, subscriptions.answer, entries.readNow, keepSelection],
+    [present, selection, readOnRefusal, subscriptions.answer, entries.readNow, keepSelection],
   );
 
   const gone = useCallback(

@@ -35,9 +35,10 @@ const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
 };
 // Kinds of file the upload dialog offers; what a file really is, the server tells from its bytes.
 const UPLOADABLE = "application/pdf,audio/*,video/*,text/html,.html,.htm";
-// How many rows are drawn at first, and how many more each time the list is scrolled near the
-// last drawn: a list of thousands is drawn as it is reached, so that it shows at once.
-const ROWS_AT_A_TIME = 150;
+// How many rows are drawn at first, a window and more of them, and how many more each time the
+// list is scrolled near the last drawn: a list of thousands is drawn as it is reached, so that
+// it shows at once.
+const ROWS_AT_A_TIME = 60;
 
 // Where an import goes: into the folder selected, or where the service puts it.
 export type ImportInto = { folderId: string; name: string } | undefined;
