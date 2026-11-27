@@ -2,15 +2,15 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
-from functools import cache
+from datetime import UTC, datetime, timedelta
+from functools import cache, partial
 from http import HTTPStatus
 from pathlib import PurePath
 from typing import Annotated, Any, Literal
 from urllib.parse import urldefrag, urlsplit
 
 import openai
-from fastapi import Depends, FastAPI, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, HttpUrl
 from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
@@ -82,6 +82,7 @@ from infonium.library import (
     OwnerTransaction,
     Read,
     Reading,
+    SeenItem,
 )
 from infonium.library_conversation import (
     LIBRARY_BUSY,
@@ -103,14 +104,20 @@ from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
 from infonium.subscriptions.feed import UnreadableFeed
+from infonium.subscriptions.poller import Poller, ScheduleStopped
+from infonium.subscriptions.program import discovered_apart, polled_apart
 from infonium.subscriptions.subscription import (
     AdmissionKind,
     Awaited,
+    CountedSubscription,
     Follows,
     FollowsChoice,
+    HeldItem,
     Poll,
     PostingNumber,
+    ShownPosting,
     SubscriptionDraft,
+    Subscriptions,
     Unadmitted,
 )
 from infonium.translation import Progress, TranslatedBlock
@@ -120,6 +127,8 @@ JSON = "application/json"
 # How many sources are read at once. A reading may hold a model on a graphics card for
 # minutes, so the number is small.
 READERS = 2
+# How often the poller looks for the polls that are due and the postings that wait.
+WATCH_SECONDS = 5
 # A source is another site's bytes served from this origin; a browser that opens one treats
 # it as inert and as the kind of bytes it is said to be.
 SOURCE_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
@@ -184,6 +193,20 @@ def intake() -> Intake:
         browser=settings.browser,
     )
     return Intake(store=library_store(), readers=READERS, engines=engines)
+
+
+@cache
+def poller() -> Poller:
+    return Poller(
+        store=library_store(),
+        intake=intake(),
+        discovered=discovered_apart,
+        fetched=partial(polled_apart, rsshub=settings.rsshub_base_url),
+        rsshub=settings.rsshub_base_url,
+        clock=partial(datetime.now, UTC),
+        interval=timedelta(minutes=settings.poll_minutes),
+        watch=timedelta(seconds=WATCH_SECONDS),
+    )
 
 
 @cache
@@ -269,7 +292,10 @@ async def running(service: FastAPI) -> AsyncIterator[None]:
     intake().resume()
     translator().resume()
     block_index().resume()
+    poller().start()
     yield
+    # The poller hands postings to the intake, so it stops first.
+    poller().close()
     block_index().close()
     intake().close()
     translator().close()
@@ -567,6 +593,7 @@ app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
+app.add_exception_handler(ScheduleStopped, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -587,6 +614,11 @@ NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": 
 STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
 # An address that cannot be subscribed to: it leads to no feed, or its feed cannot be read.
 NO_FEED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
+# The schedule of subscriptions stopped on a fault, until infonium starts again: what every
+# operation on subscriptions may be answered.
+SCHEDULE_STOPPED: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}
+}
 # How many postings a list of them holds unless more or fewer are asked for, and at most.
 POSTINGS_LISTED = 50
 MOST_POSTINGS_LISTED = 200
@@ -667,8 +699,47 @@ async def answer_ending(request: Request) -> AsyncIterator[Ending]:
 AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 
-def entry_of(item: Item) -> ItemEntry:
-    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading, seen=None)
+def entry_of(seen: SeenItem) -> ItemEntry:
+    item = seen.item
+    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading, seen=seen.seen)
+
+
+def answered_entry(owner: str, item: Item) -> ItemEntry:
+    # The entry of an item as an operation left it, with when it was seen.
+    with library_store().library(owner) as library:
+        return entry_of(library.seen_as(item))
+
+
+def subscription_view(counted: CountedSubscription) -> SubscriptionView:
+    subscription = counted.subscription
+    return SubscriptionView(
+        id=subscription.id,
+        address=subscription.address,
+        feed=subscription.feed,
+        title=subscription.title,
+        site=subscription.site,
+        added=subscription.added,
+        follows=subscription.follows,
+        poll=subscription.poll,
+        postings=counted.postings,
+        unseen=counted.unseen,
+    )
+
+
+def posting_view(shown: ShownPosting) -> PostingView:
+    match shown.admission:
+        case HeldItem(item=item):
+            admission: Unadmitted | Awaited | AdmittedItem = AdmittedItem(item=entry_of(item))
+        case Unadmitted() | Awaited() as waiting:
+            admission = waiting
+    posting = shown.posting
+    return PostingView(
+        number=shown.number,
+        title=posting.title,
+        address=posting.address,
+        published=posting.published,
+        admission=admission,
+    )
 
 
 def translation_view(standing: TranslationStanding) -> TranslationView:
@@ -720,13 +791,14 @@ def written_digest(
 @app.get("/api/items")
 def list_items(owner: Owner) -> list[ItemEntry]:
     with library_store().library(owner) as library:
-        return [entry_of(item) for item in library.items()]
+        return [entry_of(seen) for seen in library.seen_items()]
 
 
 @app.post("/api/items")
 def import_link(link: LinkImport, owner: Owner) -> ItemEntry:
     # A fragment names a place in a page, not another page.
-    return entry_of(intake().begin_address(owner, Link(url=urldefrag(str(link.url)).url)))
+    item = intake().begin_address(owner, Link(url=urldefrag(str(link.url)).url))
+    return answered_entry(owner, item)
 
 
 @app.post("/api/items/upload", responses=NAMELESS)
@@ -736,20 +808,22 @@ def import_upload(file: UploadFile, owner: Owner) -> ItemEntry:
     name = PurePath(file.filename).name
     if not name:
         raise NamelessUpload(NAMELESS_UPLOAD)
-    return entry_of(intake().begin_upload(owner, name, library_store().staged(file.file)))
+    item = intake().begin_upload(owner, name, library_store().staged(file.file))
+    return answered_entry(owner, item)
 
 
 @app.get("/api/items/{item_id}", responses=NOT_IN_LIBRARY)
 def item_entry(item_id: str, owner: Owner) -> ItemEntry:
     with library_store().library(owner) as library:
-        return entry_of(library.item(item_id))
+        return entry_of(library.seen_as(library.item(item_id)))
 
 
 @app.put("/api/items/{item_id}/seen", responses=NOT_IN_LIBRARY)
 def see_item(item_id: str, owner: Owner) -> ItemEntry:
     # The reader has the item's document on show. The first time is kept as when the item was
     # seen; a later one changes nothing.
-    raise NotImplementedError
+    with library_store().library(owner) as library:
+        return entry_of(library.see(item_id, datetime.now(UTC)))
 
 
 @app.get("/api/items/{item_id}/document", responses=NOT_IN_LIBRARY)
@@ -766,7 +840,7 @@ def read_again(item_id: str, owner: Owner) -> ItemEntry:
     # way already, that one goes on and no other starts. The document the item holds stays
     # until the new reading has given another. An upload whose reading never succeeded has no
     # file kept to read again, and is refused as a conflict.
-    return entry_of(intake().begin_again(owner, item_id))
+    return answered_entry(owner, intake().begin_again(owner, item_id))
 
 
 @app.get("/api/items/{item_id}/revisions", responses=NOT_IN_LIBRARY)
@@ -1209,49 +1283,65 @@ def remove_note(note_id: str, owner: Owner) -> None:
         Notes(transaction).remove(note_id)
 
 
-@app.get("/api/subscriptions")
+def schedule_running() -> None:
+    # Once the schedule has stopped on a fault, every operation on subscriptions is refused
+    # with it, so that the reader is told where they look.
+    poller().raise_failure()
+
+
+# The operations on subscriptions, each of which may be answered that the schedule stopped.
+subscriptions = APIRouter(dependencies=[Depends(schedule_running)], responses=SCHEDULE_STOPPED)
+
+
+@subscriptions.get("/api/subscriptions")
 def list_subscriptions(owner: Owner) -> list[SubscriptionView]:
     # The owner's subscriptions, the one added last first.
-    raise NotImplementedError
+    with library_store().transaction(owner) as transaction:
+        counted = Subscriptions(transaction).every_counted()
+    return [subscription_view(subscription) for subscription in counted]
 
 
-@app.post("/api/subscriptions", responses=NO_FEED)
+@subscriptions.post("/api/subscriptions", responses=NO_FEED)
 def subscribe(draft: SubscriptionDraft, owner: Owner) -> SubscriptionView:
     # Finds the feed the address leads to, reads it, and keeps a subscription to it that
     # lists the postings the feed holds now; the newest of them, as many as the draft says,
     # are admitted to the library. A feed the owner is subscribed to already is answered as
     # that subscription, unchanged. An address that leads to no feed that can be read is
     # refused with the reason, and nothing is kept.
-    raise NotImplementedError
+    return subscription_view(poller().subscribe(owner, draft))
 
 
-@app.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
+@subscriptions.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
 def read_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
-    raise NotImplementedError
+    with library_store().transaction(owner) as transaction:
+        return subscription_view(Subscriptions(transaction).counted(subscription_id))
 
 
-@app.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
+@subscriptions.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
 def choose_follows(subscription_id: str, choice: FollowsChoice, owner: Owner) -> SubscriptionView:
     # Sets how the subscription follows its feed from now on.
-    raise NotImplementedError
+    return subscription_view(poller().follow(owner, subscription_id, choice.follows))
 
 
-@app.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
+@subscriptions.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
 def poll_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     # Starts a poll of the subscription's feed now, whenever the next was due and though the
     # subscription be paused. Where a poll is under way already, that one goes on and no
     # other starts. The answer shows the poll under way; its end is read from the
     # subscription.
-    raise NotImplementedError
+    return subscription_view(poller().poll_now(owner, subscription_id))
 
 
-@app.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
+@subscriptions.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
 def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     # Takes every item of the subscription's postings that is read and not seen for seen now.
-    raise NotImplementedError
+    with library_store().transaction(owner) as transaction:
+        subscriptions = Subscriptions(transaction)
+        subscriptions.see(subscription_id, datetime.now(UTC))
+        return subscription_view(subscriptions.counted(subscription_id))
 
 
-@app.delete(
+@subscriptions.delete(
     "/api/subscriptions/{subscription_id}",
     responses=NOT_IN_LIBRARY,
     status_code=HTTPStatus.NO_CONTENT,
@@ -1259,10 +1349,10 @@ def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
 def unsubscribe(subscription_id: str, owner: Owner) -> None:
     # Removes the subscription and the list of its postings. The items it brought stay in the
     # library.
-    raise NotImplementedError
+    poller().unsubscribe(owner, subscription_id)
 
 
-@app.get("/api/subscriptions/{subscription_id}/postings", responses=NOT_IN_LIBRARY)
+@subscriptions.get("/api/subscriptions/{subscription_id}/postings", responses=NOT_IN_LIBRARY)
 def subscription_postings(
     subscription_id: str,
     owner: Owner,
@@ -1275,14 +1365,19 @@ def subscription_postings(
     limit: Annotated[int, Query(ge=1, le=MOST_POSTINGS_LISTED)] = POSTINGS_LISTED,
 ) -> list[PostingView]:
     # The postings the subscription lists, the newest first, as many as the limit at most.
-    raise NotImplementedError
+    with library_store().transaction(owner) as transaction:
+        page = Subscriptions(transaction).page(subscription_id, before, limit)
+    return [posting_view(shown) for shown in page]
 
 
-@app.post(
+@subscriptions.post(
     "/api/subscriptions/{subscription_id}/postings/{number}/reading", responses=NOT_IN_LIBRARY
 )
 def read_posting(subscription_id: str, number: PostingNumber, owner: Owner) -> PostingView:
     # Has the posting read at the reader's word: one that is not admitted, or that waits, is
     # admitted to the library now, and one whose item's reading failed is read again. One
     # whose item is being read, or is read, is answered as it stands.
-    raise NotImplementedError
+    return posting_view(poller().read_posting(owner, subscription_id, number))
+
+
+app.include_router(subscriptions)

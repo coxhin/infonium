@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import "./announce.css";
+import "./heard.css";
 
 // What the column tells a screen reader of things that arrive without the reader asking: a
 // highlight opened from the source, an excerpt a note took. Each announcement is told once,
@@ -26,7 +26,7 @@ export function announce(text: string): void {
 export function Announcer() {
   const { text, count } = useSyncExternalStore(onChange, () => announced);
   return (
-    <p className="announced" role="status">
+    <p className="announced heard" role="status">
       <span key={count}>{text}</span>
     </p>
   );

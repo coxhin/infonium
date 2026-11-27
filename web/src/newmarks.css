@@ -1,0 +1,23 @@
+/* What is new: a count beside a name, and a dot and weight on an item's title. */
+.new-count {
+  display: inline-block;
+  flex: none;
+  min-width: 1.4em;
+  padding: 0 0.4em;
+  border-radius: 0.7em;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.new-dot {
+  margin-right: 0.35em;
+  color: var(--accent);
+  font-family: system-ui, sans-serif;
+  font-size: 0.6em;
+  vertical-align: 0.15em;
+}

@@ -1,21 +1,28 @@
 import codecs
 import hashlib
-import html
+import json
 import re
 import sys
+import unicodedata
+import xml.sax
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import UTC, datetime
 from email.message import Message
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from io import BytesIO
 from itertools import islice
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urljoin, urlsplit
+from xml.sax import SAXException, SAXNotSupportedException
+from xml.sax.handler import feature_external_ges, feature_namespaces
+from xml.sax.xmlreader import InputSource
 
 import feedparser
 import filetype
-from lxml.html import defs, fragment_fromstring
+from lxml import etree
+from lxml.html import defs
 from pydantic import (
     AwareDatetime,
     BaseModel,
@@ -25,18 +32,18 @@ from pydantic import (
     JsonValue,
     SkipValidation,
     StringConstraints,
-    ValidationError,
+    TypeAdapter,
 )
 
-from infonium.document import WORD_GAP
-from infonium.htmlpage import SHOWN_TEXT
-from infonium.intake import (
+from infonium.document import (
     CONTENT_TYPE,
     PAGE_MEDIA_TYPES,
     RECORDING_MEDIA_TYPES,
+    WEB_SCHEMES,
+    WORD_GAP,
     declared_media_type,
 )
-from infonium.reasons import CUT_SHORT
+from infonium.htmlpage import SHOWN_TEXT
 
 # The most characters kept of a posting's key, of a title, and of an address. A feed is another
 # site's text: what goes beyond is cut, replaced or left out, as read_feed says.
@@ -44,6 +51,8 @@ KEY_CHARACTERS = 200
 TITLE_CHARACTERS = 300
 ADDRESS_CHARACTERS = 2000
 WEB_ADDRESS_PATTERN = r"^(?i:https?)://\S+$"
+# What a title cut short ends with.
+TITLE_CUT_SHORT = "\N{HORIZONTAL ELLIPSIS}"
 
 PostingKey = Annotated[str, StringConstraints(min_length=1, max_length=KEY_CHARACTERS)]
 Title = Annotated[str, StringConstraints(min_length=1, max_length=TITLE_CHARACTERS)]
@@ -61,6 +70,16 @@ MOST_POSTINGS = 2000
 # another and cut the feed sooner.
 READ_POSTINGS = 2 * MOST_POSTINGS
 POSTING_OPENING = re.compile(r"<(?:[\w.-]+:)?(?:item|entry)[\s/>]", re.IGNORECASE)
+# feedparser also builds every link, enclosure, category, content, author and thumbnail it
+# finds, close to a kilobyte each: one posting with 1.3 million links took a gigabyte. So a
+# feed is read no further than the element of these kinds after ten for each posting read, and
+# of one posting no more than 50 of each are looked at.
+READ_LISTED = 10 * READ_POSTINGS
+LISTED_OPENING = re.compile(
+    r"<(?:[\w.-]+:)?(?:link|enclosure|category|content|author|contributor|thumbnail)[\s/>]",
+    re.IGNORECASE,
+)
+MOST_LISTED = 50
 # How much of its summary's text a posting without a title is called by.
 SUMMARY_TITLE_CHARACTERS = 80
 
@@ -94,8 +113,9 @@ LARGER_ENCODINGS = {
 # A feed is another site's text, and no entity it declares is expanded: an entity that names
 # a file or an address is never read, and one that holds others, or a long text, cannot blow
 # a small feed up into gigabytes. A declaration is replaced by a space, so that what stood
-# around it cannot join into another.
-ENTITY_DECLARATION = re.compile(r"<!ENTITY[^>]*>", re.IGNORECASE)
+# around it cannot join into another. A declaration is looked for no further than the next
+# one begins, so that the text is read once however many declarations stand unclosed in it.
+ENTITY_DECLARATION = re.compile(r"<!ENTITY(?:(?!<!ENTITY)[^>])*>", re.IGNORECASE)
 ENTITY_REMOVED = " "
 # feedparser fails on a feed that refers by number to a character that no text holds: half a
 # pair of surrogates, as some feeds write each half of an emoji, or a number beyond Unicode;
@@ -111,27 +131,45 @@ MOST_CODE_POINT_DIGITS = 7
 BEYOND_UNICODE = sys.maxunicode + 1
 DECIMAL = 10
 HEXADECIMAL = 16
-# feedparser is told that the feed is UTF-8, the encoding read_feed gives it the feed in. It is
-# not told where the feed was served: it would resolve a guid against that address as well as
-# the feed's addresses, and a posting's key would change with the address of its feed. It
-# resolves against the base the feed gives, and read_feed resolves the rest.
+# feedparser is told that the feed is UTF-8, the encoding read_feed gives it the feed in, and
+# where it was served, against which, and the xml:base of the elements around each, it resolves
+# every address of the feed, as XML has it. An id is kept as written: a posting's key does not
+# change with a base or the address of its feed. The names below are those of feedparser's
+# result, and those of its parsers that read ids and links.
 DECODED_FEED = "application/xml; charset=utf-8"
+HEADERS = "headers"
+VERSION = "version"
+FEED = "feed"
+ENTRIES = "entries"
+BOZO = "bozo"
+BOZO_EXCEPTION = "bozo_exception"
+ID = "id"
+HREF = "href"
+LINKS = "links"
+# feedparser takes each element's base anew, joining it to the base around it: given the feed's
+# address, that cost a second for 40,000 elements and 1 GiB more for 6.9 million unclosed ones.
+# It is given the address only where the feed names a base of its own, in an attribute xml:base
+# or base, as it reads either; elsewhere read_feed resolves the addresses after it, against the
+# feed's address, which gives the same.
+BASE_ATTRIBUTE = re.compile(r"\bbase\s*=", re.IGNORECASE)
+NO_BASE = ""
 
 # What a web page opens with, after an XML declaration and comments, and what a feed opens
 # with. A page declared as one but opening as a feed is taken for a feed, as some servers
-# declare their feeds as pages.
+# declare their feeds as pages. Comments are taken one after another and never given back, so
+# that an opening that is not a page's is told so at once however many comments it begins
+# with.
 OPENING_CHARACTERS = 4096
 PAGE_OPENING = re.compile(
-    r"\s*(?:<\?xml[^>]*>\s*)?(?:<!--.*?-->\s*)*<(?:!doctype\s+html|html)\b",
-    re.IGNORECASE | re.DOTALL,
+    r"\s*+(?:<\?xml[^>]*+>\s*+)?(?:<!--(?:[^-]|-(?!->))*+-->\s*+)*+<(?:!doctype\s+html|html)\b",
+    re.IGNORECASE,
 )
 FEED_OPENING = re.compile(r"\s*(?:<\?xml|<rss|<feed|<rdf:rdf|\{)", re.IGNORECASE)
 JSON_OPENINGS = ("{", "[")
 XML_OPENING = "<"
 
-# What a reader is told of bytes that hold no feed: what they hold instead, and what to give.
-GIVE_A_FEED = "give the address of a feed, or a route of RSSHub, instead"
-NOT_A_FEED = "{address} is not a feed but {found}; " + GIVE_A_FEED
+# What a reader is told of bytes that hold no feed: what they hold instead.
+NOT_A_FEED = "{address} is not a feed but {found}"
 FOUND_NOTHING = "an empty answer"
 FOUND_PAGE = "a web page"
 FOUND_JSON = "JSON that is not a JSON Feed"
@@ -139,10 +177,13 @@ FOUND_XML = "XML that is not RSS or Atom"
 FOUND_FILE = "a file of the kind {kind}"
 FOUND_TEXT = "text that is not RSS, Atom or a JSON Feed"
 FOUND_TANGLED = "XML whose elements overlap too much to read it as RSS or Atom"
+FOUND_BROKEN = "RSS or Atom that breaks off, or is broken, before its title and its first posting"
 
 # The relations of a link that feedparser reports: the page of a posting or of a feed, and a
 # file it carries. A link without a relation is an alternate one, which feedparser says.
 ALTERNATE = "alternate"
+# The versions feedparser gives a feed of Atom begin so.
+ATOM = "atom"
 ENCLOSURE = "enclosure"
 PLAIN_TEXT = "text/plain"
 MARKUP_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -152,11 +193,23 @@ BREAKING_ELEMENTS = tuple(
     | {"br", "article", "aside", "figcaption", "figure", "footer", "header", "main", "section"}
 )
 
+# An address is taken as a browser takes one: without the white space around it, the tabs and
+# line breaks within it, and with a space within it written as %20.
+OUTER_SPACE = " \t\n\r\f"
+INNER_BREAKS = re.compile(r"[\t\n\r]")
+SPACE = " "
+WRITTEN_SPACE = "%20"
+
 JSON_FEED_VERSION = r"^https?://jsonfeed\.org/version/"
-# pydantic's reader of JSON refuses a whole document that writes half a pair of surrogates as
-# an escape, which a feed whose writer cut a text inside an emoji writes. Such an escape is
-# read as the replacement character. An escape is one where the backslashes before the u are
-# odd in number, the others standing for themselves; a whole pair is kept.
+# A JSON Feed is read by Python's reader of JSON, which builds what the document holds, all its
+# postings among it, before any is looked at: it takes less memory for each value than
+# pydantic's, and where it runs out of memory raises an error that can be told, where pydantic's
+# ends the process. A number is kept as written, as Python reads no whole number of more than
+# 4,300 digits, and a posting's id written as a number is taken as text. Half a pair of
+# surrogates written as an escape, which a feed whose writer cut a text inside an emoji writes,
+# is read as the replacement character, as text that holds it cannot be written out again. An
+# escape is one where the backslashes before the u are odd in number, the others standing for
+# themselves; a whole pair is kept.
 SURROGATE_ESCAPE = re.compile(
     r"(?<!\\)((?:\\\\)*)\\u([dD][89abAB][0-9a-fA-F]{2}(?:\\u[dD][c-fC-F][0-9a-fA-F]{2})?"
     r"|[dD][c-fC-F][0-9a-fA-F]{2})"
@@ -167,8 +220,14 @@ REPLACEMENT_ESCAPE = "\\ufffd"
 # How a time is read: as RFC 3339 and ISO 8601 write it, then as RFC 822 does, in the zone it
 # is written in. feedparser's own reading of the other ways feeds write a time is not used: it
 # fills in a year, a month or a day that a time leaves out from the clock, and 71 real feeds
-# wrote no time that only it could read.
-TIME_READERS = (datetime.fromisoformat, parsedate_to_datetime)
+# wrote no time that only it could read. ISO 8601 reads a zone or refuses the time. Zones that
+# feeds write in RFC 822's place but not as it writes them, an offset with a colon and GMT with
+# an offset, are written as RFC 822 writes them before it reads them; a time whose zone it then
+# cannot read, as JST, is none, never the same clock time in UTC, and one written with no zone,
+# or with -0000, which RFC 822 gives a time in UTC whose zone is unknown, is in UTC.
+COLON_OFFSET = re.compile(r"([+-])(\d{2}):(\d{2})$")
+GMT_OFFSET = re.compile(r"(?:GMT|UTC|UT)([+-])(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
+NO_ZONE = re.compile(r"(?:\d{1,2}:\d{2}(?::\d{2})?|\d{4}|-0000)$")
 
 
 class Posting(BaseModel):
@@ -226,7 +285,8 @@ def mapping_or_nothing(value: object) -> object:
 
 
 def mappings_of(value: object) -> object:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    listed = value[:MOST_LISTED] if isinstance(value, list) else []
+    return [item for item in listed if isinstance(item, dict)]
 
 
 # What feedparser gives is whatever a feed made of it. It leaves a text as None where it lost
@@ -274,10 +334,16 @@ class ParsedChannel(BaseModel):
 
 class ParsedFeed(BaseModel):
     # What feedparser reads of a feed of RSS or Atom. Its version is empty where it recognised
-    # neither. Its postings are read one at a time, as far as they are kept.
+    # neither. Its postings are read one at a time, as far as they are kept. Where the feed is
+    # not well-formed, what its XML parser found wrong is given as a SAXException; feedparser
+    # also gives other exceptions here, of the encoding, which leave the feed well-formed.
     version: ParsedString = ""
     feed: ParsedChannel
-    entries: SkipValidation[list[object]]
+    entries: SkipValidation[list[dict[str, object]]]
+    bozo_exception: SkipValidation[object] = None
+
+    def is_broken(self) -> bool:
+        return isinstance(self.bozo_exception, SAXException)
 
 
 class JsonFeedAttachment(BaseModel):
@@ -301,12 +367,17 @@ class JsonFeedItem(BaseModel):
 
 
 class JsonFeed(BaseModel):
-    # A JSON Feed, 1.0 or 1.1. A posting that is not written as the format has it is kept as
-    # the JSON it is, and left out, so that one malformed posting leaves the others readable.
+    # A JSON Feed, 1.0 or 1.1. Its postings are read one at a time, and no more than twice as
+    # many as are kept.
     version: Annotated[str, StringConstraints(pattern=JSON_FEED_VERSION)]
     title: str | None = None
     home_page_url: str | None = None
-    items: list[Annotated[JsonFeedItem | JsonValue, Field(union_mode="left_to_right")]] = []
+    items: SkipValidation[JsonValue] = None
+
+
+# A posting of a JSON Feed that is not written as the format has it is kept as the JSON it is,
+# and left out, so that one malformed posting leaves the others readable.
+JSON_FEED_ITEM = TypeAdapter(Annotated[JsonFeedItem | JsonValue, Field(union_mode="left_to_right")])
 
 
 def declared_charset(declared: str) -> list[str]:
@@ -355,32 +426,50 @@ def readable_reference(reference: re.Match[str]) -> str:
 
 
 def markup_text(markup: str) -> str:
+    # The text that markup shows, read as a browser reads it: a fragment, a whole document, a
+    # document that holds nothing, or nothing at all, which shows no text.
     readable = NUMBERED_REFERENCE.sub(readable_reference, NOT_IN_XML.sub(WORD_GAP, markup))
-    fragment = fragment_fromstring(readable, create_parent=True)
-    for element in fragment.iter(*BREAKING_ELEMENTS):
+    page = etree.HTML(readable)
+    if page is None:
+        return ""
+    for element in page.iter(*BREAKING_ELEMENTS):
         element.tail = WORD_GAP + (element.tail or "")
-    return "".join(SHOWN_TEXT(fragment))
+    return "".join(SHOWN_TEXT(page))
 
 
 def plain_text(given: GivenText) -> str:
-    # A text without markup, its character references resolved and its white space collapsed.
+    # A text without markup and its white space collapsed: markup's text with its character
+    # references resolved, plain text as it is written.
     match given.kind:
         case TextKind.MARKUP:
             text = markup_text(given.value)
         case TextKind.PLAIN:
-            text = html.unescape(LONG_REFERENCE.sub(readable_reference, given.value))
+            text = given.value
     return WORD_GAP.join(NOT_IN_XML.sub(WORD_GAP, text).split())
 
 
 def cut(text: str, most: int) -> str:
-    return text if len(text) <= most else text[: most - 1].rstrip() + CUT_SHORT
+    # A text cut short ends with an ellipsis. It is cut before a letter whose marks would be cut
+    # from it: the marks that combine with a letter follow it.
+    if len(text) <= most:
+        return text
+    end = most - 1
+    while end > 0 and unicodedata.category(text[end]).startswith("M"):
+        end -= 1
+    return text[:end].rstrip() + TITLE_CUT_SHORT
+
+
+def asked_as(written: str) -> str:
+    # An address as a browser asks for it.
+    taken = INNER_BREAKS.sub("", written.strip(OUTER_SPACE))
+    return taken.replace(SPACE, WRITTEN_SPACE)
 
 
 def resolved(address: str, base: str) -> list[str]:
     # An address resolved against a base. One that urllib cannot take apart, as one with a
     # bracket of an IPv6 address left open, resolves to none.
     try:
-        return [urljoin(base, address)]
+        return [urljoin(base, asked_as(address))]
     except ValueError:
         return []
 
@@ -398,16 +487,37 @@ def web_addresses(given: list[str], base: str) -> list[str]:
     ]
 
 
+def rfc822_zoned(written: str) -> str:
+    # A time with its zone written as RFC 822 writes one where it is written otherwise.
+    def gmt(found: re.Match[str]) -> str:
+        sign, hours, minutes = found.groups()
+        return f"{sign}{int(hours):02d}{minutes or '00'}"
+
+    return GMT_OFFSET.sub(gmt, COLON_OFFSET.sub(r"\1\2\3", written.strip()))
+
+
+def iso_moment(written: str) -> list[datetime]:
+    try:
+        moment = datetime.fromisoformat(written)
+    except (ValueError, OverflowError):
+        return []
+    return [moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)]
+
+
+def rfc822_moment(written: str) -> list[datetime]:
+    text = rfc822_zoned(written)
+    try:
+        moment = parsedate_to_datetime(text)
+    except (ValueError, OverflowError):
+        return []
+    if moment.tzinfo is not None:
+        return [moment]
+    return [moment.replace(tzinfo=UTC)] if NO_ZONE.search(text) else []
+
+
 def moment_of(written: str) -> datetime | None:
-    # A time that no reader can read, or that lies beyond the years Python counts, is none; one
-    # written without a zone is in UTC.
-    for reader in TIME_READERS:
-        try:
-            moment = reader(written)
-        except (ValueError, OverflowError):
-            continue
-        return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
-    return None
+    # A time that no reader can read, or that lies beyond the years Python counts, is none.
+    return next(iter(iso_moment(written) or rfc822_moment(written)), None)
 
 
 def title_of(listing: Listing, address: str) -> str:
@@ -451,63 +561,140 @@ def feed_of(
     )
 
 
-def given_text(parsed: ParsedText) -> GivenText:
-    kind = TextKind.MARKUP if parsed.type in MARKUP_TYPES else TextKind.PLAIN
-    return GivenText(value=parsed.value, kind=kind)
+def given_text(parsed: ParsedText, version: str) -> GivenText:
+    # A text of Atom is plain or markup as its type says; one of RSS carries markup by custom.
+    plain = version.startswith(ATOM) and parsed.type not in MARKUP_TYPES
+    return GivenText(value=parsed.value, kind=TextKind.PLAIN if plain else TextKind.MARKUP)
 
 
-def listing_of_entry(entry: ParsedEntry) -> Listing:
+def listing_of_entry(entry: ParsedEntry, version: str) -> Listing:
     # A posting's recordings are the enclosures of RSS and Atom, its pages the alternate links
     # of Atom and the link of RSS, then a guid that is a permalink, which feedparser gives as
-    # the link where the posting has no other.
+    # the link where the posting has no other: that is taken only where it is a web address
+    # itself, and never resolved against the feed's.
     recordings = [
         link.href
         for link in entry.links
         if link.rel == ENCLOSURE and link.type.casefold().startswith(RECORDING_MEDIA_TYPES)
     ]
     pages = [link.href for link in entry.links if link.rel == ALTERNATE]
+    from_guid = entry.link == entry.id
+    linked = entry.link if not from_guid or entry.link.casefold().startswith(WEB_SCHEMES) else ""
     return Listing(
         id=entry.id,
-        addresses=[*recordings, *pages, entry.link],
-        title=given_text(entry.title_detail) if entry.title_detail is not None else None,
-        summaries=[given_text(text) for text in [entry.summary_detail, *entry.content] if text],
+        addresses=[*recordings, *pages, linked],
+        title=given_text(entry.title_detail, version) if entry.title_detail is not None else None,
+        summaries=[
+            given_text(text, version) for text in [entry.summary_detail, *entry.content] if text
+        ],
         times=[entry.published, entry.updated],
     )
 
 
-def first_postings(text: str) -> str:
-    beyond = next(islice(POSTING_OPENING.finditer(text), READ_POSTINGS, None), None)
-    return text if beyond is None else text[: beyond.start()]
+def opening_after(text: str, opening: re.Pattern[str], most: int) -> int:
+    # Where the element after the most of a kind that are read begins; the text's end where
+    # there are no more.
+    beyond = next(islice(opening.finditer(text), most, None), None)
+    return len(text) if beyond is None else beyond.start()
+
+
+def read_part(text: str) -> str:
+    # The part of a feed that is read: up to the posting after those read, and up to the
+    # element of a list after those read.
+    end = min(
+        opening_after(text, POSTING_OPENING, READ_POSTINGS),
+        opening_after(text, LISTED_OPENING, READ_LISTED),
+    )
+    return text[:end]
+
+
+def parser_keeping_ids(parser_class: Any) -> Any:
+    # One of feedparser's parsers, but that it keeps an id as written, where it would resolve
+    # one it takes for a permalink against the base, and resolves the address of an RSS
+    # enclosure against the base in effect where it stands, as it does that of every link.
+    def pop(parser: Any, element: str, strip_whitespace: int = 1) -> Any:
+        if element != ID:
+            return parser_class.pop(parser, element, strip_whitespace)
+        permalink, parser.guidislink = parser.guidislink, False
+        try:
+            return parser_class.pop(parser, element, strip_whitespace)
+        finally:
+            parser.guidislink = permalink
+
+    def start_enclosure(parser: Any, attributes: Any) -> None:
+        parser_class._start_enclosure(parser, attributes)
+        enclosure = parser._get_context()[LINKS][-1]
+        if HREF in enclosure:
+            enclosure[HREF] = parser.resolve_uri(enclosure[HREF])
+
+    overrides = {"pop": pop, "_start_enclosure": start_enclosure}
+    return type(f"{parser_class.__name__}KeepingIds", (parser_class,), overrides)
+
+
+STRICT_PARSER = parser_keeping_ids(feedparser.api.StrictFeedParser)
+LOOSE_PARSER = parser_keeping_ids(feedparser.api.LooseFeedParser)
+
+
+def feedparser_result(data: bytes, base: str) -> Any:
+    # What feedparser reads of a feed's bytes, driven as feedparser.parse drives it, with the
+    # parsers above and the feed's own address as the base of its addresses: first by its
+    # parser of XML, which reads no external entity, then, where the feed is not well-formed,
+    # by its loose parser.
+    held = feedparser.util.FeedParserDict
+    result = held(bozo=False, entries=[], feed=held(), headers={CONTENT_TYPE: DECODED_FEED})
+    data = feedparser.encodings.convert_to_utf8(result[HEADERS], data, result)
+    result[VERSION], data, entities = feedparser.sanitizer.replace_doctype(data)
+    parser = STRICT_PARSER(base, None, DEFAULT_ENCODING)
+    parser.resolve_relative_uris = parser.sanitize_html = False
+    reader = xml.sax.make_parser(feedparser.api.PREFERRED_XML_PARSERS)
+    reader.setFeature(feature_namespaces, True)
+    with suppress(SAXNotSupportedException):
+        reader.setFeature(feature_external_ges, False)
+    reader.setContentHandler(parser)
+    reader.setErrorHandler(parser)
+    source = InputSource()
+    source.setByteStream(BytesIO(data))
+    try:
+        reader.parse(source)
+    except SAXException as failure:
+        result[BOZO] = True
+        result[BOZO_EXCEPTION] = parser.exc or failure
+        parser = LOOSE_PARSER(base, None, DEFAULT_ENCODING, entities)
+        parser.resolve_relative_uris = parser.sanitize_html = False
+        parser.feed(data.decode(DEFAULT_ENCODING, errors="replace"))
+    result[FEED] = parser.feeddata
+    result[ENTRIES] = parser.entries
+    result[VERSION] = result[VERSION] or parser.version
+    return result
 
 
 def xml_feed(text: str, address: str) -> ParsedFeed:
     # feedparser reads RSS 0.9x, 1.0 and 2.0 and Atom, and reads on where a feed is not
-    # well-formed. It is handed a stream, as a string would be taken for a file's name or an
-    # address to fetch. Where elements overlap, as in <item><link>x</item></link>, it closes an
+    # well-formed. Where elements overlap, as in <item><link>x</item></link>, it closes an
     # element in a context that does not hold it, and fails with a KeyError or an IndexError of
     # its own, or a TypeError where it takes the text of an element it lost for a number.
+    readable = LONG_REFERENCE.sub(
+        readable_reference, ENTITY_DECLARATION.sub(ENTITY_REMOVED, read_part(text))
+    )
+    base = address if BASE_ATTRIBUTE.search(readable) else NO_BASE
     try:
-        parsed = feedparser.parse(
-            BytesIO(
-                LONG_REFERENCE.sub(
-                    readable_reference, ENTITY_DECLARATION.sub(ENTITY_REMOVED, first_postings(text))
-                ).encode()
-            ),
-            response_headers={CONTENT_TYPE: DECODED_FEED},
-            resolve_relative_uris=False,
-            sanitize_html=False,
-        )
+        parsed = feedparser_result(readable.encode(), base)
     except (KeyError, IndexError, TypeError) as failure:
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_TANGLED)) from failure
     return ParsedFeed.model_validate(parsed)
 
 
 def rss_or_atom(parsed: ParsedFeed, address: str) -> Feed:
+    # A posting is read from what feedparser holds of it, and never through its mapping of
+    # names, which gives a posting's updated time as its published one where it has none and
+    # warns that it will stop.
     channel = parsed.feed
+    version = parsed.version
+    entries = (ParsedEntry.model_validate(dict.copy(entry)) for entry in parsed.entries)
     return feed_of(
-        title=given_text(channel.title_detail) if channel.title_detail is not None else None,
+        title=given_text(channel.title_detail, version) if channel.title_detail else None,
         sites=[*[link.href for link in channel.links if link.rel == ALTERNATE], channel.link],
-        listings=(listing_of_entry(ParsedEntry.model_validate(entry)) for entry in parsed.entries),
+        listings=(listing_of_entry(entry, version) for entry in entries),
         address=address,
     )
 
@@ -541,15 +728,16 @@ def whole_surrogates(escape: re.Match[str]) -> str:
 
 def json_feed(text: str, address: str) -> Feed:
     try:
-        document = JsonFeed.model_validate_json(SURROGATE_ESCAPE.sub(whole_surrogates, text))
-    except ValidationError as failure:
+        written = json.loads(SURROGATE_ESCAPE.sub(whole_surrogates, text), parse_int=str)
+        document = JsonFeed.model_validate(written)
+    except (ValueError, RecursionError) as failure:
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_JSON)) from failure
+    listed = document.items[:READ_POSTINGS] if isinstance(document.items, list) else []
+    read = (JSON_FEED_ITEM.validate_python(item) for item in listed)
     return feed_of(
         title=GivenText(value=document.title, kind=TextKind.PLAIN) if document.title else None,
         sites=[document.home_page_url or ""],
-        listings=(
-            listing_of_item(item) for item in document.items if isinstance(item, JsonFeedItem)
-        ),
+        listings=(listing_of_item(item) for item in read if isinstance(item, JsonFeedItem)),
         address=address,
     )
 
@@ -560,18 +748,23 @@ def read_feed(content: bytes, declared: str, address: str) -> Feed:
     text = decoded(content, declared)
     if not text.strip():
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_NOTHING))
-    kind = filetype.guess(content)
-    if kind is not None:
-        found = FOUND_FILE.format(kind=kind.mime)
-        raise UnreadableFeed(NOT_A_FEED.format(address=address, found=found))
     if text.lstrip().startswith(JSON_OPENINGS):
         return json_feed(text, address)
     if is_page(content, declared):
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_PAGE))
     parsed = xml_feed(text, address)
     # A feed that is not well-formed is still read as far as feedparser reads it: it is a feed
-    # where feedparser recognised its format, or read a title or a posting of it.
-    if not (parsed.version or parsed.entries or parsed.feed.title_detail):
-        found = FOUND_XML if text.lstrip().startswith(XML_OPENING) else FOUND_TEXT
+    # where feedparser read a title or a posting of it. One of which it read neither, as one
+    # that breaks off before them, is no feed, so that its poll fails and is made again, and
+    # the subscription keeps what it read last. A well-formed feed is a feed where feedparser
+    # recognised its format, postings or none. What else the bytes hold is told by the kind of
+    # file they look like, where they look like one.
+    read = parsed.entries or parsed.feed.title_detail
+    if parsed.version and parsed.is_broken() and not read:
+        raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_BROKEN))
+    if not (parsed.version or read):
+        kind = filetype.guess(content)
+        written = FOUND_XML if text.lstrip().startswith(XML_OPENING) else FOUND_TEXT
+        found = FOUND_FILE.format(kind=kind.mime) if kind is not None else written
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=found))
     return rss_or_atom(parsed, address)
