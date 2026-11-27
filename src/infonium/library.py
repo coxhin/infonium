@@ -139,6 +139,7 @@ class NotInLibrary(LookupError):
 class OriginKind(StrEnum):
     LINK = "link"
     UPLOAD = "upload"
+    SUBSCRIBED = "subscribed"
 
 
 class Link(Tagged):
@@ -151,7 +152,17 @@ class Upload(Tagged):
     name: Annotated[str, StringConstraints(min_length=1)]
 
 
-Origin = Annotated[Link | Upload, Field(discriminator="kind")]
+class Subscribed(Tagged):
+    # An address that a posting of a subscription named, fetched and read as a link is. The item
+    # goes by what the posting is called, which is what the reader saw listed. The subscription
+    # is the one that listed the posting, by its id; it may have been removed since.
+    kind: Literal[OriginKind.SUBSCRIBED] = OriginKind.SUBSCRIBED
+    url: str
+    called: Annotated[str, StringConstraints(min_length=1)]
+    subscription: str
+
+
+Origin = Annotated[Link | Upload | Subscribed, Field(discriminator="kind")]
 
 
 class AttemptKind(StrEnum):

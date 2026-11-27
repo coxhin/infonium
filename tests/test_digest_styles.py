@@ -200,6 +200,11 @@ REFUSED_WRITES: dict[str, st.SearchStrategy[dict[str, Any]]] = {
     ).map(lambda given: {"style": given[0], "instructions": given[1]}),
 }
 
+# The part of what is answered about an item that is its entry, and the field of an entry that
+# says when its item was seen, which entries have had since subscriptions.
+ENTRY_PART = "entry"
+SEEN_FIELD = "seen"
+
 
 def digest_path(item_id: str) -> str:
     return f"/api/items/{item_id}/digest"
@@ -860,23 +865,33 @@ def read_as_instants(digests: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{**digest, "written": datetime.fromisoformat(digest["written"])} for digest in digests]
 
 
+def never_seen(entry: dict[str, Any]) -> dict[str, Any]:
+    # An item's entry as it was answered before entries told when their items were seen: an
+    # item of a library kept before that was never seen.
+    assert entry[SEEN_FIELD] is None, (
+        f"an item of a library kept before items were seen is said to have been seen: {entry}"
+    )
+    return {field: value for field, value in entry.items() if field != SEEN_FIELD}
+
+
 def test_a_library_kept_before_digest_styles_opens_with_all_else_it_held_as_it_was(
     start_app: Callable[..., App], tmp_path: Path
 ) -> None:
     app, answers = opened_before_styles(start_app, tmp_path)
     assert answers.item_answers and answers.notes, "the library kept holds no items or notes"
-    assert answered(app, "/api/items") == answers.items, (
+    assert [never_seen(entry) for entry in answered(app, "/api/items")] == answers.items, (
         "the items of a library kept before digest styles are not as they were"
     )
     for item, kept in answers.item_answers.items():
         for what, path, before in (
-            ("entry", f"/api/items/{item}", kept.entry),
+            (ENTRY_PART, f"/api/items/{item}", kept.entry),
             ("document", f"/api/items/{item}/document", kept.document),
             ("revisions", f"/api/items/{item}/revisions", kept.revisions),
             ("highlights", f"/api/items/{item}/highlights", kept.highlights),
             ("translation", f"/api/items/{item}/translation", kept.translation),
         ):
-            assert answered(app, path) == before, (
+            now = answered(app, path)
+            assert (never_seen(now) if what == ENTRY_PART else now) == before, (
                 f"what is answered of an item's {what} in a library kept before digest styles is "
                 "not what was answered before"
             )

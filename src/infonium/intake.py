@@ -46,6 +46,7 @@ from infonium.library import (
     Read,
     Reading,
     StagedPicture,
+    Subscribed,
     Upload,
     arrival_of,
     is_underway,
@@ -373,11 +374,14 @@ class Intake:
         # reading, and a file is not taken away while a reading or a document comes to name it.
         self.turn = Lock()
 
-    def begin_link(self, owner: str, url: str) -> Item:
-        item_id = item_identity(owner, url)
+    def begin_address(self, owner: str, origin: Link | Subscribed) -> Item:
+        # A reading of what an address leads to: one a reader gave, or one a posting of a
+        # subscription named. The item is told by its address alone, so the same address is the
+        # same item whichever way it came, and takes the origin of the reading begun last.
+        item_id = item_identity(owner, origin.url)
         with self.turn:
             underway = self.underway(owner, item_id)
-            item = underway[0] if underway else self.started(owner, item_id, Link(url=url))
+            item = underway[0] if underway else self.started(owner, item_id, origin)
         if not underway:
             self.read_in_background(owner, item_id)
         return item
@@ -396,8 +400,8 @@ class Intake:
         if is_underway(item.reading):
             return item
         match item.origin:
-            case Link(url=url):
-                return self.begin_link(owner, url)
+            case Link() | Subscribed():
+                return self.begin_address(owner, item.origin)
             case Upload(name=name) if not kept:
                 # The file of an upload is kept only beside a document read from it.
                 raise NothingToReadAgain(NOTHING_KEPT.format(name=name))
@@ -500,7 +504,7 @@ class Intake:
         try:
             with TemporaryDirectory(dir=self.store.work) as directory:
                 match item.origin:
-                    case Link(url=url):
+                    case Link(url=url) | Subscribed(url=url):
                         readout = link_readout(
                             url,
                             Path(directory),
@@ -535,7 +539,14 @@ class Intake:
             with self.turn:
                 with self.store.library(owner) as library:
                     current = library.item(item_id)
-                    settled = reading_settled(current.reading, readout.extracted.title, document.id)
+                    # An item that a subscription brought goes by what its posting is called,
+                    # which is what the reader saw listed; any other by its source's own title.
+                    title = (
+                        current.origin.called
+                        if isinstance(current.origin, Subscribed)
+                        else readout.extracted.title
+                    )
+                    settled = reading_settled(current.reading, title, document.id)
                     new_document = library.keep_document(document, datetime.now(UTC))
                     if new_document:
                         self.store.keep_snapshot(snapshot)

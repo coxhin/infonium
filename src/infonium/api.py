@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from functools import cache
 from http import HTTPStatus
 from pathlib import PurePath
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urldefrag, urlsplit
 
 import openai
@@ -45,6 +45,7 @@ from infonium.document import (
     Block,
     BlockNumber,
     MediaType,
+    Tagged,
     error_text,
 )
 from infonium.embedding import EmbeddingEngine
@@ -75,6 +76,7 @@ from infonium.library import (
     Item,
     Library,
     LibraryStore,
+    Link,
     NotInLibrary,
     Origin,
     OwnerTransaction,
@@ -100,6 +102,17 @@ from infonium.revision import Revision, RevisionNumber, Revisions
 from infonium.search import BlockIndex, IndexFailed
 from infonium.settings import Settings
 from infonium.speech import Recogniser
+from infonium.subscriptions.feed import UnreadableFeed
+from infonium.subscriptions.subscription import (
+    AdmissionKind,
+    Awaited,
+    Follows,
+    FollowsChoice,
+    Poll,
+    PostingNumber,
+    SubscriptionDraft,
+    Unadmitted,
+)
 from infonium.translation import Progress, TranslatedBlock
 from infonium.translator import TranslationNotAsked, TranslationStanding, Translator
 
@@ -285,9 +298,13 @@ class LinkImport(BaseModel):
 
 
 class ItemEntry(BaseModel):
+    # An item as a list shows it. It was seen when its reader first had its document on show;
+    # an item that a subscription brought, that is read and was not seen yet, is new to its
+    # reader.
     id: str
     origin: Origin
     reading: Reading
+    seen: AwareDatetime | None
 
 
 class DocumentView(BaseModel):
@@ -492,6 +509,38 @@ class NoteView(BaseModel):
     changed: AwareDatetime
 
 
+class SubscriptionView(BaseModel):
+    # A subscription: the address its reader gave and the feed that address led to, what the
+    # feed calls itself and the site it says it belongs to, how it follows the feed, and how
+    # its latest poll stands. The postings are how many it lists; the unseen, how many of
+    # them are items that are read and that the reader has not seen.
+    id: str
+    address: str
+    feed: str
+    title: str
+    site: str | None
+    added: AwareDatetime
+    follows: Follows
+    poll: Poll
+    postings: int
+    unseen: int
+
+
+class AdmittedItem(Tagged):
+    # The posting was handed to the library as this item, whose reading says the rest.
+    kind: Literal[AdmissionKind.ADMITTED] = AdmissionKind.ADMITTED
+    item: ItemEntry
+
+
+class PostingView(BaseModel):
+    # A posting a subscription lists, and what has come of admitting it to the library.
+    number: PostingNumber
+    title: str
+    address: str
+    published: AwareDatetime | None
+    admission: Annotated[Unadmitted | Awaited | AdmittedItem, Field(discriminator="kind")]
+
+
 def refusal(status: HTTPStatus, detail: str) -> Response:
     return Response(
         content=Failure(detail=detail).model_dump_json(), status_code=status, media_type=JSON
@@ -517,6 +566,7 @@ app.add_exception_handler(PassageNotHeld, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(NothingToReadAgain, explained(HTTPStatus.CONFLICT))
 app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
+app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -535,6 +585,11 @@ NOTHING_KEPT: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": 
 # A draft of a note that holds its edition or a later one already: the note holds a later
 # writing than the one the draft was written from.
 STALE: dict[int | str, dict[str, Any]] = {HTTPStatus.PRECONDITION_FAILED: {"model": Failure}}
+# An address that cannot be subscribed to: it leads to no feed, or its feed cannot be read.
+NO_FEED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
+# How many postings a list of them holds unless more or fewer are asked for, and at most.
+POSTINGS_LISTED = 50
+MOST_POSTINGS_LISTED = 200
 # What a model's failure to answer is told as, once the lines of an answer have begun.
 
 
@@ -613,7 +668,7 @@ AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 
 def entry_of(item: Item) -> ItemEntry:
-    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading)
+    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading, seen=None)
 
 
 def translation_view(standing: TranslationStanding) -> TranslationView:
@@ -671,7 +726,7 @@ def list_items(owner: Owner) -> list[ItemEntry]:
 @app.post("/api/items")
 def import_link(link: LinkImport, owner: Owner) -> ItemEntry:
     # A fragment names a place in a page, not another page.
-    return entry_of(intake().begin_link(owner, urldefrag(str(link.url)).url))
+    return entry_of(intake().begin_address(owner, Link(url=urldefrag(str(link.url)).url)))
 
 
 @app.post("/api/items/upload", responses=NAMELESS)
@@ -688,6 +743,13 @@ def import_upload(file: UploadFile, owner: Owner) -> ItemEntry:
 def item_entry(item_id: str, owner: Owner) -> ItemEntry:
     with library_store().library(owner) as library:
         return entry_of(library.item(item_id))
+
+
+@app.put("/api/items/{item_id}/seen", responses=NOT_IN_LIBRARY)
+def see_item(item_id: str, owner: Owner) -> ItemEntry:
+    # The reader has the item's document on show. The first time is kept as when the item was
+    # seen; a later one changes nothing.
+    raise NotImplementedError
 
 
 @app.get("/api/items/{item_id}/document", responses=NOT_IN_LIBRARY)
@@ -1145,3 +1207,82 @@ def rewrite_note(note_id: str, draft: NoteDraft, owner: Owner) -> NoteView:
 def remove_note(note_id: str, owner: Owner) -> None:
     with library_store().transaction(owner) as transaction:
         Notes(transaction).remove(note_id)
+
+
+@app.get("/api/subscriptions")
+def list_subscriptions(owner: Owner) -> list[SubscriptionView]:
+    # The owner's subscriptions, the one added last first.
+    raise NotImplementedError
+
+
+@app.post("/api/subscriptions", responses=NO_FEED)
+def subscribe(draft: SubscriptionDraft, owner: Owner) -> SubscriptionView:
+    # Finds the feed the address leads to, reads it, and keeps a subscription to it that
+    # lists the postings the feed holds now; the newest of them, as many as the draft says,
+    # are admitted to the library. A feed the owner is subscribed to already is answered as
+    # that subscription, unchanged. An address that leads to no feed that can be read is
+    # refused with the reason, and nothing is kept.
+    raise NotImplementedError
+
+
+@app.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
+def read_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
+    raise NotImplementedError
+
+
+@app.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
+def choose_follows(subscription_id: str, choice: FollowsChoice, owner: Owner) -> SubscriptionView:
+    # Sets how the subscription follows its feed from now on.
+    raise NotImplementedError
+
+
+@app.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
+def poll_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
+    # Starts a poll of the subscription's feed now, whenever the next was due and though the
+    # subscription be paused. Where a poll is under way already, that one goes on and no
+    # other starts. The answer shows the poll under way; its end is read from the
+    # subscription.
+    raise NotImplementedError
+
+
+@app.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
+def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
+    # Takes every item of the subscription's postings that is read and not seen for seen now.
+    raise NotImplementedError
+
+
+@app.delete(
+    "/api/subscriptions/{subscription_id}",
+    responses=NOT_IN_LIBRARY,
+    status_code=HTTPStatus.NO_CONTENT,
+)
+def unsubscribe(subscription_id: str, owner: Owner) -> None:
+    # Removes the subscription and the list of its postings. The items it brought stay in the
+    # library.
+    raise NotImplementedError
+
+
+@app.get("/api/subscriptions/{subscription_id}/postings", responses=NOT_IN_LIBRARY)
+def subscription_postings(
+    subscription_id: str,
+    owner: Owner,
+    before: Annotated[
+        PostingNumber | None,
+        Query(
+            description="Only postings older than the one of this number; without it, the newest"
+        ),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=MOST_POSTINGS_LISTED)] = POSTINGS_LISTED,
+) -> list[PostingView]:
+    # The postings the subscription lists, the newest first, as many as the limit at most.
+    raise NotImplementedError
+
+
+@app.post(
+    "/api/subscriptions/{subscription_id}/postings/{number}/reading", responses=NOT_IN_LIBRARY
+)
+def read_posting(subscription_id: str, number: PostingNumber, owner: Owner) -> PostingView:
+    # Has the posting read at the reader's word: one that is not admitted, or that waits, is
+    # admitted to the library now, and one whose item's reading failed is read again. One
+    # whose item is being read, or is read, is answered as it stands.
+    raise NotImplementedError

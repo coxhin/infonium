@@ -36,6 +36,11 @@ export type NoteEntry = Schemas["NoteEntry"];
 export type Note = Schemas["NoteView"];
 export type NoteDraft = Schemas["NoteDraft"];
 export type LinkedPassage = Schemas["LinkedPassage"];
+export type Subscription = Schemas["SubscriptionView"];
+export type Follows = Schemas["Follows"];
+export type Poll = Subscription["poll"];
+export type Posting = Schemas["PostingView"];
+export type Admission = Posting["admission"];
 // The anchors of a passage: one at least, of one document, in the order of its blocks.
 export type Anchors = [Anchor, ...Anchor[]];
 // What happens while a question is answered. The protocol lists these as the items of a
@@ -489,5 +494,93 @@ export function rewriteNote(noteId: string, draft: NoteDraft, leaving = false): 
 export function removeNote(noteId: string): Promise<void> {
   return done(
     reached(api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } } })),
+  );
+}
+
+// The reader has the item's document on show; the first time is kept as when it was seen.
+export function seeItem(itemId: string): Promise<ItemEntry> {
+  return settled(api.PUT("/api/items/{item_id}/seen", { params: { path: { item_id: itemId } } }));
+}
+
+// The subscriptions, the one added last first.
+export function listSubscriptions(): Promise<Subscription[]> {
+  return settled(api.GET("/api/subscriptions"));
+}
+
+// Subscribes to the feed the address leads to and admits as many of its newest postings as
+// given. An address that leads to no feed that can be read is refused with the reason (400).
+export function subscribe(address: string, admit: number): Promise<Subscription> {
+  return settled(api.POST("/api/subscriptions", { body: { address, admit } }));
+}
+
+export function readSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.GET("/api/subscriptions/{subscription_id}", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Sets how the subscription follows its feed from now on.
+export function chooseFollows(subscriptionId: string, follows: Follows): Promise<Subscription> {
+  return settled(
+    api.PUT("/api/subscriptions/{subscription_id}/follows", {
+      params: { path: { subscription_id: subscriptionId } },
+      body: { follows },
+    }),
+  );
+}
+
+// Starts a poll of the subscription's feed now; its end is read from the subscription.
+export function pollSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.POST("/api/subscriptions/{subscription_id}/poll", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Takes every item of the subscription's postings that is read and not seen for seen now.
+export function seeSubscription(subscriptionId: string): Promise<Subscription> {
+  return settled(
+    api.PUT("/api/subscriptions/{subscription_id}/seen", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// Removes the subscription and the list of its postings; the items it brought stay.
+export function unsubscribe(subscriptionId: string): Promise<void> {
+  return done(
+    api.DELETE("/api/subscriptions/{subscription_id}", {
+      params: { path: { subscription_id: subscriptionId } },
+    }),
+  );
+}
+
+// The postings the subscription lists, the newest first: those older than the posting of the
+// number given, or the newest of all, as many as the limit at most.
+export function listPostings(
+  subscriptionId: string,
+  before: number | undefined,
+  limit: number,
+): Promise<Posting[]> {
+  return settled(
+    api.GET("/api/subscriptions/{subscription_id}/postings", {
+      params: {
+        path: { subscription_id: subscriptionId },
+        query: before === undefined ? { limit } : { before, limit },
+      },
+    }),
+  );
+}
+
+// Has the posting read at the reader's word: admitted now where it is not, read again where
+// its item's reading failed.
+export function readPosting(subscriptionId: string, number: number): Promise<Posting> {
+  return settled(
+    api.POST("/api/subscriptions/{subscription_id}/postings/{number}/reading", {
+      params: { path: { subscription_id: subscriptionId, number } },
+    }),
   );
 }
