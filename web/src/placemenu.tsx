@@ -1,11 +1,8 @@
 import { useState, type FormEvent } from "react";
 import type { Folder } from "./client";
+import { FOLDER_NAME_LENGTH } from "./folders";
 import { MenuItem, Popup, type Opening } from "./menu";
 import { usePress, type Press } from "./pressing";
-
-// The most characters a folder's name holds, as the service counts them once the white space
-// around the name is trimmed.
-export const FOLDER_NAME_LENGTH = 50;
 
 function Refusal({ press, doing }: { press: Press; doing: string }) {
   return press.state === "refused" ? (

@@ -9,13 +9,13 @@ import {
   type Placing,
   type Subscription,
 } from "./client";
-import type { Held } from "./foldermenu";
 import {
   entriesPlaced,
   outOfFolder,
   subscriptionsPlaced,
   useFolders,
   withFolder,
+  type Held,
   type Placer,
 } from "./folders";
 import type { Watched } from "./loading";

@@ -11,10 +11,10 @@ import {
 import type { Browsing } from "./browsing";
 import { requestReason, type Folder, type Subscription } from "./client";
 import { draggedOver, endDrag, type Dragged } from "./dragging";
+import { FOLDER_NAME_LENGTH } from "./folders";
 import { Interruption } from "./interruption";
 import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
-import { FOLDER_NAME_LENGTH } from "./placemenu";
 import { usePress } from "./pressing";
 import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
 import {

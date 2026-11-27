@@ -7,8 +7,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { Folder, Subscription } from "./client";
-import { FolderMenu, type Held } from "./foldermenu";
-import type { Placer } from "./folders";
+import { FolderMenu } from "./foldermenu";
+import type { Held, Placer } from "./folders";
 import { isMenuKey, openingAt, type Opening } from "./menu";
 import { PlaceMenu } from "./placemenu";
 import {

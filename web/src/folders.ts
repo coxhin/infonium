@@ -9,6 +9,13 @@ import {
 import { LIST_INTERVAL_MS, useWatched, type Watched } from "./loading";
 import { followed } from "./sidebarselection";
 
+// The most characters a folder's name holds, as the service counts them once the white space
+// around the name is trimmed.
+export const FOLDER_NAME_LENGTH = 50;
+
+// What a folder holds, as the question before dissolving it says it.
+export type Held = { subscriptions: number; items: number };
+
 // What moves subscriptions and items between folders, for the menus and the drags of both
 // columns: the folders by name, a placing sent to the service, and a folder made. Each answers
 // once the service has done it and what is on show follows, and fails with the service's reason.

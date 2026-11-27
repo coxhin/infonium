@@ -9,8 +9,8 @@ import {
 } from "react";
 import type { Folder, Subscription } from "./client";
 import { endDrag, startDrag } from "./dragging";
+import { FOLDER_NAME_LENGTH } from "./folders";
 import { openingAt, openingOfContextMenu, type Opening } from "./menu";
-import { FOLDER_NAME_LENGTH } from "./placemenu";
 import { usePress } from "./pressing";
 import { FIXED_NAMES, keyOf } from "./sidebarselection";
 import { stateWord } from "./subscriptions";
