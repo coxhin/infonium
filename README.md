@@ -517,7 +517,7 @@ make protocol    # regenerate protocol/openapi.json and web/src/protocol.d.ts
 
 The HTTP protocol is defined by the models in `src/infonium`. `protocol/openapi.json` and `web/src/protocol.d.ts` are generated from them and never edited by hand.
 
-`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. On a loaded machine it took 486 seconds. Three tests of where a passage stands after a second reading are marked as failing at times, each with the limit it stands for, and seven cases of five tests of the reading, polling and finding of feeds are marked as failing, each with the requirement that the code does not meet. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
+`make test` runs the tests in `tests` without the network, a browser, MinerU, FFmpeg, a speech recogniser, an embedding engine or a model: stand-ins answer for the model and the embedding engine, and a test that opens a network socket or looks up a name fails. It takes about six and a half minutes. Three tests of where a passage stands after a second reading are marked as failing at times, each with the limit it stands for. A test that needs one of these programs carries its name as a marker and runs when the marker is named; it is skipped when the program is not found the way infonium finds it:
 
 ```bash
 uv run pytest -m chrome    # Chrome or Chromium, by INFONIUM_BROWSER
@@ -531,7 +531,7 @@ The tests of the pace of requests to GLM's endpoint wait out real pauses and tak
 uv run pytest -m pace      # the pace of requests to GLM's endpoint
 ```
 
-The 28 tests of the fetcher's program poll and find feeds in the program, as infonium runs it, against a server on port 9146 of this machine, with port 9149 standing for a port that nothing answers on; so they need both ports free. They carry the marker `apart`, are left out of `make test` as well, took 48 seconds, and are run after a change to the program (`src/infonium/subscriptions/program.py`) or to what it runs.
+The 58 tests of the fetcher's program poll and find feeds in the program, as infonium runs it, against servers on ports 9146 and 9147 of this machine, with port 9149 standing for a port that nothing answers on; so they need the three ports free. They carry the marker `apart`, are left out of `make test` as well, took 69 seconds, and are run after a change to the program (`src/infonium/subscriptions/program.py`) or to what it runs.
 
 ```bash
 uv run pytest -m apart     # polls and discoveries in the fetcher's program
