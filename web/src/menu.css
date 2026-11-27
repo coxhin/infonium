@@ -1,0 +1,126 @@
+/* A popup over the page: a menu of choices, or a question asked before a press is sent. It
+   scrolls inside itself where it is taller than the window. */
+.popup {
+  position: fixed;
+  z-index: 20;
+  min-width: 12rem;
+  max-width: min(20rem, calc(100vw - 1rem));
+  overflow-y: auto;
+  padding: 0.3rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.3rem 1rem rgb(0 0 0 / 0.18);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.popup:focus {
+  outline: none;
+}
+
+.popup :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.popup [role^="menuitem"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: none;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.popup [role^="menuitem"]:hover,
+.popup [role^="menuitem"]:focus-visible {
+  background: var(--panel);
+}
+
+.popup [role^="menuitem"][aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* The folder an entry is in already, marked among the folders it can be moved to. */
+.popup [role="menuitemradio"]::before {
+  content: "";
+  flex: none;
+  width: 0.8em;
+  text-align: center;
+}
+
+.popup [role="menuitemradio"][aria-checked="true"]::before {
+  content: "✓";
+  color: var(--accent);
+}
+
+.popup .menu-heading {
+  margin: 0.2rem 0.6rem 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.popup [role="separator"] {
+  margin: 0.3rem 0.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.popup .status {
+  margin: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.popup form {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.popup input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+  padding: 0.25rem 0.45rem;
+}
+
+.popup button {
+  font-size: 0.85rem;
+}
+
+.question {
+  padding: 0.6rem 0.7rem;
+  max-width: min(18rem, calc(100vw - 1rem));
+}
+
+.question p {
+  margin: 0 0 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.question .choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.question .danger {
+  color: var(--failure);
+  border-color: var(--failure);
+}
+
+/* A press whose answer is awaited keeps the keyboard, and asks nothing more. */
+.popup button[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}

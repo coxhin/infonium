@@ -18,10 +18,13 @@ import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { LIST_INTERVAL_MS, reasonOf, useWatched, type Loaded, type Watched } from "./loading";
 import { isBeingRead } from "./entry";
 import { useRevisions } from "./itemrevisions";
+import { useNavigation } from "./navigation";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
 import type { Seat } from "./seat";
 import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
+import { Sidebar } from "./sidebar";
+import { useSidebarLayout } from "./sidebarlayout";
 import { PDF_MEDIA_TYPE } from "./views";
 
 const STILL_READING = "这一篇还在读取，读完后才能打开这段引文。";
@@ -406,6 +409,9 @@ export function App() {
   });
   const { seating, seated, unshown, pointer } = useSeating();
   const seen = useSeeing(seated?.itemId === selected ? seated : undefined, entries);
+  const [openedAtStart] = useState(selected);
+  const navigation = useNavigation(entries, seen, openedAtStart);
+  const layout = useSidebarLayout();
 
   // The column shows the passage a citation opens the item for, once the item's reader is on
   // show.
@@ -421,13 +427,16 @@ export function App() {
 
   return (
     <SeatingProvider value={seating}>
-      <div className="app">
+      <div className="app" data-sidebar={layout.pinned ? "column" : "rail"}>
+        <Sidebar navigation={navigation} layout={layout} />
         <ListColumn
           entries={entries.loaded}
           interrupted={entries.interrupted}
           refusal={entries.refusal}
           selected={selected}
           seen={seen}
+          navigation={navigation}
+          layout={layout}
           onImported={openImported}
           onChanged={entries.readNow}
         />
