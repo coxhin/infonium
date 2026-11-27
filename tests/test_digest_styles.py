@@ -59,6 +59,7 @@ class Style(StrEnum):
     # The styles by their ids, in the order they are offered.
     OVERVIEW = "overview"
     GUIDE = "guide"
+    FLASH = "flash"
     BRIEF = "brief"
     PAPER = "paper"
     OUTLINE = "outline"
@@ -83,6 +84,11 @@ STYLE_TEXTS = {
         "导读",
         "一段概要\N{FULLWIDTH LEFT PARENTHESIS}关键词加粗\N{FULLWIDTH RIGHT PARENTHESIS}"
         "\N{FULLWIDTH COMMA}加 3\N{EN DASH}6 个关键主题。仿 Gemini Notebook 的来源导读。",
+    ),
+    Style.FLASH: (
+        "快讯",
+        "1\N{EN DASH}3 句\N{FULLWIDTH COMMA}最要紧的事先说\N{FULLWIDTH COMMA}再补一两处关键的"
+        "数字或后果。仿新闻快讯的倒金字塔导语。适合扫一眼\N{FULLWIDTH COMMA}决定读不读。",
     ),
     Style.BRIEF: (
         "简报",
@@ -119,10 +125,12 @@ SECTION_FIELDS = frozenset({"title", "form", "statements"})
 # Words that the recipe of a built-in style cannot be written without: the English names of
 # its fixed sections, which the instructions name as they title a section with the words for
 # a name in the output language, and for the questions of faq, the word itself. The sections
-# of outline are the document's own parts, with no fixed names.
+# of outline are the document's own parts, with no fixed names. The one section of flash has
+# no title, and its words are what it is written as and what its first statement is.
 RECIPE_WORDS = {
     Style.OVERVIEW: ("Summary", "Takeaways"),
     Style.GUIDE: ("Overview", "Key topics"),
+    Style.FLASH: ("news flash", "lead"),
     Style.BRIEF: ("Bottom line", "Why it matters", "Key facts", "Yes, but", "What's next"),
     Style.PAPER: ("In one sentence", "Problem and motivation", "Method", "Results", "Limitations"),
     Style.OUTLINE: (),
@@ -325,10 +333,14 @@ def forms_of(digest: dict[str, Any]) -> list[object]:
     return [drafted.get("form") for drafted in digest["sections"]]
 
 
+def titles_of(digest: dict[str, Any]) -> list[object]:
+    return [drafted.get("title") for drafted in digest["sections"]]
+
+
 # R1: the styles offered.
 
 
-def test_the_seven_styles_are_offered_in_order_with_their_names_and_descriptions(
+def test_the_eight_styles_are_offered_in_order_with_their_names_and_descriptions(
     app: App,
 ) -> None:
     response = app.client.get(STYLES_PATH)
@@ -592,19 +604,30 @@ def test_instructions_given_as_null_with_a_built_in_style_are_taken_as_none(
     )
 
 
-# R8: every section carries the form drafted.
+# R8: every section carries the form drafted, and the title drafted: an empty one too, as the
+# one section of flash is drafted.
+
+# A section's title as a model drafts it: empty, or words.
+section_titles = st.one_of(
+    st.just(""),
+    st.text(alphabet=st.characters(codec="utf-8", exclude_categories=("Cs", "Cc")), max_size=20),
+)
 
 
-@given(style=st.sampled_from(Style), forms=st.lists(st.sampled_from(Form), min_size=1, max_size=8))
+@given(
+    style=st.sampled_from(Style),
+    drafted=st.lists(st.tuples(section_titles, st.sampled_from(Form)), min_size=1, max_size=8),
+)
+@example(style=Style.FLASH, drafted=[("", Form.PARAGRAPH)])
 @EXAMPLES
-def test_every_section_answered_carries_the_form_the_model_drafted(
-    app: App, style: Style, forms: list[Form]
+def test_every_section_answered_carries_the_title_and_the_form_the_model_drafted(
+    app: App, style: Style, drafted: list[tuple[str, Form]]
 ) -> None:
+    titles = [title for title, _ in drafted]
+    forms = [form for _, form in drafted]
     draft = [
-        section(
-            f"第 {number} 节", form, [statement(f"第 {number} 节说的。", [(0, FIRST_BLOCK_WORDS)])]
-        )
-        for number, form in enumerate(forms)
+        section(title, form, [statement(f"第 {number} 节说的。", [(0, FIRST_BLOCK_WORDS)])])
+        for number, (title, form) in enumerate(drafted)
     ]
     app.model.reset(drafting(draft))
     source = kept_ledger(app)
@@ -613,11 +636,19 @@ def test_every_section_answered_carries_the_form_the_model_drafted(
         f"the sections of a {style} digest are answered in the forms {forms_of(digest)}, not in "
         f"those drafted, {forms}"
     )
+    assert titles_of(digest) == titles, (
+        f"the sections of a {style} digest are answered with the titles {titles_of(digest)}, "
+        f"not with those drafted, {titles}"
+    )
     kept = kept_digests(app, source.item)
     assert styles_of(kept) == [style], f"the digest of {style} written is not kept: {kept}"
     assert forms_of(kept[0]) == forms, (
         f"the sections of the {style} digest kept are in the forms {forms_of(kept[0])}, not in "
         f"those drafted, {forms}"
+    )
+    assert titles_of(kept[0]) == titles, (
+        f"the sections of the {style} digest kept have the titles {titles_of(kept[0])}, not "
+        f"those drafted, {titles}"
     )
 
 
