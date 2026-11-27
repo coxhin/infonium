@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Annotated, Final, Literal
 
-from pydantic import AliasChoices, AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from infonium.citing import (
     BLOCKS_EXPLAINED,
@@ -138,13 +138,14 @@ class EarlierDigest(BaseModel):
 
 
 class DraftSection(BaseModel):
-    # A section as a model drafts it, its statements last. Through the relay, a reply's keys
-    # come in alphabetical order whatever the schema's, and where a section's title fell due
-    # after its statements, gpt-6.1-terra and gpt-6-luna at times wrote white space there
-    # without end. So the title is named heading, which sorts before the statements, and the
-    # section keeps it as its title. A model told the schema in text may still name it title
-    # from habit, and is read the same.
-    heading: str = Field(validation_alias=AliasChoices("heading", "title"))
+    # A section as a model drafts it. Through the relay a reply's keys come in alphabetical
+    # order whatever the schema's, so the title falls due after the statements, and it stays
+    # there. Where it falls due so, gpt-6.1-terra and gpt-6-luna at times wrote white space
+    # without end, which the guard of language_model now ends, sending the request again.
+    # Drafted first, named heading, the title cost more: gpt-6-luna wrote every quote of 5 of
+    # 101 digests in Chinese, so that each lost all its citations, against none of 101 drafted
+    # title last.
+    title: str
     form: SectionForm
     statements: list[DraftStatement]
 
@@ -173,7 +174,7 @@ def digest_instructions(language: str, chosen: ChosenStyle) -> str:
 def grounded_sections(document: Document, draft: DraftDigest) -> list[Section]:
     return [
         Section(
-            title=section.heading,
+            title=section.title,
             form=section.form,
             statements=[grounded(document, statement) for statement in section.statements],
         )

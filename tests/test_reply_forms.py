@@ -7,9 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
-from infonium.anchor import Citation
-from infonium.citing import DraftStatement
-from infonium.digest import DraftDigest, DraftSection, SectionForm
+from infonium.digest import DraftDigest
 from infonium.glossary import Term
 from infonium.item_conversation import DraftAnswer
 from infonium.language_model import parsed_reply, reply_schema
@@ -22,10 +20,12 @@ from infonium.survey import DocumentSurvey
 # fell due after the list that held an object's content, gpt-6.1-terra and gpt-6-luna at times
 # wrote white space there without end. So in every object of every form, in the schema's order
 # and in alphabetical order alike, no key comes after a key that holds a list unless it holds a
-# list itself: an object's content comes last. The one exception is a statement's text, which
-# follows its citations in alphabetical order: the statement itself, which no model takes for
-# done before it is written. A reply that names a renamed field as it was named before, as a
-# model told the schema in text may from habit, is read as one that names it as it is now.
+# list itself: an object's content comes last. Two keys are excepted, each after the one list it
+# follows. A statement's text follows its citations in alphabetical order: it is the statement
+# itself, which no model takes for done before it is written. A section's title follows its
+# statements, where it stays for the reasons DraftSection gives. A reply that names a renamed
+# field as it was named before, as a model told the schema in text may from habit, is read as
+# one that names it as it is now.
 
 # Every form a model's reply is held to, by the reply.
 REPLY_FORMS: dict[str, type[BaseModel]] = {
@@ -35,13 +35,12 @@ REPLY_FORMS: dict[str, type[BaseModel]] = {
     "a document's survey": DocumentSurvey,
     "a translation": Reply,
 }
-# The one key allowed after a list without holding one: a statement's text after its citations.
-LISTED_BEFORE = "citations"
-FOLLOWING = "text"
+# The keys allowed after a list without holding one, each with the one list it may follow: a
+# statement's text after its citations, and a section's title after its statements.
+FOLLOWING_A_LIST = {"text": "citations", "title": "statements"}
 # The fields renamed so that they no longer fall due after a list, by the form and the object
 # that holds them: each as it is named now and as it was named before.
 RENAMED = {
-    "a digest": ("DraftSection", "heading", "title"),
     "a document's survey": (
         "DocumentSurvey",
         "matches_asked_language",
@@ -52,26 +51,6 @@ DEFINITIONS = "$defs"
 REFERENCE = "$ref"
 PROPERTIES = "properties"
 
-drafted_statements = st.builds(
-    DraftStatement,
-    text=st.text(max_size=20),
-    citations=st.lists(
-        st.builds(Citation, block_number=st.integers(0, 999), quote=st.text(max_size=20)),
-        max_size=3,
-    ),
-)
-drafted_digests = st.builds(
-    DraftDigest,
-    sections=st.lists(
-        st.builds(
-            DraftSection,
-            heading=st.text(max_size=12),
-            form=st.sampled_from(SectionForm),
-            statements=st.lists(drafted_statements, max_size=3),
-        ),
-        max_size=5,
-    ),
-)
 surveys = st.builds(
     DocumentSurvey,
     language=st.text(max_size=12),
@@ -112,11 +91,12 @@ def holds_a_list(schema: dict[str, Any], definitions: dict[str, Any]) -> bool:
 
 
 def falling_due_late(keys: list[str], listing: set[str]) -> list[str]:
-    # The keys that come after a key holding a list without holding one, but a statement's text
-    # after its citations alone.
+    # The keys that come after a key holding a list without holding one, but a key excepted that
+    # follows its one list alone.
     after = keys[min((keys.index(key) for key in listing), default=len(keys)) :]
     late = [key for key in after if key not in listing]
-    return [] if late == [FOLLOWING] and set(after) - {FOLLOWING} == {LISTED_BEFORE} else late
+    excepted = len(late) == 1 and set(after) == {late[0], FOLLOWING_A_LIST.get(late[0])}
+    return [] if excepted else late
 
 
 def sent_schema(reply: str) -> dict[str, Any]:
@@ -155,27 +135,6 @@ def test_the_schema_sent_names_a_renamed_field_by_its_new_name_alone(reply: str)
     )
     named_before = [path for path, _, properties in described if before in properties[PROPERTIES]]
     assert not named_before, f"the schema sent for {reply} still names {before}: {named_before}"
-
-
-@given(draft=drafted_digests, data=st.data())
-def test_a_digest_whose_sections_name_their_title_as_before_is_read_as_one_that_names_its_heading(
-    draft: DraftDigest, data: st.DataObject
-) -> None:
-    written = draft.model_dump(mode="json")
-    renamed = data.draw(st.sets(st.integers(0, max(len(draft.sections) - 1, 0))))
-    as_before = {
-        "sections": [
-            {
-                ("title" if key == "heading" and at in renamed else key): value
-                for key, value in section.items()
-            }
-            for at, section in enumerate(written["sections"])
-        ]
-    }
-    read = parsed_reply(DraftDigest, json.dumps(as_before, ensure_ascii=False))
-    assert read == parsed_reply(DraftDigest, json.dumps(written, ensure_ascii=False)) == draft, (
-        f"a digest whose sections {sorted(renamed)} name their title as before is read otherwise"
-    )
 
 
 @given(survey=surveys)

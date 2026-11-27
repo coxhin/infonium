@@ -421,7 +421,7 @@ drafted_digests = st.builds(
     sections=st.lists(
         st.builds(
             DraftSection,
-            heading=st.text(max_size=12),
+            title=st.text(max_size=12),
             form=st.sampled_from(SectionForm),
             statements=st.lists(
                 st.builds(

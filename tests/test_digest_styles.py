@@ -241,8 +241,7 @@ def statement(text: str, citations: list[tuple[int, str]]) -> dict[str, Any]:
 
 
 def section(title: str, form: Form, statements: list[dict[str, Any]]) -> dict[str, Any]:
-    # A section as a model drafts it, its title named heading.
-    return {"heading": title, "form": form, "statements": statements}
+    return {"title": title, "form": form, "statements": statements}
 
 
 def ledger_draft(words: str) -> list[dict[str, Any]]:
@@ -399,11 +398,10 @@ def test_put_writes_no_digest_and_is_answered_405(app: App) -> None:
 
 
 def outline_of(sections: list[dict[str, Any]]) -> list[tuple[object, object, list[object]]]:
-    # The title, the form and the statements' words of each section, drafted, where the title
-    # is named heading, or answered.
+    # The title, the form and the statements' words of each section, drafted or answered.
     return [
         (
-            titled.get("heading", titled.get("title")),
+            titled.get("title"),
             titled.get("form"),
             [said.get("text") for said in titled.get("statements", [])],
         )
