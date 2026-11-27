@@ -71,10 +71,16 @@ button:disabled {
   color: var(--muted);
 }
 
+/* The sidebar, folded to a rail or unfolded to a column of its own; the list column; the reader;
+   and the column beside the reader. */
 .app {
   display: grid;
-  grid-template-columns: 17rem minmax(0, 1fr) 24rem;
+  grid-template-columns: 3rem 17rem minmax(0, 1fr) 24rem;
   height: 100vh;
+}
+
+.app:has(> .sidebar) {
+  grid-template-columns: 13rem 17rem minmax(0, 1fr) 24rem;
 }
 
 .app > * {

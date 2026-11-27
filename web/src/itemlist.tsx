@@ -1,13 +1,32 @@
-import { useId, useState, type ChangeEvent, type FormEvent } from "react";
-import { importLink, importUpload, type ItemEntry } from "./client";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
+import { importLink, importUpload, requestReason, type ItemEntry } from "./client";
+import { endDrag, startDrag } from "./dragging";
 import { isNew, itemTitle, originLabel } from "./entry";
+import type { Placer } from "./folders";
 import { Interruption } from "./interruption";
 import { itemLink } from "./links";
 import { reasonOf, type Loaded } from "./loading";
+import { MediaIcon, NO_MEDIA_NAME } from "./mediaicon";
+import { isMenuKey, openingAt, openingOfContextMenu, type Opening } from "./menu";
 import { NewDot, NewHeard } from "./newmarks";
+import { PlaceMenu } from "./placemenu";
+import { MEDIA_NAMES, followed } from "./selection";
 import "./heard.css";
 
-type Importing = { state: "idle" } | { state: "running" } | { state: "failed"; reason: string };
+type Importing =
+  | { state: "idle" }
+  | { state: "running" }
+  | { state: "failed"; reason: string }
+  | { state: "unplaced"; reason: string };
 
 const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
   underway: " · 读取中…",
@@ -16,65 +35,116 @@ const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
 };
 // Kinds of file the upload dialog offers; what a file really is, the server tells from its bytes.
 const UPLOADABLE = "application/pdf,audio/*,video/*,text/html,.html,.htm";
+// How many rows are drawn at first, a window and more of them, and how many more each time the
+// list is scrolled near the last drawn: a list of thousands is drawn as it is reached, so that
+// it shows at once.
+const ROWS_AT_A_TIME = 60;
 
-// Which items the list shows: all, those a reader added by a link or an upload, or those that
-// subscriptions brought.
-type Narrowing = "all" | "added" | "subscribed";
-const NARROWING_NAMES: Record<Narrowing, string> = {
-  all: "全部",
-  added: "手动添加",
-  subscribed: "订阅",
-};
-const NARROWED_AWAY: Record<Narrowing, string> = {
-  all: "",
-  added: "粘贴网址或上传文件添加的文章会列在这里。",
-  subscribed: "订阅读进来的文章会列在这里。",
-};
+// Where an import goes: into the folder selected, or where the service puts it.
+export type ImportInto = { folderId: string; name: string } | undefined;
 
-function narrowed(entries: ItemEntry[], narrowing: Narrowing): ItemEntry[] {
-  switch (narrowing) {
-    case "all":
-      return entries;
-    case "added":
-      return entries.filter((entry) => entry.origin.kind !== "subscribed");
-    case "subscribed":
-      return entries.filter((entry) => entry.origin.kind === "subscribed");
-  }
+// The rows drawn of a list, more as the last of them comes near; as many as at first again
+// whenever the list shown is another.
+function useRowsDrawn(total: number, listKey: string) {
+  const [drawn, setDrawn] = useState({ listKey, count: ROWS_AT_A_TIME });
+  const count = drawn.listKey === listKey ? drawn.count : ROWS_AT_A_TIME;
+  const end = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    const element = end.current;
+    if (element === null || count >= total) {
+      return undefined;
+    }
+    const watcher = new IntersectionObserver(
+      (seen) => {
+        if (seen.some((each) => each.isIntersecting)) {
+          setDrawn({ listKey, count: count + ROWS_AT_A_TIME });
+        }
+      },
+      { rootMargin: "400px 0px" },
+    );
+    watcher.observe(element);
+    return () => watcher.disconnect();
+  }, [count, total, listKey]);
+  return { count, end };
 }
 
-// The list of items as it has always been: adding by an address or a file, and the items, each
-// with where it came from, a subscription by its title; narrowed by where they came from.
+// The menu open of an item, and where it opened.
+type MenuOpen = { entry: ItemEntry; opening: Opening };
+
+// The items the selection lists, in the order the service gives them, each with the icon of its
+// media and where it came from, a subscription by its title. Above them, where the selection
+// takes them, adding by an address or a file. A hand-added item can be moved between folders by
+// its menu or by dragging it onto the sidebar; an item that follows its subscription says so.
 export function ItemList({
   entries,
+  listed,
+  listKey,
+  importable,
+  importInto,
+  emptyText,
   interrupted,
   refusal,
   selected,
   seen,
+  present,
   subscriptionTitles,
+  subscriptionFolders,
+  placer,
   onImported,
 }: {
   entries: Loaded<ItemEntry[]>;
+  listed: ItemEntry[];
+  // Names the list shown, so that the rows drawn start again when it changes.
+  listKey: string;
+  importable: boolean;
+  importInto: ImportInto;
+  emptyText: string;
   interrupted: boolean;
   // Why reading the list again failed, where the service said so.
   refusal: string | undefined;
   selected: string | undefined;
   seen: ReadonlySet<string>;
+  // The subscriptions there are, which items that they brought follow.
+  present: ReadonlySet<string>;
   subscriptionTitles: ReadonlyMap<string, string>;
+  // The name of the folder each subscription is in, of those in one.
+  subscriptionFolders: ReadonlyMap<string, string>;
+  placer: Placer;
   onImported: (entry: ItemEntry) => void;
 }) {
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState<Importing>({ state: "idle" });
-  const [narrowing, setNarrowing] = useState<Narrowing>("all");
-  const narrowingName = useId();
+  const [menu, setMenu] = useState<MenuOpen>();
+  const rows = useRowsDrawn(listed.length, listKey);
+  const describedPrefix = useId();
 
+  // An import into a folder is placed there once the service has answered it; the item is
+  // opened either way, and a placing the service refused is said under the form.
   async function imported(importingItem: Promise<ItemEntry>) {
+    const into = importInto;
     setImporting({ state: "running" });
+    let entry: ItemEntry;
     try {
-      const entry = await importingItem;
+      entry = await importingItem;
+    } catch (error) {
+      setImporting({ state: "failed", reason: reasonOf(error) });
+      return;
+    }
+    if (into === undefined) {
+      setImporting({ state: "idle" });
+      onImported(entry);
+      return;
+    }
+    try {
+      await placer.place({ folder: into.folderId, subscriptions: [], items: [entry.id] });
       setImporting({ state: "idle" });
       onImported(entry);
     } catch (error) {
-      setImporting({ state: "failed", reason: reasonOf(error) });
+      setImporting({
+        state: "unplaced",
+        reason: `已导入，但没有放进分类“${into.name}”：${requestReason(error)}`,
+      });
+      onImported(entry);
     }
   }
 
@@ -100,79 +170,162 @@ export function ItemList({
       : originLabel(entry.origin);
   }
 
-  const shown = entries.state === "ready" ? narrowed(entries.value, narrowing) : [];
+  // Of an item that follows its subscription: where it is, and how it moves.
+  function followingText(subscription: string): string {
+    const title = subscriptionTitles.get(subscription) ?? "";
+    const folder = subscriptionFolders.get(subscription);
+    return folder === undefined
+      ? `跟着订阅“${title}”，不在分类里；要移动它，请移动订阅。`
+      : `跟着订阅“${title}”放在分类“${folder}”里；要移动它，请移动订阅。`;
+  }
+
+  function openMenu(entry: ItemEntry, opening: Opening) {
+    setMenu({ entry, opening });
+  }
+
+  function onRowKey(event: KeyboardEvent<HTMLAnchorElement>, entry: ItemEntry) {
+    if (isMenuKey(event)) {
+      event.preventDefault();
+      openMenu(entry, openingAt(event.currentTarget));
+    }
+  }
+
+  function onRowContextMenu(event: MouseEvent<HTMLAnchorElement>, entry: ItemEntry) {
+    event.preventDefault();
+    openMenu(entry, openingOfContextMenu(event.currentTarget, event.clientX, event.clientY));
+  }
+
+  const loaded = entries.state === "ready";
+  const shown = listed.slice(0, rows.count);
   return (
     <>
-      <form onSubmit={importUrl}>
-        <input
-          type="url"
-          required
-          placeholder="粘贴网址：文章、PDF、视频、播客"
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-        />
-        <button disabled={importing.state === "running"}>
-          {importing.state === "running" ? "导入中…" : "导入"}
-        </button>
-      </form>
-      <label className="upload" aria-disabled={importing.state === "running"}>
-        <input
-          type="file"
-          accept={UPLOADABLE}
-          disabled={importing.state === "running"}
-          onChange={importFile}
-        />
-        上传 PDF、音频或视频
-      </label>
-      {importing.state === "failed" && <p className="status failed">{importing.reason}</p>}
+      {importable && (
+        <>
+          <form onSubmit={importUrl}>
+            <input
+              type="url"
+              required
+              placeholder="粘贴网址：文章、PDF、视频、播客"
+              aria-label={
+                importInto === undefined ? "要导入的网址" : `要导入到分类“${importInto.name}”的网址`
+              }
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+            />
+            <button disabled={importing.state === "running"}>
+              {importing.state === "running" ? "导入中…" : "导入"}
+            </button>
+          </form>
+          <label className="upload" aria-disabled={importing.state === "running"}>
+            <input
+              type="file"
+              accept={UPLOADABLE}
+              disabled={importing.state === "running"}
+              onChange={importFile}
+            />
+            上传 PDF、音频或视频
+          </label>
+          {importInto !== undefined && (
+            <p className="into">导入的文章会放进分类“{importInto.name}”。</p>
+          )}
+          {(importing.state === "failed" || importing.state === "unplaced") && (
+            <p className="status failed" role="alert">
+              {importing.reason}
+            </p>
+          )}
+        </>
+      )}
       {entries.state === "failed" && <p className="status failed">{entries.reason}</p>}
       {interrupted && <Interruption refusal={refusal} />}
-      {entries.state === "ready" && entries.value.length > 0 && (
-        <fieldset className="narrowing">
-          <legend className="heard">显示哪些文章</legend>
-          {(Object.keys(NARROWING_NAMES) as Narrowing[]).map((name) => (
-            <label key={name}>
-              <input
-                type="radio"
-                name={narrowingName}
-                value={name}
-                checked={narrowing === name}
-                onChange={() => setNarrowing(name)}
-              />
-              {NARROWING_NAMES[name]}
-            </label>
-          ))}
-        </fieldset>
-      )}
-      {entries.state === "ready" && entries.value.length > 0 && shown.length === 0 && (
-        <p className="status">{NARROWED_AWAY[narrowing]}</p>
-      )}
+      {loaded && listed.length === 0 && <p className="status">{emptyText}</p>}
       {shown.length > 0 && (
-        <ul>
+        <ul className="items">
           {shown.map((entry) => {
             const fresh = isNew(entry, seen);
             const source = sourceName(entry);
+            const title = itemTitle(entry);
+            const following = followed(entry, present);
+            const describedId = `${describedPrefix}${entry.id}`;
             return (
               <li key={entry.id}>
                 <a
                   href={itemLink(entry.id)}
                   className={fresh ? "new" : undefined}
                   aria-current={entry.id === selected}
+                  draggable={following === undefined}
+                  title={following === undefined ? undefined : followingText(following)}
+                  aria-describedby={following === undefined ? undefined : describedId}
+                  onDragStart={(event) =>
+                    following === undefined &&
+                    startDrag(event, { kind: "item", id: entry.id, folder: entry.folder })
+                  }
+                  onDragEnd={endDrag}
+                  onKeyDown={(event) => following === undefined && onRowKey(event, entry)}
+                  onContextMenu={(event) =>
+                    following === undefined && onRowContextMenu(event, entry)
+                  }
                 >
-                  {fresh && <NewDot />}
-                  {itemTitle(entry)}
-                  {fresh && <NewHeard />}
-                  <small>
-                    <span className="source" title={source}>
-                      {source}
+                  <MediaIcon
+                    media={entry.media ?? "none"}
+                    heardAs={entry.media === null ? NO_MEDIA_NAME : MEDIA_NAMES[entry.media]}
+                  />
+                  <span className="item-text">
+                    <span className="item-title" dir="auto">
+                      {fresh && <NewDot />}
+                      {title}
+                      {fresh && <NewHeard />}
                     </span>
-                    <span className="attempt">{ATTEMPT_NOTES[entry.reading.attempt.kind]}</span>
-                  </small>
+                    <small>
+                      <span className="source" dir="auto" title={source}>
+                        {source}
+                      </span>
+                      <span className="attempt">{ATTEMPT_NOTES[entry.reading.attempt.kind]}</span>
+                    </small>
+                  </span>
                 </a>
+                {following === undefined ? (
+                  <button
+                    className="row-menu"
+                    aria-label={`移动“${title}”…`}
+                    aria-haspopup="menu"
+                    aria-expanded={menu?.entry.id === entry.id}
+                    title="移到分类…"
+                    onClick={(event) => openMenu(entry, openingAt(event.currentTarget))}
+                  >
+                    <span aria-hidden="true">⋯</span>
+                  </button>
+                ) : (
+                  <span id={describedId} className="heard">
+                    {followingText(following)}
+                  </span>
+                )}
               </li>
             );
           })}
+          {rows.count < listed.length && (
+            <li ref={rows.end} className="status more">
+              还有 {listed.length - rows.count} 篇…
+            </li>
+          )}
         </ul>
+      )}
+      {menu !== undefined && (
+        <PlaceMenu
+          opening={menu.opening}
+          what={itemTitle(menu.entry)}
+          folders={placer.folders}
+          current={menu.entry.folder}
+          onPlace={(folderId) =>
+            placer.place({ folder: folderId, subscriptions: [], items: [menu.entry.id] })
+          }
+          onMake={placer.make}
+          onLeave={(refocus) => {
+            setMenu(undefined);
+            if (refocus) {
+              menu.opening.opener.focus({ preventScroll: true });
+            }
+          }}
+        />
       )}
     </>
   );

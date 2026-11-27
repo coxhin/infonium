@@ -1,6 +1,5 @@
-/* The tab of subscriptions: subscribing to an address, the list of subscriptions, and one
-   subscription open with its postings. A row of each list is laid out as an item of the list of
-   items is. */
+/* Subscribing to an address, and one subscription open with its postings, whose rows are laid
+   out as an item of the list of items is. */
 .library .subscribe {
   display: block;
 }
@@ -50,39 +49,7 @@
   padding: 0.15rem 0.3rem;
 }
 
-.subscription-list button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  column-gap: 0.5rem;
-  width: 100%;
-  padding: 0.5rem;
-  border: 0;
-  border-radius: 0.4rem;
-  background: none;
-  text-align: left;
-  line-height: 1.35;
-}
-
-.subscription-list button:hover {
-  background: var(--paper);
-}
-
-.subscription-list .new-count {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.subscription-list small {
-  grid-column: 1;
-}
-
-.subscription-list small.failed {
-  color: var(--failure);
-}
-
 /* A title runs to three lines at most; the whole of it is on hover. */
-.subscription-title,
 .subscription-head h2 {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -91,7 +58,7 @@
   overflow-wrap: anywhere;
 }
 
-/* An open subscription: the way back, which stays in place, and under it its head and its
+/* An open subscription: what is said of it, which stays in place, and under it its head and its
    postings, which scroll. */
 .subscription-pane {
   flex: 1;
@@ -102,12 +69,11 @@
 
 .subscription-pane .pane-bar {
   flex: none;
-  padding: 0.4rem 1rem;
-  border-bottom: 1px solid var(--line);
+  padding: 0 1rem;
 }
 
 .subscription-pane .pane-bar .status {
-  margin: 0.2rem 0 0;
+  margin: 0.5rem 0 0;
   font-size: 0.85rem;
 }
 
@@ -117,13 +83,6 @@
 
 .subscription-pane .pane-bar .told-again {
   color: var(--ink);
-}
-
-.subscription-pane .back {
-  margin-left: -0.5rem;
-  color: var(--muted);
-  border-color: transparent;
-  background: none;
 }
 
 .subscription-head h2 {

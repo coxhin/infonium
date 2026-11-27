@@ -18,10 +18,13 @@ import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { LIST_INTERVAL_MS, reasonOf, useWatched, type Loaded, type Watched } from "./loading";
 import { isBeingRead } from "./entry";
 import { useRevisions } from "./itemrevisions";
+import { useNavigation } from "./navigation";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
 import type { Seat } from "./seat";
 import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
+import { Sidebar } from "./sidebar";
+import { useSidebarLayout } from "./sidebarlayout";
 import { PDF_MEDIA_TYPE } from "./views";
 
 const STILL_READING = "这一篇还在读取，读完后才能打开这段引文。";
@@ -392,6 +395,40 @@ function useSeeing(seated: Seat | undefined, entries: Watched<ItemEntry[]>): Rea
   return seen;
 }
 
+// The sidebar and the list column, which share what the sidebar has selected. Their state is
+// kept here, apart from the reader's, so that a press in either draws these two columns alone.
+function Browsing({
+  entries,
+  seen,
+  selected,
+  onImported,
+}: {
+  entries: Watched<ItemEntry[]>;
+  seen: ReadonlySet<string>;
+  selected: string | undefined;
+  onImported: (entry: ItemEntry) => void;
+}) {
+  const [openedAtStart] = useState(selected);
+  const navigation = useNavigation(entries, seen, openedAtStart);
+  const layout = useSidebarLayout();
+  return (
+    <>
+      <Sidebar navigation={navigation} layout={layout} />
+      <ListColumn
+        entries={entries.loaded}
+        interrupted={entries.interrupted}
+        refusal={entries.refusal}
+        selected={selected}
+        seen={seen}
+        navigation={navigation}
+        layout={layout}
+        onImported={onImported}
+        onChanged={entries.readNow}
+      />
+    </>
+  );
+}
+
 export function App() {
   const linked = linkedItem(useLink());
   const selected = linked?.itemId;
@@ -422,15 +459,7 @@ export function App() {
   return (
     <SeatingProvider value={seating}>
       <div className="app">
-        <ListColumn
-          entries={entries.loaded}
-          interrupted={entries.interrupted}
-          refusal={entries.refusal}
-          selected={selected}
-          seen={seen}
-          onImported={openImported}
-          onChanged={entries.readNow}
-        />
+        <Browsing entries={entries} seen={seen} selected={selected} onImported={openImported} />
         {selected === undefined ? (
           <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
         ) : (
