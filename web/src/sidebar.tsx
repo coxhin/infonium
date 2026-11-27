@@ -1,4 +1,5 @@
 import {
+  useDeferredValue,
   useEffect,
   useId,
   useRef,
@@ -135,6 +136,10 @@ function SidebarBody({
   // whether the folder dropped on does or not.
   const [dropRefusal, setDropRefusal] = useState<string>();
   const { tally, media, order, selection, folders, subscriptions } = navigation;
+  // A media chosen narrows the list column at once, and the tree, which may draw again
+  // hundreds of rows, after it, in pieces that leave the page free to answer meanwhile.
+  const treeMedia = useDeferredValue(media);
+  const treeTally = useDeferredValue(tally);
   const folderList = folders.loaded.state === "ready" ? folders.loaded.value : [];
   const subscriptionList = subscriptions.loaded.state === "ready" ? subscriptions.loaded.value : [];
 
@@ -302,8 +307,8 @@ function SidebarBody({
         <ListFailures navigation={navigation} />
         <SidebarTree
           selection={selection}
-          tally={tally}
-          media={media}
+          tally={treeTally}
+          media={treeMedia}
           order={order}
           folders={folderList}
           subscriptions={subscriptionList}
