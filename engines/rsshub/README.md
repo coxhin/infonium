@@ -50,6 +50,8 @@ Where a proxy is set with `HTTP_PROXY` or `ALL_PROXY`, name 127.0.0.1 in `NO_PRO
 
 Whoever may use Docker on the machine can read the container's settings, the key among them.
 
+Make the key long and random. infonium takes the key's text out of everything it shows, so a short key or a common word would be cut out of its own sentences wherever it stands in them.
+
 Without a key, put no token of an account into RSSHub on such a machine.
 
 ## Stopping it

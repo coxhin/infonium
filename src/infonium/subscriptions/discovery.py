@@ -151,7 +151,9 @@ YOUTUBE_CONSENT_HOST = "consent.youtube.com"
 # yt-dlp, which passes that page by its own means. It is asked for the channel's id by its
 # extractor of YouTube's channels alone, which reads one page of the channel and lists none of
 # its videos (no entry of the playlist it makes of them is asked for); it keeps no cache folder,
-# and gives up a request or makes it again as it does in fetching a media page. Its requests are
+# and gives up a request or makes it again as it does in fetching a media page. What it warns of
+# is not written out: what it says where it fails is told to the reader, and each request made
+# again for a handle YouTube does not know would be a line of the service's log. Its requests are
 # its own, outside the discovery's; its time and memory are the fetcher's. A channel so found
 # took 1.0 to 1.4 s, the fetcher holding 90 to 96 MiB at its peak; a handle YouTube does not
 # know, 1.4 to 1.7 s and eight requests of yt-dlp's, each failed one made again three times.
@@ -413,6 +415,7 @@ def named_channel(address: str) -> str:
                 "extractor_retries": REQUEST_RETRIES,
                 "color": {"stderr": UNCOLOURED, "stdout": UNCOLOURED},
                 "quiet": True,
+                "no_warnings": True,
             }
         ) as finder:
             found = finder.extract_info(address, download=False)
