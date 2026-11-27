@@ -78,21 +78,12 @@
   font-size: 0.85rem;
 }
 
-.popup form {
-  display: flex;
-  gap: 0.3rem;
+.popup .folder-name {
   padding: 0.2rem 0.3rem;
 }
 
-.popup input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.4rem;
-  background: var(--paper);
-  padding: 0.25rem 0.45rem;
+.popup .folder-name .status {
+  margin: 0.1rem 0 0;
 }
 
 .popup button {

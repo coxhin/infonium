@@ -1,20 +1,11 @@
-import {
-  useDeferredValue,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
+import { useDeferredValue, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { Browsing } from "./browsing";
 import type { Folder, Subscription } from "./client";
 import { draggedOver } from "./dragging";
-import { FOLDER_NAME_LENGTH } from "./folders";
+import { FolderNameField, type NameDone } from "./foldername";
 import { Interruption } from "./interruption";
 import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
-import { usePress } from "./pressing";
 import { useSidebarDrop } from "./sidebardrop";
 import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
 import {
@@ -30,62 +21,6 @@ import "./heard.css";
 import "./sidebar.css";
 
 const ORDER_NAMES: Record<Order, string> = { name: "按名称排列", new: "按新来源数排列" };
-
-// A folder's name asked for in place of the press that makes one: Enter makes it, Escape or
-// leaving the field empty gives it up. A refusal is said under the field, which keeps what was
-// typed.
-function NewFolderField({
-  onMake,
-  onDone,
-}: {
-  onMake: (name: string) => Promise<Folder>;
-  onDone: (made: Folder | undefined) => void;
-}) {
-  const [name, setName] = useState("");
-  const { press, ask } = usePress();
-
-  function make(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      onDone(undefined);
-      return;
-    }
-    ask(() => onMake(trimmed), onDone);
-  }
-
-  return (
-    <form className="new-folder" onSubmit={make}>
-      <div className="new-folder-row">
-        <input
-          autoFocus
-          aria-label="新分类的名称"
-          placeholder="新分类的名称"
-          maxLength={FOLDER_NAME_LENGTH}
-          readOnly={press.state === "asking"}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              onDone(undefined);
-            }
-          }}
-          onBlur={() => name.trim() === "" && press.state === "idle" && onDone(undefined)}
-        />
-        <button aria-disabled={press.state === "asking"}>
-          {press.state === "asking" ? "新建中…" : "新建"}
-        </button>
-      </div>
-      {press.state === "refused" && (
-        <p className="status failed" role="alert">
-          没有新建分类：{press.reason}
-        </p>
-      )}
-    </form>
-  );
-}
 
 // The sidebar's own failures: a list it could not read, with why and a way to try again, and a
 // service that does not answer.
@@ -183,6 +118,16 @@ function SidebarBody({
     }
   }
 
+  // A folder made takes the keyboard to its row; a name given up, back to ＋ 分类.
+  function named(done: NameDone<Folder>) {
+    setNaming(false);
+    if (done.kind === "answered") {
+      setFocusKey({ key: keyOf({ kind: "folder", folderId: done.answer.id }) });
+    } else {
+      requestAnimationFrame(() => makeButton.current?.focus());
+    }
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (overlaid && event.key === "Escape") {
       event.preventDefault();
@@ -265,16 +210,13 @@ function SidebarBody({
       </div>
       <div className="sidebar-foot">
         {naming ? (
-          <NewFolderField
-            onMake={browsing.placer.make}
-            onDone={(made) => {
-              setNaming(false);
-              if (made === undefined) {
-                requestAnimationFrame(() => makeButton.current?.focus());
-              } else {
-                setFocusKey({ key: keyOf({ kind: "folder", folderId: made.id }) });
-              }
-            }}
+          <FolderNameField
+            asked={{ kind: "new" }}
+            onSend={browsing.placer.make}
+            onDone={named}
+            onBlur={({ typed, press }) =>
+              typed.trim() === "" && press.state === "idle" && named({ kind: "given up" })
+            }
           />
         ) : (
           <div className="foot-row">

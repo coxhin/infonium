@@ -1,16 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import type { Folder } from "./client";
-import { FOLDER_NAME_LENGTH } from "./folders";
+import { FolderNameField } from "./foldername";
 import { MenuItem, Popup, type Opening } from "./menu";
-import { usePress, type Press } from "./pressing";
-
-function Refusal({ press, doing }: { press: Press; doing: string }) {
-  return press.state === "refused" ? (
-    <p className="status failed" role="alert">
-      {doing}：{press.reason}
-    </p>
-  ) : null;
-}
+import { usePress } from "./pressing";
 
 // The menu of a subscription or of a hand-added item that moves it: to one of the folders, the
 // one it is in marked; to a folder made here, whose name the menu asks for in its place; or out
@@ -35,10 +27,8 @@ export function PlaceMenu({
   onLeave: (refocus: boolean) => void;
 }) {
   const [naming, setNaming] = useState(false);
-  const [name, setName] = useState("");
   const placing = usePress();
-  const making = usePress();
-  const asking = placing.press.state === "asking" || making.press.state === "asking";
+  const asking = placing.press.state === "asking";
 
   function placeIn(folderId: string | null) {
     if (folderId === current) {
@@ -51,33 +41,16 @@ export function PlaceMenu({
     );
   }
 
-  function make(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "" || asking) {
-      return;
-    }
-    making.ask(
-      () => onMake(trimmed),
-      (folder) => placeIn(folder.id),
-    );
-  }
-
   return (
     <Popup opening={opening} role="menu" label={`移动“${what}”`} onLeave={onLeave}>
       {naming ? (
-        <form onSubmit={make}>
-          <input
-            data-autofocus
-            aria-label="新分类的名称"
-            placeholder="新分类的名称"
-            maxLength={FOLDER_NAME_LENGTH}
-            readOnly={asking}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <button aria-disabled={asking}>{asking ? "新建中…" : "新建"}</button>
-        </form>
+        <FolderNameField
+          asked={{ kind: "new" }}
+          waiting={asking}
+          onSend={onMake}
+          onDone={(done) => (done.kind === "answered" ? placeIn(done.answer.id) : onLeave(true))}
+          onBlur={() => undefined}
+        />
       ) : (
         <>
           <p className="menu-heading" aria-hidden="true">
@@ -110,13 +83,16 @@ export function PlaceMenu({
           )}
         </>
       )}
-      {placing.press.state === "asking" && (
+      {asking && (
         <p className="status" role="status">
           正在移动…
         </p>
       )}
-      <Refusal press={making.press} doing="没有新建分类" />
-      <Refusal press={placing.press} doing="没有移动" />
+      {placing.press.state === "refused" && (
+        <p className="status failed" role="alert">
+          没有移动：{placing.press.reason}
+        </p>
+      )}
     </Popup>
   );
 }

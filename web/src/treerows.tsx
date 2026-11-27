@@ -1,17 +1,8 @@
-import {
-  memo,
-  useEffect,
-  useRef,
-  useState,
-  type DragEvent,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { memo, type DragEvent, type ReactNode } from "react";
 import type { Folder, Subscription } from "./client";
 import { endDrag, startDrag } from "./dragging";
-import { FOLDER_NAME_LENGTH } from "./folders";
+import { FolderNameField } from "./foldername";
 import { openingAt, openingOfContextMenu, type Opening } from "./menu";
-import { usePress } from "./pressing";
 import { FIXED_NAMES, keyOf } from "./sidebarselection";
 import { stateWord } from "./subscriptions";
 
@@ -48,61 +39,6 @@ export type RowActions = {
   rename: (folderId: string, name: string) => Promise<void>;
   renamed: (key: string) => void;
 };
-
-// A folder's name, changed in its place: Enter or leaving the field sends a changed name,
-// Escape keeps the name it had. A refusal is said under the field, which keeps what was typed.
-function RenameField({
-  folder,
-  onRename,
-  onDone,
-}: {
-  folder: Folder;
-  onRename: (name: string) => Promise<void>;
-  onDone: () => void;
-}) {
-  const [name, setName] = useState(folder.name);
-  const { press, ask } = usePress();
-  const field = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    field.current?.select();
-  }, []);
-
-  function send(event?: FormEvent) {
-    event?.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "" || trimmed === folder.name) {
-      onDone();
-      return;
-    }
-    ask(() => onRename(trimmed), onDone);
-  }
-
-  return (
-    <form className="rename" onSubmit={send} onClick={(event) => event.stopPropagation()}>
-      <input
-        ref={field}
-        aria-label={`分类“${folder.name}”的新名称`}
-        maxLength={FOLDER_NAME_LENGTH}
-        readOnly={press.state === "asking"}
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onDone();
-          }
-        }}
-        onBlur={() => press.state === "idle" && send()}
-      />
-      {press.state === "refused" && (
-        <p className="status failed" role="alert">
-          没有改名：{press.reason}
-        </p>
-      )}
-    </form>
-  );
-}
 
 // A row's ⋯, which the keyboard reaches by Tab from the row it stands on.
 function RowMenuButton({
@@ -391,10 +327,11 @@ export const FolderRow = memo(function FolderRow({
         {folded ? "▸" : "▾"}
       </span>
       {renaming ? (
-        <RenameField
-          folder={folder}
-          onRename={(name) => actions.rename(folder.id, name)}
+        <FolderNameField
+          asked={{ kind: "rename", folder }}
+          onSend={(name) => actions.rename(folder.id, name)}
           onDone={() => actions.renamed(key)}
+          onBlur={({ press, send }) => press.state === "idle" && send()}
         />
       ) : (
         <span className="name" dir="auto" title={folder.name}>
