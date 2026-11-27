@@ -90,6 +90,8 @@ INSERTED_LETTERS = 16
 WORD_SLACK = 3
 # The first letter of the Unicode categories of marks set on a character.
 MARK = "M"
+# What parts a number's whole digits from those after its point, as in 88.1.
+DECIMAL_POINT = "."
 
 # What stands for a document's beginning or end beside a copy of a passage, which no letter is.
 EDGE = "\x00"
@@ -263,11 +265,26 @@ def is_word_character(character: str) -> bool:
     )
 
 
-def is_word_edge(text: str, offset: int) -> bool:
+def is_word_end(text: str, offset: int) -> bool:
     # Whether the offset lies between two words, or between a word and what is no word, so
-    # that a stretch beginning or ending there takes no word in part.
+    # that a stretch ending there takes no word in part.
     inside = 0 < offset < len(text)
     return not (inside and is_word_character(text[offset - 1]) and is_word_character(text[offset]))
+
+
+def is_word_start(text: str, offset: int) -> bool:
+    # Whether a stretch beginning at the offset takes no word in part, as one ending there
+    # does not, and no number in part either: it begins neither at a number's point nor right
+    # after it, since the digits after the point of 88.1 are no word of their own. A stretch
+    # ending right after a point stays whole, as a sentence's end before a footnote's number
+    # glued to it (1945.3) is.
+    return is_word_end(text, offset) and not any(
+        0 < at < len(text) - 1
+        and text[at] == DECIMAL_POINT
+        and text[at - 1].isdigit()
+        and text[at + 1].isdigit()
+        for at in (offset - 1, offset)
+    )
 
 
 def is_mark(character: str) -> bool:
@@ -313,8 +330,8 @@ def marked_letters(passage: Passage, document: Document, spelling: Spelling) -> 
         after=spelling.letters[finish : finish + WIDE_SURROUNDINGS],
         place=begin / max(1, len(spelling.letters)),
         copies=len(occurrences(spelling.letters, letters, OCCURRENCES_WEIGHED)) if letters else 0,
-        whole_start=is_word_edge(document.blocks[first.block_number].text, first.start),
-        whole_end=is_word_edge(document.blocks[last.block_number].text, last.end),
+        whole_start=is_word_start(document.blocks[first.block_number].text, first.start),
+        whole_end=is_word_end(document.blocks[last.block_number].text, last.end),
     )
 
 
@@ -1088,11 +1105,11 @@ def is_whole(passage: MarkedLetters, document: Document, held: Spelling, stretch
     return bool(anchors) and (
         (
             not passage.whole_start
-            or is_word_edge(document.blocks[anchors[0].block_number].text, anchors[0].start)
+            or is_word_start(document.blocks[anchors[0].block_number].text, anchors[0].start)
         )
         and (
             not passage.whole_end
-            or is_word_edge(document.blocks[anchors[-1].block_number].text, anchors[-1].end)
+            or is_word_end(document.blocks[anchors[-1].block_number].text, anchors[-1].end)
         )
     )
 
@@ -1480,12 +1497,12 @@ def to_word_edges(
         return place
     for _ in range(WORD_SLACK):
         text, offset = edge_offset(start)
-        if not passage.whole_start or is_word_edge(text, offset) or start == 0:
+        if not passage.whole_start or is_word_start(text, offset) or start == 0:
             break
         start -= 1
     for _ in range(WORD_SLACK):
         text, offset = edge_offset(end - 1)
-        if not passage.whole_end or is_word_edge(text, offset + 1) or end == len(held.letters):
+        if not passage.whole_end or is_word_end(text, offset + 1) or end == len(held.letters):
             break
         end += 1
     return Stretch(
