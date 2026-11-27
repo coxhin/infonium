@@ -161,7 +161,7 @@ class Admitted(Tagged):
 # What has come of admitting a posting to the library.
 Admission = Annotated[Unadmitted | Awaited | Admitted, Field(discriminator="kind")]
 
-# The subscriptions of every owner. The schedule column says when the schedule is to poll a
+# The subscriptions of every owner. The column scheduled says when the schedule is to poll a
 # subscription next, and is empty while it is paused or a poll of it is under way.
 subscription_table = sqlalchemy.Table(
     "subscription",

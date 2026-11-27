@@ -106,13 +106,7 @@ class Poller:
         with self.store.every_owner() as connection:
             cut_off = underway_polls(connection)
         for owned in cut_off:
-            self.poll_in_background(
-                BegunPoll(
-                    owner=owned.owner,
-                    subscription_id=owned.subscription.id,
-                    added=owned.subscription.added,
-                )
-            )
+            self.poll_in_background(owned.owner, owned.subscription)
         watcher = self.watching.submit(self.watch)
         watcher.add_done_callback(self.record_watch)
 
@@ -160,11 +154,10 @@ class Poller:
         underway = PollUnderway(failures=failures_in_a_row(subscription.poll))
         with self.store.transaction(owner) as transaction:
             Subscriptions(transaction).keep(subscription.model_copy(update={"poll": underway}))
-        self.poll_in_background(
-            BegunPoll(owner=owner, subscription_id=subscription.id, added=subscription.added)
-        )
+        self.poll_in_background(owner, subscription)
 
-    def poll_in_background(self, begun: BegunPoll) -> None:
+    def poll_in_background(self, owner: str, subscription: Subscription) -> None:
+        begun = BegunPoll(owner=owner, subscription_id=subscription.id, added=subscription.added)
         finished = self.pool.submit(self.poll, begun)
         finished.add_done_callback(partial(self.record, begun))
 
