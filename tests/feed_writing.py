@@ -837,6 +837,36 @@ def same_time(read: datetime | None, meant: datetime | None) -> bool:
     return read == meant and read.utcoffset() == meant.utcoffset()
 
 
+# Entity bombs.
+
+
+def bomb_feed(declarations: str, reference: str, form: FeedForm) -> str:
+    # A feed whose titles are an entity that its declarations make vast.
+    if form is FeedForm.RSS:
+        return (
+            f'<?xml version="1.0"?><!DOCTYPE rss [{declarations}]><rss version="2.0"><channel>'
+            f"<title>{reference}</title><item><title>{reference}</title>"
+            "<link>https://feeds.test/p/1</link></item></channel></rss>"
+        )
+    return (
+        f'<?xml version="1.0"?><!DOCTYPE feed [{declarations}]><feed xmlns="{ATOM_NAMESPACE}">'
+        f"<title>{reference}</title><entry><id>tag:feeds.test,2026:1</id>"
+        f'<title>{reference}</title><link href="https://feeds.test/p/1"/></entry></feed>'
+    )
+
+
+BOMBS = {
+    # Ten entities each of ten of the one before: a thousand million laughs.
+    "the billion laughs": (
+        '<!ENTITY lol0 "lol">'
+        + "".join(f'<!ENTITY lol{level} "{f"&lol{level - 1};" * 10}">' for level in range(1, 10)),
+        "&lol9;",
+    ),
+    # One entity of fifty thousand letters said fifty thousand times: 2.5 GB.
+    "a quadratic blow-up": (f'<!ENTITY a "{"a" * 50_000}">', "&a;" * 50_000),
+}
+
+
 # Reading what was written, as the judgments of read_feed do.
 
 ADDRESS = "https://feeds.test/feed.xml"

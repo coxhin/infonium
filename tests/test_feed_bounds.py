@@ -21,13 +21,14 @@ from infonium.subscriptions.feed import (
 from tests.feed_reading_bound import PEAK_BYTES, SECONDS
 from tests.feed_writing import (
     ADDRESS,
-    ATOM_NAMESPACE,
+    BOMBS,
     JSON_FEED_VERSIONS,
     RSS_KIND,
     XML_FORMS,
     FeedForm,
     SaidFeed,
     ServedFeed,
+    bomb_feed,
     plain_posting,
     read,
     read_or_refused,
@@ -335,31 +336,6 @@ def test_a_feed_that_refers_to_what_a_server_holds_fetches_nothing(
     assert not touched, f"reading a feed with {sample} touched {touched}"
 
 
-def bomb_feed(declarations: str, reference: str, form: FeedForm) -> str:
-    # A feed whose titles are an entity that its declarations make vast.
-    if form is FeedForm.RSS:
-        return (
-            f'<?xml version="1.0"?><!DOCTYPE rss [{declarations}]><rss version="2.0"><channel>'
-            f"<title>{reference}</title><item><title>{reference}</title>"
-            "<link>https://feeds.test/p/1</link></item></channel></rss>"
-        )
-    return (
-        f'<?xml version="1.0"?><!DOCTYPE feed [{declarations}]><feed xmlns="{ATOM_NAMESPACE}">'
-        f"<title>{reference}</title><entry><id>tag:feeds.test,2026:1</id>"
-        f'<title>{reference}</title><link href="https://feeds.test/p/1"/></entry></feed>'
-    )
-
-
-BOMBS = {
-    # Ten entities each of ten of the one before: a thousand million laughs.
-    "the billion laughs": (
-        '<!ENTITY lol0 "lol">'
-        + "".join(f'<!ENTITY lol{level} "{f"&lol{level - 1};" * 10}">' for level in range(1, 10)),
-        "&lol9;",
-    ),
-    # One entity of fifty thousand letters said fifty thousand times: 2.5 GB.
-    "a quadratic blow-up": (f'<!ENTITY a "{"a" * 50_000}">', "&a;" * 50_000),
-}
 # What reading a feed may take, whatever it holds, as the requirements bound the reading a poll
 # and a discovery make. The process that reads it may hold no more than CHILD_MEMORY_BYTES, so
 # that a reading that runs away ends there; each sample is waited for a time of its own.
