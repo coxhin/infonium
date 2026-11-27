@@ -31,9 +31,12 @@ these rules say "the document", they mean the document a statement cites.
 
 
 class DraftStatement(BaseModel):
-    # A statement as a model writes it: its text and the passages it says it rests on.
+    # A statement as a model writes it: its text and the passages it says it rests on. A
+    # model not held to the schema, as GLM's are, may leave out the citations of a statement
+    # that rests on none. The schema a model is told still requires them: its strict form
+    # lists every field, and a default made by a factory is not written into it.
     text: str
-    citations: list[Citation]
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class Statement(BaseModel):
@@ -104,9 +107,10 @@ class SourcedCitation(BaseModel):
 
 class SourcedDraftStatement(BaseModel):
     # A statement as a model writes it about several documents: its text and the passages,
-    # in whichever documents, it says it rests on.
+    # in whichever documents, it says it rests on. Its citations may be left out as a
+    # DraftStatement's may.
     text: str
-    citations: list[SourcedCitation]
+    citations: list[SourcedCitation] = Field(default_factory=list)
 
 
 def grounded_across(documents: dict[str, Document], draft: SourcedDraftStatement) -> Statement:
