@@ -13,9 +13,14 @@ import "./subscriptions.css";
 const ADMITTED_CHOICES = [0, 1, 3, 5, 10];
 const ADMITTED_AT_FIRST = 3;
 
-// The place in the list column of the subscription open there: which one, and the item it was
-// opened at, whose posting it looks for, if any.
-export type SubscriptionPlace = { subscriptionId: string; sought: string | undefined };
+// The place in the list column of the subscription open there: which one; the item it was
+// opened at, whose posting it looks for, if any; and whether it was opened as the answer to
+// subscribing to a feed the list held already.
+export type SubscriptionPlace = {
+  subscriptionId: string;
+  sought: string | undefined;
+  again: boolean;
+};
 
 // A word on how a subscription stands, where a reader must know it.
 function stateWord(subscription: Subscription): string | undefined {
@@ -213,6 +218,7 @@ export function SubscriptionsPanel({
           key={opened.subscriptionId}
           subscriptionId={opened.subscriptionId}
           sought={opened.sought}
+          again={opened.again}
           selected={selected}
           seen={seen}
           shown={shown}

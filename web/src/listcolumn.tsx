@@ -3,8 +3,9 @@ import { isUnanswered, listSubscriptions, type ItemEntry, type Subscription } fr
 import { isBeingRead } from "./entry";
 import { Interruption } from "./interruption";
 import { ItemList } from "./itemlist";
-import { LIST_INTERVAL_MS, useWatched, type Loaded } from "./loading";
+import { useWatched, type Loaded } from "./loading";
 import { NewCount } from "./newmarks";
+import { isPollDue, untilNextPoll } from "./nextpoll";
 import { SubscriptionsPanel, type SubscriptionPlace } from "./subscriptions";
 import "./listcolumn.css";
 
@@ -35,7 +36,10 @@ function placeAtOpening(
     subscriptions.state === "ready" &&
     subscriptions.value.some((subscription) => subscription.id === origin.subscription);
   return subscribed
-    ? { tab: "subscriptions", opened: { subscriptionId: origin.subscription, sought: selected } }
+    ? {
+        tab: "subscriptions",
+        opened: { subscriptionId: origin.subscription, sought: selected, again: false },
+      }
     : AT_ITEMS;
 }
 
@@ -77,7 +81,8 @@ export function ListColumn({
   onChanged: () => void;
 }) {
   // An item that a subscription brought being read changes the count of its subscription's new
-  // items when it is read, so the subscriptions are read again closely meanwhile.
+  // items when it is read, so the subscriptions are read again closely meanwhile, as they are
+  // while a poll is under way or its time has come.
   const readingSubscribed =
     entries.state === "ready"
       ? entries.value
@@ -90,8 +95,15 @@ export function ListColumn({
     "subscriptions",
     (listed) =>
       readingSubscribed !== "" ||
-      listed.some((subscription) => subscription.poll.kind === "underway"),
-    { interval: LIST_INTERVAL_MS, shown: true, unanswered: isUnanswered },
+      listed.some(
+        (subscription) =>
+          subscription.poll.kind === "underway" || isPollDue(subscription, Date.now()),
+      ),
+    {
+      interval: (listed) => untilNextPoll(listed, Date.now()),
+      shown: true,
+      unanswered: isUnanswered,
+    },
   );
   const [opening] = useState(selected);
   const [place, setPlace] = useState<Place | undefined>(
@@ -114,9 +126,9 @@ export function ListColumn({
     }
   }, [readingSubscribed, seen.size]);
 
-  function openSubscription(subscriptionId: string) {
+  function openSubscription(opened: SubscriptionPlace) {
     setLeft(undefined);
-    setPlace({ tab: "subscriptions", opened: { subscriptionId, sought: undefined } });
+    setPlace({ tab: "subscriptions", opened });
   }
 
   function backToList() {
@@ -194,17 +206,20 @@ export function ListColumn({
             selected={selected}
             seen={seen}
             shown={place.tab === "subscriptions"}
-            onOpen={openSubscription}
+            onOpen={(subscriptionId) =>
+              openSubscription({ subscriptionId, sought: undefined, again: false })
+            }
             onBack={backToList}
             onSubscribed={(subscription) => {
               // A feed subscribed to already is answered as its subscription, which keeps its
-              // place in the list.
+              // place in the list, and is opened saying so.
+              const again = listed.some((held) => held.id === subscription.id);
               subscriptions.answer((before) =>
                 before.some((held) => held.id === subscription.id)
                   ? withSubscription(before, subscription)
                   : [subscription, ...before],
               );
-              openSubscription(subscription.id);
+              openSubscription({ subscriptionId: subscription.id, sought: undefined, again });
               onChanged();
             }}
             onView={(subscription) =>

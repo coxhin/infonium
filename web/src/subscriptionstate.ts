@@ -10,6 +10,7 @@ import {
 } from "./client";
 import { isBeingRead } from "./entry";
 import { LIST_INTERVAL_MS, useWatched, type Watched } from "./loading";
+import { isPollDue, untilNextPoll } from "./nextpoll";
 
 // How many postings are read at a time: the newest when a subscription is opened, and as many
 // older ones each time the reader asks for more.
@@ -34,12 +35,13 @@ export type OlderReading =
   | { state: "failed"; reason: string };
 const IDLE: OlderReading = { state: "idle" };
 
-// Whether what is listed is under way: a poll, a posting that waits to be handed to the library,
-// or an item being read.
+// Whether what is listed is under way: a poll, one whose time has come, a posting that waits to
+// be handed to the library, or an item being read.
 function isUnsettled(state: SubscriptionState): boolean {
   return (
     state.kind === "present" &&
     (state.subscription.poll.kind === "underway" ||
+      isPollDue(state.subscription, Date.now()) ||
       state.postings.some(
         ({ admission }) =>
           admission.kind === "awaited" ||
@@ -154,7 +156,8 @@ export function useSubscriptionState(
     }
   }, [subscriptionId, sought]);
   const watched = useWatched(load, subscriptionId, isUnsettled, {
-    interval: LIST_INTERVAL_MS,
+    interval: (state) =>
+      state.kind === "present" ? untilNextPoll([state.subscription], Date.now()) : LIST_INTERVAL_MS,
     shown,
     unanswered: isUnanswered,
   });

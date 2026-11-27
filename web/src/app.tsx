@@ -400,7 +400,7 @@ export function App() {
   // a press in the list column that changes what the library holds; and every minute while
   // nothing in it is under way, for what subscriptions brought meanwhile.
   const entries = useWatched(listItems, "items", (listed) => listed.some(isBeingRead), {
-    interval: LIST_INTERVAL_MS,
+    interval: () => LIST_INTERVAL_MS,
     shown: true,
     unanswered: isUnanswered,
   });

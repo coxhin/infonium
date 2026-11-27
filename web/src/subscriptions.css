@@ -111,6 +111,14 @@
   font-size: 0.85rem;
 }
 
+.subscription-pane .pane-bar .status:empty {
+  margin: 0;
+}
+
+.subscription-pane .pane-bar .told-again {
+  color: var(--ink);
+}
+
 .subscription-pane .back {
   margin-left: -0.5rem;
   color: var(--muted);
