@@ -7,7 +7,7 @@ from itertools import pairwise
 
 import httpx
 import pytest
-from hypothesis import HealthCheck, Phase, given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
@@ -29,13 +29,12 @@ from tests.feed_sites import (
     status_only,
     trickling,
 )
-from tests.feed_writing import ServedFeed, keyed_feeds, served_feeds
+from tests.feed_writing import RSS_KIND, ServedFeed, keyed_feeds, served_feeds
 
 # Judgments of fetched_feed (P1 to P5 and their amendments), polling a feed from stand-in sites
 # that each test scripts.
 
 FEED = "https://feeds.test/feed.xml"
-RSS_KIND = "application/rss+xml"
 # A feed whose reading depends on the address it is read at: postings at relative pages and no
 # title, so that it is called by the host of its address.
 RELATIVE_FEED = (
@@ -60,9 +59,6 @@ ASKED_CODINGS = frozenset({"gzip", "deflate", "identity"})
 # trickle, and the load of a busy machine.
 OVERRUN_SECONDS = 1.0
 EXAMPLES = settings(max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture])
-FAULT_EXAMPLES = settings(
-    EXAMPLES, phases=(Phase.explicit, Phase.reuse, Phase.generate), max_examples=10
-)
 
 etags = st.from_regex(r'(W/)?"[A-Za-z0-9._-]{1,16}"', fullmatch=True)
 modified_times = st.datetimes(

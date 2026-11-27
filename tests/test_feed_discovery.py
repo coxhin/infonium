@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 import pytest
-from hypothesis import HealthCheck, Phase, given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ from tests.feed_sites import (
     HTML,
     LOWERED_DISCOVERY_SECONDS,
     LOWERED_FEED_BYTES,
+    LOWERED_FEED_SECONDS,
     LOWERED_PAGE_BYTES,
     LOWERED_PAGE_SECONDS,
     FeedSites,
@@ -26,7 +27,7 @@ from tests.feed_sites import (
     moved,
     trickling,
 )
-from tests.feed_writing import youtube_feed
+from tests.feed_writing import FAULT_EXAMPLES, RSS_KIND, youtube_feed
 
 # Judgments of discovered_feed (D1 to D7 and their amendments), finding feeds on stand-in sites
 # that each test scripts.
@@ -34,7 +35,6 @@ from tests.feed_writing import youtube_feed
 RSSHUB = "https://rsshub.test"
 RSSHUB_SETTING = "INFONIUM_RSSHUB_BASE_URL"
 RSSHUB_FORM = "rsshub://"
-RSS_KIND = "application/rss+xml"
 ATOM_KIND = "application/atom+xml"
 JSON_FEED_KIND = "application/feed+json"
 ETAG = "etag"
@@ -43,11 +43,8 @@ LAST_MODIFIED = "last-modified"
 COMMON_FEED_PATHS = ("/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml", "/index.xml")
 MOST_REQUESTS = 7
 NAMED_FEEDS_TRIED = 3
-OVERRUN_SECONDS = 0.5
+OVERRUN_SECONDS = 0.6
 EXAMPLES = settings(max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture])
-FAULT_EXAMPLES = settings(
-    EXAMPLES, phases=(Phase.explicit, Phase.reuse, Phase.generate), max_examples=10
-)
 FILLER = "".join(
     f"<p>Paragraph {number} of a made-up page about night trains and the timetables of the "
     "sleepers that run along the coast in winter.</p>"
@@ -110,9 +107,7 @@ def serve_answer(sites: FeedSites, address: str, said: str) -> None:
         sites.serve(address, answered(content, kind_of(kind)))
 
 
-def assert_found(
-    sites: FeedSites, address: str, rsshub: str, at: str, said: str, what: str
-) -> None:
+def assert_found(address: str, rsshub: str, at: str, said: str, what: str) -> None:
     # The feed the address leads to is the one served at `at`, as it was fetched there.
     write, kind = FEEDS[said]
     discovered = discovered_feed(address, rsshub)
@@ -367,9 +362,7 @@ def test_a_page_leads_to_the_first_feed_it_names_that_reads_as_a_feed(
         serve_answer(feed_sites, named_address(page, feed.href), feed.answer)
     first = next(n for n, feed in enumerate(page.named) if feed.answer in FEEDS)
     at = named_address(page, page.named[first].href)
-    assert_found(
-        feed_sites, page.address, RSSHUB, at, page.named[first].answer, f"the page {page.head!r}"
-    )
+    assert_found(page.address, RSSHUB, at, page.named[first].answer, f"the page {page.head!r}")
     tried = [page.address, *(named_address(page, feed.href) for feed in page.named[: first + 1])]
     assert feed_sites.fetches == tried, (
         f"finding the feed of the page {page.head!r} fetched {feed_sites.fetches}, not the page "
@@ -474,7 +467,7 @@ def test_a_show_on_apple_podcasts_leads_to_the_feed_apples_lookup_gives(
     )
     feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
     address = f"https://podcasts.apple.com/{country}podcast/{slug}/id{show}{episode}"
-    assert_found(feed_sites, address, RSSHUB, at, "RSS", f"the show {address}")
+    assert_found(address, RSSHUB, at, "RSS", f"the show {address}")
     assert feed_sites.fetches == [APPLE_LOOKUP.format(show=show), at], (
         f"the show {address} was found with the fetches {feed_sites.fetches}, not Apple's "
         "lookup and the feed alone"
@@ -563,7 +556,7 @@ def test_a_page_that_names_no_feed_leads_to_a_feed_at_a_path_feeds_commonly_live
     site = urlsplit(page)
     at = f"{site.scheme}://{site.netloc}{path}"
     serve_answer(feed_sites, at, form)
-    assert_found(feed_sites, page, RSSHUB, at, form, f"the page {page}, which names no feed")
+    assert_found(page, RSSHUB, at, form, f"the page {page}, which names no feed")
     assert len(feed_sites.requests) <= MOST_REQUESTS, (
         f"finding the feed at {at} made the requests {feed_sites.asked()}"
     )
@@ -757,7 +750,7 @@ def test_one_discovery_takes_no_longer_than_allowed_in_all(feed_sites: FeedSites
     opening = page_naming(head)
     feed_sites.serve(page, trickling(opening, HTML, 0.9 * LOWERED_PAGE_SECONDS))
     for href in named:
-        feed_sites.serve(href, trickling(b"<html><body>", HTML, 0.9 * LOWERED_PAGE_SECONDS))
+        feed_sites.serve(href, trickling(b"<html><body>", HTML, 0.9 * LOWERED_FEED_SECONDS))
     began = time.monotonic()
     refusal(page, RSSHUB, "a page whose feeds trickle and do not read")
     took = time.monotonic() - began

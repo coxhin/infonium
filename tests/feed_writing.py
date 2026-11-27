@@ -1,16 +1,26 @@
 import hashlib
 import json
 import unicodedata
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from random import Random
 from urllib.parse import urljoin, urlsplit
 from xml.sax.saxutils import escape, quoteattr
 
+import pytest
+from hypothesis import HealthCheck, Phase, settings
 from hypothesis import strategies as st
 from pydantic import AwareDatetime, BaseModel
 
-from infonium.subscriptions.feed import ADDRESS_CHARACTERS, KEY_CHARACTERS, TITLE_CHARACTERS
+from infonium.subscriptions.feed import (
+    ADDRESS_CHARACTERS,
+    KEY_CHARACTERS,
+    TITLE_CHARACTERS,
+    Feed,
+    UnreadableFeed,
+    read_feed,
+)
 
 # What a feed says, as a test makes it up, written out as RSS 2.0, Atom 1.0 or JSON Feed by
 # writers of the tests' own, and what reading it must give back by the requirements of
@@ -793,18 +803,39 @@ def expected_site(feed: SaidFeed, form: FeedForm, address: str) -> str | None:
     return None if feed.site is None else urljoin(base, browser_form(feed.site))
 
 
+def cut_titles(plain: str, ends: list[int]) -> set[str]:
+    # The titles a plain text cut at each of the ends given reads as: its beginning up to the
+    # end with an ellipsis as its last character, a space the cut leaves at the end gone or not.
+    return {plain[:end] + CUT_SHORT for end in ends} | {
+        plain[:end].rstrip() + CUT_SHORT for end in ends
+    }
+
+
+def unparted_end(plain: str, end: int) -> int:
+    # The latest end at or before the one given that parts no letter from the marks that
+    # combine with it.
+    while end > 0 and unicodedata.category(plain[end]).startswith(MARK_CATEGORY):
+        end -= 1
+    return end
+
+
 def is_cut_from(read: str, plain: str, characters: int) -> bool:
     # Whether a title read is the plain text given, or, where that is longer than the
     # characters a title may hold, its beginning cut to them with an ellipsis as its last
-    # character: cut as late as it can be without parting a letter from the marks that combine
-    # with it, and a space the cut leaves at the end may go.
+    # character, as late as the cut can be without parting a letter from its marks.
+    if len(plain) <= characters:
+        return read == plain
+    return read in cut_titles(plain, [unparted_end(plain, characters - len(CUT_SHORT))])
+
+
+def is_cut_near(read: str, plain: str, characters: int) -> bool:
+    # As is_cut_from, but the cut may also part a letter from its marks: the judgments of what a
+    # title is hold it to this, and test_a_title_is_never_cut_between_a_letter_and_the_marks_
+    # that_combine_with_it alone to where the cut falls among marks.
     if len(plain) <= characters:
         return read == plain
     end = characters - len(CUT_SHORT)
-    while end > 0 and unicodedata.category(plain[end]).startswith(MARK_CATEGORY):
-        end -= 1
-    kept = plain[:end]
-    return read in (kept + CUT_SHORT, kept.rstrip() + CUT_SHORT)
+    return read in cut_titles(plain, [end, unparted_end(plain, end)])
 
 
 def same_time(read: datetime | None, meant: datetime | None) -> bool:
@@ -812,3 +843,57 @@ def same_time(read: datetime | None, meant: datetime | None) -> bool:
     if read is None or meant is None:
         return read is meant
     return read == meant and read.utcoffset() == meant.utcoffset()
+
+
+# Reading what was written, as the judgments of read_feed do.
+
+ADDRESS = "https://feeds.test/feed.xml"
+RSS_KIND = "application/rss+xml"
+# A judgment of a fault that is known, marked as an expected failure, reports the first example
+# that fails without shrinking it, which would take the time of a dozen judgments. Judgments that
+# poll and find feeds share their stand-in sites, a fixture, across examples.
+FAULT_EXAMPLES = settings(
+    phases=(Phase.explicit, Phase.reuse, Phase.generate),
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+
+
+def read(served: ServedFeed) -> Feed:
+    return read_feed(served.content, served.declared, served.address)
+
+
+def refusal(content: bytes, declared: str, address: str, what: str) -> str:
+    # The sentence that reading the bytes is refused with; the judgment fails where they are read
+    # as a feed.
+    with pytest.raises(UnreadableFeed) as refused:
+        feed = read_feed(content, declared, address)
+        pytest.fail(
+            f"{what} was read as a feed titled {feed.title!r} with {len(feed.postings)} "
+            "postings, not refused as no feed"
+        )
+    return str(refused.value)
+
+
+def read_or_refused(content: bytes, declared: str, address: str) -> list[Feed]:
+    # The feed read from the bytes, or none where they are refused as no feed, an end that the
+    # requirements allow; any other end of the reading fails the judgment.
+    read_feeds: list[Feed] = []
+    with suppress(UnreadableFeed):
+        read_feeds.append(read_feed(content, declared, address))
+    return read_feeds
+
+
+def plain_posting(number: int, title: Marked | None, page: str | None) -> SaidPosting:
+    return SaidPosting(
+        id=f"tag:feeds.test,2026:{number}",
+        title=title,
+        summary=None,
+        content=None,
+        page=page,
+        page_relation="alternate",
+        other_links=[],
+        enclosures=[],
+        published=None,
+        updated=None,
+        base=None,
+    )

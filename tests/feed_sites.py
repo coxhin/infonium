@@ -14,17 +14,16 @@ CONTENT_TYPE = "content-type"
 LOCATION = "location"
 HTML = "text/html; charset=utf-8"
 # The limits of a feed's fetch, of a page's and of a discovery, lowered so that they are met in
-# a second or two and in a megabyte, in the proportions the requirements give them.
+# a second or two and in a megabyte; a page's below a feed's, as the requirements have them,
+# and a discovery's room for a page and two feeds.
 LOWERED_FEED_SECONDS = 1.5
 LOWERED_FEED_BYTES = 1024**2
 LOWERED_PAGE_SECONDS = 1.0
 LOWERED_PAGE_BYTES = 256 * 1024
 LOWERED_DISCOVERY_SECONDS = 3.0
-# How often a trickling answer sends a little more, and for how much longer than a limit it
-# goes on: it ends at last, so that a limit that is not kept fails the test rather than
-# holding it.
+# How often a trickling answer sends a little more. A trickle ends at last, so that a limit that
+# is not kept fails the test rather than holding it.
 TRICKLE_SECONDS = 0.1
-TRICKLE_LIMITS = 5
 
 
 def not_found(request: httpx.Request) -> httpx.Response:
