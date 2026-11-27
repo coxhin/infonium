@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
 from threading import Event
@@ -13,19 +14,22 @@ from pydantic import BaseModel
 from infonium.document import HTML_MEDIA_TYPE, Paragraph, document_of
 from infonium.library import (
     LOCAL_OWNER,
+    Failed,
     FirstUnderway,
     Item,
     LibraryStore,
+    Link,
     Read,
+    Settled,
     Subscribed,
     Underway,
     Unread,
     item_identity,
 )
-from infonium.subscriptions.feed import Feed
+from infonium.subscriptions.feed import Feed, Posting
 from infonium.subscriptions.subscription import MOST_ADMITTED_A_POLL
 from tests.feed_standin import FeedStandin
-from tests.notebook import NOWHERE_ITEM
+from tests.notebook import NOWHERE_ITEM, instant
 from tests.service import SITE, App, as_owner, new_owner, stand
 from tests.subscribing import (
     ADMITTED,
@@ -55,6 +59,7 @@ from tests.subscribing import (
 # a posting read at the reader's word, and the intake that reads a subscribed address.
 STEP = timedelta(seconds=1)
 RENAMINGS = settings(max_examples=12, suppress_health_check=[HealthCheck.function_scoped_fixture])
+HELD = settings(max_examples=15, suppress_health_check=[HealthCheck.function_scoped_fixture])
 
 
 def page_path(name: str) -> str:
@@ -292,24 +297,216 @@ def test_a_posting_whose_address_the_library_holds_is_admitted_as_that_item_as_i
     assert items[0]["origin"] == before[reading_item]["origin"], (
         "S8: admitting a posting as an item being read changed its origin"
     )
-    # The other owner's posting waits its turn and is then read for them; this owner's postings
-    # are admitted without any reading, so their admission says nothing of when that one is.
-    waited_for(
-        lambda: app.site.hits[page_path(read.key)],
-        lambda hits: hits >= 2,
-        "the reading of the other owner's posting",
-    )
-    assert app.site.hits[page_path(read.key)] == 2, (
-        "S8: a posting whose address the library holds was read again, or another owner's was "
-        "not read for them"
-    )
+    # This owner's postings are admitted without a reading, the other owner's waits its turn
+    # and is read for them: the page is fetched twice, once more for them once their reading
+    # has ended, and not again, whatever watches pass.
     with as_owner(other):
         their_item = admissions_ended(app, theirs["id"])[0]["admission"]["item"]
+    watched(feeds)
+    assert app.site.hits[page_path(read.key)] == 2, (
+        "S8, S22: a posting whose address the library holds was read again, or another owner's "
+        f"was not read for them: the page was fetched {app.site.hits[page_path(read.key)]} times"
+    )
     assert their_item["id"] == item_identity(other, read.address) != read_item, (
-        "S8: another owner's posting was admitted as an item of this owner's library"
+        "S8, S22: another owner's posting was admitted as an item of this owner's library"
+    )
+    assert answered(app.client.get(f"/api/items/{read_item}"), "an item") == before[read_item], (
+        "S8, S22: the item a posting was admitted as changed once the other owner's was read"
     )
     app.site.let_go()
     app.settled(reading_item)
+
+
+# S22: a posting of what the library holds is listed as that item, at once.
+
+
+class HeldState(StrEnum):
+    # How the reading of an item the library holds stands.
+    READ = "read"
+    BEING_READ = "being read"
+    FAILED = "failed"
+
+
+class Listing(BaseModel):
+    # The postings a feed lists anew, by their places, newest first: those whose addresses this
+    # owner's library holds, each with how its item's reading stands, and those whose addresses
+    # another owner's library holds as failed items.
+    count: int
+    held: dict[int, HeldState]
+    others: list[int]
+
+
+@st.composite
+def listings(draw: st.DrawFn, least: int, most: int) -> Listing:
+    count = draw(st.integers(least, most))
+    places = st.integers(0, max(count - 1, 0))
+    return Listing(
+        count=count,
+        held=draw(st.dictionaries(places, st.sampled_from(HeldState), max_size=count)),
+        others=draw(st.lists(places, unique=True, max_size=count)),
+    )
+
+
+class HeldScenario(BaseModel):
+    # What a subscription lists at subscribing and at a later poll, how many it admits at
+    # first, and the places of the postings first listed whose addresses the reader adds to
+    # the library after they were listed, where they are not admitted by then.
+    first: Listing
+    later: Listing
+    admit: int
+    late: list[int]
+
+
+held_scenarios = st.builds(
+    HeldScenario,
+    first=listings(1, 8),
+    later=listings(0, 6),
+    admit=st.integers(0, MOST_ADMITTED_A_POLL),
+    late=st.lists(st.integers(0, 7), unique=True, max_size=2),
+)
+
+
+def kept_as(store: LibraryStore, owner: str, address: str, state: HeldState) -> str:
+    # An item of the address in the owner's library, as a reader's link, whose reading stands
+    # as given.
+    item_id = item_identity(owner, address)
+    now = datetime.now(UTC)
+    document = document_of(
+        item_id=item_id,
+        extractor="test",
+        snapshot="0" * 64,
+        media_type=HTML_MEDIA_TYPE,
+        blocks=[Paragraph(text=f"Read from {address} before.", marks=[])],
+    )
+    readings = {
+        HeldState.READ: Read(title=f"Kept {address}", document=document.id, attempt=Settled()),
+        HeldState.BEING_READ: Unread(attempt=FirstUnderway(starts=1)),
+        HeldState.FAILED: Unread(attempt=Failed(reason=f"{address} answered 404 Not Found")),
+    }
+    with store.library(owner) as library:
+        library.keep_item(
+            Item(id=item_id, origin=Link(url=address), added=now, reading=readings[state])
+        )
+        if state == HeldState.READ:
+            library.keep_document(document, now)
+    return item_id
+
+
+def entry_of_item(app: App, item: str) -> dict[str, Any]:
+    entry: dict[str, Any] = answered(app.client.get(f"/api/items/{item}"), "an item")
+    return entry
+
+
+def held_postings(
+    app: App, other: str, tag: str, listing: Listing, kept: dict[str, dict[str, Any]]
+) -> list[Posting]:
+    # The postings of a listing, newest first, with the items of the addresses held kept in
+    # this owner's library and in the other owner's, and the entries of this owner's kept by
+    # address.
+    postings = [missing_posting(f"{tag}-{place}") for place in range(listing.count)]
+    for place in listing.others:
+        kept_as(app.store, other, postings[place].address, HeldState.FAILED)
+    for place, state in listing.held.items():
+        item = kept_as(app.store, LOCAL_OWNER, postings[place].address, state)
+        kept[postings[place].address] = entry_of_item(app, item)
+    return postings
+
+
+def expected_admissions(
+    listing: Listing, postings: list[Posting], at: datetime, admits: int
+) -> list[dict[str, Any]]:
+    # The admission of each posting of a listing, newest first, as it is listed: of a held
+    # address, its item; of the newest as many as are admitted, awaited; of the rest, none.
+    return [
+        {"kind": ADMITTED, "item": posting.address}
+        if place in listing.held
+        else {"kind": AWAITED, "since": at}
+        if place < admits
+        else {"kind": UNADMITTED}
+        for place, posting in enumerate(postings)
+    ]
+
+
+def as_listed_now(
+    shown: list[dict[str, Any]], kept: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    # The admissions of postings shown, newest first, an admitted one by the address of the
+    # item kept it was admitted as, where its entry is that item's as it was kept.
+    found: list[dict[str, Any]] = []
+    for posting in shown:
+        admission = posting["admission"]
+        match admission["kind"]:
+            case "admitted" if kept.get(posting["address"]) == admission["item"]:
+                found.append({"kind": ADMITTED, "item": posting["address"]})
+            case "awaited":
+                found.append({"kind": AWAITED, "since": instant(admission["since"])})
+            case _:
+                found.append(admission)
+    return found
+
+
+@given(scenario=held_scenarios)
+@example(
+    scenario=HeldScenario(
+        first=Listing(count=5, held={0: HeldState.READ, 1: HeldState.FAILED}, others=[2]),
+        later=Listing(count=3, held={2: HeldState.BEING_READ}, others=[0]),
+        admit=2,
+        late=[4],
+    )
+)
+@HELD
+def test_a_posting_of_what_the_library_holds_is_admitted_as_that_item_as_it_is_listed(
+    subscribing_app: App, feeds: FeedStandin, held_reading: str, scenario: HeldScenario
+) -> None:
+    app = subscribing_app
+    tag = uuid4().hex
+    other = f"other-{tag}"
+    kept: dict[str, dict[str, Any]] = {}
+    first = held_postings(app, other, tag, scenario.first, kept)
+    address = served_feed(feeds, tag, first)
+    at = feeds.clock.advance(STEP)
+    view = subscribed(app, address, scenario.admit)
+    assert (view["poll"]["found"], view["postings"]) == (len(first), len(first)), (
+        f"S22: subscribing did not count among what it found the postings the library holds: {view}"
+    )
+    expected = expected_admissions(scenario.first, first, at, scenario.admit)
+    assert as_listed_now(every_posting(app, view["id"]), kept) == expected, (
+        "S22: as a subscription listed its postings, those whose addresses the owner's library "
+        "holds were not each admitted as that item, as it stood, without waiting, or the newest "
+        "as many as admitted did not wait apart from them"
+    )
+    late = [
+        place
+        for place in scenario.late
+        if place < len(first) and expected[place] == {"kind": UNADMITTED}
+    ]
+    for place in late:
+        item = kept_as(app.store, LOCAL_OWNER, first[place].address, HeldState.READ)
+        kept[first[place].address] = entry_of_item(app, item)
+    later = held_postings(app, other, f"{tag}-later", scenario.later, kept)
+    feeds.serve(address, feeds.served[address].model_copy(update={"postings": [*later, *first]}))
+    at = feeds.clock.advance(STEP)
+    poll_by_hand(app, view["id"])
+    poll = polled(app, view["id"], at)["poll"]
+    assert poll["found"] == len(later), (
+        f"S22: a poll did not count among what it found the postings the library holds: {poll}"
+    )
+    expected = expected_admissions(scenario.later, later, at, MOST_ADMITTED_A_POLL) + expected
+    watched(feeds)
+    assert as_listed_now(every_posting(app, view["id"]), kept) == expected, (
+        "S22: as a poll listed new postings, those whose addresses the owner's library holds were "
+        "not each admitted as that item, as it stood, without waiting, or a posting listed before "
+        "changed, one whose address the reader added since among them"
+    )
+    assert all(app.site.hits[page_path(posting.key)] == 0 for posting in [*first, *later]), (
+        "S22: a posting whose address the library holds was read"
+    )
+    for place in late:
+        joined = reading_posting(app, view["id"], len(first) - place)
+        assert joined["admission"] == {"kind": ADMITTED, "item": kept[first[place].address]}, (
+            "S9, S22: a posting whose address the reader added after it was listed was not "
+            f"joined to that item, as it stood, when read at the reader's word: {joined}"
+        )
 
 
 # S9: a posting read at the reader's word.
