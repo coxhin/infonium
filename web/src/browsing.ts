@@ -20,6 +20,7 @@ import {
 } from "./folders";
 import type { Landing } from "./keyboarding";
 import type { Watched } from "./loading";
+import { byName } from "./nameorder";
 import {
   useFoldedFolders,
   useRememberedMedia,
@@ -28,7 +29,6 @@ import {
 } from "./remembered";
 import {
   ALL,
-  byName,
   followed,
   isThere,
   keyOf,

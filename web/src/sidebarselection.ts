@@ -1,5 +1,6 @@
 import type { Folder, ItemEntry, Media } from "./client";
 import { isNew } from "./entry";
+import { byName } from "./nameorder";
 
 // What the sidebar has selected, which the list column shows: every item, the new ones, the
 // hand-added items in no folder, one folder, or one subscription.
@@ -32,10 +33,6 @@ export const FIXED_NAMES: Record<"all" | "new" | "unfiled", string> = {
   new: "新来源",
   unfiled: "未分类",
 };
-
-// Chinese is ordered by its pinyin, and the numbers in names by their value, so that 分类 9
-// comes before 分类 10.
-const NAME_ORDER = new Intl.Collator("zh-Hans-CN", { numeric: true });
 
 export function sameSelection(one: Selection, other: Selection): boolean {
   return keyOf(one) === keyOf(other);
@@ -223,10 +220,6 @@ export function tallied(
     holdingSubscriptions,
     holdingFolders,
   };
-}
-
-export function byName(one: string, other: string): number {
-  return NAME_ORDER.compare(one, other);
 }
 
 // Folders or subscriptions in the order chosen: by name, or by count of new items, the largest
