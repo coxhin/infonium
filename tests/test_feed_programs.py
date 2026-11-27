@@ -9,6 +9,7 @@ from contextlib import contextmanager, suppress
 from functools import partial
 from pathlib import Path
 from threading import Thread
+from urllib.parse import parse_qsl, quote, quote_plus, urlsplit
 
 import httpx
 import psutil
@@ -22,6 +23,8 @@ from infonium.subscriptions.fetcher import Validators, fetched_feed
 from infonium.subscriptions.program import discovered_apart, polled_apart
 from tests.conftest import PROXY_VARIABLES
 from tests.feed_server import (
+    HOST,
+    KEY_PARAMETER,
     RSSHUB_ERROR,
     ScriptedHandler,
     ScriptedServer,
@@ -514,3 +517,129 @@ def test_apart_the_key_for_rsshub_is_in_no_sentence_whatever_fails(
         assert KEY_SETTING in told and "key" in told, (
             f"{what} was told as {told!r}, not as RSSHub asking for a key {KEY_SETTING} gives none"
         )
+
+
+# T4: the key goes to the instance alone, the server on PORT; the site on SITE_PORT plays another
+# server. A key with characters a query escapes.
+ESCAPED_KEY = "q+uorvex/zindlap-ü9146"
+SITE = f"http://{HOST}:{SITE_PORT}"
+
+
+def written_escaped_keys() -> tuple[str, ...]:
+    # The key as it is, as an address writes it as it is (its letter outside ASCII escaped, as an
+    # address must), escaped once, twice, and as a form escapes it.
+    once = quote(ESCAPED_KEY, safe="")
+    return (
+        ESCAPED_KEY,
+        quote(ESCAPED_KEY, safe="+/"),
+        once,
+        quote(once, safe=""),
+        quote_plus(ESCAPED_KEY),
+    )
+
+
+def redirected_to(
+    location_of: Callable[[ScriptedHandler], str],
+) -> Callable[[ScriptedHandler], None]:
+    def script(handler: ScriptedHandler) -> None:
+        handler.head(302, {"Location": location_of(handler), "Content-Length": "0"})
+
+    return script
+
+
+# Addresses of the site that hold the key: under key or another name, as it is, escaped once or
+# twice, or inside the address asked, as a login wall writes it.
+KEY_LOCATIONS: dict[str, Callable[[ScriptedHandler], str]] = {
+    "under key, escaped once": lambda h: f"{SITE}/sso?key={quote(ESCAPED_KEY, safe='')}",
+    "under another name": lambda h: f"{SITE}/sso?token={quote(ESCAPED_KEY, safe='')}",
+    "written as it is": lambda h: f"{SITE}/sso?key={quote(ESCAPED_KEY, safe='+/')}",
+    "escaped twice": lambda h: f"{SITE}/sso?key={quote(quote(ESCAPED_KEY, safe=''), safe='')}",
+    "inside the address asked": lambda h: (
+        f"{SITE}/sso?rd={quote(f'http://{HOST}:{PORT}{h.path}', safe='')}"
+    ),
+}
+
+
+KEY_AS_IT_IS_FOLLOWED = pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "T4: a discovery or a poll apart of rsshub://night/trains with the key "
+        "q+uorvex/zindlap-ü9146, which the instance on 9146 redirects to "
+        "http://127.0.0.1:9147/sso?key=q+uorvex/zindlap-%C3%BC9146 (the key written as it is, "
+        "its letter outside ASCII escaped as an address must), is not to be followed and to be "
+        "told; the program follows it: the site on 9147 hears "
+        "/sso?key=q+uorvex/zindlap-%C3%BC9146. The same key escaped once or twice, under another "
+        "name or inside ?rd= is not followed"
+    ),
+)
+
+
+def keyed_step(step: str, server: ScriptedServer) -> Callable[[], object]:
+    return lambda: KEY_STEPS[step](server.address(""), SecretStr(ESCAPED_KEY))
+
+
+@pytest.mark.parametrize("step", sorted(KEY_STEPS))
+@pytest.mark.parametrize(
+    "location",
+    [
+        pytest.param(where, marks=KEY_AS_IT_IS_FOLLOWED) if where == "written as it is" else where
+        for where in sorted(KEY_LOCATIONS)
+    ],
+)
+def test_apart_a_route_redirected_elsewhere_by_an_address_that_holds_the_key_is_not_followed(
+    server: ScriptedServer,
+    site: ScriptedServer,
+    capfd: pytest.CaptureFixture[str],
+    location: str,
+    step: str,
+) -> None:
+    server.key = ESCAPED_KEY
+    server.scripts[ROUTE] = redirected_to(KEY_LOCATIONS[location])
+    what = f"a {step} apart of a route that RSSHub redirects to the site with the key {location}"
+    told = refused_apart(keyed_step(step, server), what)
+    assert server.heard and not site.heard, f"{what} asked the site {site.heard}"
+    assert SITE in told and f"{SITE}/" not in told and f"{SITE}?" not in told, (
+        f"{what} was told as {told!r}, which does not name the site by its scheme, host and port "
+        "alone"
+    )
+    assert ROUTE.lstrip("/") in told and "instance" in told and RSSHUB_SETTING in told, (
+        f"{what} was told as {told!r}, which does not say that the address asked redirects there, "
+        f"that the key is for the instance alone, and that {RSSHUB_SETTING} names it"
+    )
+    assert "rsshub://" not in told, f"{what} was told as {told!r}, which advises a route"
+    out, err = capfd.readouterr()
+    for text in (told, out, err):
+        assert not any(key in text for key in written_escaped_keys()), (
+            f"{what} let the key out: {text[:400]!r}"
+        )
+
+
+@pytest.mark.parametrize("step", sorted(KEY_STEPS))
+def test_apart_a_route_redirected_to_another_server_without_the_key_is_followed_without_it(
+    server: ScriptedServer, site: ScriptedServer, step: str
+) -> None:
+    server.key = ESCAPED_KEY
+    server.scripts[ROUTE] = redirected_to(lambda h: f"{SITE}/feeds/night.xml")
+    site.scripts["/feeds/night.xml"] = sent(FEED, RSS_KIND)
+    what = f"a {step} apart of a route that RSSHub redirects to the site without the key"
+    ended = outcome(keyed_step(step, server), what)
+    assert site.heard and all(heard == "/feeds/night.xml" for heard in site.heard), (
+        f"{what} asked the site {site.heard}: not followed, or followed with the key"
+    )
+    assert ended.startswith("gave"), f"{what} ended {ended}"
+
+
+@pytest.mark.parametrize("step", sorted(KEY_STEPS))
+def test_apart_a_route_redirected_within_the_instance_carries_the_key(
+    server: ScriptedServer, step: str
+) -> None:
+    server.key = ESCAPED_KEY
+    server.scripts[ROUTE] = redirected_to(lambda h: server.address(f"{ROUTE}/moved"))
+    server.scripts[f"{ROUTE}/moved"] = sent(FEED, RSS_KIND)
+    what = f"a {step} apart of a route that RSSHub redirects within itself"
+    ended = outcome(keyed_step(step, server), what)
+    moved_to = [heard for heard in server.heard if urlsplit(heard).path == f"{ROUTE}/moved"]
+    assert moved_to and all(
+        (KEY_PARAMETER, ESCAPED_KEY) in parse_qsl(urlsplit(heard).query) for heard in moved_to
+    ), f"{what} asked {moved_to}, not with the key"
+    assert ended.startswith("gave"), f"{what} ended {ended}"
