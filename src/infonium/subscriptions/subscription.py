@@ -28,7 +28,7 @@ from infonium.library import (
     seen_table,
     timestamp_text,
 )
-from infonium.subscriptions.discovery import RSSHUB_SCHEME
+from infonium.subscriptions.discovery import ROUTE_ADDRESS_PATTERN, RSSHUB_SCHEME
 from infonium.subscriptions.feed import (
     ADDRESS_CHARACTERS,
     WEB_ADDRESS_PATTERN,
@@ -64,7 +64,6 @@ SCHEME_END = "://"
 AUTHORITY_END = re.compile(r"[/?#]")
 USER_END = "@"
 PORT_START = ":"
-RSSHUB_ROUTE_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 NO_FEED_ADDRESS = (
     "{address} is neither a web address (http:// or https://) nor a route of RSSHub"
     f" ({RSSHUB_SCHEME}…)"
@@ -300,7 +299,8 @@ def subscribed_address(address: str) -> str:
         else f"{ASSUMED_SCHEME}{unwrapped.removeprefix(HOST_FOLLOWS)}"
     )
     is_web_address = bool(re.fullmatch(WEB_ADDRESS_PATTERN, named)) and bool(named_host(named))
-    if not is_web_address and not re.fullmatch(RSSHUB_ROUTE_PATTERN, named):
+    # A route's scheme is told in any case, as the discovery tells it.
+    if not is_web_address and not re.fullmatch(ROUTE_ADDRESS_PATTERN, named, re.IGNORECASE):
         raise UnreadableFeed(NO_FEED_ADDRESS.format(address=address))
     return named
 

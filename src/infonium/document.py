@@ -1,3 +1,5 @@
+import re
+from email.message import Message
 from enum import StrEnum
 from hashlib import sha256
 from http import HTTPStatus
@@ -49,6 +51,21 @@ MediaType = Annotated[str, StringConstraints(pattern=MEDIA_TYPE_PATTERN)]
 
 HTML_MEDIA_TYPE = "text/html"
 PDF_MEDIA_TYPE = "application/pdf"
+# How infonium fetches a source, a picture of a page or a feed: the user agent it gives, and
+# the longest silence a server is allowed. What an answer declares its kind by, as written
+# where nothing is declared, and what bytes are taken for when nothing tells their kind; the
+# kinds of a web page, and those of a file that holds a recording, sound alone or sound with a
+# picture.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0 Safari/537.36 infonium/0.1"
+)
+FETCH_TIMEOUT_SECONDS = 20.0
+CONTENT_TYPE = "content-type"
+UNDECLARED = ""
+UNKNOWN_MEDIA_TYPE = "application/octet-stream"
+PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
+RECORDING_MEDIA_TYPES = ("audio/", "video/")
 # How the address of a web page begins. An address is told by its beginning, not parsed: one
 # taken from a page may be malformed past it.
 WEB_SCHEMES = ("http://", "https://")
@@ -322,6 +339,15 @@ ERROR_STATUS = "{source} answered {status}"
 TURNED_AWAY = "{site} turned infonium away with a check in place of the page"
 BROKEN_OFF_SOURCE = "the network of this machine changed while {source} was loading"
 STATUS_NAMES = {status.value: f"{status.value} {status.phrase}" for status in HTTPStatus}
+
+
+def declared_media_type(declared: str) -> str:
+    # The kind a server or a file name gives, without its parameters; a kind that is not
+    # given, or not written as a media type, tells nothing.
+    header = Message()
+    header[CONTENT_TYPE] = declared
+    named = header.get_content_type() if declared else UNKNOWN_MEDIA_TYPE
+    return named if re.fullmatch(MEDIA_TYPE_PATTERN, named) else UNKNOWN_MEDIA_TYPE
 
 
 def error_status(source: str, status: int) -> str:

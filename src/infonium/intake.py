@@ -1,11 +1,9 @@
 import logging
 import mimetypes
-import re
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
-from email.message import Message
 from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -19,21 +17,30 @@ from pydantic import BaseModel
 from infonium import browser, captions, guard, media, pdf, recording, speech, webpage, webpictures
 from infonium.document import (
     BROKEN_OFF_SOURCE,
+    CONTENT_TYPE,
+    FETCH_TIMEOUT_SECONDS,
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
-    MEDIA_TYPE_PATTERN,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
+    PAGE_MEDIA_TYPES,
     PDF_MEDIA_TYPE,
+    RECORDING_MEDIA_TYPES,
+    UNDECLARED,
+    UNKNOWN_MEDIA_TYPE,
     Block,
     Extracted,
     KeptPicture,
     MediaType,
     UnreadableSource,
+    declared_media_type,
     document_of,
     error_status,
     turned_away,
     word_count,
+)
+from infonium.document import (
+    USER_AGENT as USER_AGENT,
 )
 from infonium.library import (
     FIRST_READING,
@@ -61,25 +68,11 @@ from infonium.library import (
 from infonium.reasons import failure_reason
 from infonium.transcript import Transcript, transcript_blocks
 
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0 Safari/537.36 infonium/0.1"
-)
-# The longest silence a server is allowed while a source, or a picture of a page, is fetched
-# from it.
-FETCH_TIMEOUT_SECONDS = 20.0
 # The longest a fetch may take in all, and the most it may bring.
 FETCH_LIMIT_SECONDS = 600.0
 FETCH_LIMIT_BYTES = 2 * 1024**3
 FETCHED_FILE = "source"
-CONTENT_TYPE = "content-type"
-UNDECLARED = ""
-# What bytes are taken for when nothing tells their kind.
-UNKNOWN_MEDIA_TYPE = "application/octet-stream"
-PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
 PAGE_OPENINGS = (b"<!doctype html", b"<html")
-# The kinds of file that hold a recording: sound alone, or sound with a picture.
-RECORDING_MEDIA_TYPES = ("audio/", "video/")
 # The kinds of source a reader can be shown as they arrived, before anything is read from them.
 SHOWN_AS_ARRIVED = frozenset({PDF_MEDIA_TYPE})
 OPENING_BYTES = 1024
@@ -132,15 +125,6 @@ class Readout(BaseModel):
     extracted: Extracted
     file: Path
     media_type: MediaType
-
-
-def declared_media_type(declared: str) -> str:
-    # The kind a server or a file name gives, without its parameters; a kind that is not
-    # given, or not written as a media type, tells nothing.
-    header = Message()
-    header[CONTENT_TYPE] = declared
-    named = header.get_content_type() if declared else UNKNOWN_MEDIA_TYPE
-    return named if re.fullmatch(MEDIA_TYPE_PATTERN, named) else UNKNOWN_MEDIA_TYPE
 
 
 def media_type_of(file: Path, declared: str) -> str:
