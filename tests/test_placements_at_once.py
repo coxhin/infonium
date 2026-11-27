@@ -243,6 +243,11 @@ def told(threads: list[list[Done]]) -> list[list[str]]:
 def test_requests_sent_at_once_are_answered_as_some_order_of_them_would_be(
     subscribing_app: App, feeds: FeedStandin, drawn: list[list[Drawn]], beginning: list[int | None]
 ) -> None:
+    """S12: of three threads let go at once, each sending a drawn run of placings, dissolvings,
+    removals of subscriptions and lists, some order of all the requests, each thread's in
+    the order it sent them and each after every request answered before it was sent, is
+    answered by the rules as they were answered and leaves the library as it is shown at the
+    end."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -284,6 +289,10 @@ def test_no_placement_names_a_folder_dissolved_among_requests_sent_at_once(
     drawn: list[list[Drawn]],
     beginning: list[int | None],
 ) -> None:
+    """S12: once three threads let go at once have each sent a drawn run of placings,
+    dissolvings, removals of subscriptions and lists, no item or subscription is told in a
+    folder that is not there, no row of the library's file names a folder dissolved, and
+    folders made anew with the dissolved ones' names hold nothing."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):

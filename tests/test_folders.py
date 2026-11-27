@@ -87,6 +87,9 @@ histories = st.lists(
 def test_the_folders_standing_are_listed_the_one_made_first_first_each_as_last_answered(
     app: App, history: list[tuple[Any, ...]]
 ) -> None:
+    """S1: after each step of a drawn history of folders made, renamed and dissolved under
+    names no other folder has, the owner's folders are listed as those standing, the one
+    made first first, each as last answered."""
     with as_owner(new_owner()):
         assert folders_listed(app) == [], "S1: an owner who made no folder has folders listed"
         standing: list[dict[str, Any]] = []
@@ -127,6 +130,9 @@ def test_the_folders_standing_are_listed_the_one_made_first_first_each_as_last_a
 def test_a_folder_is_made_with_its_name_trimmed_where_that_holds_1_to_50_characters(
     app: App, name: str, before: str, after: str
 ) -> None:
+    """S2: a name of 1 to 50 characters that neither begins nor ends with white space, sent
+    with up to three characters of white space on each side, makes a folder answered with
+    that name, made between the request and its answer, and listed as it was answered."""
     with as_owner(new_owner()):
         began = datetime.now(UTC)
         response = make_folder(app, f"{before}{name}{after}")
@@ -156,6 +162,8 @@ def test_a_folder_is_made_with_its_name_trimmed_where_that_holds_1_to_50_charact
 def test_a_name_of_no_character_or_more_than_50_once_trimmed_is_refused_and_nothing_kept(
     app: App, name: str
 ) -> None:
+    """S2: a name of white space alone, or of 51 to 80 characters once trimmed, is refused with
+    422, and the owner's folders stay as they were."""
     with as_owner(new_owner()):
         kept = made_folder(app, "Kept")
         response = make_folder(app, name)
@@ -190,6 +198,10 @@ makes_and_dissolves = st.lists(
 def test_a_name_is_refused_as_taken_exactly_where_another_folder_of_the_owners_has_it(
     app: App, history: list[tuple[Any, ...]]
 ) -> None:
+    """S2: in a drawn history of makes and dissolves under names of up to two of four
+    characters, a name is refused with 409 and a reason that holds it where a folder
+    standing has it once trimmed, and is kept otherwise; the folders listed are those kept
+    and not dissolved."""
     with as_owner(new_owner()):
         standing: list[dict[str, Any]] = []
         for step in history:
@@ -238,6 +250,10 @@ def test_a_name_is_refused_as_taken_exactly_where_another_folder_of_the_owners_h
 def test_a_rename_is_refused_as_taken_exactly_where_another_folder_has_the_name_and_else_taken(
     app: App, names: list[str], renames: list[tuple[int, str, str, str]]
 ) -> None:
+    """S3: a rename to a name that another folder of the owner's has once trimmed is refused
+    with 409 and a reason that holds the name; any other is answered with the folder under
+    the name trimmed, its id and when it was made as before, and the folders listed follow,
+    each in its place."""
     with as_owner(new_owner()):
         standing = [made_folder(app, name) for name in names]
         for place_among, name, before, after in renames:
@@ -273,6 +289,8 @@ def test_a_rename_is_refused_as_taken_exactly_where_another_folder_has_the_name_
 def test_a_folder_renamed_to_its_own_name_is_answered_unchanged(
     app: App, before: str, after: str
 ) -> None:
+    """S3: a rename to the folder's own name, with white space around it, is answered with the
+    folder as it was, and the folders listed stay as they were."""
     with as_owner(new_owner()):
         folder = made_folder(app, "论文 Ω")
         other = made_folder(app, "Other")
@@ -296,6 +314,8 @@ def test_a_folder_renamed_to_its_own_name_is_answered_unchanged(
 def test_a_rename_to_a_name_of_no_character_or_more_than_50_once_trimmed_changes_nothing(
     app: App, name: str
 ) -> None:
+    """S3: a rename to a name of white space alone, or of 51 to 80 characters once trimmed, is
+    refused with 422, and the folder stays as it was."""
     with as_owner(new_owner()):
         folder = made_folder(app, "Kept")
         response = rename_folder(app, folder["id"], name)
@@ -309,6 +329,8 @@ def test_a_rename_to_a_name_of_no_character_or_more_than_50_once_trimmed_changes
 def test_renaming_or_dissolving_a_folder_the_owner_does_not_have_is_answered_404(
     app: App,
 ) -> None:
+    """S3, S4: renaming or dissolving a folder never made, or one dissolved, is answered 404,
+    and the owner's folders stay as they were."""
     with as_owner(new_owner()):
         kept = made_folder(app, "Kept")
         gone = made_folder(app, "Gone")
@@ -352,6 +374,10 @@ folders_drawn = st.none() | st.integers(0, FOLDERS_MADE - 1)
 def test_a_dissolved_folder_is_gone_and_what_it_held_stays_in_no_folder(
     subscribing_app: App, feeds: FeedStandin, beginning: list[int | None], dissolved: int
 ) -> None:
+    """S4: dissolving a folder of a drawn library is answered 204 and leaves the folder
+    unlisted, everything it held in no folder, the items that follow a subscription in it
+    among them, and everything else where it was; dissolving it again is answered 404 and
+    moves nothing."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -377,6 +403,9 @@ def test_a_dissolved_folder_is_gone_and_what_it_held_stays_in_no_folder(
 def test_a_folder_made_with_a_dissolved_ones_name_holds_nothing_of_what_that_one_held(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S4: once a folder that holds a subscription, its item and a hand-added item is
+    dissolved, a folder made with its name holds none of them, and all three are in no
+    folder."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -406,6 +435,11 @@ def test_a_folder_made_with_a_dissolved_ones_name_holds_nothing_of_what_that_one
 def test_another_owners_folders_and_placements_are_neither_shown_nor_found(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S10: another owner lists none of an owner's folders, is shown only their own folders and
+    placements, may make a folder of a name the owner uses, and is answered 404, as for an
+    id nobody has, when renaming, dissolving or placing in the owner's folders, or placing
+    the owner's subscription, hand-added item or item that follows its subscription; the
+    owner's folders and placements stay as they were."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):

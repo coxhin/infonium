@@ -51,6 +51,10 @@ def folders_of(views: list[dict[str, Any]]) -> dict[str, str | None]:
 def test_every_answer_that_carries_a_subscription_tells_the_folder_of_its_placement(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S8: subscriptions just made are in no folder; the list of subscriptions, a subscription,
+    subscribing to its feed again, setting how it follows, a poll by hand and seeing it each
+    tell the folder of each subscription's placement, before and after the two
+    subscriptions' placements are swapped."""
     app = subscribing_app
     with as_owner(new_owner()):
         tag = uuid4().hex
@@ -185,6 +189,11 @@ def removed(app: App, arrangement: Arrangement, subscription: str) -> Arrangemen
 def test_the_items_whose_origin_names_a_removed_subscription_stay_in_the_folder_it_was_in(
     subscribing_app: App, feeds: FeedStandin, drawn: list[Plan], order: list[int]
 ) -> None:
+    """S9: in drawn libraries of subscriptions in folders or in none, with items they read,
+    items that follow them that no posting lists and hand-added items their postings list,
+    some removed and made anew first, removing each in a drawn order leaves every item whose
+    origin names it in the folder it was in, or in none, and everything else where it was;
+    those items are then placed like any other."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):

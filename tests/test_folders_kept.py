@@ -95,6 +95,10 @@ def answered_as_before(now: OwnerAnswers) -> OwnerAnswers:
 def test_a_library_kept_before_folders_answers_as_before_with_everything_in_no_folder(
     start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
+    """S11: the library that 3ddbaaa kept lists no folders for either of its owners, and
+    answers the items, each item, the media types of their documents, the subscriptions,
+    each subscription and their postings as it did, apart from the fields added since, with
+    everything in no folder."""
     app, answers = opened_before_folders(start_app, feeds, tmp_path)
     assert set(answers.owners) == set(OWNERS), "the library kept is not of the owners judged"
     for owner, before in answers.owners.items():
@@ -112,6 +116,9 @@ def test_a_library_kept_before_folders_answers_as_before_with_everything_in_no_f
 def test_the_items_of_a_library_kept_before_folders_are_told_the_media_of_their_documents(
     start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
+    """S6, S11: the items of the library that 3ddbaaa kept are told the media the rule gives
+    the media types of the documents they hold, or none where they hold none; the library
+    holds items of web, pdf, recording and none."""
     app, answers = opened_before_folders(start_app, feeds, tmp_path)
     told: dict[str, object] = {}
     expected: dict[str, object] = {}
@@ -138,6 +145,9 @@ def test_the_items_of_a_library_kept_before_folders_are_told_the_media_of_their_
 def test_a_library_kept_before_folders_keeps_the_rows_of_its_tables_when_it_is_answered(
     start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
+    """S11: once the service has opened the library that 3ddbaaa kept and answered both owners'
+    folders, items and subscriptions, every table the library held, the index's aside, is
+    defined as it was and holds the rows it held."""
     file = tmp_path / DATA_FOLDER / LIBRARY_FILE
     file.parent.mkdir()
     shutil.copyfile(KEPT_FILE, file)
@@ -171,6 +181,9 @@ def test_a_library_kept_before_folders_keeps_the_rows_of_its_tables_when_it_is_a
 def test_a_library_kept_before_folders_takes_folders_placings_and_removals(
     start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
+    """S11: in the library that 3ddbaaa kept, a folder is made; a subscription and the hand-
+    added items placed in it are shown there, with the subscription's items; those items
+    stay there once the subscription is removed; and the other owner is shown no folder."""
     app, answers = opened_before_folders(start_app, feeds, tmp_path)
     before = answers.owners[LOCAL_OWNER]
     reading = next(view["id"] for view in before.subscriptions if view["follows"] == "reads")
@@ -203,6 +216,7 @@ def test_a_library_kept_before_folders_takes_folders_placings_and_removals(
 def test_the_items_of_a_library_kept_before_digest_styles_are_web_articles_in_no_folder(
     start_app: Callable[..., App], tmp_path: Path
 ) -> None:
+    """S6, S11: the items of the library kept before digest styles are told web, in no folder."""
     app, answers = opened_before_styles(start_app, tmp_path)
     told = {entry["id"]: (entry["media"], entry["folder"]) for entry in entries(app)}
     assert told and set(told) == {entry["id"] for entry in answers.items}, (

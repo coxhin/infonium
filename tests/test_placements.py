@@ -119,6 +119,10 @@ def test_placing_puts_every_subscription_and_item_named_in_the_folder_or_in_none
     beginning: list[int | None],
     placings: list[tuple[int | None, list[int], list[int]]],
 ) -> None:
+    """S5: each of a drawn run of placings of the owner's subscriptions and hand-added items in
+    a folder or in none, some named twice or placed there already, is answered 204 and
+    leaves what it names in its folder, or in none, and every other subscription and hand-
+    added item where it was."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -153,30 +157,23 @@ def test_placing_puts_every_subscription_and_item_named_in_the_folder_or_in_none
         st.lists(st.integers(0, len(FOLLOWING) - 1), max_size=3),
         st.lists(st.integers(0, HAND_ADDED_KEPT - 1), min_size=1, max_size=4),
     ),
-    stranger=st.sampled_from(Stranger),
     position=st.integers(0, 4),
 )
-@example(
-    beginning=[None] * 6,
-    placing=(0, [0, 1], [0, 1, 2]),
-    stranger=Stranger.ITEM_OF_ANOTHER,
-    position=4,
-)
-@example(
-    beginning=[None] * 6,
-    placing=(1, [0, 1], [0, 1, 2]),
-    stranger=Stranger.SUBSCRIPTION_REMOVED,
-    position=2,
-)
+@example(beginning=[None] * 6, placing=(0, [0, 1], [0, 1, 2]), position=4)
+@example(beginning=[0, 1, 2, None, 0, 1], placing=(1, [0, 1], [0, 1, 2]), position=2)
 @EXAMPLES
 def test_a_placing_that_names_one_thing_not_the_owners_is_refused_whole_and_changes_nothing(
     subscribing_app: App,
     feeds: FeedStandin,
     beginning: list[int | None],
     placing: tuple[int | None, list[int], list[int]],
-    stranger: Stranger,
     position: int,
 ) -> None:
+    """S5, S10: a placing that names, among the owner's own subscriptions and hand-added items,
+    one folder, subscription or item that is not the owner's, each of eight kinds in turn (a
+    folder never made, dissolved or another owner's, a subscription never made, removed or
+    another owner's, an item never kept or another owner's), is answered 404, and nothing
+    moves."""
     app = subscribing_app
     owner = new_owner()
     other = new_owner()
@@ -201,21 +198,23 @@ def test_a_placing_that_names_one_thing_not_the_owners_is_refused_whole_and_chan
             Stranger.SUBSCRIPTION_REMOVED: removed,
             Stranger.ITEM_NEVER_KEPT: NOWHERE_ITEM,
         }
+        assert set(strangers) == set(Stranger), "the judgment does not name every kind of stranger"
         arrangement = arranged_as(app, arrangement, beginning)
         before = shown_now(app)
-        folder, subscriptions, items = named_by(arrangement, placing)
-        if stranger in FOLDER_STRANGERS:
-            folder = strangers[stranger]
-        elif stranger in SUBSCRIPTION_STRANGERS:
-            subscriptions.insert(position % (len(subscriptions) + 1), strangers[stranger])
-        else:
-            items.insert(position % (len(items) + 1), strangers[stranger])
-        response = place(app, folder, subscriptions, items)
-        assert response.status_code == HTTPStatus.NOT_FOUND, (
-            f"S5, S10: a placing that names {stranger} among the owner's own was answered "
-            f"{response.status_code}, not 404"
-        )
-        unchanged(app, before, f"S5: a placing refused for naming {stranger}")
+        for stranger, named in strangers.items():
+            folder, subscriptions, items = named_by(arrangement, placing)
+            if stranger in FOLDER_STRANGERS:
+                folder = named
+            elif stranger in SUBSCRIPTION_STRANGERS:
+                subscriptions.insert(position % (len(subscriptions) + 1), named)
+            else:
+                items.insert(position % (len(items) + 1), named)
+            response = place(app, folder, subscriptions, items)
+            assert response.status_code == HTTPStatus.NOT_FOUND, (
+                f"S5, S10: a placing that names {stranger} among the owner's own was answered "
+                f"{response.status_code}, not 404"
+            )
+            unchanged(app, before, f"S5: a placing refused for naming {stranger}")
 
 
 @given(
@@ -234,6 +233,8 @@ def test_a_placing_that_names_an_item_following_its_subscription_is_refused_whol
     follower: int,
     position: int,
 ) -> None:
+    """S5: a placing that names, among the owner's own, an item that follows its subscription
+    is answered 409 with a reason that speaks of the subscription, and nothing moves."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -257,6 +258,8 @@ def test_a_placing_that_names_an_item_following_its_subscription_is_refused_whol
 def test_a_placing_that_names_nothing_changes_nothing(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S5: a placing that names no subscription and no item, in a folder of the owner's or in
+    none, is answered 204, and nothing moves."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -295,6 +298,9 @@ def test_an_items_folder_is_its_subscriptions_while_it_follows_it_and_its_own_pl
     hand_added: int,
     placings: list[tuple[int | None, list[int], list[int]]],
 ) -> None:
+    """S7: after each of a drawn run of placings, every item listed is in its subscription's
+    folder where its origin names a subscription that is there, and in the folder of its own
+    placement, or in none, otherwise."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -333,6 +339,10 @@ def brought_by(app: App, subscription: str) -> list[str]:
 def test_every_answer_that_carries_an_entry_tells_the_folder_its_item_is_in(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S7: the list of items, an item, seeing an item, the postings, a posting read at the
+    reader's word, an upload, an import and a reading again each tell, of every item they
+    carry, the folder of its subscription while it follows it and of its own placement
+    otherwise, or none."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -404,6 +414,9 @@ def test_every_answer_that_carries_an_entry_tells_the_folder_its_item_is_in(
 def test_an_item_two_subscriptions_list_is_in_the_folder_of_the_one_its_origin_names(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S7: an item that one subscription brought and another lists is in the folder of the one
+    that brought it, in the list, the item and the postings of both; it stays there once the
+    other is removed, and a placing of it alone is answered 409."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -446,6 +459,9 @@ def test_an_item_two_subscriptions_list_is_in_the_folder_of_the_one_its_origin_n
 def test_an_item_whose_address_is_pasted_is_hand_added_and_in_its_own_placements_folder(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S7: an item that a subscription brought, once the reader pastes its address, is answered
+    as a hand-added item in no folder, and is then placed by itself, leaving its
+    subscription where it was."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -474,6 +490,8 @@ def test_an_item_whose_address_is_pasted_is_hand_added_and_in_its_own_placements
 def test_an_item_whose_subscription_is_made_anew_follows_it_whatever_its_own_placement(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S7: an item whose subscription is removed and made anew is in that subscription's folder
+    whatever its own placement, moves with it, and a placing of it alone is answered 409."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):

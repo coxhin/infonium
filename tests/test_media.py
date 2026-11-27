@@ -129,6 +129,9 @@ def test_a_read_items_media_is_told_by_the_media_type_of_the_document_it_holds(
     earlier: str | None,
     attempt: Settled | Failed | Underway,
 ) -> None:
+    """S6: an item that holds a made-up document of a drawn media type, after an earlier
+    revision of another or none, its latest attempt settled, failed or under way, is told in
+    the list and by itself the media the rule gives that document's media type."""
     owner = new_owner()
     origin = link_origin()
     item_id = item_of(owner, origin)
@@ -155,6 +158,9 @@ def test_a_read_items_media_is_told_by_the_media_type_of_the_document_it_holds(
 def test_an_unread_items_media_is_told_by_the_file_kept_as_it_arrived_and_none_without_it(
     app: App, attempt: FirstUnderway | Failed
 ) -> None:
+    """S6: an item that holds no document is told, in the list and by itself, the media the
+    rule gives the media type of the file its first reading keeps as it arrived, and none
+    where it keeps none or where its reading failed."""
     owner = new_owner()
     item_id = keep_item(app.store, owner, link_origin(), Unread(attempt=attempt))
     arrival = attempt.arrival if isinstance(attempt, FirstUnderway) else None
@@ -171,6 +177,10 @@ def test_an_unread_items_media_is_told_by_the_file_kept_as_it_arrived_and_none_w
 def test_every_answer_that_carries_an_entry_tells_the_media_its_item_is_read_as(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    """S6: the list of items, an item, seeing an item, the postings, a posting read at the
+    reader's word, an upload, an import and a reading again each tell, of every item they
+    carry, the media the rule gives the document its reading names; over a page, PDFs
+    uploaded, fetched and posted, a posted page, and made-up recordings of sound and film."""
     app = subscribing_app
     owner = new_owner()
     with as_owner(owner):
@@ -262,6 +272,10 @@ def test_every_answer_that_carries_an_entry_tells_the_media_its_item_is_read_as(
 def test_an_item_whose_first_reading_is_under_way_or_failed_is_told_the_media_of_what_arrived(
     app: App, standin_pdf_engine: Callable[..., Path], gate: Path
 ) -> None:
+    """S6: an item whose first reading waits for its page is told no media, in the answer that
+    began it, the list and by itself, and web once read; one whose PDF arrived and waits for
+    its engine is told pdf, and one whose only reading failed, of a PDF refused, a page not
+    there or a picture, none, each in the list and by itself."""
     owner = new_owner()
     engine = standin_pdf_engine(PDF_SAMPLE)
     with as_owner(owner):
