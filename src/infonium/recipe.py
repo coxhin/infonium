@@ -83,10 +83,10 @@ then says what the document says about that topic in one or two sentences.
 """,
     ),
     # Its one section has a title, though the style's name stands in the row of styles above
-    # it, and the rules say that the title follows the statements. gpt-6.1-terra writes a
-    # section's title after its statements, and there it at times never ended its reply but
-    # wrote white space: with an empty title in 10 of 33 flashes of two short sources, and with
-    # this title, not told where it goes, in 3 of 16 (gpt-6-luna in 2 of 4); told, in none of 16.
+    # it, and the rules say that the title follows the statements. gpt-6.1-terra and gpt-6-luna
+    # write a section's title after its statements, and there at times never ended their reply
+    # but wrote white space: of two short sources, in 15 of 55 flashes whose rules did not say
+    # where the title goes, empty or this one, and in none of 54 whose rules said so.
     DigestStyle.FLASH: Recipe(
         name="快讯",
         description=(
@@ -106,7 +106,8 @@ reports, with who did what, and when and where, as far as the document says. Of 
 that reports no event, such as a paper, an essay or a guide, it is the document's main \
 finding, claim or advice, not the method or the steps that lead to it. Call a person or an \
 organisation by the name the document gives them, not "the author" or "the agencies", \
-wherever the document gives one.
+wherever the document gives one. Where it gives none, call them as the document does, such as \
+"the author" (in Chinese 作者), and never by a name from outside the document.
 
 Each further statement adds the detail that matters most after the lead, such as a key \
 number, a consequence or what comes next. Leave out background, history and anything the \
