@@ -1,5 +1,6 @@
 import type { Folder, ItemEntry, Media } from "./client";
 import { isNew } from "./entry";
+import { byName } from "./nameorder";
 
 // What the sidebar has selected, which the list column shows: every item, the new ones, the
 // hand-added items in no folder, one folder, or one subscription.
@@ -32,10 +33,6 @@ export const FIXED_NAMES: Record<"all" | "new" | "unfiled", string> = {
   new: "新来源",
   unfiled: "未分类",
 };
-
-// Chinese is ordered by its pinyin, and the numbers in names by their value, so that 分类 9
-// comes before 分类 10.
-const NAME_ORDER = new Intl.Collator("zh-Hans-CN", { numeric: true });
 
 export function sameSelection(one: Selection, other: Selection): boolean {
   return keyOf(one) === keyOf(other);
@@ -81,6 +78,51 @@ export function isOfMedia(entry: ItemEntry, media: MediaChoice): boolean {
   return media === "any" || entry.media === media;
 }
 
+// Whether what the selection names is there: a folder or a subscription may have gone, as one
+// removed in another window.
+export function isThere(
+  selection: Selection,
+  folders: ReadonlySet<string>,
+  present: ReadonlySet<string>,
+): boolean {
+  switch (selection.kind) {
+    case "folder":
+      return folders.has(selection.folderId);
+    case "subscription":
+      return present.has(selection.subscriptionId);
+    default:
+      return true;
+  }
+}
+
+// The selection a page opens with, once the items, the subscriptions and the folders are read:
+// the one remembered, where it is there still and holds the item open in the reader, if one is;
+// otherwise the item's subscription where it follows one, else its folder, else every item. A
+// folder or a subscription that is there no more holds nothing. The item open is seen as soon as
+// the reader has it on show, so that 新来源 holds it no more whichever comes first.
+export function openingSelection(
+  remembered: Selection,
+  opened: ItemEntry | undefined,
+  folders: ReadonlySet<string>,
+  present: ReadonlySet<string>,
+  seen: ReadonlySet<string>,
+): Selection {
+  const there = isThere(remembered, folders, present);
+  if (opened === undefined) {
+    return there ? remembered : ALL;
+  }
+  if (there && holds(remembered, opened, present, new Set(seen).add(opened.id))) {
+    return remembered;
+  }
+  const subscription = followed(opened, present);
+  if (subscription !== undefined) {
+    return { kind: "subscription", subscriptionId: subscription };
+  }
+  return opened.folder !== null && folders.has(opened.folder)
+    ? { kind: "folder", folderId: opened.folder }
+    : ALL;
+}
+
 // Whether the selection holds the item, whatever its media.
 export function holds(
   selection: Selection,
@@ -116,11 +158,13 @@ export function listed(
 }
 
 // What the sidebar counts and keeps, of the items of a media: how many are new, in all, of
-// each subscription and in each folder; and which subscriptions and folders hold any.
+// each subscription, in each folder and of the hand-added items in no folder; and which
+// subscriptions and folders hold any.
 export type Tally = {
   fresh: number;
   freshOfSubscription: ReadonlyMap<string, number>;
   freshInFolder: ReadonlyMap<string, number>;
+  freshUnfiled: number;
   holdingSubscriptions: ReadonlySet<string>;
   holdingFolders: ReadonlySet<string>;
 };
@@ -136,6 +180,7 @@ export function tallied(
   seen: ReadonlySet<string>,
 ): Tally {
   let fresh = 0;
+  let freshUnfiled = 0;
   const freshOfSubscription = new Map<string, number>();
   const freshInFolder = new Map<string, number>();
   const holdingSubscriptions = new Set<string>();
@@ -158,17 +203,23 @@ export function tallied(
         countOne(freshOfSubscription, subscription);
       }
       // A folder counts every new item in it: those of its subscriptions, and those whose
-      // subscription was removed, which stay new until they are seen.
+      // subscription was removed, which stay new until they are seen. So does 未分类, of the
+      // items a removed subscription in no folder brought.
       if (entry.folder !== null) {
         countOne(freshInFolder, entry.folder);
+      } else if (subscription === undefined) {
+        freshUnfiled += 1;
       }
     }
   }
-  return { fresh, freshOfSubscription, freshInFolder, holdingSubscriptions, holdingFolders };
-}
-
-export function byName(one: string, other: string): number {
-  return NAME_ORDER.compare(one, other);
+  return {
+    fresh,
+    freshOfSubscription,
+    freshInFolder,
+    freshUnfiled,
+    holdingSubscriptions,
+    holdingFolders,
+  };
 }
 
 // Folders or subscriptions in the order chosen: by name, or by count of new items, the largest

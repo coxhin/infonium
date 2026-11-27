@@ -1,95 +1,37 @@
-import {
-  useDeferredValue,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type DragEvent,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
-import { requestReason, type Folder } from "./client";
-import { draggedOver, endDrag, type Dragged } from "./dragging";
+import { useDeferredValue, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import type { Browsing } from "./browsing";
+import type { Folder, Subscription } from "./client";
+import { draggedOver } from "./dragging";
+import { FolderNameField, type NameDone } from "./foldername";
 import { Interruption } from "./interruption";
+import { keyboardIsNowhere, useOnLanding, type Landing } from "./keyboarding";
+import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
-import type { Navigation } from "./navigation";
-import { FOLDER_NAME_LENGTH } from "./placemenu";
-import { usePress } from "./pressing";
+import { useSidebarDrop } from "./sidebardrop";
+import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_CHOICES,
   MEDIA_NAMES,
   keyOf,
-  selectionOfKey,
+  type MediaChoice,
   type Order,
   type Selection,
-} from "./selection";
-import { SHORTCUT_NAME, type SidebarLayout } from "./sidebarlayout";
+} from "./sidebarselection";
 import { SidebarTree } from "./sidebartree";
 import "./heard.css";
 import "./sidebar.css";
 
 const ORDER_NAMES: Record<Order, string> = { name: "按名称排列", new: "按新来源数排列" };
 
-// A folder's name asked for in place of the press that makes one: Enter makes it, Escape or
-// leaving the field empty gives it up. A refusal is said under the field, which keeps what was
-// typed.
-function NewFolderField({
-  onMake,
-  onDone,
-}: {
-  onMake: (name: string) => Promise<Folder>;
-  onDone: (made: Folder | undefined) => void;
-}) {
-  const [name, setName] = useState("");
-  const { press, ask } = usePress();
-
-  function make(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      onDone(undefined);
-      return;
-    }
-    ask(() => onMake(trimmed), onDone);
-  }
-
-  return (
-    <form className="new-folder" onSubmit={make}>
-      <div className="new-folder-row">
-        <input
-          autoFocus
-          aria-label="新分类的名称"
-          placeholder="新分类的名称"
-          maxLength={FOLDER_NAME_LENGTH}
-          readOnly={press.state === "asking"}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              onDone(undefined);
-            }
-          }}
-          onBlur={() => name.trim() === "" && press.state === "idle" && onDone(undefined)}
-        />
-        <button aria-disabled={press.state === "asking"}>
-          {press.state === "asking" ? "新建中…" : "新建"}
-        </button>
-      </div>
-      {press.state === "refused" && (
-        <p className="status failed" role="alert">
-          没有新建分类：{press.reason}
-        </p>
-      )}
-    </form>
-  );
-}
-
 // The sidebar's own failures: a list it could not read, with why and a way to try again, and a
 // service that does not answer.
-function ListFailures({ navigation }: { navigation: Navigation }) {
-  const { folders, subscriptions } = navigation;
+function ListFailures({
+  folders,
+  subscriptions,
+}: {
+  folders: Watched<Folder[]>;
+  subscriptions: Watched<Subscription[]>;
+}) {
   return (
     <>
       {folders.loaded.state === "failed" && (
@@ -117,25 +59,19 @@ function ListFailures({ navigation }: { navigation: Navigation }) {
 // outside the folders, a subscription or an item leaves its folder.
 function SidebarBody({
   overlaid,
-  navigation,
+  browsing,
   layout,
 }: {
   overlaid: boolean;
-  navigation: Navigation;
+  browsing: Browsing;
   layout: SidebarLayout;
 }) {
   const own = useRef<HTMLElement>(null);
   const makeButton = useRef<HTMLButtonElement>(null);
   const mediaName = useId();
   const [naming, setNaming] = useState(false);
-  const [focusKey, setFocusKey] = useState<{ key: string }>();
-  // The folder what is dragged would go into, none where it would leave its folder, and nothing
-  // where no drag is over the sidebar.
-  const [dropOn, setDropOn] = useState<string | null>();
-  // Why the service refused the last drop, said at the sidebar's head, which stays in view
-  // whether the folder dropped on does or not.
-  const [dropRefusal, setDropRefusal] = useState<string>();
-  const { tally, media, order, selection, folders, subscriptions } = navigation;
+  const drop = useSidebarDrop(browsing.placer);
+  const { tally, media, order, selection, folders, subscriptions } = browsing;
   // A media chosen narrows the list column at once, and the tree, which may draw again
   // hundreds of rows, after it, in pieces that leave the page free to answer meanwhile.
   const treeMedia = useDeferredValue(media);
@@ -169,16 +105,36 @@ function SidebarBody({
   }, [overlaid, layout.close]);
 
   function select(chosen: Selection) {
-    navigation.select(chosen);
+    browsing.select(chosen);
     if (overlaid) {
       layout.close();
     }
   }
 
   function subscribe() {
-    navigation.startSubscribing();
+    browsing.startSubscribing();
     if (overlaid) {
       layout.close();
+    }
+  }
+
+  // A folder made by Enter takes the keyboard to its row, and a name given up gives it back to
+  // ＋ 分类; where the reader has taken the keyboard elsewhere, it stays there.
+  function named(done: NameDone<Folder>) {
+    setNaming(false);
+    if (done.kind === "answered" && done.keyboard === "kept") {
+      browsing.land(keyOf({ kind: "folder", folderId: done.answer.id }));
+    } else if (done.kind === "given up") {
+      makeButton.current?.focus();
+    }
+  }
+
+  // ＋ 分类 opens the field, or goes back to the one open, with what was typed in it.
+  function startNaming() {
+    if (naming) {
+      own.current?.querySelector<HTMLElement>(".sidebar-foot .folder-name input")?.focus();
+    } else {
+      setNaming(true);
     }
   }
 
@@ -188,64 +144,6 @@ function SidebarBody({
       layout.close();
     }
   }
-
-  // Where what is dragged over the sidebar goes: into the folder it is over, a subscription
-  // under a folder counting as that folder, and anywhere else out of its folder; nowhere where
-  // it is already.
-  function dropOf(
-    event: DragEvent<HTMLElement>,
-  ): { dragged: Dragged; folderId: string | null } | undefined {
-    const dragged = draggedOver(event);
-    if (dragged === undefined || !(event.target instanceof Element)) {
-      return undefined;
-    }
-    const over = selectionOfKey(event.target.closest<HTMLElement>("li.folder")?.dataset.key ?? "");
-    const folderId = over?.kind === "folder" ? over.folderId : null;
-    return dragged.folder === folderId ? undefined : { dragged, folderId };
-  }
-
-  function onDragOver(event: DragEvent<HTMLElement>) {
-    const drop = dropOf(event);
-    setDropOn(drop?.folderId);
-    if (drop !== undefined) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-    }
-  }
-
-  function onDrop(event: DragEvent<HTMLElement>) {
-    const drop = dropOf(event);
-    setDropOn(undefined);
-    endDrag();
-    if (drop === undefined) {
-      return;
-    }
-    event.preventDefault();
-    const { dragged, folderId } = drop;
-    const doing =
-      folderId === null
-        ? "没有移出分类"
-        : `没有移到“${folderList.find((folder) => folder.id === folderId)?.name ?? ""}”`;
-    setDropRefusal(undefined);
-    navigation.placer
-      .place({
-        folder: folderId,
-        subscriptions: dragged.kind === "subscription" ? [dragged.id] : [],
-        items: dragged.kind === "item" ? [dragged.id] : [],
-      })
-      .catch((error: unknown) => setDropRefusal(`${doing}：${requestReason(error)}`));
-  }
-
-  // A drag that ends anywhere leaves nothing marked.
-  useEffect(() => {
-    const ended = () => setDropOn(undefined);
-    addEventListener("dragend", ended);
-    addEventListener("drop", ended);
-    return () => {
-      removeEventListener("dragend", ended);
-      removeEventListener("drop", ended);
-    };
-  }, []);
 
   // Over the list column, the press keeps the sidebar open as a column; in one column, and as a
   // column, it folds it.
@@ -259,7 +157,7 @@ function SidebarBody({
       ref={own}
       className="sidebar"
       data-overlaid={overlaid}
-      data-dropping={dropOn === null}
+      data-dropping={drop.over === null}
       aria-label="侧栏"
       onKeyDown={onKeyDown}
       onBlur={(event) => {
@@ -273,13 +171,9 @@ function SidebarBody({
           layout.close();
         }
       }}
-      onDragOver={onDragOver}
-      onDragLeave={(event) => {
-        if (!(event.relatedTarget instanceof Node && own.current?.contains(event.relatedTarget))) {
-          setDropOn(undefined);
-        }
-      }}
-      onDrop={onDrop}
+      onDragOver={drop.onDragOver}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
     >
       <fieldset className="media-choice">
         <legend className="heard">类型</legend>
@@ -290,21 +184,20 @@ function SidebarBody({
               name={mediaName}
               value={choice}
               checked={media === choice}
-              onChange={() => navigation.chooseMedia(choice)}
+              onChange={() => browsing.chooseMedia(choice)}
             />
             <MediaIcon media={choice} />
             <span>{MEDIA_NAMES[choice]}</span>
           </label>
         ))}
       </fieldset>
-      {dropOn === null && <p className="sidebar-said">放在这里，移出分类</p>}
-      {dropRefusal !== undefined && (
+      {drop.refusal !== undefined && (
         <p className="sidebar-said status failed" role="alert">
-          {dropRefusal}
+          {drop.refusal}
         </p>
       )}
       <div className="sidebar-scroll">
-        <ListFailures navigation={navigation} />
+        <ListFailures folders={folders} subscriptions={subscriptions} />
         <SidebarTree
           selection={selection}
           tally={treeTally}
@@ -312,44 +205,34 @@ function SidebarBody({
           order={order}
           folders={folderList}
           subscriptions={subscriptionList}
-          occupied={navigation.occupied}
-          heldIn={navigation.heldIn}
-          folded={navigation.folded}
-          focusKey={focusKey}
-          dropOn={dropOn ?? undefined}
-          placer={navigation.placer}
+          occupied={browsing.occupied}
+          heldIn={browsing.heldIn}
+          folded={browsing.folded}
+          landing={browsing.landing}
+          dropOn={drop.over ?? undefined}
+          placer={browsing.placer}
           onSelect={select}
-          onFolded={navigation.fold}
-          onRename={navigation.rename}
-          onDissolve={navigation.dissolve}
+          onFolded={browsing.fold}
+          onRename={browsing.rename}
+          onDissolve={browsing.dissolve}
         />
       </div>
       <div className="sidebar-foot">
-        {naming ? (
-          <NewFolderField
-            onMake={navigation.placer.make}
-            onDone={(made) => {
-              setNaming(false);
-              if (made === undefined) {
-                requestAnimationFrame(() => makeButton.current?.focus());
-              } else {
-                setFocusKey({ key: keyOf({ kind: "folder", folderId: made.id }) });
-              }
-            }}
-          />
-        ) : (
-          <div className="foot-row">
-            <button ref={makeButton} onClick={() => setNaming(true)}>
-              ＋ 分类
-            </button>
-            <button onClick={subscribe}>＋ 订阅</button>
-          </div>
+        {drop.over === null && <p className="drop-out">放在这里，移出分类</p>}
+        {naming && (
+          <FolderNameField asked={{ kind: "new" }} onSend={browsing.placer.make} onDone={named} />
         )}
+        <div className="foot-row">
+          <button ref={makeButton} onClick={startNaming}>
+            ＋ 分类
+          </button>
+          <button onClick={subscribe}>＋ 订阅</button>
+        </div>
         <div className="foot-row">
           <select
             aria-label="分类和订阅的排列"
             value={order}
-            onChange={(event) => navigation.chooseOrder(event.target.value as Order)}
+            onChange={(event) => browsing.chooseOrder(event.target.value as Order)}
           >
             {(Object.keys(ORDER_NAMES) as Order[]).map((each) => (
               <option key={each} value={each}>
@@ -373,11 +256,27 @@ function SidebarBody({
 
 // The sidebar folded: the media's icons, the one chosen marked, and the count of new items; a
 // press opens the whole sidebar over the list column, and a drag that comes over it opens it to
-// be dropped on. Under them, the press that unfolds it.
-function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarLayout }) {
-  const { media, tally } = navigation;
+// be dropped on. Under them, the press that unfolds it. A row of the sidebar the keyboard is
+// sent to is not drawn while it is folded: the keyboard lands on the press that opens it, whose
+// tree takes it to the row selected.
+function Rail({
+  media,
+  fresh,
+  landing,
+  layout,
+}: {
+  media: MediaChoice;
+  fresh: number;
+  landing: Landing | undefined;
+  layout: SidebarLayout;
+}) {
   const openedByDrag = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
+  useOnLanding(landing, () => {
+    if (!layout.overlaid && keyboardIsNowhere()) {
+      opener.current?.focus();
+    }
+  });
 
   useEffect(() => {
     const ended = () => {
@@ -394,7 +293,7 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
     };
   }, [layout.close]);
 
-  const told = `打开侧栏：${MEDIA_NAMES[media]}${tally.fresh > 0 ? `，${tally.fresh} 篇新来源` : ""}`;
+  const told = `打开侧栏：${MEDIA_NAMES[media]}${fresh > 0 ? `，${fresh} 篇新来源` : ""}`;
   return (
     <div className="rail">
       <button
@@ -419,9 +318,9 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
             <MediaIcon media={choice} />
           </span>
         ))}
-        {tally.fresh > 0 && (
+        {fresh > 0 && (
           <span className="new-count" aria-hidden="true">
-            {tally.fresh}
+            {fresh}
           </span>
         )}
       </button>
@@ -439,17 +338,24 @@ function Rail({ navigation, layout }: { navigation: Navigation; layout: SidebarL
 
 // The sidebar where the layout puts it: a column; or a rail, and over the list column when it
 // is opened; or, in one column, nothing until a press opens it over the page.
-export function Sidebar({ navigation, layout }: { navigation: Navigation; layout: SidebarLayout }) {
+export function Sidebar({ browsing, layout }: { browsing: Browsing; layout: SidebarLayout }) {
   if (layout.pinned) {
-    return <SidebarBody overlaid={false} navigation={navigation} layout={layout} />;
+    return <SidebarBody overlaid={false} browsing={browsing} layout={layout} />;
   }
   return (
     <div className="sidebar-place">
-      {layout.width !== "narrow" && <Rail navigation={navigation} layout={layout} />}
+      {layout.width !== "narrow" && (
+        <Rail
+          media={browsing.media}
+          fresh={browsing.tally.fresh}
+          landing={browsing.landing}
+          layout={layout}
+        />
+      )}
       {layout.overlaid && (
         <>
           {layout.width === "narrow" && <div className="scrim" aria-hidden="true" />}
-          <SidebarBody overlaid navigation={navigation} layout={layout} />
+          <SidebarBody overlaid browsing={browsing} layout={layout} />
         </>
       )}
     </div>

@@ -7,8 +7,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { Folder, Subscription } from "./client";
-import { FolderMenu, type Held } from "./foldermenu";
-import type { Placer } from "./folders";
+import { FolderMenu } from "./foldermenu";
+import type { Held, Placer } from "./folders";
+import { keyboardIsNowhere, useKeyboardHolder, useOnLanding, type Landing } from "./keyboarding";
 import { isMenuKey, openingAt, type Opening } from "./menu";
 import { PlaceMenu } from "./placemenu";
 import {
@@ -20,7 +21,7 @@ import {
   type Order,
   type Selection,
   type Tally,
-} from "./selection";
+} from "./sidebarselection";
 import {
   FIXED,
   FixedRow,
@@ -117,6 +118,13 @@ type MenuOpen =
   | { kind: "folder"; key: string; folder: Folder; opening: Opening }
   | { kind: "subscription"; key: string; subscription: Subscription; opening: Opening };
 
+// The count of new items each fixed entry shows.
+const FIXED_COUNTS: Record<(typeof FIXED)[number]["kind"], (tally: Tally) => number> = {
+  all: () => 0,
+  new: (tally) => tally.fresh,
+  unfiled: (tally) => tally.freshUnfiled,
+};
+
 // The one of the keys under a folder that is the key looked for, if it is among them.
 function among(keys: string[], key: string | undefined): string | undefined {
   return key !== undefined && keys.includes(key) ? key : undefined;
@@ -126,7 +134,10 @@ function among(keys: string[], key: string | undefined): string | undefined {
 // subscriptions, and the subscriptions in no folder. ↑ and ↓ move among the rows on show, →
 // unfolds a folder or goes to its first subscription, ← folds it or goes up to it, Enter and
 // Space select. One row at a time takes Tab: the one the keyboard moved to last, which is the
-// selection's row until the keyboard moves. A folder something is dragged onto is marked.
+// selection's row until the keyboard moves. A folder something is dragged onto is marked. A row
+// that goes with the keyboard in it hands it on: a subscription moved by its menu to its row
+// where it stands now, unfolding the folder it went into; any other row to the row that stands
+// in its place, or 全部.
 export function SidebarTree({
   selection,
   tally,
@@ -137,7 +148,7 @@ export function SidebarTree({
   occupied,
   heldIn,
   folded,
-  focusKey,
+  landing,
   dropOn,
   placer,
   onSelect,
@@ -155,9 +166,9 @@ export function SidebarTree({
   occupied: ReadonlySet<string>;
   heldIn: (folderId: string) => Held;
   folded: ReadonlySet<string>;
-  // A row the keyboard is sent to from outside the tree, as a folder just made, each time the
-  // value changes.
-  focusKey: { key: string } | undefined;
+  // A row the keyboard is sent to from outside the tree, where it has nowhere else to be, as a
+  // folder or a subscription just made, each time the value changes.
+  landing: Landing | undefined;
   dropOn: string | undefined;
   placer: Placer;
   onSelect: (selection: Selection) => void;
@@ -203,12 +214,42 @@ export function SidebarTree({
     }
   }, [selectedKey, selectedParent]);
 
-  useEffect(() => {
-    if (focusKey !== undefined) {
-      setActive(focusKey.key);
-      requestAnimationFrame(() => rowElement(focusKey.key)?.focus());
+  // The row that holds the keyboard; the rows as they were last drawn; and a row the keyboard is
+  // to land on once it is drawn.
+  const holder = useKeyboardHolder(tree, (element) =>
+    element.closest<HTMLElement>('[role="treeitem"]')?.dataset.key,
+  );
+  const drawn = useRef(rows);
+  const pending = useRef<string>(undefined);
+  useOnLanding(landing, (asked) => {
+    pending.current = asked.key;
+  });
+  useLayoutEffect(() => {
+    const before = drawn.current;
+    drawn.current = rows;
+    const asked = pending.current;
+    const nowhere = keyboardIsNowhere();
+    if (asked !== undefined) {
+      // A row asked for waits to be drawn while the keyboard has nowhere to be, or is in the
+      // menu that asked for it; the reader taking the keyboard elsewhere ends the wait.
+      const element = rowElement(asked);
+      if (nowhere && element !== null) {
+        pending.current = undefined;
+        element.focus();
+      } else {
+        const waiting = nowhere || document.activeElement?.closest(".popup") !== null;
+        pending.current = waiting ? asked : undefined;
+      }
+      return;
     }
-  }, [focusKey]);
+    const held = holder.current;
+    if (!nowhere || held === undefined) {
+      return;
+    }
+    const at = before.findIndex((row) => row.key === held);
+    const standing = rows.some((row) => row.key === held) ? held : rows[at]?.key;
+    rowElement(standing ?? keyOf(ALL))?.focus();
+  });
 
   const tabKey = rows.some((row) => row.key === active)
     ? active
@@ -266,9 +307,13 @@ export function SidebarTree({
     openMenu,
     fold,
     rename: onRename,
-    renamed: (key) => {
+    // The field gives the keyboard back to the folder's row where it had it, left by Enter or
+    // Escape; where the reader took the keyboard elsewhere, it stays there.
+    renamed: (key, done) => {
       setRenaming(undefined);
-      requestAnimationFrame(() => rowElement(key)?.focus());
+      if (done.kind === "given up" || (done.kind === "answered" && done.keyboard === "kept")) {
+        rowElement(key)?.focus();
+      }
     },
   };
   const latest = useRef(current);
@@ -282,7 +327,7 @@ export function SidebarTree({
       openMenu: (key, opening) => latest.current.openMenu(key, opening),
       fold: (folderId, folding) => latest.current.fold(folderId, folding),
       rename: (folderId, name) => latest.current.rename(folderId, name),
-      renamed: (key) => latest.current.renamed(key),
+      renamed: (key, done) => latest.current.renamed(key, done),
     }),
     [],
   );
@@ -338,14 +383,26 @@ export function SidebarTree({
     }
   }
 
+  // A menu left by a key gives the keyboard back to its opener, unless what was chosen in it asks
+  // for another row, as a subscription moved, which takes it once it is drawn.
   function leaveMenu(refocus: boolean) {
     const opener = menu?.opening.opener;
     setMenu(undefined);
-    if (refocus) {
+    if (refocus && pending.current === undefined) {
       (opener?.isConnected === true ? opener : rowElement(tabKey))?.focus({
         preventScroll: true,
       });
     }
+  }
+
+  // A subscription moved by its menu takes the keyboard to its row where it stands now, its
+  // folder unfolded to show it.
+  async function moveSubscription(subscriptionId: string, folderId: string | null) {
+    await placer.place({ folder: folderId, subscriptions: [subscriptionId], items: [] });
+    if (folderId !== null && folded.has(folderId)) {
+      fold(folderId, false);
+    }
+    pending.current = subscriptionKey(subscriptionId);
   }
 
   return (
@@ -361,9 +418,8 @@ export function SidebarTree({
           <FixedRow
             key={kind}
             kind={kind}
-            // Only 新来源 is counted: 全部 would show the same number, and the hand-added items
-            // under 未分类 are new only where their subscription was removed.
-            fresh={kind === "new" ? tally.fresh : 0}
+            // 全部 is not counted: it would show the same number as 新来源.
+            fresh={FIXED_COUNTS[kind](tally)}
             selected={kind === selectedKey}
             tabbable={kind === tabKey}
             actions={actions}
@@ -428,9 +484,7 @@ export function SidebarTree({
           what={menu.subscription.title}
           folders={placer.folders}
           current={menu.subscription.folder}
-          onPlace={(folderId) =>
-            placer.place({ folder: folderId, subscriptions: [menu.subscription.id], items: [] })
-          }
+          onPlace={(folderId) => moveSubscription(menu.subscription.id, folderId)}
           onMake={placer.make}
           onLeave={leaveMenu}
         />

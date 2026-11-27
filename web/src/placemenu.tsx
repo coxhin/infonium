@@ -1,19 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import type { Folder } from "./client";
+import { FolderNameField, type NameDone } from "./foldername";
 import { MenuItem, Popup, type Opening } from "./menu";
 import { usePress, type Press } from "./pressing";
-
-// The most characters a folder's name holds, as the service counts them once the white space
-// around the name is trimmed.
-export const FOLDER_NAME_LENGTH = 50;
-
-function Refusal({ press, doing }: { press: Press; doing: string }) {
-  return press.state === "refused" ? (
-    <p className="status failed" role="alert">
-      {doing}：{press.reason}
-    </p>
-  ) : null;
-}
 
 // The menu of a subscription or of a hand-added item that moves it: to one of the folders, the
 // one it is in marked; to a folder made here, whose name the menu asks for in its place; or out
@@ -38,10 +27,8 @@ export function PlaceMenu({
   onLeave: (refocus: boolean) => void;
 }) {
   const [naming, setNaming] = useState(false);
-  const [name, setName] = useState("");
   const placing = usePress();
-  const making = usePress();
-  const asking = placing.press.state === "asking" || making.press.state === "asking";
+  const asking = placing.press.state === "asking";
 
   function placeIn(folderId: string | null) {
     if (folderId === current) {
@@ -54,72 +41,78 @@ export function PlaceMenu({
     );
   }
 
-  function make(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "" || asking) {
-      return;
+  // A folder made is moved into; a name given up closes the menu. The keyboard's leaving the field
+  // for another place in the menu leaves the field as it is; a press outside closes the menu.
+  function named(done: NameDone<Folder>) {
+    if (done.kind === "answered") {
+      placeIn(done.answer.id);
+    } else if (done.kind === "given up") {
+      onLeave(true);
     }
-    making.ask(
-      () => onMake(trimmed),
-      (folder) => placeIn(folder.id),
-    );
   }
 
+  // While it asks for a new folder's name, the menu is a dialog, which holds a field and a press.
+  if (naming) {
+    return (
+      <Popup
+        key="naming"
+        opening={opening}
+        role="dialog"
+        label={`把“${what}”移到新分类`}
+        onLeave={onLeave}
+      >
+        <FolderNameField asked={{ kind: "new" }} waiting={asking} onSend={onMake} onDone={named} />
+        <PlacingSaid press={placing.press} />
+      </Popup>
+    );
+  }
   return (
     <Popup opening={opening} role="menu" label={`移动“${what}”`} onLeave={onLeave}>
-      {naming ? (
-        <form onSubmit={make}>
-          <input
-            data-autofocus
-            aria-label="新分类的名称"
-            placeholder="新分类的名称"
-            maxLength={FOLDER_NAME_LENGTH}
-            readOnly={asking}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <button aria-disabled={asking}>{asking ? "新建中…" : "新建"}</button>
-        </form>
-      ) : (
+      <p className="menu-heading" aria-hidden="true">
+        移到分类…
+      </p>
+      <div role="group" aria-label="移到分类">
+        {folders.map((folder) => (
+          <MenuItem
+            key={folder.id}
+            checked={folder.id === current}
+            disabled={asking}
+            onChoose={() => placeIn(folder.id)}
+          >
+            <span className="menu-name" dir="auto" title={folder.name}>
+              {folder.name}
+            </span>
+          </MenuItem>
+        ))}
+        <MenuItem disabled={asking} onChoose={() => setNaming(true)}>
+          新建分类…
+        </MenuItem>
+      </div>
+      {current !== null && (
         <>
-          <p className="menu-heading" aria-hidden="true">
-            移到分类…
-          </p>
-          <div role="group" aria-label="移到分类">
-            {folders.map((folder) => (
-              <MenuItem
-                key={folder.id}
-                checked={folder.id === current}
-                disabled={asking}
-                onChoose={() => placeIn(folder.id)}
-              >
-                <span className="menu-name" dir="auto" title={folder.name}>
-                  {folder.name}
-                </span>
-              </MenuItem>
-            ))}
-            <MenuItem disabled={asking} onChoose={() => setNaming(true)}>
-              新建分类…
-            </MenuItem>
-          </div>
-          {current !== null && (
-            <>
-              <div role="separator" />
-              <MenuItem disabled={asking} onChoose={() => placeIn(null)}>
-                移出分类
-              </MenuItem>
-            </>
-          )}
+          <div role="separator" />
+          <MenuItem disabled={asking} onChoose={() => placeIn(null)}>
+            移出分类
+          </MenuItem>
         </>
       )}
-      {placing.press.state === "asking" && (
-        <p className="status" role="status">
-          正在移动…
-        </p>
-      )}
-      <Refusal press={making.press} doing="没有新建分类" />
-      <Refusal press={placing.press} doing="没有移动" />
+      <PlacingSaid press={placing.press} />
     </Popup>
   );
+}
+
+// What the menu says of a move: that it is under way, or why the service refused it.
+function PlacingSaid({ press }: { press: Press }) {
+  if (press.state === "asking") {
+    return (
+      <p className="status" role="status">
+        正在移动…
+      </p>
+    );
+  }
+  return press.state === "refused" ? (
+    <p className="status failed" role="alert">
+      没有移动：{press.reason}
+    </p>
+  ) : null;
 }

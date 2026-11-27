@@ -1,10 +1,8 @@
 import { useState } from "react";
 import type { Folder } from "./client";
+import type { Held } from "./folders";
 import { MenuItem, Popup, type Opening } from "./menu";
 import { usePress } from "./pressing";
-
-// What a folder holds, as the question before dissolving it says it.
-export type Held = { subscriptions: number; items: number };
 
 function heldText(folder: Folder, held: Held): string {
   const parts = [

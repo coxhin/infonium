@@ -1,18 +1,9 @@
-import {
-  memo,
-  useEffect,
-  useRef,
-  useState,
-  type DragEvent,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { memo, type DragEvent, type ReactNode } from "react";
 import type { Folder, Subscription } from "./client";
 import { endDrag, startDrag } from "./dragging";
+import { FolderNameField, type NameDone } from "./foldername";
 import { openingAt, openingOfContextMenu, type Opening } from "./menu";
-import { FOLDER_NAME_LENGTH } from "./placemenu";
-import { usePress } from "./pressing";
-import { FIXED_NAMES, keyOf } from "./selection";
+import { FIXED_NAMES, keyOf } from "./sidebarselection";
 import { stateWord } from "./subscriptions";
 
 // The rows of the sidebar's tree, each drawn again only when its own values change: the fixed
@@ -46,63 +37,8 @@ export type RowActions = {
   openMenu: (key: string, opening: Opening) => void;
   fold: (folderId: string, folding: boolean) => void;
   rename: (folderId: string, name: string) => Promise<void>;
-  renamed: (key: string) => void;
+  renamed: (key: string, done: NameDone<void>) => void;
 };
-
-// A folder's name, changed in its place: Enter or leaving the field sends a changed name,
-// Escape keeps the name it had. A refusal is said under the field, which keeps what was typed.
-function RenameField({
-  folder,
-  onRename,
-  onDone,
-}: {
-  folder: Folder;
-  onRename: (name: string) => Promise<void>;
-  onDone: () => void;
-}) {
-  const [name, setName] = useState(folder.name);
-  const { press, ask } = usePress();
-  const field = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    field.current?.select();
-  }, []);
-
-  function send(event?: FormEvent) {
-    event?.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed === "" || trimmed === folder.name) {
-      onDone();
-      return;
-    }
-    ask(() => onRename(trimmed), onDone);
-  }
-
-  return (
-    <form className="rename" onSubmit={send} onClick={(event) => event.stopPropagation()}>
-      <input
-        ref={field}
-        aria-label={`分类“${folder.name}”的新名称`}
-        maxLength={FOLDER_NAME_LENGTH}
-        readOnly={press.state === "asking"}
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onDone();
-          }
-        }}
-        onBlur={() => press.state === "idle" && send()}
-      />
-      {press.state === "refused" && (
-        <p className="status failed" role="alert">
-          没有改名：{press.reason}
-        </p>
-      )}
-    </form>
-  );
-}
 
 // A row's ⋯, which the keyboard reaches by Tab from the row it stands on.
 function RowMenuButton({
@@ -391,10 +327,10 @@ export const FolderRow = memo(function FolderRow({
         {folded ? "▸" : "▾"}
       </span>
       {renaming ? (
-        <RenameField
-          folder={folder}
-          onRename={(name) => actions.rename(folder.id, name)}
-          onDone={() => actions.renamed(key)}
+        <FolderNameField
+          asked={{ kind: "rename", folder }}
+          onSend={(name) => actions.rename(folder.id, name)}
+          onDone={(done) => actions.renamed(key, done)}
         />
       ) : (
         <span className="name" dir="auto" title={folder.name}>

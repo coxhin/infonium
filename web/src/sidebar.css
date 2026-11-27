@@ -175,7 +175,7 @@
 }
 
 /* A folder that takes what is dragged over it, and the sidebar, outside the folders, that takes
-   it out of its folder; what is said of a drop stands under the media, in view. */
+   it out of its folder; why a drop was refused stands under the media, in view. */
 .sidebar-tree li.dropping > .row {
   background: var(--paper);
   outline: 2px dashed var(--accent);
@@ -198,34 +198,18 @@
   color: var(--failure);
 }
 
-/* A folder's name, changed in its place; a refusal of it goes under the row, which keeps its
-   line. */
-.sidebar-tree .row:has(> .rename) {
+/* A folder's name, changed in its place: the field stands among the row's own parts; a refusal
+   of it goes under the row, after the count and the ⋯, which keep their line. */
+.sidebar-tree .row:has(> .folder-name) {
   flex-wrap: wrap;
 }
 
-.sidebar-tree .rename {
+.sidebar-tree .folder-name {
   display: contents;
 }
 
-.sidebar-tree .rename input {
-  flex: 1;
-  width: auto;
-}
-
-.sidebar :is(.rename, .new-folder) input {
-  width: 100%;
-  min-width: 0;
-  font: inherit;
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.4rem;
-  background: var(--paper);
-  padding: 0.2rem 0.4rem;
-}
-
-.sidebar-tree .rename .status {
-  flex-basis: 100%;
+.sidebar-tree .folder-name .status {
+  order: 1;
   margin: 0.1rem 0 0.2rem 1.45rem;
   font-weight: normal;
   white-space: normal;
@@ -287,6 +271,7 @@ li:focus-within > .row-menu,
 }
 
 .sidebar-foot {
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -295,8 +280,26 @@ li:focus-within > .row-menu,
   border-top: 1px solid var(--line);
 }
 
-.foot-row,
-.new-folder-row {
+/* While what is dragged would leave its folder, the foot, which is outside the folders too,
+   says so over its presses. It takes no room, so that nothing moves under a still pointer, and
+   no pointer, so that the drop goes where it is said to. */
+.sidebar-foot .drop-out {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 0.6rem;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.foot-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -326,16 +329,6 @@ li:focus-within > .row-menu,
   width: 2rem;
   padding: 0.2rem 0;
   color: var(--muted);
-}
-
-.new-folder-row button {
-  flex: none;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.5rem;
-}
-
-.new-folder .status {
-  margin: 0.3rem 0 0;
 }
 
 .sidebar button[aria-disabled="true"] {

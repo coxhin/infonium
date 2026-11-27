@@ -82,6 +82,10 @@
   margin: 1rem;
 }
 
+.library .list-view > .status button {
+  margin-left: 0.4rem;
+}
+
 /* The view under the head, which scrolls by itself. */
 .library .list-view {
   position: relative;

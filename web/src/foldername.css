@@ -1,0 +1,35 @@
+/* A field that asks for a folder's name, the press that sends it beside it where it has one, and
+   under them why the service refused the name. */
+.folder-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.4rem;
+}
+
+.folder-name input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+  padding: 0.2rem 0.4rem;
+}
+
+.folder-name button {
+  flex: none;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.folder-name button[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.folder-name .status {
+  flex-basis: 100%;
+  margin: 0;
+}

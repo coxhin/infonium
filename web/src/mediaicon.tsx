@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { MediaChoice } from "./selection";
+import type { MediaChoice } from "./sidebarselection";
 import "./mediaicon.css";
 
 // Drawn on a 16 by 16 grid in the colour of the text around them.

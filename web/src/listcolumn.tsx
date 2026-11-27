@@ -1,9 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Browsing } from "./browsing";
 import { requestReason, type ItemEntry, type Subscription } from "./client";
 import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
+import { keyboardIsNowhere, useOnLanding } from "./keyboarding";
 import type { Loaded } from "./loading";
-import type { Navigation } from "./navigation";
+import type { SidebarLayout } from "./sidebarlayout";
 import {
   MEDIA_NAMES,
   keyOf,
@@ -11,9 +13,9 @@ import {
   selectionName,
   type MediaChoice,
   type Selection,
-} from "./selection";
-import type { SidebarLayout } from "./sidebarlayout";
-import { SubscribeForm, SubscribingHint, withSubscription } from "./subscriptions";
+} from "./sidebarselection";
+import { withSubscription } from "./subscriptionlist";
+import { SubscribeForm, SubscribingHint } from "./subscriptions";
 import { SubscriptionPane } from "./subscriptionpane";
 import "./listcolumn.css";
 
@@ -39,9 +41,28 @@ function emptyText(selection: Selection, media: MediaChoice): string {
   }
 }
 
+// The lists besides the items that the list of a selection rests on: the subscriptions, which
+// tell the items that follow one, for 未分类, a folder and a subscription; and the folders, for a
+// folder. 全部 and 新来源 need the items alone.
+type ListName = "subscriptions" | "folders";
+const RESTS_ON: Record<Selection["kind"], ListName[]> = {
+  all: [],
+  new: [],
+  unfiled: ["subscriptions"],
+  folder: ["subscriptions", "folders"],
+  subscription: ["subscriptions"],
+};
+const LIST_NAMES: Record<ListName, string> = { subscriptions: "订阅", folders: "分类" };
+type Read = { loaded: Loaded<unknown>; readNow: () => void };
+
+function failure(read: Read): string {
+  return read.loaded.state === "failed" ? read.loaded.reason : "";
+}
+
 // The list column: under a head that names the selection and the media, the items the sidebar
 // selected, with adding by an address or a file where the selection takes it; or the
 // subscription selected, as its panel shows it, whatever the media; or the form that subscribes.
+// A list that rests on a list that cannot be read says so, and why, in place of a wrong list.
 // In one column, a press at its head opens the sidebar over the page.
 export function ListColumn({
   entries,
@@ -49,7 +70,7 @@ export function ListColumn({
   refusal,
   selected,
   seen,
-  navigation,
+  browsing,
   layout,
   onImported,
   onChanged,
@@ -61,13 +82,13 @@ export function ListColumn({
   selected: string | undefined;
   // The items told as seen from this page.
   seen: ReadonlySet<string>;
-  navigation: Navigation;
+  browsing: Browsing;
   layout: SidebarLayout;
   onImported: (entry: ItemEntry) => void;
   // What the library holds has changed by a press in the column.
   onChanged: () => void;
 }) {
-  const { selection, media, present, subscriptions, folders, placer } = navigation;
+  const { selection, media, present, subscriptions, folders, placer } = browsing;
   const [unplaced, setUnplaced] = useState<string>();
   const folderMap = useMemo(
     () =>
@@ -102,10 +123,19 @@ export function ListColumn({
     [entries, selection, media, present, seen],
   );
 
-  const subscribing = navigation.subscribing;
+  const subscribing = browsing.subscribing;
   const name = subscribing ? "订阅" : selectionName(selection, folderMap);
   const listKey = `${keyOf(selection)}|${media}`;
   const view = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  // In one column the sidebar is drawn only when opened: a row of it the keyboard is sent to, as
+  // that of a subscription just made, lands the keyboard on the press that opens it.
+  useOnLanding(browsing.landing, () => {
+    if (layout.width === "narrow" && !layout.overlaid && keyboardIsNowhere()) {
+      opener.current?.focus();
+    }
+  });
   // Another selection or media is listed from its top, not where the one before was scrolled.
   useLayoutEffect(() => {
     view.current?.scrollTo({ top: 0 });
@@ -114,14 +144,25 @@ export function ListColumn({
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }
       : undefined;
-  // The lists the selection is drawn from are read first; until then, they are being opened.
+  const lists: Record<ListName, Read> = { subscriptions, folders };
+  const restsOn = RESTS_ON[selection.kind];
+  const unread = restsOn.filter((list) => lists[list].loaded.state === "failed");
+  // The selection the page opens with rests on both lists, and is decided once they are read;
+  // while one of them cannot be read, it waits, and the lists that can be shown meanwhile do not.
+  const deciding =
+    !browsing.opened &&
+    !(["subscriptions", "folders"] as const).some((list) => lists[list].loaded.state === "failed");
+  // A list is being opened while the lists it rests on are read, and while the selection the
+  // page opens with, which may move it, is decided. Every item is listed at once: no list moves
+  // it.
   const waiting =
     selection.kind !== "all" &&
-    (subscriptions.loaded.state === "loading" || folders.loaded.state === "loading");
+    unread.length === 0 &&
+    (deciding || restsOn.some((list) => lists[list].loaded.state === "loading"));
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
-    navigation.subscribed(subscription).then(
+    browsing.subscribed(subscription).then(
       () => onChanged(),
       (error: unknown) =>
         setUnplaced(`已订阅，但没有放进分类“${importInto?.name ?? ""}”：${requestReason(error)}`),
@@ -133,6 +174,7 @@ export function ListColumn({
       <div className="list-brand">
         {layout.width === "narrow" && (
           <button
+            ref={opener}
             className="sidebar-opener"
             aria-label="打开侧栏"
             aria-expanded={layout.overlaid}
@@ -147,14 +189,14 @@ export function ListColumn({
         <h1>infonium</h1>
       </div>
       <div className="list-head">
-        <h2 dir="auto" title={name}>
+        <h2 ref={heading} tabIndex={-1} dir="auto" title={name}>
           {name}
         </h2>
         {!subscribing && selection.kind !== "subscription" && media !== "any" && (
           <span className="list-media">{MEDIA_NAMES[media]}</span>
         )}
         {subscribing && (
-          <button className="quiet" onClick={navigation.stopSubscribing}>
+          <button className="quiet" onClick={browsing.stopSubscribing}>
             取消
           </button>
         )}
@@ -172,19 +214,26 @@ export function ListColumn({
             <SubscribingHint />
           )}
         </div>
-      ) : selection.kind === "subscription" && navigation.pane !== undefined ? (
+      ) : unread.length > 0 ? (
+        <div className="list-view">
+          <p className="status failed">
+            这里的文章还列不出来，因为{unread.map((list) => LIST_NAMES[list]).join("和")}
+            没有读到：{unread.map((list) => failure(lists[list])).join("；")}
+            <button onClick={() => unread.forEach((list) => lists[list].readNow())}>重试</button>
+          </p>
+        </div>
+      ) : !waiting && selection.kind === "subscription" && browsing.pane !== undefined ? (
         <SubscriptionPane
-          key={navigation.pane.subscriptionId}
-          subscriptionId={navigation.pane.subscriptionId}
-          sought={navigation.pane.sought}
-          again={navigation.pane.again}
+          key={browsing.pane.subscriptionId}
+          subscriptionId={browsing.pane.subscriptionId}
+          sought={browsing.pane.sought}
+          again={browsing.pane.again}
           selected={selected}
           seen={seen}
-          shown
           onView={(subscription) =>
             subscriptions.replace((before) => withSubscription(before, subscription))
           }
-          onGone={navigation.gone}
+          onGone={browsing.gone}
           onChanged={onChanged}
         />
       ) : (
@@ -208,6 +257,8 @@ export function ListColumn({
               subscriptionFolders={subscriptionFolders}
               placer={placer}
               onImported={onImported}
+              onEmptied={() => heading.current?.focus()}
+              onOpenFolder={(folderId) => browsing.select({ kind: "folder", folderId })}
             />
           )}
         </div>
