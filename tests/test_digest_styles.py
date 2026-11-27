@@ -124,13 +124,12 @@ DIGEST_FIELDS = frozenset(
 SECTION_FIELDS = frozenset({"title", "form", "statements"})
 # Words that the recipe of a built-in style cannot be written without: the English names of
 # its fixed sections, which the instructions name as they title a section with the words for
-# a name in the output language, and for the questions of faq, the word itself. The sections
-# of outline are the document's own parts, with no fixed names. The one section of flash has
-# no title, and its words are what it is written as and what its first statement is.
+# a name in the output language, and for the questions of faq and the lead of flash, the word
+# itself. The sections of outline are the document's own parts, with no fixed names.
 RECIPE_WORDS = {
     Style.OVERVIEW: ("Summary", "Takeaways"),
     Style.GUIDE: ("Overview", "Key topics"),
-    Style.FLASH: ("news flash", "lead"),
+    Style.FLASH: ("News flash", "lead"),
     Style.BRIEF: ("Bottom line", "Why it matters", "Key facts", "Yes, but", "What's next"),
     Style.PAPER: ("In one sentence", "Problem and motivation", "Method", "Results", "Limitations"),
     Style.OUTLINE: (),
@@ -604,8 +603,8 @@ def test_instructions_given_as_null_with_a_built_in_style_are_taken_as_none(
     )
 
 
-# R8: every section carries the form drafted, and the title drafted: an empty one too, as the
-# one section of flash is drafted.
+# R8: every section carries the form drafted, and the title drafted: an empty one too, which
+# the web shows under no heading, as a reader's own instructions may ask a digest without one.
 
 # A section's title as a model drafts it: empty, or words.
 section_titles = st.one_of(
@@ -618,7 +617,7 @@ section_titles = st.one_of(
     style=st.sampled_from(Style),
     drafted=st.lists(st.tuples(section_titles, st.sampled_from(Form)), min_size=1, max_size=8),
 )
-@example(style=Style.FLASH, drafted=[("", Form.PARAGRAPH)])
+@example(style=Style.CUSTOM, drafted=[("", Form.PARAGRAPH)])
 @EXAMPLES
 def test_every_section_answered_carries_the_title_and_the_form_the_model_drafted(
     app: App, style: Style, drafted: list[tuple[str, Form]]
