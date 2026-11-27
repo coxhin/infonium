@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yt_dlp
 from fastapi.testclient import TestClient
 from hypothesis import settings
 from pydantic import SecretStr
@@ -260,11 +261,12 @@ def app(start_app: Callable[..., App]) -> App:
 
 @pytest.fixture
 def feed_sites(monkeypatch: pytest.MonkeyPatch) -> FeedSites:
-    # The stand-in sites that a feed is polled and found from, with the limits of a fetch and of
-    # a discovery lowered, by the names the modules give them.
+    # The stand-in sites that a feed is polled and found from, and yt-dlp beside them, with the
+    # limits of a fetch and of a discovery lowered, by the names the modules give them.
     standin = FeedSites()
     monkeypatch.setattr(httpx, "Client", standin.client())
     monkeypatch.setattr(httpx, "stream", standin.stream)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", standin.yt_dlp.youtube_dl())
     for module in (fetcher, discovery):
         monkeypatch.setattr(module, "FEED_LIMIT_SECONDS", LOWERED_FEED_SECONDS)
         monkeypatch.setattr(module, "FEED_LIMIT_BYTES", LOWERED_FEED_BYTES)
