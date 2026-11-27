@@ -5,7 +5,7 @@ from contextlib import closing, contextmanager
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
-from threading import Event, Lock, Thread, get_ident
+from threading import Event, Lock, get_ident
 from typing import Any
 
 import httpx2
@@ -17,13 +17,16 @@ from hypothesis import strategies as st
 from infonium import api
 from infonium.library import LIBRARY_FILE, LOCAL_OWNER, LibraryStore, item_identity
 from infonium.search import WORDS_TABLE, indexed_block_table, indexed_document_table
-from tests.feed_standin import FeedFunction, FeedStandin, held_reached
+from infonium.subscriptions.feed import UnreadableFeed
+from tests.feed_standin import INTERVAL, FeedFunction, FeedStandin, held_reached
 from tests.library_before_digest_styles import ANSWERS, DATA_FOLDER, KEPT_DATA, LibraryAnswers
-from tests.service import SETTLE_SECONDS, App, as_owner, keep_sources, new_owner
+from tests.service import App, as_owner, keep_sources, new_owner
 from tests.subscribing import (
     ADMITTED,
     AWAITED,
+    FAILED,
     READ,
+    UNDERWAY,
     admission_of,
     admissions_ended,
     answered,
@@ -36,6 +39,7 @@ from tests.subscribing import (
     polled,
     postings_page,
     served_feed,
+    stopped_in_time,
     subscribed,
     subscription_path,
     viewed,
@@ -63,8 +67,6 @@ COMMIT_EVENT = "commit"
 # The statements that change what the library holds.
 WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP")
 WROTE = "wrote"
-# How long a stop may take before the test takes it that it waits for what the test holds.
-STOP_SECONDS = 5
 
 
 def library_file(tmp_path: Path) -> Path:
@@ -127,19 +129,6 @@ def everything_shown(app: App, owner: str) -> dict[str, Any]:
         }
 
 
-def stopped_while_held(app: App) -> None:
-    # Stops the service while what the stand-in site holds waits. A stop that waits for it ends
-    # once it is let go. The library is let go of on this thread, which holds its lock.
-    stopping = Thread(target=app.client.__exit__, args=(None, None, None), daemon=True)
-    stopping.start()
-    stopping.join(STOP_SECONDS)
-    if stopping.is_alive():
-        app.site.let_go()
-        stopping.join(SETTLE_SECONDS)
-    assert not stopping.is_alive(), "the service did not stop"
-    app.stop()
-
-
 # S14: kept over a restart, beside an older library.
 
 
@@ -186,7 +175,7 @@ def test_subscriptions_postings_and_what_was_seen_are_kept_over_a_restart(
     )
 
 
-def test_postings_awaited_when_the_service_stops_are_admitted_after_it_starts(
+def test_the_service_stops_in_time_while_postings_wait_and_admits_them_after_it_starts(
     start_app: Callable[..., App], feeds: FeedStandin
 ) -> None:
     app = start_app(poller=feeds.poller)
@@ -200,7 +189,7 @@ def test_postings_awaited_when_the_service_stops_are_admitted_after_it_starts(
     assert admissions == [ADMITTED, AWAITED, AWAITED], (
         f"S8: the newest posting was not admitted first and the others left waiting: {admissions}"
     )
-    stopped_while_held(app)
+    stopped_in_time(app, "while postings wait and one is being read")
     again = start_app(poller=feeds.poller)
     shown = admissions_ended(again, view["id"])
     assert [posting["admission"]["item"]["reading"]["kind"] for posting in shown] == [READ] * 3, (
@@ -214,6 +203,69 @@ def test_postings_awaited_when_the_service_stops_are_admitted_after_it_starts(
     # A reading that the stopped service's intake still holds ends here, not in a later test.
     again.site.let_go()
     watched(feeds)
+
+
+def test_the_service_stops_in_time_while_polls_fail_and_polls_them_after_it_starts(
+    start_app: Callable[..., App], feeds: FeedStandin
+) -> None:
+    app = start_app(poller=feeds.poller)
+    addresses = [
+        served_feed(feeds, f"stop-failing-{number}", [missing_posting(f"stop-failing-{number}")])
+        for number in range(4)
+    ]
+    views = [subscribed(app, address, admit=0) for address in addresses]
+    for address in addresses:
+        feeds.plan_polls(address, UnreadableFeed("Down"), UnreadableFeed("Still down"))
+    feeds.clock.advance(INTERVAL)
+    waited_for(
+        lambda: len(feeds.calls_of(FeedFunction.FETCHED)), lambda polls: polls >= 1, "a poll"
+    )
+    stopped_in_time(app, "while polls fail")
+    again = start_app(poller=feeds.poller)
+    for view in views:
+        ended = waited_for(
+            partial(viewed, again, view["id"]),
+            lambda shown: shown["poll"]["kind"] != UNDERWAY,
+            "S20: the end of a poll under way or due when the service stopped",
+        )
+        assert ended["poll"]["kind"] == FAILED, (
+            f"S20: a poll due when the service stopped while polls failed did not end failed "
+            f"after it started: {ended['poll']}"
+        )
+    assert all(feeds.polls_of(address) >= 1 for address in addresses), (
+        "S20: a poll due when the service stopped was not begun after it started"
+    )
+
+
+def test_the_service_stops_in_time_while_a_poll_is_held_and_begins_it_again_after(
+    start_app: Callable[..., App], feeds: FeedStandin
+) -> None:
+    app = start_app(poller=feeds.poller)
+    first = [missing_posting(f"stop-held-{number}") for number in range(2)]
+    feed = served_feed(feeds, "stop-held", first)
+    view = subscribed(app, feed, admit=0)
+    feeds.serve(
+        feed,
+        feeds.served[feed].model_copy(
+            update={"postings": [missing_posting("stop-held-new"), *first]}
+        ),
+    )
+    hold = feeds.hold_poll(feed)
+    poll_by_hand(app, view["id"])
+    held_reached(hold, "the poll by hand")
+    stopped_in_time(app, "while a poll is held under way")
+    again = start_app(poller=feeds.poller)
+    shown = waited_for(
+        lambda: every_posting(again, view["id"]),
+        lambda postings: len(postings) == 3,
+        "S20: the poll under way when the service stopped, begun again after it started",
+    )
+    assert [posting["number"] for posting in shown] == [3, 2, 1], (
+        "S20: a poll begun again after a stop did not list what it found once"
+    )
+    assert feeds.polls_of(feed) == 2, (
+        "S20: a poll under way when the service stopped was not begun again once"
+    )
 
 
 def test_a_library_kept_before_subscriptions_opens_with_what_it_held_unchanged(

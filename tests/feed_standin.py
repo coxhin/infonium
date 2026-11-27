@@ -35,16 +35,24 @@ CUT_AT_THE_END = "the test ended while the feed was asked for"
 
 class Clock:
     # The poller's clock. It stands still until the test moves it, and counts how often it is
-    # read, so that a test can wait until the poller has looked at the time again.
+    # read, so that a test can wait until the poller has looked at the time again. Once the
+    # test fails it, every read of the poller's raises the error given.
     def __init__(self, now: datetime) -> None:
         self.lock = Lock()
         self.now = now
         self.reads = 0
+        self.failures: list[Exception] = []
 
     def __call__(self) -> datetime:
         with self.lock:
             self.reads += 1
+            if self.failures:
+                raise self.failures[0]
             return self.now
+
+    def fail(self, error: Exception) -> None:
+        with self.lock:
+            self.failures.append(error)
 
     def read_count(self) -> int:
         with self.lock:

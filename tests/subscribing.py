@@ -22,6 +22,8 @@ MOST_POSTINGS_LISTED = 200
 # that the poller has looked at what is due and what waits, and has done nothing.
 WATCHES = 6
 HELD_READING = "held-reading"
+# How long a stop may take: a few seconds, on a machine under load.
+STOP_SECONDS = 10
 UNDERWAY = "underway"
 SETTLED = "settled"
 FAILED = "failed"
@@ -179,11 +181,15 @@ def polled(app: App, subscription_id: str, at: datetime) -> dict[str, Any]:
     )
 
 
-def left_standing(app: App, what: str) -> NoReturn:
-    # The judgment fails where the poller stopped going on, and the service is left as it
-    # stands: stopping it would wait for the poller for ever.
+def left_standing(app: App, said: str) -> NoReturn:
+    # The judgment fails where the service stopped going on, and the service is left as it
+    # stands: stopping it would wait for it for ever.
     app.running = False
-    pytest.fail(f"S5, S6: the poller did not go on: {what} in {SETTLE_SECONDS} seconds")
+    pytest.fail(said)
+
+
+def not_going_on(what: str) -> str:
+    return f"S5, S6: the poller did not go on: {what} in {SETTLE_SECONDS} seconds"
 
 
 def polled_going_on(app: App, subscription_id: str, at: datetime) -> dict[str, Any]:
@@ -191,7 +197,7 @@ def polled_going_on(app: App, subscription_id: str, at: datetime) -> dict[str, A
     # function that fails at once may have stopped the poller.
     seen = seen_in_time(lambda: viewed(app, subscription_id), lambda view: is_polled_at(view, at))
     if not seen:
-        left_standing(app, f"no poll of subscription {subscription_id} at {at} ended")
+        left_standing(app, not_going_on(f"no poll of subscription {subscription_id} at {at} ended"))
     return seen[0]
 
 
@@ -209,18 +215,18 @@ def answered_going_on(app: App, ask: Callable[[], httpx2.Response], what: str) -
 
     Thread(target=asking, daemon=True).start()
     if wait([answer], timeout=SETTLE_SECONDS).not_done:
-        left_standing(app, f"{what} was not answered")
+        left_standing(app, not_going_on(f"{what} was not answered"))
     return answered(answer.result(), what)
 
 
-def stopped_going_on(app: App) -> None:
-    # The service stopped, where a poller that stopped going on may keep it from stopping. The
-    # library is let go of on this thread, which holds its lock.
+def stopped_in_time(app: App, meanwhile: str) -> None:
+    # The service stopped within a few seconds, whatever it was doing, as the circumstance
+    # given says. The library is let go of on this thread, which holds its lock.
     stopping = Thread(target=app.client.__exit__, args=(None, None, None), daemon=True)
     stopping.start()
-    stopping.join(SETTLE_SECONDS)
+    stopping.join(STOP_SECONDS)
     if stopping.is_alive():
-        left_standing(app, "the service did not stop")
+        left_standing(app, f"S20: the service did not stop in {STOP_SECONDS} seconds {meanwhile}")
     app.stop()
 
 

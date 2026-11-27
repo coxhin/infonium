@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
+from enum import StrEnum
 from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
@@ -31,6 +32,7 @@ from tests.subscribing import (
     READ,
     SETTLED,
     SUBSCRIBED,
+    SUBSCRIPTIONS,
     UNADMITTED,
     UNDERWAY,
     admission_of,
@@ -80,7 +82,22 @@ schemeless_addresses = st.from_regex(
     r"[a-z0-9]{1,12}(\.[a-z0-9]{1,12}){1,3}(/[a-z0-9._~-]{1,12}){0,3}", fullmatch=True
 )
 # Addresses of schemes that are neither the web's nor RSSHub's, and web addresses of no host.
-OTHER_SCHEMES = ("ftp", "file", "gopher", "ws", "wss", "javascript", "chrome", "feed", "itpc")
+OTHER_SCHEMES = ("ftp", "file", "gopher", "ws", "wss", "javascript", "chrome", "itpc")
+# The parts of a web address, and the word feed in any case, as an address written for a feed
+# begins with it.
+hosts = st.from_regex(r"[a-z0-9]{1,12}(\.[a-z0-9]{1,12}){1,3}", fullmatch=True)
+paths = st.from_regex(r"(/[a-z0-9._~-]{1,12}){0,3}", fullmatch=True)
+feed_words = st.tuples(*(st.sampled_from((letter, letter.upper())) for letter in "feed")).map(
+    "".join
+)
+# The schemes that feed: may not stand before, with what follows each.
+SCHEMES_AFTER_FEED = (
+    "mailto:someone@example.org",
+    "ftp://feeds.test/rss.xml",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "data:text/plain,feed",
+)
 unsubscribable_addresses = st.one_of(
     st.sampled_from(("https://", "http://")),
     st.tuples(
@@ -243,6 +260,80 @@ def test_an_address_neither_of_the_web_nor_of_rsshub_is_refused_before_anything_
     assert feeds.calls_of(FeedFunction.DISCOVERED) == [], (
         f"S1: an address that is neither a web address nor an rsshub:// route ({address!r}) was "
         "looked for before it was refused"
+    )
+    kept_nothing(subscribing_app)
+
+
+# S19: an address written for a feed.
+
+
+class WrittenForAFeed(StrEnum):
+    # How an address may be written for a feed: feed:// before the host, // alone, or feed:
+    # before a web address of either scheme.
+    FEED_SLASHES = "feed://"
+    SLASHES = "//"
+    FEED_HTTPS = "feed:https://"
+    FEED_HTTP = "feed:http://"
+
+
+def written_for_a_feed(written: WrittenForAFeed, word: str, address: str) -> str:
+    # The address as a reader writes it for a feed, of the web address given without its
+    # scheme, and the word feed as given.
+    match written:
+        case WrittenForAFeed.FEED_SLASHES:
+            return f"{word}://{address}"
+        case WrittenForAFeed.SLASHES:
+            return f"//{address}"
+        case WrittenForAFeed.FEED_HTTPS:
+            return f"{word}:https://{address}"
+        case WrittenForAFeed.FEED_HTTP:
+            return f"{word}:http://{address}"
+
+
+@given(
+    written=st.sampled_from(WrittenForAFeed),
+    word=feed_words,
+    host=hosts,
+    path=paths,
+)
+@example(written=WrittenForAFeed.FEED_SLASHES, word="FEED", host="blog.test", path="/rss.xml")
+@EXAMPLES
+def test_an_address_written_for_a_feed_is_looked_for_as_the_web_address_it_stands_for(
+    subscribing_app: App,
+    feeds: FeedStandin,
+    written: WrittenForAFeed,
+    word: str,
+    host: str,
+    path: str,
+) -> None:
+    address = written_for_a_feed(written, word, f"{host}{path}")
+    scheme = "http" if written == WrittenForAFeed.FEED_HTTP else "https"
+    stands_for = f"{scheme}://{host}{path}"
+    feeds.lead(stands_for, served_feed(feeds, uuid4().hex, []))
+    response = subscribe(subscribing_app, address, admit=0)
+    assert response.status_code == HTTPStatus.OK, (
+        f"S19: an address written for a feed ({address!r}) was refused: {response.text[:200]}"
+    )
+    assert feeds.calls_of(FeedFunction.DISCOVERED)[-1].address == stands_for, (
+        f"S19: an address written for a feed ({address!r}) was not looked for as the web "
+        f"address it stands for, {stands_for}"
+    )
+
+
+@given(word=feed_words, after=st.sampled_from(SCHEMES_AFTER_FEED))
+@example(word="feed", after="mailto:someone@example.org")
+@EXAMPLES
+def test_feed_before_another_scheme_is_refused_before_anything_is_looked_for(
+    subscribing_app: App, feeds: FeedStandin, word: str, after: str
+) -> None:
+    address = f"{word}:{after}"
+    response = subscribe(subscribing_app, address, admit=0)
+    assert response.status_code in {HTTPStatus.BAD_REQUEST, HTTPStatus.UNPROCESSABLE_ENTITY}, (
+        f"S19: feed: before a scheme that is not the web's ({address!r}) was not refused: "
+        f"{response.status_code} {response.text[:200]}"
+    )
+    assert feeds.calls_of(FeedFunction.DISCOVERED) == [], (
+        f"S19: feed: before a scheme that is not the web's ({address!r}) was looked for"
     )
     kept_nothing(subscribing_app)
 
@@ -849,3 +940,81 @@ def test_owners_of_subscriptions_to_one_feed_each_have_their_own_postings_items_
     assert viewed(app, mine["id"])["unseen"] == 1, (
         "S13: a subscription counts another owner's items as unseen"
     )
+
+
+# S18: a schedule that has stopped is told.
+
+STOPPED_CLOCK = "the clock of the test stopped the schedule"
+ITEM_OPERATIONS: dict[str, Callable[[App, str], httpx2.Response]] = {
+    "the list of items": lambda app, item: app.client.get("/api/items"),
+    "one item": lambda app, item: app.client.get(f"/api/items/{item}"),
+    "seeing an item": lambda app, item: app.client.put(f"/api/items/{item}/seen"),
+}
+
+
+def test_a_schedule_that_stopped_on_a_fault_is_told_by_every_operation_on_subscriptions(
+    subscribing_app: App, feeds: FeedStandin
+) -> None:
+    app = subscribing_app
+    kept_feed = served_feed(feeds, "told", [missing_posting("told-0")])
+    gone_feed = served_feed(feeds, "told-gone", [missing_posting("told-gone-0")])
+    later_feed = served_feed(feeds, "told-later", [missing_posting("told-later-0")])
+    before: dict[str, httpx2.Response] = {"subscribing": subscribe(app, kept_feed, 0)}
+    kept = before["subscribing"].json()["id"]
+    gone = subscribed(app, gone_feed, 0)["id"]
+    before["the list"] = app.client.get(SUBSCRIPTIONS)
+    for operation, asked in SUBSCRIPTION_OPERATIONS.items():
+        subscription = gone if operation == "unsubscribing" else kept
+        at = feeds.clock.advance(STEP)
+        before[operation] = asked(app, subscription)
+        if operation == "polling it by hand":
+            polled(app, kept, at)
+    for operation, response in before.items():
+        expected = HTTPStatus.NO_CONTENT if operation == "unsubscribing" else HTTPStatus.OK
+        assert response.status_code == expected, (
+            f"S18: before the schedule stopped, {operation} was answered "
+            f"{response.status_code}: {response.text[:200]}"
+        )
+    item = before["reading a posting"].json()["admission"]["item"]["id"]
+    app.settled(item)
+    items_before = {
+        operation: asked(app, item).json()
+        for operation, asked in ITEM_OPERATIONS.items()
+        if operation != "seeing an item"
+    }
+    feeds.clock.fail(RuntimeError(STOPPED_CLOCK))
+    waited_for(
+        lambda: app.client.get(SUBSCRIPTIONS).status_code,
+        lambda status: status == HTTPStatus.SERVICE_UNAVAILABLE,
+        "S18: the list of subscriptions refused once the schedule stopped on a fault",
+    )
+    after: dict[str, httpx2.Response] = {
+        "the list": app.client.get(SUBSCRIPTIONS),
+        "subscribing": subscribe(app, later_feed, 0),
+    }
+    for operation, asked in SUBSCRIPTION_OPERATIONS.items():
+        for subscription, named in ((kept, "a subscription"), (NOWHERE_ITEM, "none")):
+            after[f"{operation} of {named}"] = asked(app, subscription)
+    assert len(after) == 16, "the operations judged are not the nine of S18"
+    for operation, response in after.items():
+        assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE, (
+            f"S18: once the schedule stopped on a fault, {operation} was answered "
+            f"{response.status_code}, not 503: {response.text[:200]}"
+        )
+        assert STOPPED_CLOCK in response.json().get("detail", ""), (
+            f"S18: once the schedule stopped on a fault, {operation} was refused without the "
+            f"reason: {response.text[:200]}"
+        )
+    assert feeds.calls_of(FeedFunction.DISCOVERED, later_feed) == [], (
+        "S18: subscribing once the schedule stopped looked for the feed"
+    )
+    for operation, asked in ITEM_OPERATIONS.items():
+        response = asked(app, item)
+        assert response.status_code == HTTPStatus.OK, (
+            f"S18: once the schedule stopped on a fault, {operation} was answered "
+            f"{response.status_code}: {response.text[:200]}"
+        )
+        if operation in items_before:
+            assert response.json() == items_before[operation], (
+                f"S18: once the schedule stopped on a fault, {operation} answers otherwise"
+            )

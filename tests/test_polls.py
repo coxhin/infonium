@@ -44,7 +44,7 @@ from tests.subscribing import (
     polled,
     polled_going_on,
     served_feed,
-    stopped_going_on,
+    stopped_in_time,
     subscribe,
     subscribed,
     subscription_path,
@@ -654,7 +654,7 @@ def test_polls_whose_feed_fails_at_once_are_kept_failed_and_the_poller_goes_on(
     subscription = subscribed(app, feed, admit=0)["id"]
     for failures in range(1, 5):
         failed_at_once(app, feeds, subscription, failures)
-        stopped_going_on(app)
+        stopped_in_time(app, "after polls that failed at once")
         app = start_app(poller=feeds.poller)
 
 
