@@ -2,7 +2,6 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
-from functools import partial
 from threading import Event, Lock
 
 import httpx
@@ -56,6 +55,14 @@ class BegunPoll(BaseModel):
     added: AwareDatetime
 
 
+def record_fault(finished: Future[None]) -> None:
+    # A poll keeps its own failure; what still ends one is a fault in keeping it. This runs in
+    # whichever thread finishes or registers last, which may hold the turn, so it takes none.
+    error = None if finished.cancelled() else finished.exception()
+    if error is not None:
+        logger.error("a poll's failure could not be kept", exc_info=error)
+
+
 def polled(subscriptions: Subscriptions, begun: BegunPoll) -> list[Subscription]:
     # The subscription a poll was begun of, while that poll is under way; nothing once it was
     # removed.
@@ -95,7 +102,9 @@ class Poller:
         self.watching = ThreadPoolExecutor(max_workers=1, thread_name_prefix="poll-watch")
         # A subscription and the postings it lists are changed by one thread at a time. So a
         # poll is begun once whoever asks for it, a posting is admitted once, and a poll of a
-        # subscription that was removed keeps nothing.
+        # subscription that was removed keeps nothing. The turn is taken only where an
+        # operation begins, in a thread that holds nothing: what runs with it held never takes
+        # it, and no callback of a future takes it.
         self.turn = Lock()
         self.stopped = Event()
 
@@ -158,15 +167,19 @@ class Poller:
     def poll_in_background(self, owner: str, subscription: Subscription) -> None:
         begun = BegunPoll(owner=owner, subscription_id=subscription.id, added=subscription.added)
         finished = self.pool.submit(self.poll, begun)
-        finished.add_done_callback(partial(self.record, begun))
+        finished.add_done_callback(record_fault)
 
     def poll(self, begun: BegunPoll) -> None:
         # The feed is asked for from where the fetcher stopped, unless the subscription was
-        # removed before the poll had its turn.
+        # removed before the poll had its turn. A poll that fails keeps its failure itself, in
+        # the poller's own thread, which holds nothing when it begins.
         with self.store.transaction(begun.owner) as transaction:
             asked = polled(Subscriptions(transaction), begun)
         for subscription in asked:
-            self.settle(begun, self.fetched(subscription.feed, subscription.validators))
+            try:
+                self.settle(begun, self.fetched(subscription.feed, subscription.validators))
+            except Exception as failure:
+                self.keep_failure(begun, failure)
         if not asked:
             logger.info("subscription %s was removed before its poll began", begun.subscription_id)
 
@@ -200,11 +213,8 @@ class Poller:
         if not settling:
             logger.info("subscription %s was removed while it was polled", begun.subscription_id)
 
-    def record(self, begun: BegunPoll, finished: Future[None]) -> None:
+    def keep_failure(self, begun: BegunPoll, error: Exception) -> None:
         # A poll that failed is kept as failed, unless its subscription was removed meanwhile.
-        error = None if finished.cancelled() else finished.exception()
-        if error is None:
-            return
         with self.turn, self.store.transaction(begun.owner) as transaction:
             subscriptions = Subscriptions(transaction)
             failing = polled(subscriptions, begun)
