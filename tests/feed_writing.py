@@ -4,12 +4,13 @@ import unicodedata
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
+from itertools import pairwise
 from random import Random
 from urllib.parse import urljoin, urlsplit
 from xml.sax.saxutils import escape, quoteattr
 
 import pytest
-from hypothesis import HealthCheck, Phase, settings
+from hypothesis import HealthCheck, Phase, assume, settings
 from hypothesis import strategies as st
 from pydantic import AwareDatetime, BaseModel
 
@@ -169,12 +170,32 @@ SIGN_REFERENCES = {
     "<": ("&lt;", "&#60;", "&#x3C;"),
     ">": ("&gt;", "&#62;", "&#x3e;"),
 }
+
+
+def mendable(text: str) -> bool:
+    # Whether the text may read as UTF-8 taken for Latin-1, which RSS and Atom mend (N13): a
+    # letter that begins one of UTF-8 (U+00C2 to U+00F4) stands before one that continues it
+    # (U+0080 to U+00BF). The texts made up below are kept clear of it, whatever stands around
+    # such a pair, and whatever letters are written as references.
+    return any(
+        "Â" <= first <= "ô" and "\u0080" <= second <= "¿" for first, second in pairwise(text)
+    )
+
+
+def unmendable(texts: st.SearchStrategy[str]) -> st.SearchStrategy[str]:
+    return texts.filter(lambda text: not mendable(text))
+
+
 letters = st.characters(categories=("L", "M", "N", "P", "S"), exclude_characters="<>&")
-words = st.lists(
-    st.one_of(letters, letters, letters, st.sampled_from([*SIGN_REFERENCES, *NAMED_REFERENCES])),
-    min_size=1,
-    max_size=8,
-).map("".join)
+words = unmendable(
+    st.lists(
+        st.one_of(
+            letters, letters, letters, st.sampled_from([*SIGN_REFERENCES, *NAMED_REFERENCES])
+        ),
+        min_size=1,
+        max_size=8,
+    ).map("".join)
+)
 GAPS = (" ", "  ", "\n", "\t", " \n\t ")
 INLINE_ELEMENTS = (
     ("b", ""),
@@ -216,6 +237,8 @@ def marked_texts(draw: st.DrawFn, said_words: st.SearchStrategy[str] = words) ->
             written = f"<{name}{attributes}>{written}</{name}>"
         pieces += [written, chance.choice(GAPS)]
     pieces[-1] = chance.choice(("", *GAPS))
+    # Signs left out of a word not marked may bring two letters together.
+    assume(not mendable(WORD_GAP.join(said)))
     return Marked(markup="".join(pieces), plain=WORD_GAP.join(said))
 
 
@@ -334,13 +357,15 @@ LEFT_OUT_ID_HEAD = "tag:feeds.test,2026:left-out-"
 ids = st.one_of(
     st.none(),
     st.sampled_from(SHARED_IDS),
-    st.text(
-        st.one_of(
-            st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789:/._-?=&#"),
-            st.characters(categories=("L", "N")),
-        ),
-        min_size=1,
-        max_size=30,
+    unmendable(
+        st.text(
+            st.one_of(
+                st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789:/._-?=&#"),
+                st.characters(categories=("L", "N")),
+            ),
+            min_size=1,
+            max_size=30,
+        )
     ),
     st.integers(KEY_CHARACTERS - 1, KEY_CHARACTERS + 40).map(
         lambda length: LONG_ID_HEAD + "x" * (length - len(LONG_ID_HEAD))

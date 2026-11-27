@@ -70,6 +70,7 @@ from tests.feed_writing import (
     served_feeds,
     slugs,
     spaced_slugs,
+    unmendable,
     unreadable_times,
     words,
     written_feed,
@@ -702,7 +703,7 @@ def test_an_rss_title_is_markup_only_where_it_is_markup(written: str, form: str)
 # and no character reference.
 UNMARKED_TOKENS = ("<", ">", "&", "<T>", "<script>", "<details>", "Vec<T>", "a<b", "x>y", "Box<dyn")
 unmarked_words = st.one_of(
-    st.text(st.characters(categories=("L", "N")), min_size=1, max_size=8),
+    unmendable(st.text(st.characters(categories=("L", "N")), min_size=1, max_size=8)),
     st.sampled_from(UNMARKED_TOKENS),
 )
 unmarked_writing = st.lists(unmarked_words, min_size=1, max_size=10).map(WORD_GAP.join)
@@ -741,7 +742,9 @@ def test_an_rss_description_is_read_as_html_whatever_it_looks_like(written: str,
 
 
 description_words = st.lists(
-    st.text(st.characters(categories=("L", "N", "P", "S"), exclude_characters="<&"), min_size=1),
+    unmendable(
+        st.text(st.characters(categories=("L", "N", "P", "S"), exclude_characters="<&"), min_size=1)
+    ),
     min_size=1,
     max_size=30,
 )
@@ -795,6 +798,37 @@ def test_an_rss_description_that_is_a_whole_html_document_reads_as_its_text_or_n
     assert posting.title == expected, (
         f"an {form} posting without a title, described {written!r}, was called "
         f"{posting.title!r}, not {expected!r}: a description that is a document is HTML"
+    )
+
+
+# N13: a text of RSS or Atom whose every letter beyond ASCII reads as UTF-8 taken for Latin-1 is
+# mended, as feedparser mends it; a text with any other letter beyond ASCII, and any text of JSON
+# Feed, is read as written.
+MENDED_TEXTS = {
+    "CafÃ© society": "Café society",
+    "Â¡": "¡",
+    "Â¡Hola! señor": "Â¡Hola! señor",
+    "PÃO de queijo": "PÃO de queijo",
+    "Ã© and 夜": "Ã© and 夜",
+}
+
+
+@pytest.mark.parametrize("form", list(FeedForm))
+@pytest.mark.parametrize("written", sorted(MENDED_TEXTS))
+def test_rss_and_atom_mend_text_whose_letters_beyond_ascii_read_as_utf_8_taken_for_latin_1(
+    written: str, form: FeedForm
+) -> None:
+    said = SaidFeed(
+        title=said_plainly(written),
+        site=None,
+        base=None,
+        postings=[plain_posting(0, said_plainly(written), "https://feeds.test/p/0")],
+    )
+    feed = read_feed(written_feed(said, form), "", ADDRESS)
+    expected = MENDED_TEXTS[written] if form in XML_FORMS else written
+    assert [feed.title, feed.postings[0].title] == [expected, expected], (
+        f"a {form} feed and posting titled {written!r} were read as {feed.title!r} and "
+        f"{feed.postings[0].title!r}, not as {expected!r} (N13)"
     )
 
 
