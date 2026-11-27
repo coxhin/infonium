@@ -71,9 +71,7 @@ class Poller:
     # give, polls each subscription's feed when it is due, a few at a time and off the thread
     # that asks, and hands the postings that wait to the intake one at a time. The two feed
     # functions are given: the service gives it those of the subscriptions package.
-    # The schedule is a loop of our own: its due times live in the library's file with the
-    # subscriptions, where a reader is shown them and a restart finds them, which a scheduling
-    # library's own store of jobs would only copy.
+    # Our own loop: the due times must live in the library's file, which a job store would copy.
     def __init__(
         self,
         store: LibraryStore,
