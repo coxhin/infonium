@@ -1,6 +1,8 @@
 import {
   isUnanswered,
   listFolders,
+  place,
+  Refused,
   type Folder,
   type ItemEntry,
   type Placing,
@@ -12,13 +14,53 @@ import { followed } from "./sidebarselection";
 // The most characters a folder's name holds, as the service counts them once the white space
 // around the name is trimmed.
 export const FOLDER_NAME_LENGTH = 50;
+const NOT_FOUND = 404;
 
 // What a folder holds, as the question before dissolving it says it.
 export type Held = { subscriptions: number; items: number };
 
+// A placing refused because its folder is there no more, as one dissolved in another window. The
+// service names the folder by its id, which the reader never saw; this says it by the name the
+// page showed it by.
+export class FolderGone extends Error {
+  constructor(folderName: string) {
+    super(`分类“${folderName}”已经不在了`);
+  }
+}
+
+// Whether the service holds the folder still; where it cannot be asked, the refusal it gave is
+// said as it gave it.
+function isFolderThere(folderId: string): Promise<boolean> {
+  return listFolders().then(
+    (folders) => folders.some((folder) => folder.id === folderId),
+    () => true,
+  );
+}
+
+// Places as the service does. A placing it refuses as not in the library, into a folder it no
+// longer holds, is refused as FolderGone, by the folder's name among those the page knew; any
+// other refusal is the service's.
+export async function placeAmong(placing: Placing, known: Folder[]): Promise<void> {
+  try {
+    await place(placing);
+  } catch (error) {
+    const folderId = placing.folder;
+    if (
+      folderId !== null &&
+      error instanceof Refused &&
+      error.status === NOT_FOUND &&
+      !(await isFolderThere(folderId))
+    ) {
+      throw new FolderGone(known.find((folder) => folder.id === folderId)?.name ?? "");
+    }
+    throw error;
+  }
+}
+
 // What moves subscriptions and items between folders, for the menus and the drags of both
 // columns: the folders by name, a placing sent to the service, and a folder made. Each answers
-// once the service has done it and what is on show follows, and fails with the service's reason.
+// once the service has done it and what is on show follows, and fails with the service's reason,
+// or with FolderGone.
 export type Placer = {
   folders: Folder[];
   place: (placing: Placing) => Promise<void>;

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   dissolveFolder,
   makeFolder,
-  place,
   renameFolder,
   type Folder,
   type ItemEntry,
@@ -12,6 +11,7 @@ import {
 import {
   entriesPlaced,
   outOfFolder,
+  placeAmong,
   subscriptionsPlaced,
   useFolders,
   withFolder,
@@ -200,7 +200,7 @@ export function useBrowsing(
     () => ({
       folders: [...listedFolders].sort((one, other) => byName(one.name, other.name)),
       place: async (placing: Placing) => {
-        await readOnRefusal(place(placing));
+        await readOnRefusal(placeAmong(placing, listedFolders));
         entries.answer((before) => entriesPlaced(before, placing, present));
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       },
@@ -260,7 +260,7 @@ export function useBrowsing(
           subscriptions: [subscription.id],
           items: [],
         };
-        await readOnRefusal(place(placing));
+        await readOnRefusal(placeAmong(placing, listedFolders));
         subscriptions.answer((before) => subscriptionsPlaced(before, placing));
       }
       const chosen = { kind: "subscription", subscriptionId: subscription.id } as const;
@@ -270,7 +270,16 @@ export function useBrowsing(
       setPane({ subscriptionId: subscription.id, sought: undefined, again });
       land(keyOf(chosen));
     },
-    [present, selection, readOnRefusal, subscriptions.answer, entries.readNow, keepSelection, land],
+    [
+      present,
+      selection,
+      listedFolders,
+      readOnRefusal,
+      subscriptions.answer,
+      entries.readNow,
+      keepSelection,
+      land,
+    ],
   );
 
   const gone = useCallback(

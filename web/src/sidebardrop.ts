@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent } from "react";
 import { requestReason } from "./client";
 import { draggedOver, endDrag, type Dragged } from "./dragging";
-import type { Placer } from "./folders";
+import { FolderGone, type Placer } from "./folders";
 import { selectionOfKey } from "./sidebarselection";
 
 // A drag of the page's over the sidebar: where what is dragged would go, why the service refused
@@ -75,10 +75,8 @@ export function useSidebarDrop(placer: Placer): SidebarDrop {
     }
     event.preventDefault();
     const { dragged, folderId } = drop;
-    const doing =
-      folderId === null
-        ? "没有移出分类"
-        : `没有移到“${placer.folders.find((folder) => folder.id === folderId)?.name ?? ""}”`;
+    const target = placer.folders.find((folder) => folder.id === folderId);
+    const doing = folderId === null ? "没有移出分类" : `没有移到“${target?.name ?? ""}”`;
     setRefusal(undefined);
     placer
       .place({
@@ -86,7 +84,14 @@ export function useSidebarDrop(placer: Placer): SidebarDrop {
         subscriptions: dragged.kind === "subscription" ? [dragged.id] : [],
         items: dragged.kind === "item" ? [dragged.id] : [],
       })
-      .catch((error: unknown) => setRefusal(`${doing}：${requestReason(error)}`));
+      .catch((error: unknown) =>
+        // A folder gone is named in the refusal itself.
+        setRefusal(
+          error instanceof FolderGone
+            ? `没有移动：${error.message}`
+            : `${doing}：${requestReason(error)}`,
+        ),
+      );
   }
 
   return { over, refusal, onDragOver, onDragLeave, onDrop };
