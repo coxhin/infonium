@@ -1,5 +1,10 @@
+import html
 import json
+import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
+from functools import partial
 from xml.sax.saxutils import escape
 
 import pytest
@@ -22,6 +27,7 @@ from tests.feed_writing import (
     FAULT_EXAMPLES,
     JSON_FEED_VERSIONS,
     MONTH_NAMES,
+    POSTING_ELEMENTS,
     RECORDING_TYPES,
     RSS_KIND,
     SUMMARY_TITLE_CHARACTERS,
@@ -31,6 +37,7 @@ from tests.feed_writing import (
     Marked,
     SaidFeed,
     ServedFeed,
+    TextKind,
     WrittenTime,
     absolute_addresses,
     absolute_addresses_of,
@@ -43,7 +50,6 @@ from tests.feed_writing import (
     feed_addresses,
     forms,
     is_cut_from,
-    is_cut_near,
     keyed_feeds,
     marked_texts,
     markup_of,
@@ -53,15 +59,17 @@ from tests.feed_writing import (
     padded,
     plain_posting,
     read,
+    read_text,
+    refusal,
     relative_addresses,
     relative_addresses_of,
     said_feeds,
+    said_plainly,
     said_postings,
     same_time,
     served_feeds,
     slugs,
     spaced_slugs,
-    unmarked_text,
     unreadable_times,
     words,
     written_feed,
@@ -70,7 +78,8 @@ from tests.feed_writing import (
 )
 
 # Judgments of read_feed: a posting's address, key, title and time, and the feed itself
-# (F2 to F6).
+# (F2 to F6, G12 and G15). A reading raises no warning of any kind (G16).
+pytestmark = pytest.mark.filterwarnings("error")
 
 
 def titled(feed: SaidFeed, title: Marked | None) -> SaidFeed:
@@ -160,13 +169,6 @@ def test_an_rss_guid_that_is_a_web_permalink_is_the_page_of_a_posting_without_a_
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F2 and F3 as amended, not yet built: the guid of an RSS posting without a link, "
-    "where it is no web address and not said to be no permalink, is joined to the feed's "
-    "address or base and made the posting's address",
-)
-@settings(FAULT_EXAMPLES)
 @given(
     guid=not_web_ids,
     permalink=st.sampled_from(PERMALINK_MARKS),
@@ -184,12 +186,6 @@ def test_an_rss_guid_that_is_no_web_address_is_never_a_postings_page(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an Atom entry without a link whose id is no web address is given its id joined to "
-    "the feed's address (or base) as its address, as feedparser takes an id for a permalink",
-)
-@settings(FAULT_EXAMPLES)
 @given(entry_id=not_web_ids, address=feed_addresses)
 def test_an_atom_entry_without_a_link_has_no_address_whatever_its_id(
     entry_id: str, address: str
@@ -203,27 +199,16 @@ def test_an_atom_entry_without_a_link_has_no_address_whatever_its_id(
     )
 
 
-ENCLOSURE_FORMS = [
-    pytest.param(
-        FeedForm.RSS,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="the relative address of an RSS enclosure is resolved against the feed's "
-            "address, never against the xml:base of its channel",
-        ),
-    ),
-    FeedForm.ATOM,
-]
+ENCLOSURE_FORMS = [FeedForm.RSS, FeedForm.ATOM]
 
 
 @pytest.mark.parametrize("form", ENCLOSURE_FORMS)
-@settings(FAULT_EXAMPLES)
 @given(feed_base=st.sampled_from(BASES), written=relative_addresses, address=feed_addresses)
 def test_an_enclosures_relative_address_is_resolved_against_the_base_the_feed_gives(
     form: FeedForm, feed_base: str, written: str, address: str
 ) -> None:
     enclosure = Enclosure(address=written, kind="audio/mpeg")
-    posting = plain_posting(0, unmarked_text("An episode"), None).model_copy(
+    posting = plain_posting(0, said_plainly("An episode"), None).model_copy(
         update={"enclosures": [enclosure]}
     )
     said = SaidFeed(title=None, site=None, base=feed_base, postings=[posting])
@@ -240,7 +225,7 @@ def feeds_of_postings_based(draw: st.DrawFn) -> SaidFeed:
     # Feeds of postings at relative pages, some with a base of their own, under a base of the
     # feed or none.
     postings = [
-        plain_posting(number, unmarked_text("A posting"), draw(relative_addresses)).model_copy(
+        plain_posting(number, said_plainly("A posting"), draw(relative_addresses)).model_copy(
             update={"base": draw(bases)}
         )
         for number in range(draw(st.integers(1, 4)))
@@ -248,12 +233,6 @@ def feeds_of_postings_based(draw: st.DrawFn) -> SaidFeed:
     return SaidFeed(title=None, site=None, base=draw(bases), postings=postings)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a posting's xml:base holds for the postings after it too, and one that is relative "
-    "is not resolved against the feed's base",
-)
-@settings(FAULT_EXAMPLES)
 @given(said=feeds_of_postings_based(), form=st.sampled_from(XML_FORMS), address=feed_addresses)
 def test_a_postings_base_applies_to_it_alone_and_within_the_feeds(
     said: SaidFeed, form: FeedForm, address: str
@@ -267,12 +246,6 @@ def test_a_postings_base_applies_to_it_alone_and_within_the_feeds(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a relative xml:base that climbs (../up/) is resolved as if it did not: its steps "
-    "up are lost",
-)
-@settings(FAULT_EXAMPLES)
 @given(
     base=st.sampled_from(CLIMBING_BASES),
     site=relative_addresses,
@@ -284,7 +257,7 @@ def test_a_base_that_climbs_is_resolved_as_written(
     base: str, site: str, pages: list[str], form: FeedForm, address: str
 ) -> None:
     postings = [
-        plain_posting(number, unmarked_text("A posting"), page) for number, page in enumerate(pages)
+        plain_posting(number, said_plainly("A posting"), page) for number, page in enumerate(pages)
     ]
     said = SaidFeed(title=None, site=site, base=base, postings=postings)
     feed = read_feed(written_feed(said, form), "", address)
@@ -324,12 +297,6 @@ def feeds_of_spaced_addresses(draw: st.DrawFn) -> SaidFeed:
     return said.model_copy(update={"postings": postings, "site": draw(spaced)})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F2 as amended, not yet built: a posting whose address has a space in it is left "
-    "out, where the space is to be written %20 and white space around it dropped",
-)
-@settings(FAULT_EXAMPLES)
 @given(served=served_feeds(feeds_of_spaced_addresses()))
 def test_an_address_is_kept_as_a_browser_asks_for_it(served: ServedFeed) -> None:
     feed = read(served)
@@ -390,7 +357,7 @@ def feeds_saying_postings_again(draw: st.DrawFn) -> SaidFeed:
     copies = [
         posting.model_copy(
             update={
-                "title": unmarked_text("A copy"),
+                "title": said_plainly("A copy"),
                 "page": f"https://feeds.test/again/{number}",
                 "enclosures": [],
             }
@@ -424,22 +391,10 @@ def test_a_json_feed_id_written_as_a_number_is_a_key_as_its_text() -> None:
     assert keys == ["12"], f"a JSON Feed item of the id 12, a number, was keyed {keys}"
 
 
-KEY_FORMS = [
-    pytest.param(
-        FeedForm.ATOM,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="the key of an Atom entry whose id is relative is the id joined to the "
-            "xml:base in force, not the id as written",
-        ),
-    ),
-    FeedForm.RSS,
-    FeedForm.JSON_1_1,
-]
+KEY_FORMS = [FeedForm.ATOM, FeedForm.RSS, FeedForm.JSON_1_1]
 
 
 @pytest.mark.parametrize("form", KEY_FORMS)
-@settings(FAULT_EXAMPLES)
 @given(
     said_ids=st.lists(not_web_ids, min_size=1, max_size=4, unique=True),
     base=st.sampled_from(BASES),
@@ -450,7 +405,7 @@ def test_a_postings_key_is_its_id_as_written_under_any_base(
 ) -> None:
     postings = [
         plain_posting(
-            number, unmarked_text("A posting"), f"https://feeds.test/p/{number}"
+            number, said_plainly("A posting"), f"https://feeds.test/p/{number}"
         ).model_copy(update={"id": said_id})
         for number, said_id in enumerate(said_ids)
     ]
@@ -467,8 +422,8 @@ def test_a_postings_key_is_its_id_as_written_under_any_base(
 titled_feeds = st.tuples(addressed_feeds(), marked_texts()).map(lambda said: titled(*said))
 BLANK_TITLES = (
     None,
-    unmarked_text(""),
-    Marked(markup=" <i></i> ", unmarked="  ", plain=""),
+    said_plainly(""),
+    Marked(markup=" <i></i> ", plain=""),
 )
 untitled_feeds = st.tuples(addressed_feeds(), st.sampled_from(BLANK_TITLES)).map(
     lambda said: titled(*said)
@@ -483,7 +438,7 @@ def test_a_postings_title_is_its_plain_text_cut_to_title_characters_with_an_elli
     for posting, said, plain in zip(
         postings_read(served), served.said.postings, expected, strict=True
     ):
-        assert is_cut_near(posting.title, plain.called, TITLE_CHARACTERS), (
+        assert is_cut_from(posting.title, plain.called, TITLE_CHARACTERS), (
             f"a {served.form} posting titled {markup_of(said.title)!r} was called "
             f"{posting.title!r}, not its plain text {plain.called!r} cut to {TITLE_CHARACTERS} "
             "characters with an ellipsis"
@@ -498,7 +453,7 @@ def test_a_posting_without_a_title_is_called_by_its_summary_or_content_else_its_
     for posting, said, plain in zip(
         postings_read(served), served.said.postings, expected, strict=True
     ):
-        assert is_cut_near(posting.title, plain.called, plain.called_characters), (
+        assert is_cut_from(posting.title, plain.called, plain.called_characters), (
             f"a {served.form} posting without a title, whose summary is "
             f"{markup_of(said.summary)!r} and content "
             f"{markup_of(said.content)!r}, was called {posting.title!r}, not "
@@ -507,39 +462,105 @@ def test_a_posting_without_a_title_is_called_by_its_summary_or_content_else_its_
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the title and summary of a JSON Feed item are kept with their markup: references "
-    "are resolved, elements are not removed",
-)
-@settings(FAULT_EXAMPLES)
-@given(title=marked_texts(), summary=marked_texts(), address=feed_addresses)
-def test_a_json_feed_items_title_and_summary_are_read_as_plain_text(
-    title: Marked, summary: Marked, address: str
+def json_item_with(field: str, written: str) -> bytes:
+    item = {"id": "1", "url": "https://feeds.test/p/1", field: written}
+    return json.dumps({"version": JSON_FEED_VERSIONS[FeedForm.JSON_1_1], "items": [item]}).encode()
+
+
+def atom_titled(typed: str, written: str) -> bytes:
+    entry = (
+        f"<entry><id>tag:feeds.test,2026:1</id><title{typed}>{written}</title>"
+        '<link href="https://feeds.test/p/1"/></entry>'
+    )
+    return f'<feed xmlns="{ATOM_NAMESPACE}"><title>A feed</title>{entry}</feed>'.encode()
+
+
+def rss_item_with(element: str, written: str) -> bytes:
+    item = (
+        f"<item><{element}>{escape(written)}</{element}><link>https://feeds.test/p/1</link></item>"
+    )
+    return f'<rss version="2.0"><channel><title>A feed</title>{item}</channel></rss>'.encode()
+
+
+XML_REFERENCES = frozenset({"amp", "lt", "gt", "quot", "apos"})
+NAMED_REFERENCE = re.compile(r"&([A-Za-z]+);")
+
+
+def as_xhtml(markup: str) -> str:
+    # Markup as XHTML writes it: a reference XML does not name written by its number.
+    return '<div xmlns="http://www.w3.org/1999/xhtml">{}</div>'.format(
+        NAMED_REFERENCE.sub(
+            lambda found: (
+                found.group()
+                if found.group(1) in XML_REFERENCES
+                else f"&#{ord(html.unescape(found.group()))};"
+            ),
+            markup,
+        )
+    )
+
+
+# Each field a test writes a text into: how the feed is written, what its format says the field
+# is, and the most characters of it a posting is called by.
+FIELDS: dict[str, tuple[Callable[[str], bytes], TextKind, int]] = {
+    "JSON Feed's title": (partial(json_item_with, "title"), TextKind.PLAIN, TITLE_CHARACTERS),
+    "JSON Feed's summary": (
+        partial(json_item_with, "summary"),
+        TextKind.PLAIN,
+        SUMMARY_TITLE_CHARACTERS,
+    ),
+    "JSON Feed's content_text": (
+        partial(json_item_with, "content_text"),
+        TextKind.PLAIN,
+        SUMMARY_TITLE_CHARACTERS,
+    ),
+    "JSON Feed's content_html": (
+        partial(json_item_with, "content_html"),
+        TextKind.MARKUP,
+        SUMMARY_TITLE_CHARACTERS,
+    ),
+    "Atom's title of type text": (
+        lambda written: atom_titled(' type="text"', escape(written)),
+        TextKind.PLAIN,
+        TITLE_CHARACTERS,
+    ),
+    "Atom's title of no type": (
+        lambda written: atom_titled("", escape(written)),
+        TextKind.PLAIN,
+        TITLE_CHARACTERS,
+    ),
+    "Atom's title of type html": (
+        lambda written: atom_titled(' type="html"', escape(written)),
+        TextKind.MARKUP,
+        TITLE_CHARACTERS,
+    ),
+    "Atom's title of type xhtml": (
+        lambda written: atom_titled(' type="xhtml"', as_xhtml(written)),
+        TextKind.MARKUP,
+        TITLE_CHARACTERS,
+    ),
+    "RSS's title": (partial(rss_item_with, "title"), TextKind.MARKUP, TITLE_CHARACTERS),
+    "RSS's description": (
+        partial(rss_item_with, "description"),
+        TextKind.MARKUP,
+        SUMMARY_TITLE_CHARACTERS,
+    ),
+}
+
+
+@given(text=marked_texts(), field=st.sampled_from(sorted(FIELDS)), address=feed_addresses)
+def test_a_field_is_read_as_what_its_format_says_it_is(
+    text: Marked, field: str, address: str
 ) -> None:
-    items = [
-        {"id": "1", "url": "https://feeds.test/p/1", "title": title.markup},
-        {"id": "2", "url": "https://feeds.test/p/2", "summary": summary.markup},
-    ]
-    content = json.dumps({"version": JSON_FEED_VERSIONS[FeedForm.JSON_1_1], "items": items})
-    titled_posting, summarised = read_feed(content.encode(), "", address).postings
-    assert is_cut_near(titled_posting.title, title.plain, TITLE_CHARACTERS), (
-        f"a JSON Feed item titled {title.markup!r} was called {titled_posting.title!r}, not its "
-        f"plain text {title.plain!r} cut to {TITLE_CHARACTERS} characters"
-    )
-    assert is_cut_near(summarised.title, summary.plain, SUMMARY_TITLE_CHARACTERS), (
-        f"a JSON Feed item without a title, whose summary is {summary.markup!r}, was called "
-        f"{summarised.title!r}, not the first {SUMMARY_TITLE_CHARACTERS} characters of "
-        f"{summary.plain!r}"
+    write, kind, characters = FIELDS[field]
+    [posting] = read_feed(write(text.markup), "", address).postings
+    said = read_text(text, kind)
+    assert is_cut_from(posting.title, said, characters), (
+        f"{field}, {kind.value}, written {text.markup!r}, called its posting {posting.title!r}, "
+        f"not {said!r} cut to {characters} characters"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F4 as amended, not yet built: a title is cut between a letter and a mark that combines"
-    " with it",
-)
-@settings(FAULT_EXAMPLES)
 @given(
     lead=st.integers(0, 8),
     letter=st.sampled_from("eaoक"),
@@ -556,7 +577,7 @@ def test_a_title_is_never_cut_between_a_letter_and_the_marks_that_combine_with_i
         title=None,
         site=None,
         base=None,
-        postings=[plain_posting(0, unmarked_text(plain), "https://feeds.test/p/0")],
+        postings=[plain_posting(0, said_plainly(plain), "https://feeds.test/p/0")],
     )
     [posting] = read_feed(written_feed(said, form), "", address).postings
     assert is_cut_from(posting.title, plain, TITLE_CHARACTERS), (
@@ -581,7 +602,6 @@ def documents_saying(said_words: str) -> st.SearchStrategy[Marked]:
     return st.sampled_from(DOCUMENTS).map(
         lambda document: Marked(
             markup=document.format(words=escape(said_words)),
-            unmarked=document.format(words=escape(said_words)),
             plain=said_words if "{words}" in document else "",
         )
     )
@@ -604,12 +624,6 @@ def feeds_titled_by_documents(draw: st.DrawFn) -> SaidFeed:
     return said.model_copy(update={"postings": postings})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F4 as amended, not yet built: a title or summary that is an empty HTML document or a "
-    "bare doctype fails the reading with lxml's ParserError or an AssertionError",
-)
-@settings(FAULT_EXAMPLES)
 @given(served=served_feeds(feeds_titled_by_documents()))
 def test_a_title_or_summary_that_is_a_whole_html_document_never_fails_the_reading(
     served: ServedFeed,
@@ -621,12 +635,6 @@ def test_a_title_or_summary_that_is_a_whole_html_document_never_fails_the_readin
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F4 as amended, not yet built: a title or summary that is a whole HTML document is kept"
-    " as its markup",
-)
-@settings(FAULT_EXAMPLES)
 @given(served=served_feeds(feeds_titled_by_documents(), st.sampled_from(XML_FORMS)))
 def test_a_title_or_summary_that_is_a_whole_html_document_reads_as_its_text_or_nothing(
     served: ServedFeed,
@@ -635,10 +643,84 @@ def test_a_title_or_summary_that_is_a_whole_html_document_reads_as_its_text_or_n
     for posting, said, plain in zip(
         postings_read(served), served.said.postings, expected, strict=True
     ):
-        assert is_cut_near(posting.title, plain.called, plain.called_characters), (
+        assert is_cut_from(posting.title, plain.called, plain.called_characters), (
             f"a {served.form} posting titled {markup_of(said.title)!r}, with the summary "
             f"{markup_of(said.summary)!r}, was called {posting.title!r}, not {plain.called!r}"
         )
+
+
+class Cut(StrEnum):
+    BEFORE_TITLE = "before its title"
+    INSIDE_TITLE = "inside its title"
+    AFTER_TITLE = "after its title"
+    INSIDE_THIRD = "inside its third posting"
+
+
+@st.composite
+def titled_feeds_of_three(draw: st.DrawFn) -> SaidFeed:
+    # Feeds with a title and three postings or four, each with an address and a key of its own.
+    postings = draw(st.lists(said_postings(), min_size=3, max_size=4))
+    said = draw(said_feeds(st.just([addressed_postings(p, n) for n, p in enumerate(postings)])))
+    return said.model_copy(update={"title": draw(marked_texts())})
+
+
+def cut_places(text: str, form: FeedForm) -> dict[Cut, tuple[int, int]]:
+    # Where in a written feed each cut may fall, from the first place to the last.
+    posting = POSTING_ELEMENTS[form]
+    title = text.index("<title", text.index("</image>") if form is FeedForm.RSS else 0)
+    title_end = text.index("</title>", title) + len("</title>")
+    openings = [n for n in range(len(text)) if text.startswith(f"<{posting}", n)]
+    third_end = text.index(f"</{posting}>", openings[2]) + len(f"</{posting}>")
+    return {
+        Cut.BEFORE_TITLE: (0, title),
+        Cut.INSIDE_TITLE: (title + 1, title_end - 1),
+        Cut.AFTER_TITLE: (title_end, openings[0]),
+        Cut.INSIDE_THIRD: (openings[2] + 1, third_end - 1),
+    }
+
+
+CUTS = [
+    Cut.BEFORE_TITLE,
+    Cut.INSIDE_TITLE,
+    Cut.AFTER_TITLE,
+    pytest.param(
+        Cut.INSIDE_THIRD,
+        marks=pytest.mark.xfail(
+            strict=True,
+            reason="G12, not reached by the mends: a posting cut short after its link, before "
+            "its id is whole, is read, keyed by its address where the whole feed keys it by its "
+            "id",
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize("cut", CUTS)
+@settings(FAULT_EXAMPLES)
+@given(
+    served=served_feeds(titled_feeds_of_three(), st.sampled_from(XML_FORMS)),
+    data=st.data(),
+)
+def test_a_feed_cut_short_is_a_feed_where_a_title_or_a_posting_was_read_whole(
+    cut: Cut, served: ServedFeed, data: st.DataObject
+) -> None:
+    text = served.content.decode()
+    first, last = cut_places(text, served.form)[cut]
+    broken = text[: data.draw(st.integers(first, last))].encode()
+    what = f"a {served.form} feed cut {cut.value}"
+    if cut in (Cut.BEFORE_TITLE, Cut.INSIDE_TITLE):
+        refusal(broken, served.declared, served.address, what)
+        return
+    feed = read_feed(broken, served.declared, served.address)
+    expected = expected_postings(served.said, served.form, served.address)
+    whole = 0 if cut is Cut.AFTER_TITLE else 2
+    keys = [posting.key for posting in feed.postings]
+    assert keys == [posting.key for posting in expected[:whole]], (
+        f"{what} was read with the postings {keys}, not the {whole} it holds whole"
+    )
+    assert is_cut_from(
+        feed.title, expected_feed_title(served.said, served.form, served.address), TITLE_CHARACTERS
+    ), f"{what} was called {feed.title!r}, not by its title"
 
 
 # F5: a posting's time.
@@ -688,7 +770,7 @@ def test_a_time_that_cannot_be_read_is_none_and_leaves_no_posting_out(served: Se
 
 def feed_published(written: str, form: FeedForm, address: str) -> datetime | None:
     # The time read of the one posting of a feed that says it was published at the time written.
-    posting = plain_posting(0, unmarked_text("A posting"), "https://feeds.test/p/0").model_copy(
+    posting = plain_posting(0, said_plainly("A posting"), "https://feeds.test/p/0").model_copy(
         update={"published": WrittenTime(text=written, meant=None)}
     )
     said = SaidFeed(title=None, site=None, base=None, postings=[posting])
@@ -702,12 +784,6 @@ def rfc822_text(moment: datetime, zone: str) -> str:
     return f"{day}, {moment.day:02} {month} {moment.year} {moment.strftime('%H:%M:%S')} {zone}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F5 as amended, not yet built: a time whose zone is written +hh:mm is read at the same "
-    "clock time in UTC",
-)
-@settings(FAULT_EXAMPLES)
 @given(moment=moments, offset=offsets, form=forms, address=feed_addresses)
 def test_a_time_whose_zone_is_written_with_a_colon_is_its_moment_or_none(
     moment: datetime, offset: timedelta, form: FeedForm, address: str
@@ -724,12 +800,6 @@ def test_a_time_whose_zone_is_written_with_a_colon_is_its_moment_or_none(
 UNREAD_ZONES = ("XYZ", "Moon", "QQQ", "+x0", "zone")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F5 as amended, not yet built: a time whose zone cannot be read is read at the same "
-    "clock time in UTC, where it is to be none",
-)
-@settings(FAULT_EXAMPLES)
 @given(moment=moments, zone=st.sampled_from(UNREAD_ZONES), form=forms, address=feed_addresses)
 def test_a_time_whose_zone_cannot_be_read_is_none(
     moment: datetime, zone: str, form: FeedForm, address: str
@@ -748,8 +818,8 @@ def test_a_time_whose_zone_cannot_be_read_is_none(
 @given(served=served_feeds())
 def test_a_feeds_title_is_its_plain_text_else_the_host_of_its_address(served: ServedFeed) -> None:
     title = read(served).title
-    expected = expected_feed_title(served.said, served.address)
-    assert is_cut_near(title, expected, TITLE_CHARACTERS), (
+    expected = expected_feed_title(served.said, served.form, served.address)
+    assert is_cut_from(title, expected, TITLE_CHARACTERS), (
         f"a {served.form} feed at {served.address} titled "
         f"{markup_of(served.said.title)!r} was called {title!r}, not "
         f"{expected!r} cut to {TITLE_CHARACTERS} characters"

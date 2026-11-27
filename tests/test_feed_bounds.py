@@ -31,13 +31,15 @@ from tests.feed_writing import (
     plain_posting,
     read,
     read_or_refused,
+    said_plainly,
     served_feeds,
-    unmarked_text,
     written_feed,
 )
 
 # Judgments of read_feed: the bounds of a reading, a feed as another site's text, and a
-# reading that touches nothing but its arguments (F8 to F10).
+# reading that touches nothing but its arguments (F8 to F10). A reading raises no warning of any
+# kind (G16).
+pytestmark = pytest.mark.filterwarnings("error")
 
 
 # F8: bounds.
@@ -55,7 +57,7 @@ def test_of_a_feed_of_more_than_2000_postings_the_first_2000_with_an_address_are
 ) -> None:
     # Of postings beyond the first 4,000 none need be kept: where more than 2,000 without an
     # address come first, those with one among the first 4,000 are enough.
-    title = unmarked_text("A posting")
+    title = said_plainly("A posting")
     postings = [plain_posting(number, title, None) for number in range(unaddressed)] + [
         plain_posting(number, title, f"https://feeds.test/p/{number}")
         for number in range(unaddressed, unaddressed + MOST_POSTINGS + 100)
@@ -142,13 +144,8 @@ def items_beyond(extra: int) -> bytes:
 
 
 SENT_ITEMS = 10_000
-FAULT_OF_BOUNDS = (
-    "F8 as amended, not yet built: every item of a JSON Feed, and every attachment of an item, "
-    "is read, whatever the bound"
-)
 
 
-@pytest.mark.xfail(strict=True, reason=FAULT_OF_BOUNDS)
 def test_of_a_json_feed_no_more_items_are_read_than_twice_those_kept() -> None:
     sent = items_beyond(SENT_ITEMS - MOST_POSTINGS)
     bounded = items_beyond(MOST_POSTINGS_READ - MOST_POSTINGS)
@@ -170,7 +167,11 @@ SENT_ATTACHMENTS = 20_000
 BOUNDED_ATTACHMENTS = 1_000
 
 
-@pytest.mark.xfail(strict=True, reason=FAULT_OF_BOUNDS)
+@pytest.mark.xfail(
+    strict=True,
+    reason="F8 as amended, not reached by the mends: the attachments of a JSON Feed item are "
+    "read one by one, all of them: 20,000 make 38,000 calls more than 1,000",
+)
 def test_of_one_json_feed_item_the_attachments_read_are_bounded() -> None:
     sent, bounded = attached(SENT_ATTACHMENTS), attached(BOUNDED_ATTACHMENTS)
     addresses = [posting.address for posting in read_feed(sent, "", ADDRESS).postings]
@@ -445,11 +446,6 @@ LINEAR_SECONDS = 2.0
 LINEAR_WAIT_SECONDS = 6.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F9 as amended, not yet built: comments before a feed take time that doubles with "
-    "each, and declarations of entities that never close take time that grows with their square",
-)
 @pytest.mark.parametrize("sample", sorted(GREEDY_SAMPLES))
 def test_reading_takes_time_in_proportion_to_what_is_read(sample: str, tmp_path: Path) -> None:
     reading = bounded_reading(GREEDY_SAMPLES[sample], tmp_path, LINEAR_WAIT_SECONDS, sample)

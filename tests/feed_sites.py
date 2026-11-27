@@ -6,8 +6,9 @@ from typing import Any
 import httpx
 
 # The sites that feeds and pages are fetched from while a test polls or finds a feed, answered
-# in the test's own process as each test scripts them: what each address answers, every
-# request heard, and every fetch made through httpx.stream, whose redirects it follows.
+# in the test's own process as each test scripts them: what each address answers, and every
+# request heard, each redirect a request of its own. httpx's client and httpx.stream answer from
+# them.
 
 Answer = Callable[[httpx.Request], httpx.Response]
 CONTENT_TYPE = "content-type"
@@ -27,15 +28,13 @@ TRICKLE_SECONDS = 0.1
 
 
 def not_found(request: httpx.Request) -> httpx.Response:
-    return httpx.Response(404, headers={CONTENT_TYPE: HTML}, content=b"<p>Not here.</p>")
+    return httpx.Response(404, headers={CONTENT_TYPE: HTML}, content=iter([b"<p>Not here.</p>"]))
 
 
 class FeedSites:
     def __init__(self) -> None:
         self.answers: dict[str, Answer] = {}
         self.requests: list[httpx.Request] = []
-        self.fetches: list[str] = []
-        self.options: list[dict[str, Any]] = []
 
     def serve(self, address: str, answer: Answer) -> None:
         self.answers[str(httpx.URL(address))] = answer
@@ -44,8 +43,6 @@ class FeedSites:
         # The sites as they were before a test scripted them, for each example of a property.
         self.answers.clear()
         self.requests.clear()
-        self.fetches.clear()
-        self.options.clear()
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -54,14 +51,20 @@ class FeedSites:
     def asked(self) -> list[str]:
         return [str(request.url) for request in self.requests]
 
+    def client(self) -> type[httpx.Client]:
+        # httpx's client, answering every request from these sites, whatever transport or mounts
+        # the code that makes it gives it.
+        transport = httpx.MockTransport(self.answer)
+
+        class StandinClient(httpx.Client):
+            def __init__(self, *given: Any, **options: Any) -> None:
+                super().__init__(*given, **(options | {"transport": transport, "mounts": None}))
+
+        return StandinClient
+
     @contextmanager
     def stream(self, method: str, url: httpx.URL | str, **options: Any) -> Iterator[httpx.Response]:
-        self.fetches.append(str(url))
-        self.options.append(options)
-        with (
-            httpx.Client(transport=httpx.MockTransport(self.answer)) as client,
-            client.stream(method, url, **options) as response,
-        ):
+        with self.client()() as client, client.stream(method, url, **options) as response:
             yield response
 
 
@@ -80,7 +83,7 @@ def kind_of(kind: str) -> httpx.Headers:
 
 def status_only(status: int, headers: httpx.Headers) -> Answer:
     def answer(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, headers=headers)
+        return httpx.Response(status, headers=headers, content=iter([]))
 
     return answer
 

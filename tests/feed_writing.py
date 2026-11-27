@@ -51,6 +51,9 @@ JSON_FEED_VERSIONS = {
     FeedForm.JSON_1_1: "https://jsonfeed.org/version/1.1",
 }
 XML_FORMS = (FeedForm.RSS, FeedForm.ATOM)
+JSON_FORMS = (FeedForm.JSON_1, FeedForm.JSON_1_1)
+# The element a posting is written in, in each form of XML.
+POSTING_ELEMENTS = {FeedForm.RSS: "item", FeedForm.ATOM: "entry"}
 # The kinds a server declares a feed of each form as, beside those that say nothing of it.
 DECLARED_KINDS = {
     FeedForm.RSS: ("application/rss+xml", "application/xml", "text/xml; charset=utf-8"),
@@ -68,12 +71,29 @@ HTML_TYPE = ' type="html"'
 
 
 class Marked(BaseModel):
-    # A text as a feed writes it, as HTML; the same without its elements, its references kept;
-    # and the plain text a reader sees of it: its words with single spaces between them. A text
-    # written blank has no plain text.
+    # A text as a feed writes it, as HTML, and the plain text a reader sees of it where its
+    # format says it is markup: its words with single spaces between them. A text written blank
+    # has no plain text.
     markup: str
-    unmarked: str
     plain: str
+
+
+class TextKind(StrEnum):
+    # What a field of a feed is, as its format says (G15): markup, or plain text kept as written.
+    MARKUP = "markup"
+    PLAIN = "plain text"
+
+
+def read_text(text: Marked, kind: TextKind) -> str:
+    # What a reader is given of a text a feed writes: the plain text of markup, or plain text
+    # as written, its white space collapsed.
+    return text.plain if kind is TextKind.MARKUP else WORD_GAP.join(text.markup.split())
+
+
+def kind_of_titles(form: FeedForm) -> TextKind:
+    # Titles and summaries are plain text in JSON Feed, and markup as RSS and Atom (type="html")
+    # are written here.
+    return TextKind.PLAIN if form in JSON_FORMS else TextKind.MARKUP
 
 
 class Enclosure(BaseModel):
@@ -92,12 +112,9 @@ def markup_of(text: Marked | None) -> str | None:
     return None if text is None else text.markup
 
 
-def unmarked_of(text: Marked | None) -> str | None:
-    return None if text is None else text.unmarked
-
-
-def unmarked_text(text: str) -> Marked:
-    return Marked(markup=text, unmarked=text, plain=WORD_GAP.join(text.split()))
+def said_plainly(text: str) -> Marked:
+    # A text without markup or references, read alike whatever its format says it is.
+    return Marked(markup=text, plain=WORD_GAP.join(text.split()))
 
 
 def written_text(time: WrittenTime | None) -> str | None:
@@ -178,19 +195,16 @@ def marked_texts(draw: st.DrawFn, said_words: st.SearchStrategy[str] = words) ->
     said *= draw(st.sampled_from((1, 1, 1, 40, 90)))
     chance = Random(draw(st.integers(0, 2**32)))
     pieces = [chance.choice(("", *GAPS))]
-    unmarked = pieces[:]
     for word in said:
         written = "".join(
             written_letter(letter, chance.random(), chance.randrange(3)) for letter in word
         )
-        gap = chance.choice(GAPS)
-        unmarked += [written, gap]
         if chance.random() < 0.3:
             name, attributes = chance.choice(INLINE_ELEMENTS)
             written = f"<{name}{attributes}>{written}</{name}>"
-        pieces += [written, gap]
-    pieces[-1] = unmarked[-1] = chance.choice(("", *GAPS))
-    return Marked(markup="".join(pieces), unmarked="".join(unmarked), plain=WORD_GAP.join(said))
+        pieces += [written, chance.choice(GAPS)]
+    pieces[-1] = chance.choice(("", *GAPS))
+    return Marked(markup="".join(pieces), plain=WORD_GAP.join(said))
 
 
 def written_letter(letter: str, chance: float, form: int) -> str:
@@ -207,9 +221,9 @@ def written_letter(letter: str, chance: float, form: int) -> str:
 
 
 BLANK_TEXTS = (
-    Marked(markup="", unmarked="", plain=""),
-    Marked(markup=" \n ", unmarked=" \n ", plain=""),
-    Marked(markup="<b></b>", unmarked="", plain=""),
+    Marked(markup="", plain=""),
+    Marked(markup=" \n ", plain=""),
+    Marked(markup="<b></b>", plain=""),
 )
 titles = st.one_of(st.none(), st.sampled_from(BLANK_TEXTS), marked_texts())
 summaries = st.one_of(
@@ -219,8 +233,8 @@ summaries = st.one_of(
 )
 
 # Addresses as a feed writes them: absolute, relative to its base, longer than infonium keeps,
-# or of a scheme that is not the web's. Addresses with a space in them, and with white space
-# around them, are written by the judgment of how an address is kept.
+# or of a scheme that is not the web's; with a space in them at times, and white space around
+# them.
 HOSTS = ("feeds.test", "blog.example.test", "news.test", "cdn.test")
 SLUG_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789-"
 slugs = st.text(SLUG_LETTERS, min_size=1, max_size=16)
@@ -259,9 +273,10 @@ def relative_addresses_of(slugs_written: st.SearchStrategy[str]) -> st.SearchStr
 
 
 relative_addresses = relative_addresses_of(slugs)
+any_slugs = st.one_of(slugs, spaced_slugs)
+written_absolute_addresses = padded(absolute_addresses_of(any_slugs))
+written_relative_addresses = padded(relative_addresses_of(any_slugs))
 LONG_ADDRESS_HEAD = "https://feeds.test/"
-# Where an address or an id is resolved to tell whether any base would change it.
-UNBASED = "https://cdn.test/"
 long_addresses = st.sampled_from(
     (ADDRESS_CHARACTERS - 1, ADDRESS_CHARACTERS, ADDRESS_CHARACTERS + 1, ADDRESS_CHARACTERS + 500)
 ).map(lambda length: LONG_ADDRESS_HEAD + "a" * (length - len(LONG_ADDRESS_HEAD)))
@@ -275,13 +290,16 @@ NOT_WEB_ADDRESSES = (
 )
 not_web_addresses = st.sampled_from(NOT_WEB_ADDRESSES)
 pages = st.one_of(
-    st.none(), absolute_addresses, relative_addresses, long_addresses, not_web_addresses
+    st.none(),
+    written_absolute_addresses,
+    written_relative_addresses,
+    long_addresses,
+    padded(not_web_addresses),
 )
-BASES = ("https://base.test/root/", "https://feeds.test/blog/", "/blog/", "sub/", "./sub/")
-# Bases that climb above the feed's folder, which test_a_base_that_climbs_is_resolved_as_written
-# judges.
+# Bases that climb above the feed's folder, and others.
 CLIMBING_BASES = ("../up/", "../", "../../a/b/")
-bases = st.one_of(st.none(), st.sampled_from(BASES))
+BASES = ("https://base.test/root/", "https://feeds.test/blog/", "/blog/", "sub/", "./sub/")
+bases = st.one_of(st.none(), st.sampled_from(BASES + CLIMBING_BASES))
 RECORDING_TYPES = ("audio/mpeg", "audio/x-m4a", "video/mp4", "Audio/MPEG", "audio/ogg; codecs=opus")
 OTHER_TYPES = (
     "image/jpeg",
@@ -292,7 +310,7 @@ OTHER_TYPES = (
 )
 enclosures = st.builds(
     Enclosure,
-    address=st.one_of(absolute_addresses, relative_addresses, not_web_addresses),
+    address=st.one_of(written_absolute_addresses, written_relative_addresses, not_web_addresses),
     kind=st.sampled_from(RECORDING_TYPES + OTHER_TYPES),
 )
 
@@ -428,29 +446,10 @@ def is_addressed(posting: SaidPosting) -> bool:
     )
 
 
-def clear_of_bases(posting: SaidPosting, base: str | None) -> SaidPosting:
-    # A posting whose enclosures and id are written so that no base can change them where a
-    # base applies: its relative enclosures made absolute, a relative id made a tag. The
-    # judgments test_an_enclosures_relative_address_is_resolved_against_the_base_the_feed_gives
-    # and test_a_postings_key_is_its_id_as_written_under_any_base judge those cases.
-    if base is None and posting.base is None:
-        return posting
-    absolute = [
-        enclosure.model_copy(update={"address": urljoin(UNBASED, browser_form(enclosure.address))})
-        if is_relative(browser_form(enclosure.address))
-        else enclosure
-        for enclosure in posting.enclosures
-    ]
-    relative_id = posting.id is not None and urljoin(UNBASED, posting.id) != posting.id
-    tagged = f"{LONG_ID_HEAD}{posting.id}" if relative_id else posting.id
-    return posting.model_copy(update={"enclosures": absolute, "id": tagged})
-
-
 @st.composite
 def said_postings(draw: st.DrawFn) -> SaidPosting:
     # A posting whose time published cannot be read is given no time updated that can, so
-    # that which of the two is its time is not in doubt. A base of a posting's own is written
-    # by test_a_postings_base_applies_to_it_alone_and_within_the_feeds alone.
+    # that which of the two is its time is not in doubt.
     published = draw(st.none() | written_times)
     updated = draw(
         st.none() | (unreadable_times if published and published.meant is None else written_times)
@@ -466,7 +465,7 @@ def said_postings(draw: st.DrawFn) -> SaidPosting:
         enclosures=draw(st.lists(enclosures, max_size=3)),
         published=published,
         updated=updated,
-        base=None,
+        base=draw(bases),
     )
 
 
@@ -477,17 +476,14 @@ def said_feeds(
     # A feed's postings that have no address keep an id of their own, so that which of two
     # postings with one key is kept is never a posting that is left out.
     said = draw(st.lists(said_postings(), max_size=4) if postings is None else postings)
-    base = draw(bases)
     return SaidFeed(
         title=draw(titles),
-        site=draw(st.one_of(st.none(), absolute_addresses, relative_addresses)),
-        base=base,
+        site=draw(st.one_of(st.none(), written_absolute_addresses, written_relative_addresses)),
+        base=draw(bases),
         postings=[
-            clear_of_bases(posting, base)
+            posting
             if is_addressed(posting) or posting.id is None
-            else clear_of_bases(posting, base).model_copy(
-                update={"id": f"{LEFT_OUT_ID_HEAD}{number}"}
-            )
+            else posting.model_copy(update={"id": f"{LEFT_OUT_ID_HEAD}{number}"})
             for number, posting in enumerate(said)
         ],
     )
@@ -694,16 +690,16 @@ def atom_entry(posting: SaidPosting) -> str:
 
 def json_feed(feed: SaidFeed, form: FeedForm) -> str:
     # JSON Feed 1.0 is written with every character beyond ASCII escaped, 1.1 as it is. Its
-    # titles and summaries are written without elements, as the format's text is plain; its
-    # content is HTML.
+    # titles and summaries are plain text, written with what a feed's markup holds; its content
+    # is HTML.
     items = [
         {
             name: value
             for name, value in (
                 ("id", posting.id),
                 ("url", posting.page),
-                ("title", unmarked_of(posting.title)),
-                ("summary", unmarked_of(posting.summary)),
+                ("title", markup_of(posting.title)),
+                ("summary", markup_of(posting.summary)),
                 ("content_html", markup_of(posting.content)),
                 ("date_published", written_text(posting.published)),
                 ("date_modified", written_text(posting.updated)),
@@ -724,7 +720,7 @@ def json_feed(feed: SaidFeed, form: FeedForm) -> str:
         name: value
         for name, value in (
             ("version", JSON_FEED_VERSIONS[form]),
-            ("title", unmarked_of(feed.title)),
+            ("title", markup_of(feed.title)),
             ("home_page_url", feed.site),
             ("items", items),
         )
@@ -757,14 +753,19 @@ def key_of(text: str) -> str:
     return text if len(text) <= KEY_CHARACTERS else hashlib.sha256(text.encode()).hexdigest()
 
 
-def calling(posting: SaidPosting, address: str) -> tuple[str, int]:
+def calling(posting: SaidPosting, form: FeedForm, address: str) -> tuple[str, int]:
+    titles = kind_of_titles(form)
     texts = (
-        (posting.title, TITLE_CHARACTERS),
-        (posting.summary, SUMMARY_TITLE_CHARACTERS),
-        (posting.content, SUMMARY_TITLE_CHARACTERS),
+        (posting.title, TITLE_CHARACTERS, titles),
+        (posting.summary, SUMMARY_TITLE_CHARACTERS, titles),
+        (posting.content, SUMMARY_TITLE_CHARACTERS, TextKind.MARKUP),
     )
     return next(
-        ((text.plain, characters) for text, characters in texts if text and text.plain),
+        (
+            (read_text(text, kind), characters)
+            for text, characters, kind in texts
+            if text and read_text(text, kind)
+        ),
         (address, TITLE_CHARACTERS),
     )
 
@@ -778,7 +779,7 @@ def expected_postings(feed: SaidFeed, form: FeedForm, address: str) -> list[Expe
         if resolved is None or not is_kept_address(resolved):
             continue
         key = key_of(posting.id if posting.id is not None else resolved)
-        called, characters = calling(posting, resolved)
+        called, characters = calling(posting, form, resolved)
         times = (posting.published, posting.updated)
         published = next((time.meant for time in times if time and time.meant), None)
         expected.setdefault(
@@ -794,8 +795,9 @@ def expected_postings(feed: SaidFeed, form: FeedForm, address: str) -> list[Expe
     return list(expected.values())
 
 
-def expected_feed_title(feed: SaidFeed, address: str) -> str:
-    return feed.title.plain if feed.title and feed.title.plain else str(urlsplit(address).hostname)
+def expected_feed_title(feed: SaidFeed, form: FeedForm, address: str) -> str:
+    said = "" if feed.title is None else read_text(feed.title, kind_of_titles(form))
+    return said or str(urlsplit(address).hostname)
 
 
 def expected_site(feed: SaidFeed, form: FeedForm, address: str) -> str | None:
@@ -826,16 +828,6 @@ def is_cut_from(read: str, plain: str, characters: int) -> bool:
     if len(plain) <= characters:
         return read == plain
     return read in cut_titles(plain, [unparted_end(plain, characters - len(CUT_SHORT))])
-
-
-def is_cut_near(read: str, plain: str, characters: int) -> bool:
-    # As is_cut_from, but the cut may also part a letter from its marks: the judgments of what a
-    # title is hold it to this, and test_a_title_is_never_cut_between_a_letter_and_the_marks_
-    # that_combine_with_it alone to where the cut falls among marks.
-    if len(plain) <= characters:
-        return read == plain
-    end = characters - len(CUT_SHORT)
-    return read in cut_titles(plain, [end, unparted_end(plain, end)])
 
 
 def same_time(read: datetime | None, meant: datetime | None) -> bool:

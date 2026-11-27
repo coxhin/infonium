@@ -12,7 +12,13 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from infonium import guard, intake
-from infonium.document import OVERDUE_SOURCE, OVERSIZE_SOURCE, error_status, turned_away
+from infonium.document import (
+    FETCH_TIMEOUT_SECONDS,
+    OVERDUE_SOURCE,
+    OVERSIZE_SOURCE,
+    error_status,
+    turned_away,
+)
 from infonium.subscriptions.feed import ADDRESS_CHARACTERS, UnreadableFeed, read_feed
 from infonium.subscriptions.fetcher import Changed, Unchanged, Validators, fetched_feed
 from tests.feed_sites import (
@@ -33,6 +39,8 @@ from tests.feed_writing import RSS_KIND, ServedFeed, keyed_feeds, served_feeds
 
 # Judgments of fetched_feed (P1 to P5 and their amendments), polling a feed from stand-in sites
 # that each test scripts.
+# A reading raises no warning of any kind (G16), in a poll and a discovery too.
+pytestmark = pytest.mark.filterwarnings("error")
 
 FEED = "https://feeds.test/feed.xml"
 # A feed whose reading depends on the address it is read at: postings at relative pages and no
@@ -95,9 +103,8 @@ def test_a_poll_is_one_get_as_the_intake_makes_it_carrying_the_validators_it_hol
     feed_sites.forget()
     feed_sites.serve(FEED, answered(RELATIVE_FEED, kind_of(RSS_KIND)))
     fetched_feed(FEED, held)
-    assert len(feed_sites.fetches) == len(feed_sites.requests) == 1, (
-        f"a poll of a feed that answers at once made the requests {feed_sites.asked()} in "
-        f"{len(feed_sites.fetches)} fetches, not one GET"
+    assert len(feed_sites.requests) == 1, (
+        f"a poll of a feed that answers at once made the requests {feed_sites.asked()}, not one GET"
     )
     [request] = feed_sites.requests
     headers = request.headers
@@ -124,10 +131,10 @@ def test_a_poll_is_one_get_as_the_intake_makes_it_carrying_the_validators_it_hol
         f"a poll asked for the codings {headers.get(ACCEPT_ENCODING)!r}, not gzip or deflate alone"
     )
     timeout = request.extensions["timeout"]
-    assert timeout["read"] == intake.FETCH_TIMEOUT_SECONDS and (
-        timeout["connect"] is not None and timeout["connect"] <= intake.FETCH_TIMEOUT_SECONDS
+    assert timeout["read"] == FETCH_TIMEOUT_SECONDS and (
+        timeout["connect"] is not None and timeout["connect"] <= FETCH_TIMEOUT_SECONDS
     ), (
-        f"a poll waits for a silent server as {timeout}, not {intake.FETCH_TIMEOUT_SECONDS} "
+        f"a poll waits for a silent server as {timeout}, not {FETCH_TIMEOUT_SECONDS} "
         "seconds as the intake does"
     )
 
@@ -223,9 +230,9 @@ def test_a_feed_that_changes_is_polled_from_where_the_fetcher_stopped(
 
     def answer(request: httpx.Request) -> httpx.Response:
         if request.headers.get(IF_NONE_MATCH) == served[-1].etag:
-            return httpx.Response(304, headers={ETAG: served[-1].etag})
+            return httpx.Response(304, headers={ETAG: served[-1].etag}, content=iter([]))
         headers = {CONTENT_TYPE: RSS_KIND, ETAG: served[-1].etag, LAST_MODIFIED: modified}
-        return httpx.Response(200, headers=headers, content=served[-1].content)
+        return httpx.Response(200, headers=headers, content=iter([served[-1].content]))
 
     feed_sites.serve(FEED, answer)
     first = fetched_feed(FEED, Validators())
@@ -252,11 +259,6 @@ UNSEEN_ETAGS = (b'"caf\xe9"', b'"\xe2\x80\x9cquoted\xe2\x80\x9d"', b'"tab\x7f"')
 GOOD_MODIFIED = b"Wed, 25 Nov 2026 10:00:00 GMT"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P2 as amended, not yet built: an ETag with a byte beyond visible ASCII is kept and "
-    "sent back as If-None-Match",
-)
 @pytest.mark.parametrize("etag", UNSEEN_ETAGS)
 def test_a_validator_with_a_byte_beyond_visible_ascii_is_not_kept(
     feed_sites: FeedSites, etag: bytes
@@ -286,19 +288,7 @@ UNASKED_CODINGS = {
 }
 
 
-CODED_TWICE = pytest.mark.xfail(
-    strict=True,
-    reason="P1 as amended, not yet built: an answer coded gzip twice is inflated twice and read",
-)
-
-
-@pytest.mark.parametrize(
-    "coding",
-    [
-        pytest.param(coding, marks=CODED_TWICE) if "," in coding else coding
-        for coding in sorted(UNASKED_CODINGS)
-    ],
-)
+@pytest.mark.parametrize("coding", sorted(UNASKED_CODINGS))
 def test_an_answer_with_a_coding_but_one_of_gzip_or_deflate_is_unreadable(
     feed_sites: FeedSites, coding: str
 ) -> None:
@@ -487,8 +477,8 @@ LONG_ADDRESS = "https://feeds.test/" + "a" * ADDRESS_CHARACTERS
 
 @pytest.mark.xfail(
     strict=True,
-    reason="being mended: a feed moved to an address longer than a feed's address may be is "
-    "read there",
+    reason="not reached by the mend: a feed polled through a redirect to an address longer than "
+    "a feed's address may be is read there, where discovery refuses it",
 )
 def test_an_address_that_leads_to_one_longer_than_a_feeds_address_may_be_is_unreadable(
     feed_sites: FeedSites,

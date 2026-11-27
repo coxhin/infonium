@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from infonium.document import OVERDUE_SOURCE, OVERSIZE_SOURCE
-from infonium.subscriptions.discovery import discovered_feed
+from infonium.subscriptions.discovery import discovered_feed, served_at
 from infonium.subscriptions.feed import ADDRESS_CHARACTERS, UnreadableFeed, read_feed
 from infonium.subscriptions.fetcher import Changed, Validators
 from tests.feed_sites import (
@@ -31,6 +31,8 @@ from tests.feed_writing import FAULT_EXAMPLES, RSS_KIND, youtube_feed
 
 # Judgments of discovered_feed (D1 to D7 and their amendments), finding feeds on stand-in sites
 # that each test scripts.
+# A reading raises no warning of any kind (G16), in a poll and a discovery too.
+pytestmark = pytest.mark.filterwarnings("error")
 
 RSSHUB = "https://rsshub.test"
 RSSHUB_SETTING = "INFONIUM_RSSHUB_BASE_URL"
@@ -41,7 +43,7 @@ ETAG = "etag"
 LAST_MODIFIED = "last-modified"
 # The paths at a site that feeds commonly live at, and the most requests one discovery makes.
 COMMON_FEED_PATHS = ("/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml", "/index.xml")
-MOST_REQUESTS = 7
+MOST_REQUESTS = 8
 NAMED_FEEDS_TRIED = 3
 OVERRUN_SECONDS = 0.6
 EXAMPLES = settings(max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -159,9 +161,9 @@ def test_an_rsshub_route_is_the_feed_at_that_route_of_the_instance(
     at = instance_route(instance, route + query)
     feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
     discovered = discovered_feed(f"{RSSHUB_FORM}{slashes}{route}{query}", instance)
-    assert feed_sites.fetches == [at], (
+    assert feed_sites.asked() == [at], (
         f"the route {slashes}{route}{query} of RSSHub at {instance} was fetched at "
-        f"{feed_sites.fetches}, not at {at}, joined with one slash"
+        f"{feed_sites.asked()}, not at {at}, joined with one slash"
     )
     expected = Changed(feed=read_feed(rss_feed(at), RSS_KIND, at), validators=Validators())
     assert discovered.fetched == expected, (
@@ -169,11 +171,6 @@ def test_an_rsshub_route_is_the_feed_at_that_route_of_the_instance(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1 as amended, not yet built: an rsshub:// address is found at the instance's "
-    "address of its route, where it is to be found at rsshub:// and its route",
-)
 @FAULT_EXAMPLES
 @given(instance=instances, route=routes, slashes=leading_slashes)
 def test_an_rsshub_route_is_found_at_its_route_written_one_way(
@@ -192,11 +189,6 @@ def test_an_rsshub_route_is_found_at_its_route_written_one_way(
 SCHEME_CASES = ("RSSHub://", "RSSHUB://", "rssHub://")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1 as amended, not yet built: an address whose scheme is rsshub in another case is "
-    "refused as neither a web address nor a route",
-)
 @pytest.mark.parametrize("scheme", SCHEME_CASES)
 def test_an_rsshub_route_is_told_by_its_scheme_in_any_case(
     feed_sites: FeedSites, scheme: str
@@ -204,11 +196,43 @@ def test_an_rsshub_route_is_told_by_its_scheme_in_any_case(
     at = instance_route(RSSHUB, "github/issue/night/trains")
     feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
     discovered = discovered_feed(f"{scheme}github/issue/night/trains", RSSHUB)
-    assert feed_sites.fetches == [at], (
-        f"the address {scheme}github/issue/night/trains was fetched at {feed_sites.fetches}, not "
+    assert feed_sites.asked() == [at], (
+        f"the address {scheme}github/issue/night/trains was fetched at {feed_sites.asked()}, not "
         f"as a route of RSSHub at {at}"
     )
     assert discovered.fetched.feed.title == at, f"the route was found with {discovered}"
+    assert discovered.address == f"{RSSHUB_FORM}github/issue/night/trains", (
+        f"the address {scheme}github/issue/night/trains was found at {discovered.address}, not at "
+        f"{RSSHUB_FORM}github/issue/night/trains"
+    )
+
+
+web_addresses = st.builds(
+    lambda scheme, host, path: f"{scheme}://{host}/{path}",
+    st.sampled_from(("http", "https")),
+    st.sampled_from(("blog.test", "feeds.example.test")),
+    routes,
+)
+
+
+@given(
+    address=web_addresses,
+    instance=instances,
+    route=routes,
+    slashes=leading_slashes,
+    scheme=st.sampled_from((RSSHUB_FORM, *SCHEME_CASES)),
+)
+def test_the_web_address_a_feeds_address_stands_for_is_itself_or_its_route_at_the_instance(
+    address: str, instance: str, route: str, slashes: str, scheme: str
+) -> None:
+    assert served_at(address, instance) == address, (
+        f"the web address {address} was taken to stand for {served_at(address, instance)}"
+    )
+    written = f"{scheme}{slashes}{route}"
+    assert served_at(written, instance) == instance_route(instance, route), (
+        f"the route {written} was taken to stand for {served_at(written, instance)}, not the "
+        f"route at RSSHub at {instance}, joined with one slash: {instance_route(instance, route)}"
+    )
 
 
 @EXAMPLES
@@ -225,6 +249,128 @@ def test_an_rsshub_instance_that_does_not_answer_is_told_with_its_setting(
     assert instance.rstrip("/") in told and "RSSHub" in told and RSSHUB_SETTING in told, (
         f"RSSHub at {instance} failing with {kind.__name__} was told as {told!r}, which does not "
         f"say that RSSHub at {instance} did not answer and that {RSSHUB_SETTING} names it"
+    )
+
+
+# RSSHub's rules: after everything else found no feed, the rules the instance publishes for
+# the address's site.
+
+RULES = f"{RSSHUB}/api/radar/rules"
+RADAR_DOCS = "https://docs.rsshub.test/routes/nighttrains"
+# RSSHub's page of an error, in the shape of its own (lib/views/error.tsx).
+RSSHUB_ERROR = (
+    "<!DOCTYPE html><html><body><h1>Looks like something went wrong</h1><div>"
+    '<p class="mb-2 font-bold">Helpful Information</p><p class="message">Error Message:<br/>'
+    '<code class="details">{message}</code></p><p class="message">Route: <code>{route}</code>'
+    "</p></div></body></html>"
+)
+ROUTE_FAILURE = "The night line north is not in the timetable"
+
+
+def radar_rules(subdomain: str) -> bytes:
+    # The rules of a made-up site in the shape RSSHub serves them (lib/api/radar/rules/utils.ts):
+    # by the site's domain, then by its subdomain ("." for none), a list of rules, each with the
+    # paths it matches and the route it leads to. One rule matches a line's page; the other does
+    # not.
+    rules = [
+        {
+            "title": "Station",
+            "docs": RADAR_DOCS,
+            "source": ["/station/:name"],
+            "target": "/nighttrains/station/:name",
+        },
+        {
+            "title": "Line",
+            "docs": RADAR_DOCS,
+            "source": ["/line/:line"],
+            "target": "/nighttrains/line/:line",
+        },
+    ]
+    said = {"nighttrains.test": {"_name": "Night trains", subdomain: rules}}
+    return json.dumps(said).encode()
+
+
+SITE_HOSTS = {".": "nighttrains.test", "www": "www.nighttrains.test"}
+
+
+@EXAMPLES
+@given(subdomain=st.sampled_from(sorted(SITE_HOSTS)), line=routes.map(lambda r: r.split("/")[0]))
+def test_an_address_one_of_rsshubs_rules_matches_leads_to_that_routes_feed_kept_as_a_route(
+    feed_sites: FeedSites, subdomain: str, line: str
+) -> None:
+    feed_sites.forget()
+    page = f"https://{SITE_HOSTS[subdomain]}/line/{line}"
+    feed_sites.serve(page, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve(RULES, answered(radar_rules(subdomain), kind_of("application/json")))
+    at = instance_route(RSSHUB, f"nighttrains/line/{line}")
+    feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
+    discovered = discovered_feed(page, RSSHUB)
+    route = f"{RSSHUB_FORM}nighttrains/line/{line}"
+    assert discovered.address == route, (
+        f"the page {page}, which names no feed and which RSSHub's rule of lines matches, was found "
+        f"at {discovered.address}, not at the route {route}"
+    )
+    expected = Changed(feed=read_feed(rss_feed(at), RSS_KIND, at), validators=Validators())
+    assert discovered.fetched == expected, (
+        f"the route {route} was found with {discovered.fetched}, not its feed as fetched at {at}"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="D7 as ruled, not reached by the mends: a discovery that reaches a route of RSSHub's "
+    "rules makes 9 requests: the page, the six paths, the rules and the route",
+)
+def test_a_discovery_that_reaches_a_route_of_rsshubs_rules_makes_no_more_requests_than_allowed(
+    feed_sites: FeedSites,
+) -> None:
+    page = "https://nighttrains.test/line/north"
+    feed_sites.serve(page, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve(RULES, answered(radar_rules("."), kind_of("application/json")))
+    at = instance_route(RSSHUB, "nighttrains/line/north")
+    feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
+    discovered_feed(page, RSSHUB)
+    assert len(feed_sites.requests) <= MOST_REQUESTS, (
+        f"finding the route of {page} made {len(feed_sites.requests)} requests, beyond the "
+        f"{MOST_REQUESTS} allowed: {feed_sites.asked()}"
+    )
+
+
+def test_an_rsshub_that_does_not_answer_its_rules_costs_one_request_and_changes_nothing(
+    feed_sites: FeedSites,
+) -> None:
+    page = "https://nighttrains.test/line/north"
+    feed_sites.serve(page, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve(RULES, answered(b"{}", kind_of("application/json")))
+    told_without_a_rule = refusal(page, RSSHUB, f"the page {page}, which no rule matches")
+    feed_sites.forget()
+    feed_sites.serve(page, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve(RULES, failing(httpx.ConnectError, []))
+    told_silent = refusal(page, RSSHUB, f"the page {page}, with RSSHub silent")
+    asked_of_rsshub = [asked for asked in feed_sites.asked() if asked.startswith(RSSHUB)]
+    assert asked_of_rsshub == [RULES], (
+        f"finding the feed of {page} with RSSHub silent asked RSSHub {asked_of_rsshub}, not its "
+        "rules once"
+    )
+    assert told_silent == told_without_a_rule, (
+        f"finding the feed of {page} with RSSHub silent was refused as {told_silent!r}, not as it "
+        f"is where RSSHub answers and no rule matches: {told_without_a_rule!r}"
+    )
+
+
+def test_a_route_of_rsshubs_rules_that_fails_is_told_with_the_route_and_what_rsshub_answered(
+    feed_sites: FeedSites,
+) -> None:
+    page = "https://nighttrains.test/line/north"
+    route = "/nighttrains/line/north"
+    feed_sites.serve(page, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve(RULES, answered(radar_rules("."), kind_of("application/json")))
+    failed = RSSHUB_ERROR.format(message=ROUTE_FAILURE, route=route).encode()
+    feed_sites.serve(f"{RSSHUB}{route}", answered(failed, kind_of(HTML), 503))
+    told = refusal(page, RSSHUB, f"the page {page}, whose route RSSHub fails")
+    assert route.lstrip("/") in told and (ROUTE_FAILURE in told or "503" in told), (
+        f"a route of RSSHub's rules that failed was told as {told!r}, which does not name the "
+        f"route {route} and what RSSHub answered (503, {ROUTE_FAILURE!r})"
     )
 
 
@@ -259,8 +405,10 @@ def test_a_feed_is_its_own_feed_found_with_one_fetch(
     )
     feed_sites.serve(at, answered(write(at), headers))
     discovered = discovered_feed(asked, RSSHUB)
-    assert len(feed_sites.fetches) == 1, (
-        f"the {form} feed at {asked} was found with the fetches {feed_sites.fetches}, not one"
+    once = [asked] if status is None else [asked, at]
+    assert feed_sites.asked() == once, (
+        f"the {form} feed at {asked} was found with the requests {feed_sites.asked()}, not one "
+        f"fetch of it: {once}"
     )
     expected = Changed(
         feed=read_feed(write(at), kind, at), validators=Validators(etag=etag, modified=modified)
@@ -364,8 +512,8 @@ def test_a_page_leads_to_the_first_feed_it_names_that_reads_as_a_feed(
     at = named_address(page, page.named[first].href)
     assert_found(page.address, RSSHUB, at, page.named[first].answer, f"the page {page.head!r}")
     tried = [page.address, *(named_address(page, feed.href) for feed in page.named[: first + 1])]
-    assert feed_sites.fetches == tried, (
-        f"finding the feed of the page {page.head!r} fetched {feed_sites.fetches}, not the page "
+    assert feed_sites.asked() == tried, (
+        f"finding the feed of the page {page.head!r} fetched {feed_sites.asked()}, not the page "
         f"and the feeds it names in their order up to the first that reads: {tried}"
     )
 
@@ -379,9 +527,9 @@ def test_a_page_has_no_more_than_three_of_the_feeds_it_names_tried(
     feed_sites.serve(page, answered(page_naming(head), kind_of(HTML)))
     feed_sites.serve(named[-1], answered(rss_feed(named[-1]), kind_of(RSS_KIND)))
     refusal(page, RSSHUB, "a page whose first three feeds do not read")
-    assert named[-1] not in feed_sites.fetches, (
+    assert named[-1] not in feed_sites.asked(), (
         f"a page that names four feeds, of which three do not read, had the fourth tried: "
-        f"{feed_sites.fetches}"
+        f"{feed_sites.asked()}"
     )
 
 
@@ -409,9 +557,9 @@ def test_a_youtube_channel_by_its_id_leads_to_youtubes_feed_without_its_page(
     feed_sites.serve(at, answered(youtube_feed(channel, VIDEOS), kind_of(ATOM_KIND)))
     address = f"https://{host}/channel/{channel}{after}"
     discovered = discovered_feed(address, RSSHUB)
-    assert (feed_sites.fetches, discovered.address) == ([at], at), (
+    assert (feed_sites.asked(), discovered.address) == ([at], at), (
         f"the channel {address} was found at {discovered.address} with the fetches "
-        f"{feed_sites.fetches}, not at YouTube's feed {at} alone"
+        f"{feed_sites.asked()}, not at YouTube's feed {at} alone"
     )
 
 
@@ -436,9 +584,9 @@ def test_a_youtube_playlist_leads_to_youtubes_feed_of_it_without_its_page(
     )
     address = f"https://{host}{shape.format(list=playlist)}"
     discovered = discovered_feed(address, RSSHUB)
-    assert (feed_sites.fetches, discovered.address) == ([at], at), (
+    assert (feed_sites.asked(), discovered.address) == ([at], at), (
         f"the playlist {address} was found at {discovered.address} with the fetches "
-        f"{feed_sites.fetches}, not at YouTube's feed {at} alone"
+        f"{feed_sites.asked()}, not at YouTube's feed {at} alone"
     )
 
 
@@ -468,8 +616,8 @@ def test_a_show_on_apple_podcasts_leads_to_the_feed_apples_lookup_gives(
     feed_sites.serve(at, answered(rss_feed(at), kind_of(RSS_KIND)))
     address = f"https://podcasts.apple.com/{country}podcast/{slug}/id{show}{episode}"
     assert_found(address, RSSHUB, at, "RSS", f"the show {address}")
-    assert feed_sites.fetches == [APPLE_LOOKUP.format(show=show), at], (
-        f"the show {address} was found with the fetches {feed_sites.fetches}, not Apple's "
+    assert feed_sites.asked() == [APPLE_LOOKUP.format(show=show), at], (
+        f"the show {address} was found with the fetches {feed_sites.asked()}, not Apple's "
         "lookup and the feed alone"
     )
 
@@ -505,6 +653,10 @@ CONSENT = "https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%
 CONSENT_PAGE = page_naming("").replace(b"Night trains", b"Before you continue to YouTube")
 
 
+def common_paths_asked(sites: FeedSites) -> list[str]:
+    return [asked for asked in sites.asked() if urlsplit(asked).path in COMMON_FEED_PATHS]
+
+
 def test_a_youtube_page_that_asks_for_consent_tells_the_reader_to_give_the_channels_id(
     feed_sites: FeedSites,
 ) -> None:
@@ -516,8 +668,8 @@ def test_a_youtube_page_that_asks_for_consent_tells_the_reader_to_give_the_chann
         f"a channel whose page asks for consent was refused as {told!r}, which does not tell the "
         "reader to give the channel's address with its id"
     )
-    assert feed_sites.fetches == [address], (
-        f"finding the feed of a channel whose page asks for consent fetched {feed_sites.fetches}, "
+    assert not common_paths_asked(feed_sites), (
+        f"finding the feed of a channel whose page asks for consent fetched {feed_sites.asked()}, "
         "where YouTube's pages have no paths of feeds tried"
     )
 
@@ -532,8 +684,8 @@ def test_a_youtube_page_that_names_no_feed_has_no_paths_of_feeds_tried(
             f"https://www.youtube.com{path}", answered(rss_feed(path), kind_of(RSS_KIND))
         )
     refusal(address, RSSHUB, f"the channel {address} whose page carries nothing of its feed")
-    assert feed_sites.fetches == [address], (
-        f"finding the feed of a YouTube page that names none fetched {feed_sites.fetches}, where "
+    assert not common_paths_asked(feed_sites), (
+        f"finding the feed of a YouTube page that names none fetched {feed_sites.asked()}, where "
         "YouTube's pages have no paths of feeds tried"
     )
 
@@ -562,11 +714,6 @@ def test_a_page_that_names_no_feed_leads_to_a_feed_at_a_path_feeds_commonly_live
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D5 as widened, not yet built: a page whose named feeds do not read has no paths of "
-    "feeds tried",
-)
 @FAULT_EXAMPLES
 @given(
     page=st.sampled_from(PAGES),
@@ -650,19 +797,14 @@ def refusals(sites: FeedSites) -> dict[str, tuple[str, str]]:
     }
 
 
-FORM_NOT_SHOWN = pytest.mark.xfail(
-    strict=True,
-    reason="D6 as amended, not yet built: the refusal names RSSHub but does not show the form "
-    "rsshub://",
-)
-REFUSED_KINDS = [
-    pytest.param("a page that names no feed", marks=FORM_NOT_SHOWN),
-    pytest.param("a picture", marks=FORM_NOT_SHOWN),
-    pytest.param("a show Apple names no feed of", marks=FORM_NOT_SHOWN),
-    pytest.param("a channel whose page asks for consent", marks=FORM_NOT_SHOWN),
-    pytest.param("a route of an RSSHub that does not answer", marks=FORM_NOT_SHOWN),
+REFUSED_KINDS = (
+    "a page that names no feed",
+    "a picture",
+    "a show Apple names no feed of",
+    "a channel whose page asks for consent",
+    "a route of an RSSHub that does not answer",
     "an address of no web",
-]
+)
 
 
 @pytest.mark.parametrize("refused", REFUSED_KINDS)
@@ -684,7 +826,7 @@ def test_a_page_beyond_the_bytes_allowed_is_oversize(feed_sites: FeedSites) -> N
     padding = b"<!--" + b" " * LOWERED_PAGE_BYTES + b"-->"
     feed_sites.serve(page, answered(page_naming("") + padding, kind_of(HTML)))
     told = refusal(page, RSSHUB, f"a page of more than {LOWERED_PAGE_BYTES} bytes")
-    assert told == OVERSIZE_SOURCE.format(source=page), (
+    assert told.startswith(OVERSIZE_SOURCE.format(source=page)), (
         f"a page beyond the bytes allowed was refused as {told!r}"
     )
 
@@ -707,7 +849,7 @@ def test_a_page_that_trickles_beyond_the_time_allowed_is_overdue(feed_sites: Fee
     began = time.monotonic()
     told = refusal(page, RSSHUB, "a page that trickles")
     took = time.monotonic() - began
-    assert told == OVERDUE_SOURCE.format(source=page), (
+    assert told.startswith(OVERDUE_SOURCE.format(source=page)), (
         f"a page that trickles beyond the time allowed was refused as {told!r}"
     )
     assert took <= LOWERED_PAGE_SECONDS + 1.0, (
@@ -715,11 +857,6 @@ def test_a_page_that_trickles_beyond_the_time_allowed_is_overdue(feed_sites: Fee
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D7 as amended, not yet built: a redirect is not counted among the requests one "
-    "discovery may make",
-)
 def test_one_discovery_makes_no_more_requests_than_allowed_redirects_counted(
     feed_sites: FeedSites,
 ) -> None:
@@ -763,11 +900,6 @@ def test_one_discovery_takes_no_longer_than_allowed_in_all(feed_sites: FeedSites
 LONG_ADDRESS = "https://feeds.test/" + "a" * ADDRESS_CHARACTERS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="being mended: a feed moved to an address longer than a feed's address may be ends "
-    "in pydantic's ValidationError of Discovered, not in UnreadableFeed",
-)
 def test_an_address_that_leads_to_one_longer_than_a_feeds_address_may_be_leads_to_no_feed(
     feed_sites: FeedSites,
 ) -> None:

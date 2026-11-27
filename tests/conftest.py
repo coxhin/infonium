@@ -260,6 +260,7 @@ def feed_sites(monkeypatch: pytest.MonkeyPatch) -> FeedSites:
     # The stand-in sites that a feed is polled and found from, with the limits of a fetch and of
     # a discovery lowered, by the names the modules give them.
     standin = FeedSites()
+    monkeypatch.setattr(httpx, "Client", standin.client())
     monkeypatch.setattr(httpx, "stream", standin.stream)
     for module in (fetcher, discovery):
         monkeypatch.setattr(module, "FEED_LIMIT_SECONDS", LOWERED_FEED_SECONDS)
