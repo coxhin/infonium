@@ -14,6 +14,7 @@ from infonium import api, embedding, intake, search, speech, webpictures
 from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
+from infonium.subscriptions import discovery, fetcher
 from tests import pdf_engine_standin
 from tests.embedding_standin import (
     EMBEDDING_BASE_URL,
@@ -21,6 +22,14 @@ from tests.embedding_standin import (
     EMBEDDING_MODEL,
     EmbeddingStandin,
     embedding_standin,
+)
+from tests.feed_sites import (
+    LOWERED_DISCOVERY_SECONDS,
+    LOWERED_FEED_BYTES,
+    LOWERED_FEED_SECONDS,
+    LOWERED_PAGE_BYTES,
+    LOWERED_PAGE_SECONDS,
+    FeedSites,
 )
 from tests.model_standin import (
     GLM_BASE_URL,
@@ -237,3 +246,18 @@ def start_app(
 @pytest.fixture
 def app(start_app: Callable[..., App]) -> App:
     return start_app()
+
+
+@pytest.fixture
+def feed_sites(monkeypatch: pytest.MonkeyPatch) -> FeedSites:
+    # The stand-in sites that a feed is polled and found from, with the limits of a fetch and of
+    # a discovery lowered, by the names the modules give them.
+    standin = FeedSites()
+    monkeypatch.setattr(httpx, "stream", standin.stream)
+    for module in (fetcher, discovery):
+        monkeypatch.setattr(module, "FEED_LIMIT_SECONDS", LOWERED_FEED_SECONDS)
+        monkeypatch.setattr(module, "FEED_LIMIT_BYTES", LOWERED_FEED_BYTES)
+    monkeypatch.setattr(discovery, "PAGE_LIMIT_SECONDS", LOWERED_PAGE_SECONDS)
+    monkeypatch.setattr(discovery, "PAGE_LIMIT_BYTES", LOWERED_PAGE_BYTES)
+    monkeypatch.setattr(discovery, "DISCOVERY_LIMIT_SECONDS", LOWERED_DISCOVERY_SECONDS)
+    return standin
