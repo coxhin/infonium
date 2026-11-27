@@ -9,9 +9,15 @@ import sqlalchemy
 from pydantic import AwareDatetime, BaseModel
 
 from infonium.intake import Intake
-from infonium.library import Failed, Library, LibraryStore, Subscribed, item_identity
+from infonium.library import (
+    Failed,
+    Library,
+    LibraryStore,
+    Subscribed,
+    is_busy,
+    item_identity,
+)
 from infonium.reasons import failure_reason
-from infonium.search import is_busy
 from infonium.subscriptions.discovery import Discovered
 from infonium.subscriptions.feed import UnreadableFeed
 from infonium.subscriptions.fetcher import Changed, Fetched, Unchanged, Validators

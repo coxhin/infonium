@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 from array import array
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import StrEnum
@@ -16,6 +15,7 @@ from infonium.library import (
     LibraryStore,
     OwnerTransaction,
     document_table,
+    is_busy,
     item_table,
     kept_document_id,
     kept_title,
@@ -142,9 +142,6 @@ UNREADABLE = "replace"
 NUL = "\x00"
 UTF16 = "utf-16"
 SURROGATES_KEPT = "surrogatepass"
-# The part of SQLite's code for a failure that says the file was busy; the rest of the code
-# says how.
-PRIMARY_CODE = 0xFF
 
 
 def readable_query(query: str) -> str:
@@ -154,13 +151,6 @@ def readable_query(query: str) -> str:
 
 
 SearchQuery = Annotated[str, AfterValidator(readable_query)]
-
-
-def is_busy(error: sqlalchemy.exc.OperationalError) -> bool:
-    return (
-        isinstance(error.orig, sqlite3.Error)
-        and error.orig.sqlite_errorcode & PRIMARY_CODE == sqlite3.SQLITE_BUSY
-    )
 
 
 class IndexFailed(Exception):

@@ -60,6 +60,9 @@ ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 WRITE_AHEAD = "PRAGMA journal_mode = WAL"
 WRITER_PATIENCE_MILLISECONDS = 30_000
 AWAIT_WRITER = f"PRAGMA busy_timeout = {WRITER_PATIENCE_MILLISECONDS}"
+# The part of SQLite's code for a failure that says the file was busy; the rest of the code
+# says how.
+PRIMARY_CODE = 0xFF
 TIMESTAMP = TypeAdapter(AwareDatetime)
 
 metadata = sqlalchemy.MetaData()
@@ -432,6 +435,14 @@ def digest_row(digest: Digest, owner: str) -> dict[sqlalchemy.Column[Any], str |
         digest_table.c.format: DIGEST_FORMAT,
         digest_table.c.body: digest.model_dump_json(),
     }
+
+
+def is_busy(error: sqlalchemy.exc.OperationalError) -> bool:
+    # Whether a failure on the library's file is another writer's holding it past the wait.
+    return (
+        isinstance(error.orig, sqlite3.Error)
+        and error.orig.sqlite_errorcode & PRIMARY_CODE == sqlite3.SQLITE_BUSY
+    )
 
 
 def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
