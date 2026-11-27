@@ -49,8 +49,19 @@ from infonium.subscriptions.subscription import (
 POLLS_AT_ONCE = 2
 # The failures of a poll that lie with the feed or the way to it, not with infonium.
 FEED_FAILURES = (UnreadableFeed, httpx.HTTPError)
+SCHEDULE_STOPPED = (
+    "the schedule of subscriptions stopped on a fault, and no feed is polled and no posting"
+    " admitted until infonium starts again: {reason}"
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ScheduleStopped(Exception):
+    # The poller's watch stopped on a fault of infonium's own. Every operation on subscriptions
+    # is refused with it until infonium starts again, so that a reader is told where they look,
+    # not shown polls that were due long ago. The cause is kept as the cause.
+    pass
 
 
 class BegunPoll(BaseModel):
@@ -113,6 +124,8 @@ class Poller:
         # it, and no callback of a future takes it.
         self.turn = Lock()
         self.stopped = Event()
+        # No watch runs until the poller starts.
+        self.watcher: Future[None] = Future()
 
     def start(self) -> None:
         # Polls that the service's stopping cut off begin again, and the watch begins.
@@ -120,8 +133,18 @@ class Poller:
             cut_off = underway_polls(connection)
         for owned in cut_off:
             self.poll_in_background(owned.owner, owned.subscription)
-        watcher = self.watching.submit(self.watch)
-        watcher.add_done_callback(self.record_watch)
+        self.watcher = self.watching.submit(self.watch)
+        self.watcher.add_done_callback(self.record_watch)
+
+    def raise_failure(self) -> None:
+        # A watch that stopped on a fault fails every operation on subscriptions after it, as
+        # the index's worker fails every search.
+        if self.watcher.done() and not self.watcher.cancelled():
+            failure = self.watcher.exception()
+            if failure is not None:
+                raise ScheduleStopped(
+                    SCHEDULE_STOPPED.format(reason=failure_reason(failure))
+                ) from failure
 
     def close(self) -> None:
         # The watch ends its round first, so that it hands no posting to an intake that closes
@@ -132,11 +155,12 @@ class Poller:
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def record_watch(self, finished: Future[None]) -> None:
+        # Takes no lock: it may run in a thread that holds the turn.
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             logger.error(
-                "the schedule of subscriptions stopped: no feed is polled by it, and no posting"
-                " admitted, until infonium starts again",
+                "the schedule of subscriptions stopped; every operation on subscriptions is"
+                " refused until infonium starts again",
                 exc_info=error,
             )
 
