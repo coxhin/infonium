@@ -121,12 +121,12 @@ export function Reader({
       {...{ [DOCUMENT_ATTRIBUTE]: itemDocument.id }}
     >
       <header>
-        {entry.origin.kind === "link" ? (
+        {entry.origin.kind === "upload" ? (
+          <span>{originLabel(entry.origin)}</span>
+        ) : (
           <a href={entry.origin.url} target="_blank" rel="noreferrer noopener">
             {originLabel(entry.origin)} ↗
           </a>
-        ) : (
-          <span>{originLabel(entry.origin)}</span>
         )}
         {blocks[0]?.kind !== "heading" && <h1>{title}</h1>}
       </header>

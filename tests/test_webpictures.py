@@ -24,8 +24,8 @@ from PIL import ExifTags, Image
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
-from infonium import egress, intake, webpictures
-from infonium.document import Block, Extracted, Figure, Paragraph
+from infonium import egress, webpictures
+from infonium.document import USER_AGENT, Block, Extracted, Figure, Paragraph
 from tests.unix_server import unix_server
 
 # The pictures of a web page's figures, downloaded through the transport that judges every
@@ -281,7 +281,7 @@ def page_with(*sources: str) -> Extracted:
 def downloaded(
     extracted: Extracted, folder: Path, page: str = PAGE, silence: float = SILENCE
 ) -> Extracted:
-    return webpictures.with_pictures(extracted, page, folder, intake.USER_AGENT, silence)
+    return webpictures.with_pictures(extracted, page, folder, USER_AGENT, silence)
 
 
 def pictured(extracted: Extracted) -> list[str]:
@@ -371,7 +371,7 @@ def test_a_picture_is_asked_for_as_a_browser_that_shows_the_page_asks_for_it(
         "a picture of another origin was not given the page's origin as its referrer"
     )
     for address, headers in heard.items():
-        assert headers["user-agent"] == intake.USER_AGENT, f"{address} heard another user agent"
+        assert headers["user-agent"] == USER_AGENT, f"{address} heard another user agent"
         assert headers["accept"] == webpictures.PICTURE_ACCEPT, f"{address} was not asked a picture"
         assert headers["accept-encoding"] == "identity", f"{address} was asked to compress it"
     site.reset()

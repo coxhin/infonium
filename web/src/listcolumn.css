@@ -1,0 +1,154 @@
+/* The list column: its two tabs, told as the column beside the reader tells its own; the choice
+   that narrows the list of items; and an item that is new. The column is as tall as the window,
+   or in one column as tall as the room it is given, and, as the column beside the reader, keeps
+   its name and tabs in place while each view under them scrolls by itself. */
+.app > .library {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.library :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app > .library > h1 {
+  flex: none;
+  margin: 0;
+  padding: 1rem 1rem 0.9rem;
+}
+
+.library .tabs {
+  flex: none;
+  display: flex;
+  gap: 0.2rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.library > .status {
+  margin: 1rem;
+}
+
+/* A view that scrolls by itself, and the tab of subscriptions, which holds the list of them or
+   one subscription open in its place. */
+.library .list-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.library .list-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.library .list-stack[hidden] {
+  display: none;
+}
+
+.library .tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 0.3rem 0.7rem 0.4rem;
+  color: var(--muted);
+}
+
+.library .tabs button[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.library .narrowing {
+  display: flex;
+  margin: 1rem 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.library .narrowing label {
+  flex: 1;
+  min-width: 0;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.library .narrowing label + label {
+  border-left: 0;
+}
+
+.library .narrowing label:first-of-type {
+  border-radius: 0.4rem 0 0 0.4rem;
+}
+
+.library .narrowing label:last-of-type {
+  border-radius: 0 0.4rem 0.4rem 0;
+}
+
+.library .narrowing label:has(:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.library .narrowing label:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The choice is made by the radio buttons, which stay in reach of the keyboard; their labels are
+   what shows. */
+.library .narrowing input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.library li a {
+  overflow-wrap: anywhere;
+}
+
+/* Where an item came from stays on one line, cut where it is long, as a subscription's title
+   may be; the whole is on hover. */
+.library li a small {
+  display: flex;
+}
+
+.library li a .source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library li a .attempt {
+  flex: none;
+  white-space: pre;
+}
+
+.library li a.new {
+  font-weight: 600;
+}
+
+.library li a.new small {
+  font-weight: normal;
+}

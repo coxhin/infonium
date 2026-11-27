@@ -34,3 +34,11 @@ class Settings(BaseSettings):
     embedding_base_url: str = "http://127.0.0.1:8751/v1"
     embedding_api_key: SecretStr = SecretStr("unused")
     embedding_model: str = "ibm-granite/granite-embedding-97m-multilingual-r2"
+    # How long after a poll of a subscription's feed the next one is due.
+    poll_minutes: PositiveInt = 60
+    # The RSSHub instance that serves the routes a reader subscribes to as rsshub://; the
+    # default is the one that engines/rsshub starts.
+    rsshub_base_url: str = "http://127.0.0.1:1200"
+    # The key that instance asks every request for, as its ACCESS_KEY: needed where others use
+    # this machine, as engines/rsshub/README.md says; none by default.
+    rsshub_access_key: SecretStr | None = None

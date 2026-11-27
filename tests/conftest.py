@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yt_dlp
 from fastapi.testclient import TestClient
 from hypothesis import settings
 from pydantic import SecretStr
@@ -14,6 +15,8 @@ from infonium import api, embedding, intake, search, speech, webpictures
 from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
+from infonium.subscriptions import discovery, fetcher
+from infonium.subscriptions.poller import Poller
 from tests import pdf_engine_standin
 from tests.embedding_standin import (
     EMBEDDING_BASE_URL,
@@ -22,6 +25,16 @@ from tests.embedding_standin import (
     EmbeddingStandin,
     embedding_standin,
 )
+from tests.feed_sites import (
+    LOWERED_DISCOVERY_SECONDS,
+    LOWERED_FEED_BYTES,
+    LOWERED_FEED_SECONDS,
+    LOWERED_PAGE_BYTES,
+    LOWERED_PAGE_SECONDS,
+    FeedSites,
+)
+from tests.feed_standin import INTERVAL, FeedStandin
+from tests.library_before_digest_styles import DATA_FOLDER
 from tests.model_standin import (
     GLM_BASE_URL,
     MODEL_BASE_URL,
@@ -32,6 +45,7 @@ from tests.model_standin import (
     model_standin,
 )
 from tests.service import LOWERED_FETCH_BYTES, LOWERED_FETCH_SECONDS, App, Site, digest_reply
+from tests.subscribing import reading_held
 
 # The examples of a property run as fast as the extractor and the parsers they call, whose
 # first calls load what they keep; a deadline per example would fail them at random.
@@ -159,8 +173,9 @@ def start_app(
     embedder: EmbeddingStandin,
 ) -> Iterator[Callable[..., App]]:
     # Starts the service on the test's library, its models speaking the wire API given, its
-    # embedding engine the stand-in by the name of the model given, and translating into the
-    # language given.
+    # embedding engine the stand-in by the name of the model given, translating into the
+    # language given, with the poller that the maker given makes on its library and intake, and
+    # on the library in the test's folder of the name given.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
     # The pictures of a page are asked of the stand-in site too, whatever host they name.
@@ -175,9 +190,10 @@ def start_app(
         browser=Path("no-such-browser"),
     )
     started: list[App] = []
-    # The service's own providers of its translator and of its models, called anew for each
-    # start.
+    # The service's own providers of its translator, its poller and its models, called anew for
+    # each start.
     made_translator = api.translator.__wrapped__
+    made_poller = api.poller.__wrapped__
     made_language_model = api.language_model.__wrapped__
     made_answering_model = api.answering_model.__wrapped__
     made_glm_pace = api.glm_pace.__wrapped__
@@ -186,8 +202,10 @@ def start_app(
         wire_api: WireApi = WireApi.RESPONSES,
         embedding_model: str = EMBEDDING_MODEL,
         language: str = api.settings.language,
+        poller: Callable[[], Poller] = made_poller,
+        folder: str = DATA_FOLDER,
     ) -> App:
-        store = LibraryStore(tmp_path / "data")
+        store = LibraryStore(tmp_path / folder)
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
         monkeypatch.setattr(api, "intake", lambda: reader)
@@ -219,6 +237,8 @@ def start_app(
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)
+        polling = poller()
+        monkeypatch.setattr(api, "poller", lambda: polling)
         client = TestClient(api.app)
         client.__enter__()
         started.append(App(client, store, site, model, index))
@@ -237,3 +257,42 @@ def start_app(
 @pytest.fixture
 def app(start_app: Callable[..., App]) -> App:
     return start_app()
+
+
+@pytest.fixture
+def feed_sites(monkeypatch: pytest.MonkeyPatch) -> FeedSites:
+    # The stand-in sites that a feed is polled and found from, and yt-dlp beside them, with the
+    # limits of a fetch and of a discovery lowered, by the names the modules give them.
+    standin = FeedSites()
+    monkeypatch.setattr(httpx, "Client", standin.client())
+    monkeypatch.setattr(httpx, "stream", standin.stream)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", standin.yt_dlp.youtube_dl())
+    for module in (fetcher, discovery):
+        monkeypatch.setattr(module, "FEED_LIMIT_SECONDS", LOWERED_FEED_SECONDS)
+        monkeypatch.setattr(module, "FEED_LIMIT_BYTES", LOWERED_FEED_BYTES)
+    monkeypatch.setattr(discovery, "PAGE_LIMIT_SECONDS", LOWERED_PAGE_SECONDS)
+    monkeypatch.setattr(discovery, "PAGE_LIMIT_BYTES", LOWERED_PAGE_BYTES)
+    monkeypatch.setattr(discovery, "DISCOVERY_LIMIT_SECONDS", LOWERED_DISCOVERY_SECONDS)
+    return standin
+
+
+@pytest.fixture
+def feeds(start_app: Callable[..., App], request: pytest.FixtureRequest) -> Iterator[FeedStandin]:
+    # The feeds that a service started with feeds.poller as its poller's maker finds and polls,
+    # the clock it reads, and the interval between its polls, which a test may give as the
+    # fixture's parameter. A call the test still holds is cut off before the services stop.
+    standin = FeedStandin(interval=getattr(request, "param", INTERVAL))
+    yield standin
+    standin.let_go()
+
+
+@pytest.fixture
+def subscribing_app(start_app: Callable[..., App], feeds: FeedStandin) -> App:
+    return start_app(poller=feeds.poller)
+
+
+@pytest.fixture
+def held_reading(subscribing_app: App, feeds: FeedStandin) -> str:
+    # The address of a posting whose reading is held until the test ends, so that no other
+    # posting is admitted meanwhile.
+    return reading_held(subscribing_app, feeds)

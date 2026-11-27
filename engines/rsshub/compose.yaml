@@ -1,0 +1,25 @@
+# The bridge that makes feeds of sites that have none, for infonium: RSSHub, which serves the
+# feed of a site at a route of its own. infonium reaches it at http://127.0.0.1:1200, and a
+# reader subscribes to a route as rsshub://<route>.
+name: infonium-rsshub
+services:
+  rsshub:
+    # The image without a browser. Pinned by digest, so that the same build is run everywhere.
+    image: diygod/rsshub@sha256:37c26b6cc928f4b0f94c7dec3a4c28b5497c43d30b62092b3196fc6159d8aa11
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # What RSSHub fetched for a route is kept in its own memory, and lost when it stops: the
+      # feed of a route for 5 minutes, the pages of its postings for an hour. infonium polls a
+      # feed once an hour unless told otherwise, so a volume would keep nothing it asks again.
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: "300"
+      CACHE_CONTENT_EXPIRE: "3600"
+    # The keys and accounts some routes need, under the names RSSHub gives them, one to a line
+    # of a file .env beside this one; git keeps no .env.
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # This machine only: RSSHub asks no one who they are.
+      - "127.0.0.1:${RSSHUB_PORT:-1200}:1200"

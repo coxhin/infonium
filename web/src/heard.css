@@ -1,0 +1,11 @@
+/* What a screen reader hears and the page does not show: the app's one rule for it, brought in
+   by every module that uses it. */
+.heard {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  margin: 0;
+}

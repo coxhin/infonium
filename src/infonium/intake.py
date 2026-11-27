@@ -1,11 +1,9 @@
 import logging
 import mimetypes
-import re
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
-from email.message import Message
 from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -19,17 +17,24 @@ from pydantic import BaseModel
 from infonium import browser, captions, guard, media, pdf, recording, speech, webpage, webpictures
 from infonium.document import (
     BROKEN_OFF_SOURCE,
+    CONTENT_TYPE,
+    FETCH_TIMEOUT_SECONDS,
     HTML_MEDIA_TYPE,
     LITTLE_TEXT_WORDS,
-    MEDIA_TYPE_PATTERN,
     OVERDUE_SOURCE,
     OVERSIZE_SOURCE,
+    PAGE_MEDIA_TYPES,
     PDF_MEDIA_TYPE,
+    RECORDING_MEDIA_TYPES,
+    UNDECLARED,
+    UNKNOWN_MEDIA_TYPE,
+    USER_AGENT,
     Block,
     Extracted,
     KeptPicture,
     MediaType,
     UnreadableSource,
+    declared_media_type,
     document_of,
     error_status,
     turned_away,
@@ -46,6 +51,7 @@ from infonium.library import (
     Read,
     Reading,
     StagedPicture,
+    Subscribed,
     Upload,
     arrival_of,
     is_underway,
@@ -60,25 +66,11 @@ from infonium.library import (
 from infonium.reasons import failure_reason
 from infonium.transcript import Transcript, transcript_blocks
 
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0 Safari/537.36 infonium/0.1"
-)
-# The longest silence a server is allowed while a source, or a picture of a page, is fetched
-# from it.
-FETCH_TIMEOUT_SECONDS = 20.0
 # The longest a fetch may take in all, and the most it may bring.
 FETCH_LIMIT_SECONDS = 600.0
 FETCH_LIMIT_BYTES = 2 * 1024**3
 FETCHED_FILE = "source"
-CONTENT_TYPE = "content-type"
-UNDECLARED = ""
-# What bytes are taken for when nothing tells their kind.
-UNKNOWN_MEDIA_TYPE = "application/octet-stream"
-PAGE_MEDIA_TYPES = frozenset({HTML_MEDIA_TYPE, "application/xhtml+xml"})
 PAGE_OPENINGS = (b"<!doctype html", b"<html")
-# The kinds of file that hold a recording: sound alone, or sound with a picture.
-RECORDING_MEDIA_TYPES = ("audio/", "video/")
 # The kinds of source a reader can be shown as they arrived, before anything is read from them.
 SHOWN_AS_ARRIVED = frozenset({PDF_MEDIA_TYPE})
 OPENING_BYTES = 1024
@@ -131,15 +123,6 @@ class Readout(BaseModel):
     extracted: Extracted
     file: Path
     media_type: MediaType
-
-
-def declared_media_type(declared: str) -> str:
-    # The kind a server or a file name gives, without its parameters; a kind that is not
-    # given, or not written as a media type, tells nothing.
-    header = Message()
-    header[CONTENT_TYPE] = declared
-    named = header.get_content_type() if declared else UNKNOWN_MEDIA_TYPE
-    return named if re.fullmatch(MEDIA_TYPE_PATTERN, named) else UNKNOWN_MEDIA_TYPE
 
 
 def media_type_of(file: Path, declared: str) -> str:
@@ -373,11 +356,14 @@ class Intake:
         # reading, and a file is not taken away while a reading or a document comes to name it.
         self.turn = Lock()
 
-    def begin_link(self, owner: str, url: str) -> Item:
-        item_id = item_identity(owner, url)
+    def begin_address(self, owner: str, origin: Link | Subscribed) -> Item:
+        # A reading of what an address leads to: one a reader gave, or one a posting of a
+        # subscription named. The item is told by its address alone, so the same address is the
+        # same item whichever way it came, and takes the origin of the reading begun last.
+        item_id = item_identity(owner, origin.url)
         with self.turn:
             underway = self.underway(owner, item_id)
-            item = underway[0] if underway else self.started(owner, item_id, Link(url=url))
+            item = underway[0] if underway else self.started(owner, item_id, origin)
         if not underway:
             self.read_in_background(owner, item_id)
         return item
@@ -396,8 +382,8 @@ class Intake:
         if is_underway(item.reading):
             return item
         match item.origin:
-            case Link(url=url):
-                return self.begin_link(owner, url)
+            case Link() | Subscribed():
+                return self.begin_address(owner, item.origin)
             case Upload(name=name) if not kept:
                 # The file of an upload is kept only beside a document read from it.
                 raise NothingToReadAgain(NOTHING_KEPT.format(name=name))
@@ -500,7 +486,7 @@ class Intake:
         try:
             with TemporaryDirectory(dir=self.store.work) as directory:
                 match item.origin:
-                    case Link(url=url):
+                    case Link(url=url) | Subscribed(url=url):
                         readout = link_readout(
                             url,
                             Path(directory),
@@ -535,7 +521,14 @@ class Intake:
             with self.turn:
                 with self.store.library(owner) as library:
                     current = library.item(item_id)
-                    settled = reading_settled(current.reading, readout.extracted.title, document.id)
+                    # An item that a subscription brought goes by what its posting is called,
+                    # which is what the reader saw listed; any other by its source's own title.
+                    title = (
+                        current.origin.called
+                        if isinstance(current.origin, Subscribed)
+                        else readout.extracted.title
+                    )
+                    settled = reading_settled(current.reading, title, document.id)
                     new_document = library.keep_document(document, datetime.now(UTC))
                     if new_document:
                         self.store.keep_snapshot(snapshot)

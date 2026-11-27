@@ -333,6 +333,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/{item_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** See Item */
+        put: operations["see_item_api_items__item_id__seen_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}/source": {
         parameters: {
             query?: never;
@@ -457,10 +474,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Subscriptions */
+        get: operations["list_subscriptions_api_subscriptions_get"];
+        put?: never;
+        /** Subscribe */
+        post: operations["subscribe_api_subscriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Subscription */
+        get: operations["read_subscription_api_subscriptions__subscription_id__get"];
+        put?: never;
+        post?: never;
+        /** Unsubscribe */
+        delete: operations["unsubscribe_api_subscriptions__subscription_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}/follows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Choose Follows */
+        put: operations["choose_follows_api_subscriptions__subscription_id__follows_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Subscription */
+        post: operations["poll_subscription_api_subscriptions__subscription_id__poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}/postings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Subscription Postings */
+        get: operations["subscription_postings_api_subscriptions__subscription_id__postings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}/postings/{number}/reading": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Posting */
+        post: operations["read_posting_api_subscriptions__subscription_id__postings__number__reading_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscriptions/{subscription_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** See Subscription */
+        put: operations["see_subscription_api_subscriptions__subscription_id__seen_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdmittedItem */
+        AdmittedItem: {
+            item: components["schemas"]["ItemEntry"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "admitted";
+        };
         /** Anchor */
         Anchor: {
             /**
@@ -509,6 +656,19 @@ export interface components {
              */
             kind: "answered";
             turn: components["schemas"]["Turn"];
+        };
+        /** Awaited */
+        Awaited: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "awaited";
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
         };
         /** Body_import_upload_api_items_upload_post */
         Body_import_upload_api_items_upload_post: {
@@ -659,6 +819,15 @@ export interface components {
             /** Starts */
             starts: number;
         };
+        /**
+         * Follows
+         * @enum {string}
+         */
+        Follows: "reads" | "lists" | "paused";
+        /** FollowsChoice */
+        FollowsChoice: {
+            follows: components["schemas"]["Follows"];
+        };
         /** FormulaMark */
         FormulaMark: {
             /**
@@ -748,9 +917,11 @@ export interface components {
             /** Id */
             id: string;
             /** Origin */
-            origin: components["schemas"]["Link"] | components["schemas"]["Upload"];
+            origin: components["schemas"]["Link"] | components["schemas"]["Upload"] | components["schemas"]["Subscribed"];
             /** Reading */
             reading: components["schemas"]["Unread"] | components["schemas"]["Read"];
+            /** Seen */
+            seen: string | null;
         };
         /** ItemHighlights */
         ItemHighlights: {
@@ -1058,6 +1229,74 @@ export interface components {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
         };
+        /** PollFailed */
+        PollFailed: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Due
+             * Format: date-time
+             */
+            due: string;
+            /** Failures */
+            failures: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "failed";
+            /** Reason */
+            reason: string;
+        };
+        /** PollSettled */
+        PollSettled: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Due
+             * Format: date-time
+             */
+            due: string;
+            /** Found */
+            found: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "settled";
+        };
+        /** PollUnderway */
+        PollUnderway: {
+            /** Failures */
+            failures: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "underway";
+        };
+        /** PostingView */
+        PostingView: {
+            /** Address */
+            address: string;
+            /** Admission */
+            admission: components["schemas"]["Unadmitted"] | components["schemas"]["Awaited"] | components["schemas"]["AdmittedItem"];
+            /**
+             * Number
+             * @description The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer.
+             */
+            number: number;
+            /** Published */
+            published: string | null;
+            /** Title */
+            title: string;
+        };
         /** Question */
         Question: {
             /** Text */
@@ -1219,6 +1458,55 @@ export interface components {
             start: number;
             style: components["schemas"]["Style"];
         };
+        /** Subscribed */
+        Subscribed: {
+            /** Called */
+            called: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "subscribed";
+            /** Subscription */
+            subscription: string;
+            /** Url */
+            url: string;
+        };
+        /** SubscriptionDraft */
+        SubscriptionDraft: {
+            /** Address */
+            address: string;
+            /**
+             * Admit
+             * @default 3
+             */
+            admit: number;
+        };
+        /** SubscriptionView */
+        SubscriptionView: {
+            /**
+             * Added
+             * Format: date-time
+             */
+            added: string;
+            /** Address */
+            address: string;
+            /** Feed */
+            feed: string;
+            follows: components["schemas"]["Follows"];
+            /** Id */
+            id: string;
+            /** Poll */
+            poll: components["schemas"]["PollUnderway"] | components["schemas"]["PollSettled"] | components["schemas"]["PollFailed"];
+            /** Postings */
+            postings: number;
+            /** Site */
+            site: string | null;
+            /** Title */
+            title: string;
+            /** Unseen */
+            unseen: number;
+        };
         /** Table */
         Table: {
             /**
@@ -1330,6 +1618,14 @@ export interface components {
             answer: components["schemas"]["Answer"];
             /** Question */
             question: string;
+        };
+        /** Unadmitted */
+        Unadmitted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unadmitted";
         };
         /** Unanswered */
         Unanswered: {
@@ -2409,6 +2705,46 @@ export interface operations {
             };
         };
     };
+    see_item_api_items__item_id__seen_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemEntry"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     item_source_api_items__item_id__source_get: {
         parameters: {
             query?: never;
@@ -2925,6 +3261,437 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_subscriptions_api_subscriptions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"][];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    subscribe_api_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    read_subscription_api_subscriptions__subscription_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    unsubscribe_api_subscriptions__subscription_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    choose_follows_api_subscriptions__subscription_id__follows_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FollowsChoice"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    poll_subscription_api_subscriptions__subscription_id__poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    subscription_postings_api_subscriptions__subscription_id__postings_get: {
+        parameters: {
+            query?: {
+                /** @description Only postings older than the one of this number; without it, the newest */
+                before?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostingView"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    read_posting_api_subscriptions__subscription_id__postings__number__reading_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+                /** @description The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer. */
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostingView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    see_subscription_api_subscriptions__subscription_id__seen_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
                 };
             };
         };

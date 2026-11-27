@@ -8,6 +8,8 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.163.0",
+    # Exactly: reading a feed drives two of its parsers' own methods, which another version may change.
+    "feedparser==6.0.14",
     "filelock>=4.2.10",
     "filetype>=1.2.0",
     "httpx>=0.28.1",
@@ -55,25 +57,26 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The default run refuses the network, and leaves out the tests that need a program of their
-# own and the tests of the pace, which time requests on the clock; `-m` with a marker's name
-# runs those.
+# own, the tests of the pace, which time requests on the clock, and those of the fetcher program,
+# which connects to a server on a port of this machine; `-m` with a marker's name runs those.
 addopts = [
     "--strict-markers",
     "--disable-socket",
     "--allow-unix-socket",
     "-m",
-    "not chrome and not ffmpeg and not mineru and not pace",
+    "not chrome and not ffmpeg and not mineru and not pace and not apart",
 ]
 markers = [
     "chrome: renders pages in Google Chrome or Chromium, with its sandbox",
     "ffmpeg: reads recordings with FFmpeg's ffmpeg and ffprobe",
     "mineru: parses PDFs with MinerU 3.4.2 on a GPU",
     "pace: times the requests to GLM's endpoint on the clock",
+    "apart: polls and finds feeds in the fetcher program, over a server on port 9146",
 ]
 
 [[tool.mypy.overrides]]
 # These ship no type information.
-module = ["filetype", "pypdfium2", "sqlite_vec"]
+module = ["feedparser", "filetype", "pypdfium2", "sqlite_vec"]
 ignore_missing_imports = true
 
 [dependency-groups]
