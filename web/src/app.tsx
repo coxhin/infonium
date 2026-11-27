@@ -1,16 +1,18 @@
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   listItems,
   readAgain,
   readDocument,
   readEntry,
   readRevisionDocument,
+  seeItem,
   type ItemDocument,
   type ItemEntry,
   type ItemRevisions,
   type Revision,
 } from "./client";
 import { ArrivedPages } from "./arrival";
+import { useFollowed, type Followed } from "./following";
 import { Library } from "./library";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { reasonOf, useWatched, type Loaded } from "./loading";
@@ -18,6 +20,7 @@ import { isBeingRead } from "./entry";
 import { useRevisions } from "./itemrevisions";
 import { ReadItem, type ReadEntry } from "./reading";
 import { EarlierLine, NOT_REREADING, RevisionHead, type Rereading } from "./revisions";
+import type { Seat } from "./seat";
 import { SeatingProvider, SideColumn, useCannotShow, useSeating } from "./side";
 import { PDF_MEDIA_TYPE } from "./views";
 
@@ -358,16 +361,46 @@ function ItemPane({
   }
 }
 
+// Tells the service, once for each item, when a read item's document is first on show in the
+// reader, which seats only a document; an item the list says was seen already is not told again.
+// What the service answers is put in the list at once, and the items told are handed to the list
+// column, for what it shows as new to follow.
+function useSeeing(seated: Seat | undefined, entries: Followed<ItemEntry[]>): ReadonlySet<string> {
+  const [seen, setSeen] = useState<ReadonlySet<string>>(new Set());
+  const told = useRef(new Set<string>());
+  const { loaded, replace } = entries;
+  useEffect(() => {
+    if (seated === undefined || told.current.has(seated.itemId)) {
+      return;
+    }
+    const { itemId } = seated;
+    const listed =
+      loaded.state === "ready" ? loaded.value.find((entry) => entry.id === itemId) : undefined;
+    if (listed !== undefined && listed.seen !== null) {
+      return;
+    }
+    told.current.add(itemId);
+    seeItem(itemId).then(
+      (entry) => {
+        replace((before) => before.map((held) => (held.id === entry.id ? entry : held)));
+        setSeen((before) => new Set(before).add(itemId));
+      },
+      // Not told this time; the next time the item is on show, it is told again.
+      () => told.current.delete(itemId),
+    );
+  }, [seated?.itemId, seated?.life]);
+  return seen;
+}
+
 export function App() {
   const linked = linkedItem(useLink());
   const selected = linked?.itemId;
   const [imports, setImports] = useState(0);
-  // A reading started again in the reader is watched in the list as an import is.
-  const [readings, setReadings] = useState(0);
-  const entries = useWatched(listItems, `${imports}:${readings}`, (listed) =>
-    listed.some(isBeingRead),
-  );
+  // The list is read again at once after an import, a reading started again in the reader, and
+  // a press in the list column that changes what the library holds.
+  const entries = useFollowed(listItems, "items", (listed) => listed.some(isBeingRead), true);
   const { seating, seated, unshown, pointer } = useSeating();
+  const seen = useSeeing(seated?.itemId === selected ? seated : undefined, entries);
 
   // The column shows the passage a citation opens the item for, once the item's reader is on
   // show.
@@ -377,6 +410,7 @@ export function App() {
 
   function openImported(entry: ItemEntry) {
     setImports(imports + 1);
+    entries.readNow();
     location.hash = itemLink(entry.id);
   }
 
@@ -387,7 +421,9 @@ export function App() {
           entries={entries.loaded}
           interrupted={entries.interrupted}
           selected={selected}
+          seen={seen}
           onImported={openImported}
+          onChanged={entries.readNow}
         />
         {selected === undefined ? (
           <Notice failed={false}>粘贴一个网址或上传一个文件，或从左侧打开一篇。</Notice>
@@ -395,11 +431,7 @@ export function App() {
           // An import may have started the open item's reading again, so the pane is rebuilt
           // after every import and reads the item again.
           <PaneBoundary key={`${selected}:${imports}`}>
-            <ItemPane
-              itemId={selected}
-              revision={linked?.revision}
-              onReading={() => setReadings((before) => before + 1)}
-            />
+            <ItemPane itemId={selected} revision={linked?.revision} onReading={entries.readNow} />
           </PaneBoundary>
         )}
         <SideColumn
