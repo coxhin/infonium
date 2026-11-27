@@ -192,7 +192,8 @@ posting_table = sqlalchemy.Table(
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
     sqlalchemy.UniqueConstraint("subscription_id", "key"),
-    sqlalchemy.Index("posting_item", "subscription_id", "item_id"),
+    # A subscription's postings counted, and its admitted ones found, from the index alone.
+    sqlalchemy.Index("posting_item", "subscription_id", "owner", "item_id"),
 )
 # The postings that wait, in the order they are admitted.
 sqlalchemy.Index("posting_awaited", posting_table.c.awaited, posting_table.c.number.desc())
