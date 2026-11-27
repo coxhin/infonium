@@ -53,11 +53,12 @@ WebAddress = Annotated[
 
 # The most postings kept of one reading of a feed, the first it lists.
 MOST_POSTINGS = 2000
-# feedparser builds every posting a feed lists before any is kept, a few kilobytes of memory
-# each: 20 MB of three million empty postings took it 12 seconds. So a feed is read up to the
-# posting after twice as many as are kept, and is cut where that one begins; feedparser reads
-# a feed so cut as one that is not well-formed. A posting is told by its element's opening,
-# which may stand inside the text of another and cut the feed sooner.
+# feedparser builds every posting a feed lists before any is kept: 22 MiB of 160,000 postings,
+# each with a title, a link, a guid and a date, took it 15 s and 300 MiB, and 20 MiB of three
+# million empty ones 12 s. So a feed is read up to the posting after twice as many as are
+# kept, and is cut where that one begins; feedparser reads a feed so cut as one that is not
+# well-formed. A posting is told by its element's opening, which may stand inside the text of
+# another and cut the feed sooner.
 READ_POSTINGS = 2 * MOST_POSTINGS
 POSTING_OPENING = re.compile(r"<(?:[\w.-]+:)?(?:item|entry)[\s/>]", re.IGNORECASE)
 # How much of its summary's text a posting without a title is called by.
@@ -102,6 +103,10 @@ ENTITY_REMOVED = " "
 # Such a reference becomes a space before either reads it; a reference of fewer digits than
 # any of those has is left as it is.
 LONG_REFERENCE = re.compile(r"&#(?:([0-9]{5,})|[xX]([0-9a-fA-F]{4,}));?")
+# lxml also refuses the text its parser of HTML makes of markup that refers by number to a
+# character XML allows nowhere, as &#11; does, so in markup every such reference becomes a
+# space before lxml reads it.
+NUMBERED_REFERENCE = re.compile(r"&#(?:([0-9]+)|[xX]([0-9a-fA-F]+));?")
 MOST_CODE_POINT_DIGITS = 7
 BEYOND_UNICODE = sys.maxunicode + 1
 DECIMAL = 10
@@ -212,13 +217,24 @@ class Listing(BaseModel):
     times: list[str]
 
 
-def nothing_as_empty(value: object) -> object:
-    return "" if value is None else value
+def text_or_nothing(value: object) -> object:
+    return value if isinstance(value, str) else ""
 
 
-# A text that feedparser gives, which it leaves as None where it lost track of an element in a
-# feed that is not well-formed.
-ParsedString = Annotated[str, BeforeValidator(nothing_as_empty)]
+def mapping_or_nothing(value: object) -> object:
+    return value if isinstance(value, dict) else None
+
+
+def mappings_of(value: object) -> object:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+# What feedparser gives is whatever a feed made of it. It leaves a text as None where it lost
+# track of an element of a feed that is not well-formed, and keeps an element it does not know
+# under the element's own name, so that <links version="2.0"> makes the links of a feed a
+# mapping and <links>x</links> a text. A value of another kind than feedparser's own is taken
+# for none.
+ParsedString = Annotated[str, BeforeValidator(text_or_nothing)]
 
 
 class ParsedText(BaseModel):
@@ -233,22 +249,27 @@ class ParsedLink(BaseModel):
     type: ParsedString = ""
 
 
+ParsedDetail = Annotated[ParsedText | None, BeforeValidator(mapping_or_nothing)]
+ParsedTexts = Annotated[list[ParsedText], BeforeValidator(mappings_of)]
+ParsedLinks = Annotated[list[ParsedLink], BeforeValidator(mappings_of)]
+
+
 class ParsedEntry(BaseModel):
     # What feedparser reads of a posting of RSS or Atom, by the names it gives.
     id: ParsedString = ""
     link: ParsedString = ""
-    links: list[ParsedLink] = []
-    title_detail: ParsedText | None = None
-    summary_detail: ParsedText | None = None
-    content: list[ParsedText] = []
+    links: ParsedLinks = []
+    title_detail: ParsedDetail = None
+    summary_detail: ParsedDetail = None
+    content: ParsedTexts = []
     published: ParsedString = ""
     updated: ParsedString = ""
 
 
 class ParsedChannel(BaseModel):
-    title_detail: ParsedText | None = None
+    title_detail: ParsedDetail = None
     link: ParsedString = ""
-    links: list[ParsedLink] = []
+    links: ParsedLinks = []
 
 
 class ParsedFeed(BaseModel):
@@ -334,7 +355,8 @@ def readable_reference(reference: re.Match[str]) -> str:
 
 
 def markup_text(markup: str) -> str:
-    fragment = fragment_fromstring(NOT_IN_XML.sub(WORD_GAP, markup), create_parent=True)
+    readable = NUMBERED_REFERENCE.sub(readable_reference, NOT_IN_XML.sub(WORD_GAP, markup))
+    fragment = fragment_fromstring(readable, create_parent=True)
     for element in fragment.iter(*BREAKING_ELEMENTS):
         element.tail = WORD_GAP + (element.tail or "")
     return "".join(SHOWN_TEXT(fragment))
@@ -461,8 +483,9 @@ def first_postings(text: str) -> str:
 def xml_feed(text: str, address: str) -> ParsedFeed:
     # feedparser reads RSS 0.9x, 1.0 and 2.0 and Atom, and reads on where a feed is not
     # well-formed. It is handed a stream, as a string would be taken for a file's name or an
-    # address to fetch. Where elements overlap, as in <item><link>x</item></link>, it fails
-    # with a KeyError or an IndexError of its own, finding no link in the context it closes one in.
+    # address to fetch. Where elements overlap, as in <item><link>x</item></link>, it closes an
+    # element in a context that does not hold it, and fails with a KeyError or an IndexError of
+    # its own, or a TypeError where it takes the text of an element it lost for a number.
     try:
         parsed = feedparser.parse(
             BytesIO(
@@ -474,7 +497,7 @@ def xml_feed(text: str, address: str) -> ParsedFeed:
             resolve_relative_uris=False,
             sanitize_html=False,
         )
-    except (KeyError, IndexError) as failure:
+    except (KeyError, IndexError, TypeError) as failure:
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_TANGLED)) from failure
     return ParsedFeed.model_validate(parsed)
 

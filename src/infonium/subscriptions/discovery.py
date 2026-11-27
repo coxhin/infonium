@@ -40,9 +40,10 @@ PAGE_LIMIT_BYTES = 5 * 1024**2
 PAGE_LIMIT_SECONDS = 30.0
 DISCOVERY_LIMIT_SECONDS = 60.0
 
-# The feeds a page names in its head, of which the first few are tried in the order the page
-# names them. A link's relations and its kind are read in any case, and the kind without its
-# parameters.
+# The feeds a page names by links of its head, of which the first few are tried in the order
+# the page names them. A link is taken wherever it stands, as a page that is not well-formed
+# may leave its head's links in its body. A link's relations and its kind are read in any case,
+# and the kind without its parameters.
 NAMED_FEEDS_TRIED = 3
 LINKS = "//link[@href]"
 BASES = "//base/@href"
@@ -62,8 +63,8 @@ COMMON_FEED_PATHS = ("/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml", "/in
 
 # YouTube keeps the feed of a channel and of a playlist at an address of its own, by the
 # channel's id or the playlist's. A channel named by its handle or its old names is found
-# through its page, which names the feed or carries the channel's id in its canonical link;
-# the feeds that YouTube's pages commonly name are not looked for.
+# through its page, which names the feed or carries the channel's id in its canonical link.
+# The places where a site's feed commonly is are not tried on YouTube.
 YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com"})
 YOUTUBE_FEED = "https://www.youtube.com/feeds/videos.xml?{query}"
 CHANNEL_ID = "channel_id"

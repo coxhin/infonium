@@ -28,8 +28,8 @@ USER_AGENT_HEADER = "user-agent"
 ACCEPT = "accept"
 # A feed is asked for compressed only as gzip or deflate, and an answer compressed otherwise is
 # refused: httpx inflates each piece of an answer whole before it is counted, and a piece of
-# brotli may inflate to gigabytes (a bomb of a few hundred bytes took 2.2 GB to inflate to its
-# 1 GiB), where one of gzip or deflate inflates at most about a thousandfold.
+# brotli may inflate to gigabytes (a bomb of 1,617 bytes took 2.2 GB to inflate to its 1 GiB),
+# where one of gzip or deflate inflates at most about a thousandfold.
 ACCEPT_ENCODING = "accept-encoding"
 CONTENT_ENCODING = "content-encoding"
 INFLATED = ("gzip", "deflate")
