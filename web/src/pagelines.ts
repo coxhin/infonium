@@ -23,8 +23,8 @@ export type Line = {
 // the drawn page, the characters' widths, or, for text written without spaces, an even share.
 export type Cut = { edges: number[]; by: "ink" | "widths" | "evenly" };
 
-// A box on a page.
-export type PageBox = { page: number; box: Box };
+// A box on a page, and whether the text in it runs down the page rather than across it.
+export type PageBox = { page: number; box: Box; downward: boolean };
 
 // A stretch of one block's text, as code points from start to end.
 export type Span = { blockNumber: number; start: number; end: number };
@@ -565,7 +565,7 @@ export class PageText {
   coveredBoxes(span: Span): PageBox[] {
     return (this.ofBlocks.get(span.blockNumber) ?? []).flatMap((line) => {
       const box = this.coveredBox(line, span.start, span.end);
-      return box === undefined ? [] : [{ page: line.place.page, box }];
+      return box === undefined ? [] : [{ page: line.place.page, box, downward: line.downward }];
     });
   }
 

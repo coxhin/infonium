@@ -1,6 +1,7 @@
 import { cellTexts, cutAtMarks, STYLE_ELEMENTS } from "./blocktext";
 import type { Block, Mark, PageBlocks, TranslatedBlock } from "./client";
 import { FrameWords } from "./framewords";
+import { FADE_EASING, Glow, GLOW_LASTS, GLOW_WHOLE, levelRules } from "./glowing";
 import type { Setting } from "./setting";
 
 // What infonium adds to the page goes in an element of a name of its own: the service takes
@@ -34,23 +35,85 @@ const TOP_FRAGMENT = "top";
 const PERCENT_ESCAPE = /^%([0-9a-f]{2})$/i;
 const ESCAPE_LENGTH = 3;
 const HEXADECIMAL = 16;
-const INLINE_DISPLAY = "inline";
-// The passage pointed at is drawn over the reader's highlights where they overlap.
-const POINTED_PRIORITY = 10;
+// A passage pointed at glows in the page as it does in the reader's own views (glowing.ts),
+// over the reader's highlights where they overlap. Its words keep the page's colour, and the
+// glow takes the colour of the reader's own in its light theme on a page whose words are dark,
+// and in its dark theme on one whose words are light (glowing.css). A colour the page gives
+// its words other than in RGB is taken for a dark one.
+type Tone = "light" | "dark";
+const POINTED_GLOWS: Record<Tone, { channels: string; alpha: number }> = {
+  light: { channels: "255 200 60", alpha: 0.42 },
+  dark: { channels: "240 180 60", alpha: 0.34 },
+};
+const RGB = /^rgba?\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)/;
+// How much red, green and blue each weigh in the lightness of a colour, and the lightness,
+// from 0 to 1, above which words are light.
+const LIGHTNESS_WEIGHTS = [0.2126, 0.7152, 0.0722];
+const CHANNEL_MOST = 255;
+const LIGHT_WORDS = 0.5;
 
-// A passage pointed at is marked in colours of its own, the same on any page, light or dark:
-// an outline in two colours that shows against either, and its words dark on yellow. The
-// outline goes round an element laid out as a block; round one laid out inline, as a run of
-// words inside a larger element is, it would be drawn round each line apart, so there the
-// words alone mark it, unless the browser cannot mark words.
-const POINTED_OUTLINE =
-  "outline: 3px solid #f2a900 !important; outline-offset: 2px !important;" +
-  " box-shadow: 0 0 0 5px rgb(0 0 0 / 0.45) !important;";
+function toneOf(view: Window, element: Element): Tone {
+  const found = RGB.exec(view.getComputedStyle(element).color);
+  if (found === null) {
+    return "light";
+  }
+  const lightness = found
+    .slice(1)
+    .reduce((sum, channel, index) => sum + (LIGHTNESS_WEIGHTS[index] ?? 0) * Number(channel), 0);
+  return lightness / CHANNEL_MOST > LIGHT_WORDS ? "dark" : "light";
+}
+
+function pointedGlowRules(pointed: string): string {
+  return (Object.keys(POINTED_GLOWS) as Tone[])
+    .map((tone) => {
+      const { channels, alpha } = POINTED_GLOWS[tone];
+      return levelRules(`${pointed}-${tone}`, (strength) => {
+        const shown = (alpha * strength).toFixed(3);
+        return `background-color: rgb(${channels} / ${shown}) !important;`;
+      });
+    })
+    .join("\n");
+}
+
+// Where the browser cannot mark words, the elements that hold a passage pointed at are ringed
+// instead, in two colours that show against any page, and the ring fades as a glow does. Each
+// act of pointing names its fading anew, so that the ring begins again.
+const RING = "#f2a900";
+const RING_EDGE = "0 0 0 5px rgb(0 0 0 / 0.45)";
+const RING_GONE = "0 0 0 5px rgb(0 0 0 / 0)";
+const PERCENT = 100;
+
+function ringRules(selectors: string, fading: string): string {
+  const whole = ((GLOW_WHOLE / GLOW_LASTS) * PERCENT).toFixed(1);
+  return `
+@keyframes ${fading} {
+  ${whole}% {
+    outline-color: ${RING};
+    box-shadow: ${RING_EDGE};
+    animation-timing-function: ${FADE_EASING};
+  }
+  to {
+    outline-color: transparent;
+    box-shadow: ${RING_GONE};
+  }
+}
+${selectors} {
+  outline-style: solid !important;
+  outline-width: 3px !important;
+  outline-offset: 2px !important;
+  outline-color: ${RING};
+  box-shadow: ${RING_EDGE};
+  animation: ${fading} ${GLOW_LASTS}ms linear forwards !important;
+}
+`;
+}
+
 // The translation beside its source is set quieter in the page's own colours and type: a rule
-// of the text's own colour before it, the words faded. The browser's own anchoring of the
-// scroll is left to infonium, which keeps the place as it changes the page. A link is not
-// dragged, and its words may be selected, which a browser does not let a press in a link begin
-// otherwise, so that a drag from or over one selects its words.
+// of the text's own colour before it, the words faded. A passage pointed at glows in
+// highlights of the page's own, one for each strength of each tone. The browser's own
+// anchoring of the scroll is left to infonium, which keeps the place as it changes the page. A
+// link is not dragged, and its words may be selected, which a browser does not let a press in
+// a link begin otherwise, so that a drag from or over one selects its words.
 const frameStyle = (pointed: string) => `
 ${TRANSLATION_ELEMENT} {
   display: block;
@@ -61,10 +124,7 @@ ${TRANSLATION_ELEMENT} {
   opacity: 0.72;
   font-size: 0.92em;
 }
-::highlight(${pointed}) {
-  background-color: #ffe08a !important;
-  color: #1f2328 !important;
-}
+${pointedGlowRules(pointed)}
 html, body {
   overflow-anchor: none !important;
 }
@@ -114,7 +174,11 @@ export class FramedPage {
   // The letters that end the names of what infonium draws in this page.
   readonly name = drawnName();
   readonly pointedHighlight = `${POINTED_HIGHLIGHT}-${this.name}`;
+  // The glow of a passage pointed at, where the browser marks words.
+  readonly glow: Glow | undefined;
   marked = false;
+  // How many acts of pointing have ringed elements, which names each ring's fading.
+  rings = 0;
 
   constructor(document: Document, view: Window & typeof globalThis) {
     this.document = document;
@@ -125,6 +189,9 @@ export class FramedPage {
     own.replaceSync(frameStyle(this.pointedHighlight));
     this.pointedRule = new view.CSSStyleSheet();
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, own, this.pointedRule];
+    this.glow = this.marksWords()
+      ? new Glow({ registry: view.CSS.highlights, Highlight: view.Highlight })
+      : undefined;
   }
 
   holdsSource(element: Element): boolean {
@@ -189,36 +256,40 @@ export class FramedPage {
     return "highlights" in this.view.CSS && typeof this.view.Highlight === "function";
   }
 
-  // Marks the places of a passage, which stands above every other highlight of the page.
-  mark(places: PointedPlace[]): void {
-    const words = this.marksWords();
-    const outlined = places.filter(
-      ({ holder }) =>
-        !(words && this.view.getComputedStyle(holder).display.startsWith(INLINE_DISPLAY)),
-    );
-    this.pointedRule.replaceSync(
-      outlined.length === 0
-        ? ""
-        : `${outlined
-            .map(({ selector }) => outranking(selector, this.name))
-            .join(", ")} { ${POINTED_OUTLINE} }`,
-    );
-    if (words) {
-      const highlight = new this.view.Highlight(...places.map(({ passage }) => passage));
-      highlight.priority = POINTED_PRIORITY;
-      this.view.CSS.highlights.set(this.pointedHighlight, highlight);
+  // Marks the places of a passage, which glows above every other highlight of the page: a
+  // passage pointed at anew glows from its start, and one marked again, as when the elements
+  // that hold it are written anew, glows on as far as it has come and faded.
+  mark(places: PointedPlace[], anew: boolean): void {
+    const [first] = places;
+    if (first === undefined) {
+      this.unmark();
+      return;
     }
     this.marked = true;
+    if (this.glow === undefined) {
+      if (anew) {
+        this.rings += 1;
+        const selectors = places.map(({ selector }) => outranking(selector, this.name));
+        this.pointedRule.replaceSync(
+          ringRules(selectors.join(", "), `${this.pointedHighlight}-ring-${this.rings}`),
+        );
+      }
+      return;
+    }
+    const passages = places.map(({ passage }) => passage);
+    if (anew) {
+      this.glow.begin(passages, `${this.pointedHighlight}-${toneOf(this.view, first.holder)}`);
+    } else {
+      this.glow.relight(passages);
+    }
   }
 
   unmark(): void {
     if (!this.marked) {
       return;
     }
+    this.glow?.end();
     this.pointedRule.replaceSync("");
-    if (this.marksWords()) {
-      this.view.CSS.highlights.delete(this.pointedHighlight);
-    }
     this.marked = false;
   }
 }
