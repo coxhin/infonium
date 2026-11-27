@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from infonium import guard
 from infonium.document import OVERDUE_SOURCE, OVERSIZE_SOURCE, Tagged, error_status, turned_away
 from infonium.intake import CONTENT_TYPE, FETCH_TIMEOUT_SECONDS, UNDECLARED, USER_AGENT
-from infonium.subscriptions.feed import Feed, UnreadableFeed, read_feed
+from infonium.subscriptions.feed import Feed, UnreadableFeed
+from infonium.subscriptions.feedprocess import read_in_process
 
 # The most a feed may hold, counted as the bytes it inflates to, and the longest its fetch may
 # take in all.
@@ -142,9 +143,10 @@ def answer_of(response: httpx.Response, content: bytes) -> Answer:
 
 
 def changed(answer: Answer) -> Changed:
-    # The feed an answer holds, read at the address it came from as the kind it declares.
+    # The feed an answer holds, read at the address it came from as the kind it declares, by a
+    # process of its own.
     return Changed(
-        feed=read_feed(answer.content, answer.declared, answer.address),
+        feed=read_in_process(answer.content, answer.declared, answer.address),
         validators=answer.validators,
     )
 
