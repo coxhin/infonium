@@ -26,7 +26,7 @@ from infonium.subscriptions.feed import (
     web_addresses,
 )
 from infonium.subscriptions.fetcher import (
-    FEED_LIMIT,
+    FEED_LIMIT_BYTES,
     FEED_LIMIT_SECONDS,
     MOST_REDIRECTS,
     REFUSAL_LIMIT_BYTES,
@@ -74,7 +74,8 @@ FULL_STOP = "."
 # requests, each redirect among them. A request is not made once either is spent, and the
 # exchange under way is given up when the minute is. Of the requests, one is kept for a route
 # of RSSHub where nothing else leads to a feed.
-PAGE_LIMIT = Limit(most_bytes=5 * 1024**2, most_seconds=30.0)
+PAGE_LIMIT_BYTES = 5 * 1024**2
+PAGE_LIMIT_SECONDS = 30.0
 DISCOVERY_LIMIT_SECONDS = 60.0
 MOST_REQUESTS = 8
 KEPT_FOR_RSSHUB = 1
@@ -207,7 +208,9 @@ def page_limit(status: int, declared: str) -> Limit:
     # A page is held to less than a feed, and of an error only what it may say is read.
     if status != HTTPStatus.OK:
         return Limit(most_bytes=REFUSAL_LIMIT_BYTES, most_seconds=FEED_LIMIT_SECONDS)
-    return PAGE_LIMIT if declared_media_type(declared) in PAGE_MEDIA_TYPES else FEED_LIMIT
+    if declared_media_type(declared) in PAGE_MEDIA_TYPES:
+        return Limit(most_bytes=PAGE_LIMIT_BYTES, most_seconds=PAGE_LIMIT_SECONDS)
+    return Limit(most_bytes=FEED_LIMIT_BYTES, most_seconds=FEED_LIMIT_SECONDS)
 
 
 def fetched_answer(address: str, allowance: Allowance) -> Answer:

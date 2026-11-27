@@ -102,9 +102,6 @@ class Limit(BaseModel):
     most_seconds: float
 
 
-FEED_LIMIT = Limit(most_bytes=FEED_LIMIT_BYTES, most_seconds=FEED_LIMIT_SECONDS)
-
-
 class Answer(BaseModel):
     # What an address answered with: the address the answer came from after redirects, its
     # status, the kind it declares, its bytes, and the validators it gives.
