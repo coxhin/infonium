@@ -229,7 +229,6 @@ export function ListColumn({
           again={browsing.pane.again}
           selected={selected}
           seen={seen}
-          shown
           onView={(subscription) =>
             subscriptions.replace((before) => withSubscription(before, subscription))
           }

@@ -10,18 +10,17 @@ const ALREADY_SUBSCRIBED = "已经订阅过这个订阅源，这里就是它；�
 
 // One subscription, open in the list column as the sidebar selected it: what is said of it, which
 // stays in place, and under it its head and its postings, which scroll, read again while they are
-// on show. The subscription as read here is told to the column, so that the
-// list it goes back to, and the count of new items, say the same. The postings are read again
-// when an item is told as seen; one opened at an item looks for that item's posting and brings
-// it into view. One opened as the answer to subscribing to a feed subscribed to already says so,
-// until the reader does something else.
+// on show. The subscription as read here is told to the column, so that the sidebar's row of it
+// and its count of new items say the same. The postings are read again when an item is told as
+// seen; one opened at an item looks for that item's posting and brings it into view. One opened
+// as the answer to subscribing to a feed subscribed to already says so, until the reader does
+// something else.
 export function SubscriptionPane({
   subscriptionId,
   sought,
   again,
   selected,
   seen,
-  shown,
   onView,
   onGone,
   onChanged,
@@ -31,13 +30,12 @@ export function SubscriptionPane({
   again: boolean;
   selected: string | undefined;
   seen: ReadonlySet<string>;
-  shown: boolean;
   onView: (subscription: Subscription) => void;
   onGone: (subscriptionId: string) => void;
   // What the library holds has changed by a press here.
   onChanged: () => void;
 }) {
-  const state = useSubscriptionState(subscriptionId, sought, shown);
+  const state = useSubscriptionState(subscriptionId, sought);
   const now = useNow();
   const view = useRef<HTMLDivElement>(null);
   const { loaded } = state;
