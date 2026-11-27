@@ -2,17 +2,21 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
-from functools import partial
 from threading import Event, Lock
 
-import httpx
 import sqlalchemy
 from pydantic import AwareDatetime, BaseModel
 
 from infonium.intake import Intake
-from infonium.library import Failed, Library, LibraryStore, Subscribed, item_identity
+from infonium.library import (
+    Failed,
+    Library,
+    LibraryStore,
+    Subscribed,
+    is_busy,
+    item_identity,
+)
 from infonium.reasons import failure_reason
-from infonium.search import is_busy
 from infonium.subscriptions.discovery import Discovered
 from infonium.subscriptions.feed import UnreadableFeed
 from infonium.subscriptions.fetcher import Changed, Fetched, Unchanged, Validators
@@ -42,10 +46,19 @@ from infonium.subscriptions.subscription import (
 
 # How many polls run at once; the others wait their turn.
 POLLS_AT_ONCE = 2
-# The failures of a poll that lie with the feed or the way to it, not with infonium.
-FEED_FAILURES = (UnreadableFeed, httpx.HTTPError)
+SCHEDULE_STOPPED = (
+    "the schedule of subscriptions stopped on a fault, and no feed is polled and no posting"
+    " admitted until infonium starts again: {reason}"
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ScheduleStopped(Exception):
+    # The poller's watch stopped on a fault of infonium's own. Every operation on subscriptions
+    # is refused with it until infonium starts again, so that a reader is told where they look,
+    # not shown polls that were due long ago. The cause is kept as the cause.
+    pass
 
 
 class BegunPoll(BaseModel):
@@ -54,6 +67,14 @@ class BegunPoll(BaseModel):
     owner: str
     subscription_id: str
     added: AwareDatetime
+
+
+def record_fault(finished: Future[None]) -> None:
+    # A poll keeps its own failure; what still ends one is a fault in keeping it. This runs in
+    # whichever thread finishes or registers last, which may hold the turn, so it takes none.
+    error = None if finished.cancelled() else finished.exception()
+    if error is not None:
+        logger.error("a poll's failure could not be kept", exc_info=error)
 
 
 def polled(subscriptions: Subscriptions, begun: BegunPoll) -> list[Subscription]:
@@ -95,18 +116,32 @@ class Poller:
         self.watching = ThreadPoolExecutor(max_workers=1, thread_name_prefix="poll-watch")
         # A subscription and the postings it lists are changed by one thread at a time. So a
         # poll is begun once whoever asks for it, a posting is admitted once, and a poll of a
-        # subscription that was removed keeps nothing.
+        # subscription that was removed keeps nothing. The turn is taken only where an
+        # operation begins, in a thread that holds nothing: what runs with it held never takes
+        # it, and no callback of a future takes it.
         self.turn = Lock()
         self.stopped = Event()
+        # No watch runs until the poller starts.
+        self.watcher: Future[None] = Future()
 
     def start(self) -> None:
         # Polls that the service's stopping cut off begin again, and the watch begins.
-        with self.store.every_owner() as connection:
-            cut_off = underway_polls(connection)
+        with self.store.every_owner() as every_owner:
+            cut_off = underway_polls(every_owner)
         for owned in cut_off:
             self.poll_in_background(owned.owner, owned.subscription)
-        watcher = self.watching.submit(self.watch)
-        watcher.add_done_callback(self.record_watch)
+        self.watcher = self.watching.submit(self.watch)
+        self.watcher.add_done_callback(self.record_watch)
+
+    def raise_failure(self) -> None:
+        # A watch that stopped on a fault fails every operation on subscriptions after it, as
+        # the index's worker fails every search.
+        if self.watcher.done() and not self.watcher.cancelled():
+            failure = self.watcher.exception()
+            if failure is not None:
+                raise ScheduleStopped(
+                    SCHEDULE_STOPPED.format(reason=failure_reason(failure))
+                ) from failure
 
     def close(self) -> None:
         # The watch ends its round first, so that it hands no posting to an intake that closes
@@ -117,11 +152,12 @@ class Poller:
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def record_watch(self, finished: Future[None]) -> None:
+        # Takes no lock: it may run in a thread that holds the turn.
         error = None if finished.cancelled() else finished.exception()
         if error is not None:
             logger.error(
-                "the schedule of subscriptions stopped: no feed is polled by it, and no posting"
-                " admitted, until infonium starts again",
+                "the schedule of subscriptions stopped; every operation on subscriptions is"
+                " refused until infonium starts again",
                 exc_info=error,
             )
 
@@ -143,8 +179,8 @@ class Poller:
 
     def begin_due_polls(self) -> None:
         with self.turn:
-            with self.store.every_owner() as connection:
-                due = due_subscriptions(connection, self.clock())
+            with self.store.every_owner() as every_owner:
+                due = due_subscriptions(every_owner, self.clock())
             for owned in due:
                 self.begin_poll(owned.owner, owned.subscription)
 
@@ -158,15 +194,19 @@ class Poller:
     def poll_in_background(self, owner: str, subscription: Subscription) -> None:
         begun = BegunPoll(owner=owner, subscription_id=subscription.id, added=subscription.added)
         finished = self.pool.submit(self.poll, begun)
-        finished.add_done_callback(partial(self.record, begun))
+        finished.add_done_callback(record_fault)
 
     def poll(self, begun: BegunPoll) -> None:
         # The feed is asked for from where the fetcher stopped, unless the subscription was
-        # removed before the poll had its turn.
+        # removed before the poll had its turn. A poll that fails keeps its failure itself, in
+        # the poller's own thread, which holds nothing when it begins.
         with self.store.transaction(begun.owner) as transaction:
             asked = polled(Subscriptions(transaction), begun)
         for subscription in asked:
-            self.settle(begun, self.fetched(subscription.feed, subscription.validators))
+            try:
+                self.settle(begun, self.fetched(subscription.feed, subscription.validators))
+            except Exception as failure:
+                self.keep_failure(begun, failure)
         if not asked:
             logger.info("subscription %s was removed before its poll began", begun.subscription_id)
 
@@ -200,11 +240,10 @@ class Poller:
         if not settling:
             logger.info("subscription %s was removed while it was polled", begun.subscription_id)
 
-    def record(self, begun: BegunPoll, finished: Future[None]) -> None:
+    def keep_failure(self, begun: BegunPoll, error: Exception) -> None:
         # A poll that failed is kept as failed, unless its subscription was removed meanwhile.
-        error = None if finished.cancelled() else finished.exception()
-        if error is None:
-            return
+        # A feed that cannot be read, the way to it included, fails as UnreadableFeed and is
+        # logged with its reason; anything else raised is a fault, logged with its traceback.
         with self.turn, self.store.transaction(begun.owner) as transaction:
             subscriptions = Subscriptions(transaction)
             failing = polled(subscriptions, begun)
@@ -214,7 +253,7 @@ class Poller:
                 )
                 subscriptions.keep(subscription.model_copy(update={"poll": failed}))
         for subscription in failing:
-            if isinstance(error, FEED_FAILURES):
+            if isinstance(error, UnreadableFeed):
                 logger.warning("polling %s failed: %s", subscription.feed, failure_reason(error))
             else:
                 logger.error("polling %s failed", subscription.feed, exc_info=error)
@@ -226,9 +265,9 @@ class Poller:
         # brought is being read: so the postings that subscriptions bring keep one reader at
         # most, and what a reader adds by hand does not wait behind them.
         with self.turn:
-            with self.store.every_owner() as connection:
-                waiting = longest_awaited(connection)
-                if waiting and is_subscribed_reading_underway(connection):
+            with self.store.every_owner() as every_owner:
+                waiting = longest_awaited(every_owner)
+                if waiting and is_subscribed_reading_underway(every_owner):
                     return
             for posting in waiting:
                 self.admit(posting.owner, posting.subscription_id, posting.number)

@@ -1,6 +1,6 @@
 import shutil
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
@@ -60,6 +60,9 @@ ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 WRITE_AHEAD = "PRAGMA journal_mode = WAL"
 WRITER_PATIENCE_MILLISECONDS = 30_000
 AWAIT_WRITER = f"PRAGMA busy_timeout = {WRITER_PATIENCE_MILLISECONDS}"
+# The part of SQLite's code for a failure that says the file was busy; the rest of the code
+# says how.
+PRIMARY_CODE = 0xFF
 TIMESTAMP = TypeAdapter(AwareDatetime)
 
 metadata = sqlalchemy.MetaData()
@@ -434,6 +437,14 @@ def digest_row(digest: Digest, owner: str) -> dict[sqlalchemy.Column[Any], str |
     }
 
 
+def is_busy(error: sqlalchemy.exc.OperationalError) -> bool:
+    # Whether a failure on the library's file is another writer's holding it past the wait.
+    return (
+        isinstance(error.orig, sqlite3.Error)
+        and error.orig.sqlite_errorcode & PRIMARY_CODE == sqlite3.SQLITE_BUSY
+    )
+
+
 def set_up_connection(connection: sqlite3.Connection, record: object) -> None:
     # What every connection to the library's file is given before it is used: the settings,
     # and sqlite-vec's functions over vectors, for the index of blocks. No other extension can
@@ -572,6 +583,19 @@ class OwnerTransaction:
     def __init__(self, connection: sqlalchemy.Connection, owner: str) -> None:
         self.connection = connection
         self.owner = owner
+
+
+class AcrossOwners:
+    # Reads the rows of every owner in one transaction. It runs a select and nothing else, so
+    # nothing is written through it; each row it gives names its owner, and any work on the
+    # row is done in a transaction held to that owner.
+    def __init__(self, connection: sqlalchemy.Connection) -> None:
+        self.connection = connection
+
+    def rows[*Columns](
+        self, query: sqlalchemy.Select[*Columns]
+    ) -> Sequence[sqlalchemy.Row[*Columns]]:
+        return self.connection.execute(query).all()
 
 
 class Library:
@@ -827,12 +851,14 @@ class LibraryStore:
             yield Library(transaction)
 
     @contextmanager
-    def every_owner(self) -> Iterator[sqlalchemy.Connection]:
-        # One transaction on the library's database for the work the service does for all its
-        # owners, as the schedule of subscriptions does: each row read through it names its
-        # owner, and any work on the row is then done in a transaction held to that owner.
+    def every_owner(self) -> Iterator[AcrossOwners]:
+        # A reading of every owner's rows in one transaction, for the schedule of subscriptions,
+        # whose reads across owners are its only use: what is due, what waits to be admitted,
+        # whose poll is under way, and whether an item a subscription brought is being read.
+        # owners() would not do, for it names only those who hold an item, and a reader may
+        # subscribe before anything is read.
         with self.engine.begin() as connection:
-            yield connection
+            yield AcrossOwners(connection)
 
     def owners(self) -> list[str]:
         # Everyone who has an item in the library.
