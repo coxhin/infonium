@@ -62,13 +62,15 @@ NO_TOKEN_USAGE = "the endpoint reported no token usage"
 INCOMPLETE_REPLY = "the endpoint cut the reply short: {reason}"
 UNEXPECTED_REPLY = "the model's reply is not of the form asked for: {error}"
 UNREADABLE_EVENT = "the endpoint sent a part of the reply that is not JSON: {error}"
-# A reply held to JSON that writes this many white-space characters in a row between its
-# tokens has run away. Through the relay, gpt-6.1-terra and gpt-6-luna at times wrote white
-# space without end where a field fell due after the list that held a section's statements,
-# until the relay ended the reply after about 15 minutes. JSON set out with indents writes
-# a few dozen in a row at most.
+# A reply held to JSON that writes this many white-space characters in a row outside its
+# strings has run away: between two of its tokens, before the first or after the last.
+# Through the relay, gpt-6.1-terra and gpt-6-luna at times wrote white space without end
+# where a field fell due after the list that held a section's statements, until the relay
+# ended the reply after about 15 minutes. A reply that has closed its value and then writes
+# white space without end would run on as long, so it is ended and sent again too. JSON set
+# out with indents writes a few dozen in a row at most.
 RUNAWAY_WHITE_SPACE = 300
-# The white space JSON allows between its tokens. Inside a string only the space stands
+# The white space JSON allows outside its strings. Inside a string only the space stands
 # unescaped, and a run of spaces there is the string's text.
 JSON_WHITE_SPACE = frozenset(" \t\n\r")
 RAN_AWAY = (
@@ -76,7 +78,7 @@ RAN_AWAY = (
     "white-space characters in a row"
 )
 RUNAWAY_ENDED = (
-    "%s wrote %d white-space characters in a row between the tokens of its JSON, after %d "
+    "%s wrote %d white-space characters in a row outside the strings of its JSON, after %d "
     "characters in %.1f s: it is ended, %s"
 )
 SENT_AGAIN = "and sent again"
@@ -174,7 +176,7 @@ class RunawayReply(UnstructuredCompletion):
 class WhiteSpaceRun:
     # Reads a reply held to JSON as it streams, piece by piece wherever the pieces are cut,
     # and tells when it has written RUNAWAY_WHITE_SPACE white-space characters in a row
-    # between its tokens. A quote opens or closes a string unless a backslash escapes it.
+    # outside its strings. A quote opens or closes a string unless a backslash escapes it.
     def __init__(self) -> None:
         self.length = 0
         self.in_string = False

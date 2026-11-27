@@ -386,15 +386,15 @@ def test_a_request_the_endpoint_refuses_raises_the_openai_packages_error(
 
 
 # A reply that runs away: one held to JSON that writes RUNAWAY_WHITE_SPACE white-space characters
-# in a row between its tokens is ended, its stream closed, and its request sent again while the
-# request has attempts left.
+# in a row outside its strings, between two of its tokens, before the first or after the last, is
+# ended, its stream closed, and its request sent again while the request has attempts left.
 
-# The white space JSON allows between its tokens.
+# The white space JSON allows outside its strings.
 JSON_WHITE_SPACE = " \t\n\r"
 # So many requests to GLM's endpoint a minute that its pace holds no test back.
 UNHURRIED_GLM_REQUESTS = 600_000
-# Runs of white space between tokens: a few characters, as a reply set out with spaces writes,
-# runs about the bound, and runs past it.
+# Runs of white space to set before, between or after tokens: a few characters, as a reply set out
+# with spaces writes, runs about the bound, and runs past it.
 white_space_runs = st.one_of(
     st.integers(0, 4),
     st.integers(RUNAWAY_WHITE_SPACE - 2, RUNAWAY_WHITE_SPACE + 2),
@@ -462,7 +462,7 @@ def tokens_of(value: object) -> list[str]:
 
 
 def spaced(value: object, gaps: dict[int, str]) -> tuple[str, int]:
-    # The value's JSON with white space set between its tokens: at each place given, taken
+    # The value's JSON with white space set outside its strings: at each place given, taken
     # modulo the places there are, before a token or after the last. And the longest run so set.
     tokens = tokens_of(value)
     at = {place % (len(tokens) + 1): white for place, white in gaps.items()}
@@ -485,7 +485,7 @@ def runaway_reply(head: str, white: str, gate: threading.Event | None = None) ->
 @example(tally=Tally(words=["fog"], count=1), gaps={3: " " * (RUNAWAY_WHITE_SPACE - 1)}, cuts=[])
 @example(tally=Tally(words=["fog"], count=1), gaps={3: " " * RUNAWAY_WHITE_SPACE}, cuts=[])
 @EXAMPLES
-def test_a_reply_is_sent_again_once_it_writes_300_white_space_characters_in_a_row_between_tokens(
+def test_a_reply_is_sent_again_once_it_writes_300_white_space_characters_in_a_row_outside_strings(
     model: ModelStandin, wire_api: WireApi, tally: Tally, gaps: dict[int, str], cuts: list[int]
 ) -> None:
     text, longest = spaced(tally.model_dump(mode="json"), gaps)
@@ -494,7 +494,7 @@ def test_a_reply_is_sent_again_once_it_writes_300_white_space_characters_in_a_ro
     events = replying(wire_api, [], [])
     ran_away = longest >= RUNAWAY_WHITE_SPACE
     assert len(model.asked()) == (2 if ran_away else 1), (
-        f"a reply that wrote at most {longest} white-space characters in a row between its tokens "
+        f"a reply that wrote at most {longest} white-space characters in a row outside its strings "
         f"was {'not ' if ran_away else ''}ended and sent again"
     )
     assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
@@ -550,7 +550,7 @@ def test_spaces_inside_a_string_never_end_a_reply_however_many_and_wherever_the_
     events = replying(wire_api, [], [])
     assert len(model.asked()) == 1, (
         "a reply whose strings hold runs of spaces, and that writes fewer than "
-        f"{RUNAWAY_WHITE_SPACE} white-space characters in a row between its tokens, was sent again"
+        f"{RUNAWAY_WHITE_SPACE} white-space characters in a row outside them, was sent again"
     )
     assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
         "a reply whose strings hold runs of spaces was not read as written"
