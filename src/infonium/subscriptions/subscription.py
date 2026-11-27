@@ -48,9 +48,9 @@ SUBSCRIPTION_FORMAT = 1
 POSTING_FORMAT = 1
 # The longest a feed whose polls fail waits for its next poll, however many failed in a row.
 LONGEST_WAIT_AFTER_FAILURES = timedelta(days=1)
-# An address that names how it is reached, as https:// and rsshub:// do; one that names none is
-# reached over HTTPS.
-NAMED_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# An address that names how it is reached, as https://, rsshub:// and mailto: do; one that
+# names none is reached over HTTPS. A host followed by its port, as example.com:8080, names none.
+NAMED_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
 ASSUMED_SCHEME = "https://"
 RSSHUB_ROUTE_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 NO_FEED_ADDRESS = (
