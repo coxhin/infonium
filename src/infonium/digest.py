@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Annotated, Final, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AliasChoices, AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from infonium.citing import (
     BLOCKS_EXPLAINED,
@@ -138,7 +138,13 @@ class EarlierDigest(BaseModel):
 
 
 class DraftSection(BaseModel):
-    title: str
+    # A section as a model drafts it, its statements last. Through the relay, a reply's keys
+    # come in alphabetical order whatever the schema's, and where a section's title fell due
+    # after its statements, gpt-6.1-terra and gpt-6-luna at times wrote white space there
+    # without end. So the title is named heading, which sorts before the statements, and the
+    # section keeps it as its title. A model told the schema in text may still name it title
+    # from habit, and is read the same.
+    heading: str = Field(validation_alias=AliasChoices("heading", "title"))
     form: SectionForm
     statements: list[DraftStatement]
 
@@ -167,7 +173,7 @@ def digest_instructions(language: str, chosen: ChosenStyle) -> str:
 def grounded_sections(document: Document, draft: DraftDigest) -> list[Section]:
     return [
         Section(
-            title=section.title,
+            title=section.heading,
             form=section.form,
             statements=[grounded(document, statement) for statement in section.statements],
         )
