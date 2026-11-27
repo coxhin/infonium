@@ -8,7 +8,7 @@ You need Docker.
 docker compose up -d
 ```
 
-This starts RSSHub at <http://127.0.0.1:1200>, where infonium looks for it, and starts it again after a restart of the machine until you stop it. The image weighs 124 MiB to download and 638 MB on disk; it has no browser. The running engine held 259 MiB of memory idle, 365 MiB after reading the feeds of 22 routes, and 390 MiB after 24 sites' own addresses more. It takes no processor time while no one asks it anything.
+This starts RSSHub at <http://127.0.0.1:1200>, where infonium looks for it, and starts it again after a restart of the machine until you stop it. The image weighs 124 MiB to download and 638 MB on disk; it has no browser. The running engine held 243 MiB of memory idle, 335 MiB after reading the feeds of 22 routes, and 342 MiB after 24 sites' own addresses more. It takes no processor time while no one asks it anything.
 
 ## Subscribing
 
@@ -28,7 +28,7 @@ TWITTER_AUTH_TOKEN=the token of your account
 
 and start the engine again with `docker compose up -d`. git keeps no `.env`.
 
-A few routes, such as Douyin's, need a browser, which this image leaves out; RSSHub answers them with an error. Bilibili's videos of a user asked for one at the first request after RSSHub started, and gave the feed at the next.
+A few routes, such as Douyin's, need a browser, which this image leaves out; RSSHub answers them with an error. Bilibili's videos of a user asked for one at times: of three starts of RSSHub, the route gave its feed at once after one, at the second request after another, and not at all after the third.
 
 ## Another port
 
