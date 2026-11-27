@@ -58,6 +58,8 @@ FEED_PREFIX = re.compile(r"^(?i:feed):")
 NAMED_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
 ASSUMED_SCHEME = "https://"
 HOST_FOLLOWS = "//"
+# A web address names its host right after its scheme: https:///path names none.
+NAMED_HOST = re.compile(r"^(?i:https?)://[^/?#\s]")
 RSSHUB_ROUTE_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 NO_FEED_ADDRESS = (
     "{address} is neither a web address (http:// or https://) nor a route of RSSHub"
@@ -277,17 +279,16 @@ def instant_order(instant: datetime) -> int:
 def subscribed_address(address: str) -> str:
     # The address that is looked into for a feed, for the one a reader gave: the web address
     # that one written for a feed (feed:) stands for, and reached over HTTPS where it names no
-    # scheme. One that is then neither a web address nor a route of RSSHub leads to no feed,
-    # and nothing is fetched.
+    # scheme. One that is then neither a web address that names its host nor a route of RSSHub
+    # leads to no feed, and nothing is fetched.
     unwrapped = FEED_PREFIX.sub("", address, count=1)
     named = (
         unwrapped
         if NAMED_SCHEME.match(unwrapped)
         else f"{ASSUMED_SCHEME}{unwrapped.removeprefix(HOST_FOLLOWS)}"
     )
-    if not re.fullmatch(WEB_ADDRESS_PATTERN, named) and not re.fullmatch(
-        RSSHUB_ROUTE_PATTERN, named
-    ):
+    is_web_address = bool(re.fullmatch(WEB_ADDRESS_PATTERN, named) and NAMED_HOST.match(named))
+    if not is_web_address and not re.fullmatch(RSSHUB_ROUTE_PATTERN, named):
         raise UnreadableFeed(NO_FEED_ADDRESS.format(address=address))
     return named
 
