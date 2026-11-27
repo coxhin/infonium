@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useArrivals } from "./arrivals";
 import { isUnanswered, listSubscriptions, type ItemEntry, type Subscription } from "./client";
 import { isBeingRead } from "./entry";
 import { useWatched, type Loaded, type Watched } from "./loading";
@@ -20,7 +21,8 @@ export function withSubscription(listed: Subscription[], read: Subscription): Su
 // The owner's subscriptions, read again closely while a poll is under way or its time has come,
 // and while an item that a subscription brought is being read, since its count of new items
 // changes when it is read; and read again at once when an item is told as seen. A poll that
-// settles may have brought items, so the list of items is read again then.
+// settles may have brought items, so the list of items is read again then, and again as each
+// posting it found arrives.
 export function useSubscriptions(
   entries: Loaded<ItemEntry[]>,
   seen: ReadonlySet<string>,
@@ -74,6 +76,7 @@ export function useSubscriptions(
     }
     polled.current = polls;
   }, [polls]);
+  useArrivals(subscriptions.loaded, onPolled);
 
   return subscriptions;
 }
