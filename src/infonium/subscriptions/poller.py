@@ -129,8 +129,8 @@ class Poller:
 
     def start(self) -> None:
         # Polls that the service's stopping cut off begin again, and the watch begins.
-        with self.store.every_owner() as connection:
-            cut_off = underway_polls(connection)
+        with self.store.every_owner() as every_owner:
+            cut_off = underway_polls(every_owner)
         for owned in cut_off:
             self.poll_in_background(owned.owner, owned.subscription)
         self.watcher = self.watching.submit(self.watch)
@@ -182,8 +182,8 @@ class Poller:
 
     def begin_due_polls(self) -> None:
         with self.turn:
-            with self.store.every_owner() as connection:
-                due = due_subscriptions(connection, self.clock())
+            with self.store.every_owner() as every_owner:
+                due = due_subscriptions(every_owner, self.clock())
             for owned in due:
                 self.begin_poll(owned.owner, owned.subscription)
 
@@ -266,9 +266,9 @@ class Poller:
         # brought is being read: so the postings that subscriptions bring keep one reader at
         # most, and what a reader adds by hand does not wait behind them.
         with self.turn:
-            with self.store.every_owner() as connection:
-                waiting = longest_awaited(connection)
-                if waiting and is_subscribed_reading_underway(connection):
+            with self.store.every_owner() as every_owner:
+                waiting = longest_awaited(every_owner)
+                if waiting and is_subscribed_reading_underway(every_owner):
                     return
             for posting in waiting:
                 self.admit(posting.owner, posting.subscription_id, posting.number)

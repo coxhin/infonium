@@ -10,6 +10,7 @@ from sqlalchemy.dialects import sqlite
 from infonium.document import Tagged
 from infonium.library import (
     SEEN_FORMAT,
+    AcrossOwners,
     AttemptKind,
     NotInLibrary,
     OriginKind,
@@ -606,9 +607,9 @@ class Subscriptions:
 
 
 def owned_subscriptions(
-    connection: sqlalchemy.Connection, *where: sqlalchemy.ColumnElement[bool]
+    every_owner: AcrossOwners, *where: sqlalchemy.ColumnElement[bool]
 ) -> list[OwnedSubscription]:
-    rows = connection.execute(
+    rows = every_owner.rows(
         sqlalchemy.select(subscription_table.c.owner, subscription_table.c.body).where(*where)
     )
     return [
@@ -617,20 +618,20 @@ def owned_subscriptions(
     ]
 
 
-def due_subscriptions(connection: sqlalchemy.Connection, now: datetime) -> list[OwnedSubscription]:
+def due_subscriptions(every_owner: AcrossOwners, now: datetime) -> list[OwnedSubscription]:
     # Every owner's subscriptions that the schedule is to poll by the time given.
-    return owned_subscriptions(connection, subscription_table.c.scheduled <= instant_order(now))
+    return owned_subscriptions(every_owner, subscription_table.c.scheduled <= instant_order(now))
 
 
-def underway_polls(connection: sqlalchemy.Connection) -> list[OwnedSubscription]:
+def underway_polls(every_owner: AcrossOwners) -> list[OwnedSubscription]:
     # Every owner's subscriptions whose poll is under way.
-    return owned_subscriptions(connection, poll_kind == PollKind.UNDERWAY)
+    return owned_subscriptions(every_owner, poll_kind == PollKind.UNDERWAY)
 
 
-def longest_awaited(connection: sqlalchemy.Connection) -> list[AwaitedPosting]:
+def longest_awaited(every_owner: AcrossOwners) -> list[AwaitedPosting]:
     # The posting of all owners' that has waited longest to be admitted, and of those that
     # have waited as long the one of the higher number; nothing while none waits.
-    rows = connection.execute(
+    rows = every_owner.rows(
         sqlalchemy.select(
             posting_table.c.owner, posting_table.c.subscription_id, posting_table.c.number
         )
@@ -646,14 +647,13 @@ def longest_awaited(connection: sqlalchemy.Connection) -> list[AwaitedPosting]:
     ]
 
 
-def is_subscribed_reading_underway(connection: sqlalchemy.Connection) -> bool:
+def is_subscribed_reading_underway(every_owner: AcrossOwners) -> bool:
     # Whether an item of anyone's that a subscription brought is being read.
-    return bool(
-        connection.execute(
-            sqlalchemy.select(
-                sqlalchemy.exists().where(
-                    origin_kind == OriginKind.SUBSCRIBED, attempt_kind == AttemptKind.UNDERWAY
-                )
+    reading = every_owner.rows(
+        sqlalchemy.select(
+            sqlalchemy.exists().where(
+                origin_kind == OriginKind.SUBSCRIBED, attempt_kind == AttemptKind.UNDERWAY
             )
-        ).scalar_one()
+        )
     )
+    return bool(reading[0][0])
