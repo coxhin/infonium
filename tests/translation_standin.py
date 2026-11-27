@@ -120,11 +120,11 @@ def plain(text: str) -> str:
 
 
 def survey_reply(
-    written_in_asked_language: bool = False, terms: dict[str, str] | None = None
+    matches_asked_language: bool = False, terms: dict[str, str] | None = None
 ) -> Reply:
     survey = {
         "language": "made-up",
-        "written_in_asked_language": written_in_asked_language,
+        "matches_asked_language": matches_asked_language,
         "terms": [
             {"source": source, "translation": translation}
             for source, translation in (terms or {}).items()

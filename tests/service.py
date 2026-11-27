@@ -195,7 +195,7 @@ def digest_reply(asked: Asked) -> Reply:
         {"text": "Misnumbered.", "citations": [{"block_number": number + 2, "quote": quote}]},
         {"text": "Made up.", "citations": [{"block_number": number, "quote": MADE_UP_QUOTE}]},
     ]
-    sections = [{"title": "Summary", "form": SectionForm.LIST, "statements": statements}]
+    sections = [{"heading": "Summary", "form": SectionForm.LIST, "statements": statements}]
     return Reply(pieces=[json.dumps({"sections": sections})])
 
 

@@ -198,7 +198,7 @@ def standing_view(app: App, item_id: str, standing: str) -> dict[str, Any]:
         case "translated":
             app.model.reset(translating())
         case _:
-            app.model.reset(translating(survey=survey_reply(written_in_asked_language=True)))
+            app.model.reset(translating(survey=survey_reply(matches_asked_language=True)))
     asked_for(app, item_id)
     return settled(app, item_id)
 

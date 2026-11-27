@@ -70,7 +70,7 @@ def expected_start(block: str, raw: str, written: str) -> int:
 def digest_citing(quote: str) -> Callable[[Asked], Reply]:
     citation = {"block_number": 0, "quote": quote}
     statement = {"text": "Quoted.", "citations": [citation]}
-    sections = [{"title": "Summary", "form": SectionForm.LIST, "statements": [statement]}]
+    sections = [{"heading": "Summary", "form": SectionForm.LIST, "statements": [statement]}]
     return lambda asked: Reply(pieces=[json.dumps({"sections": sections})])
 
 

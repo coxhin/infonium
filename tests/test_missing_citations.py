@@ -49,17 +49,17 @@ SECTION_TITLE = "要点"
 # The parameter of the service's query that chooses a model.
 MODEL_PARAMETER = "model"
 # The keys of a statement as a model writes it and as infonium keeps it; of the statements of an
-# answer, the sections of a digest and a section's title and form; of the block and quote of a
-# citation and an anchor, an anchor's document and range, and the document that a citation in
-# an answer about the library names; and of when a reply was kept, which two replies kept one
-# after the other never share.
+# answer, the sections of a digest and a drafted section's heading and form; of the block and
+# quote of a citation and an anchor, an anchor's document and range, and the document that a
+# citation in an answer about the library names; and of when a reply was kept, which two
+# replies kept one after the other never share.
 TEXT = "text"
 CITATIONS = "citations"
 ANCHORS = "anchors"
 LOST_CITATIONS = "lost_citations"
 STATEMENTS = "statements"
 SECTIONS = "sections"
-TITLE = "title"
+HEADING = "heading"
 FORM = "form"
 BLOCK_NUMBER = "block_number"
 QUOTE = "quote"
@@ -199,7 +199,7 @@ def replying(
             for each in planned
         ]
         body = (
-            {SECTIONS: [{TITLE: SECTION_TITLE, FORM: SectionForm.LIST, STATEMENTS: statements}]}
+            {SECTIONS: [{HEADING: SECTION_TITLE, FORM: SectionForm.LIST, STATEMENTS: statements}]}
             if writing == Writing.DIGEST
             else {STATEMENTS: statements}
         )

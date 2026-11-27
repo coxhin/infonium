@@ -554,7 +554,7 @@ def test_a_block_of_one_passage_is_never_refused_for_the_length_or_likeness_of_i
 
 
 def test_a_document_the_survey_finds_in_the_readers_language_is_unneeded(app: App) -> None:
-    app.model.reset(translating(survey=survey_reply(written_in_asked_language=True)))
+    app.model.reset(translating(survey=survey_reply(matches_asked_language=True)))
     document = kept(app, [Paragraph(text="港口的账簿记下了每一班渡船。", marks=[])])
     asked_for(app, document.item_id)
     view = settled(app, document.item_id)
@@ -570,7 +570,7 @@ def test_a_document_the_survey_finds_in_the_readers_language_is_unneeded(app: Ap
 
 
 def test_post_on_an_unneeded_translation_translates_without_asking_again(app: App) -> None:
-    app.model.reset(translating(survey=survey_reply(written_in_asked_language=True)))
+    app.model.reset(translating(survey=survey_reply(matches_asked_language=True)))
     document = kept(app, [Paragraph(text="港口的账簿记下了每一班渡船。", marks=[])])
     asked_for(app, document.item_id)
     assert settled(app, document.item_id)["progress"] == {"kind": "unneeded"}, "not Unneeded"
@@ -1000,7 +1000,7 @@ def test_one_block_again_is_translated_by_the_digest_model_with_its_context_and_
 def test_one_block_again_is_refused_where_no_translation_was_asked_for(
     app: App, standing: str
 ) -> None:
-    survey = survey_reply(written_in_asked_language=standing == "unneeded")
+    survey = survey_reply(matches_asked_language=standing == "unneeded")
     app.model.reset(translating(survey=survey))
     document = kept(app, [Paragraph(text="harbour ledger", marks=[])])
     if standing == "unneeded":
