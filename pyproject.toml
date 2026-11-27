@@ -8,6 +8,7 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.163.0",
+    "feedparser>=6.0.14",
     "filelock>=4.2.10",
     "filetype>=1.2.0",
     "httpx>=0.28.1",
@@ -73,7 +74,7 @@ markers = [
 
 [[tool.mypy.overrides]]
 # These ship no type information.
-module = ["filetype", "pypdfium2", "sqlite_vec"]
+module = ["feedparser", "filetype", "pypdfium2", "sqlite_vec"]
 ignore_missing_imports = true
 
 [dependency-groups]

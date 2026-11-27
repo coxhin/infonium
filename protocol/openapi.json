@@ -1,6 +1,25 @@
 {
   "components": {
     "schemas": {
+      "AdmittedItem": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemEntry"
+          },
+          "kind": {
+            "const": "admitted",
+            "default": "admitted",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "item"
+        ],
+        "title": "AdmittedItem",
+        "type": "object"
+      },
       "Anchor": {
         "properties": {
           "block_number": {
@@ -102,6 +121,27 @@
           "turn"
         ],
         "title": "Answered",
+        "type": "object"
+      },
+      "Awaited": {
+        "properties": {
+          "kind": {
+            "const": "awaited",
+            "default": "awaited",
+            "title": "Kind",
+            "type": "string"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "since"
+        ],
+        "title": "Awaited",
         "type": "object"
       },
       "Body_import_upload_api_items_upload_post": {
@@ -538,6 +578,27 @@
         "title": "FirstUnderway",
         "type": "object"
       },
+      "Follows": {
+        "enum": [
+          "reads",
+          "lists",
+          "paused"
+        ],
+        "title": "Follows",
+        "type": "string"
+      },
+      "FollowsChoice": {
+        "properties": {
+          "follows": {
+            "$ref": "#/components/schemas/Follows"
+          }
+        },
+        "required": [
+          "follows"
+        ],
+        "title": "FollowsChoice",
+        "type": "object"
+      },
       "FormulaMark": {
         "properties": {
           "end": {
@@ -767,6 +828,7 @@
             "discriminator": {
               "mapping": {
                 "link": "#/components/schemas/Link",
+                "subscribed": "#/components/schemas/Subscribed",
                 "upload": "#/components/schemas/Upload"
               },
               "propertyName": "kind"
@@ -777,6 +839,9 @@
               },
               {
                 "$ref": "#/components/schemas/Upload"
+              },
+              {
+                "$ref": "#/components/schemas/Subscribed"
               }
             ],
             "title": "Origin"
@@ -798,12 +863,25 @@
               }
             ],
             "title": "Reading"
+          },
+          "seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen"
           }
         },
         "required": [
           "id",
           "origin",
-          "reading"
+          "reading",
+          "seen"
         ],
         "title": "ItemEntry",
         "type": "object"
@@ -1516,6 +1594,159 @@
         "title": "Passage",
         "type": "object"
       },
+      "PollFailed": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "due": {
+            "format": "date-time",
+            "title": "Due",
+            "type": "string"
+          },
+          "failures": {
+            "minimum": 1.0,
+            "title": "Failures",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "failed",
+            "default": "failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "at",
+          "reason",
+          "failures",
+          "due"
+        ],
+        "title": "PollFailed",
+        "type": "object"
+      },
+      "PollSettled": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "due": {
+            "format": "date-time",
+            "title": "Due",
+            "type": "string"
+          },
+          "found": {
+            "minimum": 0.0,
+            "title": "Found",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "settled",
+            "default": "settled",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "at",
+          "found",
+          "due"
+        ],
+        "title": "PollSettled",
+        "type": "object"
+      },
+      "PollUnderway": {
+        "properties": {
+          "failures": {
+            "minimum": 0.0,
+            "title": "Failures",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "underway",
+            "default": "underway",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "failures"
+        ],
+        "title": "PollUnderway",
+        "type": "object"
+      },
+      "PostingView": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "admission": {
+            "discriminator": {
+              "mapping": {
+                "admitted": "#/components/schemas/AdmittedItem",
+                "awaited": "#/components/schemas/Awaited",
+                "unadmitted": "#/components/schemas/Unadmitted"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Unadmitted"
+              },
+              {
+                "$ref": "#/components/schemas/Awaited"
+              },
+              {
+                "$ref": "#/components/schemas/AdmittedItem"
+              }
+            ],
+            "title": "Admission"
+          },
+          "number": {
+            "description": "The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "address",
+          "published",
+          "admission"
+        ],
+        "title": "PostingView",
+        "type": "object"
+      },
       "Question": {
         "properties": {
           "text": {
@@ -1929,6 +2160,142 @@
         "title": "StyleMark",
         "type": "object"
       },
+      "Subscribed": {
+        "properties": {
+          "called": {
+            "minLength": 1,
+            "title": "Called",
+            "type": "string"
+          },
+          "kind": {
+            "const": "subscribed",
+            "default": "subscribed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subscription": {
+            "title": "Subscription",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "url",
+          "called",
+          "subscription"
+        ],
+        "title": "Subscribed",
+        "type": "object"
+      },
+      "SubscriptionDraft": {
+        "properties": {
+          "address": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Address",
+            "type": "string"
+          },
+          "admit": {
+            "default": 3,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Admit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "title": "SubscriptionDraft",
+        "type": "object"
+      },
+      "SubscriptionView": {
+        "properties": {
+          "added": {
+            "format": "date-time",
+            "title": "Added",
+            "type": "string"
+          },
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "feed": {
+            "title": "Feed",
+            "type": "string"
+          },
+          "follows": {
+            "$ref": "#/components/schemas/Follows"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "poll": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/components/schemas/PollFailed",
+                "settled": "#/components/schemas/PollSettled",
+                "underway": "#/components/schemas/PollUnderway"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PollUnderway"
+              },
+              {
+                "$ref": "#/components/schemas/PollSettled"
+              },
+              {
+                "$ref": "#/components/schemas/PollFailed"
+              }
+            ],
+            "title": "Poll"
+          },
+          "postings": {
+            "title": "Postings",
+            "type": "integer"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unseen": {
+            "title": "Unseen",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "address",
+          "feed",
+          "title",
+          "site",
+          "added",
+          "follows",
+          "poll",
+          "postings",
+          "unseen"
+        ],
+        "title": "SubscriptionView",
+        "type": "object"
+      },
       "Table": {
         "properties": {
           "cell_separator": {
@@ -2196,6 +2563,21 @@
           "answer"
         ],
         "title": "Turn",
+        "type": "object"
+      },
+      "Unadmitted": {
+        "properties": {
+          "kind": {
+            "const": "unadmitted",
+            "default": "unadmitted",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Unadmitted",
         "type": "object"
       },
       "Unanswered": {
@@ -3700,6 +4082,55 @@
         "summary": "Revision Document"
       }
     },
+    "/api/items/{item_id}/seen": {
+      "put": {
+        "operationId": "see_item_api_items__item_id__seen_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "See Item"
+      }
+    },
     "/api/items/{item_id}/source": {
       "get": {
         "operationId": "item_source_api_items__item_id__source_get",
@@ -4374,6 +4805,466 @@
           }
         },
         "summary": "Rewrite Note"
+      }
+    },
+    "/api/subscriptions": {
+      "get": {
+        "operationId": "list_subscriptions_api_subscriptions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubscriptionView"
+                  },
+                  "title": "Response List Subscriptions Api Subscriptions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Subscriptions"
+      },
+      "post": {
+        "operationId": "subscribe_api_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Subscribe"
+      }
+    },
+    "/api/subscriptions/{subscription_id}": {
+      "delete": {
+        "operationId": "unsubscribe_api_subscriptions__subscription_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unsubscribe"
+      },
+      "get": {
+        "operationId": "read_subscription_api_subscriptions__subscription_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Subscription"
+      }
+    },
+    "/api/subscriptions/{subscription_id}/follows": {
+      "put": {
+        "operationId": "choose_follows_api_subscriptions__subscription_id__follows_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowsChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Choose Follows"
+      }
+    },
+    "/api/subscriptions/{subscription_id}/poll": {
+      "post": {
+        "operationId": "poll_subscription_api_subscriptions__subscription_id__poll_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll Subscription"
+      }
+    },
+    "/api/subscriptions/{subscription_id}/postings": {
+      "get": {
+        "operationId": "subscription_postings_api_subscriptions__subscription_id__postings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only postings older than the one of this number; without it, the newest",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer.",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only postings older than the one of this number; without it, the newest",
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PostingView"
+                  },
+                  "title": "Response Subscription Postings Api Subscriptions  Subscription Id  Postings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Subscription Postings"
+      }
+    },
+    "/api/subscriptions/{subscription_id}/postings/{number}/reading": {
+      "post": {
+        "operationId": "read_posting_api_subscriptions__subscription_id__postings__number__reading_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer.",
+            "in": "path",
+            "name": "number",
+            "required": true,
+            "schema": {
+              "description": "The place of a posting among the postings of its subscription, counted from 1 in the order the subscription came to list them: of two postings, the one with the higher number is the newer.",
+              "minimum": 1,
+              "title": "Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Posting"
+      }
+    },
+    "/api/subscriptions/{subscription_id}/seen": {
+      "put": {
+        "operationId": "see_subscription_api_subscriptions__subscription_id__seen_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "See Subscription"
       }
     }
   }
