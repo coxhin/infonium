@@ -117,10 +117,10 @@ class FeedStandin:
     # which change whenever the test serves the feed anew; the addresses that lead to a feed
     # elsewhere; and what the test planned for the next calls. Every call is recorded, and how
     # many polls run at once, of each feed and of all.
-    def __init__(self) -> None:
+    def __init__(self, interval: timedelta) -> None:
         self.lock = Lock()
         self.clock = Clock(STARTING_TIME)
-        self.interval = INTERVAL
+        self.interval = interval
         self.watch = WATCH
         self.served: dict[str, Feed] = {}
         self.versions: Counter[str] = Counter()

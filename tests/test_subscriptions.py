@@ -505,6 +505,16 @@ def test_an_item_is_seen_the_first_time_it_is_asked_and_that_time_is_kept(
     assert answered(app.client.get(f"/api/items/{item}"), "reading an item")["seen"] is None, (
         "S11: an item never seen is said to have been seen"
     )
+    with as_owner(new_owner()):
+        of_another = refusal(app.client.put(f"/api/items/{item}/seen"), item)
+        of_none = refusal(app.client.put(f"/api/items/{NOWHERE_ITEM}/seen"), NOWHERE_ITEM)
+    assert of_another[0] == HTTPStatus.NOT_FOUND and of_another == of_none, (
+        "S11, S13: seeing another owner's item was not refused as one that is not there: "
+        f"{of_another} against {of_none}"
+    )
+    assert answered(app.client.get(f"/api/items/{item}"), "reading an item")["seen"] is None, (
+        "S11, S13: another owner's asking took an item for seen"
+    )
     before, after, entry = seen_now(app, item)
     assert entry["seen"] is not None and before <= instant(entry["seen"]) <= after, (
         f"S11: seeing an item did not keep the time it was seen: {entry['seen']}"
@@ -514,10 +524,6 @@ def test_an_item_is_seen_the_first_time_it_is_asked_and_that_time_is_kept(
     assert again == entry, "S11: seeing an item again changed when it was seen"
     assert answered(app.client.get(f"/api/items/{item}"), "reading an item") == entry, (
         "S11: an item's entry does not tell when it was first seen"
-    )
-    response = app.client.put(f"/api/items/{NOWHERE_ITEM}/seen")
-    assert response.status_code == HTTPStatus.NOT_FOUND, (
-        f"S11: seeing an item that is not there was not refused: {response.status_code}"
     )
 
 

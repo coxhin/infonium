@@ -1,9 +1,10 @@
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, wait
 from datetime import datetime
 from http import HTTPStatus
-from threading import Event
-from typing import Any
+from threading import Event, Thread
+from typing import Any, NoReturn
 
 import httpx2
 import pytest
@@ -21,6 +22,16 @@ MOST_POSTINGS_LISTED = 200
 # that the poller has looked at what is due and what waits, and has done nothing.
 WATCHES = 6
 HELD_READING = "held-reading"
+# A known fault of the part: a poll whose feed function raises at once can stop the poller for
+# good, and the service then neither answers nor stops, nor lets the tests end. A judgment of
+# such polls is not run until the part's mend is merged.
+FAILS_AT_ONCE = pytest.mark.xfail(
+    run=False,
+    reason=(
+        "S5, S6: a poll whose feed function raises at once can deadlock the poller, and the "
+        "service then neither answers nor stops (known fault, being mended)"
+    ),
+)
 UNDERWAY = "underway"
 SETTLED = "settled"
 FAILED = "failed"
@@ -145,15 +156,23 @@ def posting_numbered(app: App, subscription_id: str, number: int) -> dict[str, A
     return page[0]
 
 
-def waited_for[Seen](look: Callable[[], Seen], done: Callable[[Seen], bool], what: str) -> Seen:
+def seen_in_time[Seen](look: Callable[[], Seen], done: Callable[[Seen], bool]) -> list[Seen]:
+    # What is seen once it is done, or nothing where it is not done in time.
     deadline = time.monotonic() + SETTLE_SECONDS
     while True:
         seen = look()
         if done(seen):
-            return seen
+            return [seen]
         if time.monotonic() > deadline:
-            pytest.fail(f"{what} did not happen in {SETTLE_SECONDS} seconds: {seen}")
+            return []
         time.sleep(POLL_SECONDS)
+
+
+def waited_for[Seen](look: Callable[[], Seen], done: Callable[[Seen], bool], what: str) -> Seen:
+    seen = seen_in_time(look, done)
+    if not seen:
+        pytest.fail(f"{what} did not happen in {SETTLE_SECONDS} seconds: {look()}")
+    return seen[0]
 
 
 def is_polled_at(view: dict[str, Any], at: datetime) -> bool:
@@ -170,9 +189,56 @@ def polled(app: App, subscription_id: str, at: datetime) -> dict[str, Any]:
     )
 
 
+def left_standing(app: App, what: str) -> NoReturn:
+    # The judgment fails where the poller stopped going on, and the service is left as it
+    # stands: stopping it would wait for the poller for ever.
+    app.running = False
+    pytest.fail(f"S5, S6: the poller did not go on: {what} in {SETTLE_SECONDS} seconds")
+
+
+def polled_going_on(app: App, subscription_id: str, at: datetime) -> dict[str, Any]:
+    # The subscription once a poll of it at the time given has settled or failed, where a feed
+    # function that fails at once may have stopped the poller.
+    seen = seen_in_time(lambda: viewed(app, subscription_id), lambda view: is_polled_at(view, at))
+    if not seen:
+        left_standing(app, f"no poll of subscription {subscription_id} at {at} ended")
+    return seen[0]
+
+
+def answered_going_on(app: App, ask: Callable[[], httpx2.Response], what: str) -> Any:
+    # What the service answers to a request that a poller that stopped going on may never
+    # answer. The request is sent from a thread that does not keep the tests from ending.
+    answer: Future[httpx2.Response] = Future()
+
+    def asking() -> None:
+        answer.set_running_or_notify_cancel()
+        try:
+            answer.set_result(ask())
+        except BaseException as error:
+            answer.set_exception(error)
+
+    Thread(target=asking, daemon=True).start()
+    if wait([answer], timeout=SETTLE_SECONDS).not_done:
+        left_standing(app, f"{what} was not answered")
+    return answered(answer.result(), what)
+
+
+def stopped_going_on(app: App) -> None:
+    # The service stopped, where a poller that stopped going on may keep it from stopping. The
+    # library is let go of on this thread, which holds its lock.
+    stopping = Thread(target=app.client.__exit__, args=(None, None, None), daemon=True)
+    stopping.start()
+    stopping.join(SETTLE_SECONDS)
+    if stopping.is_alive():
+        left_standing(app, "the service did not stop")
+    app.stop()
+
+
 def poll_by_hand(app: App, subscription_id: str) -> dict[str, Any]:
-    view: dict[str, Any] = answered(
-        app.client.post(f"{subscription_path(subscription_id)}/poll"), "a poll by hand"
+    view: dict[str, Any] = answered_going_on(
+        app,
+        lambda: app.client.post(f"{subscription_path(subscription_id)}/poll"),
+        "a poll by hand",
     )
     return view
 

@@ -23,7 +23,7 @@ from tests.embedding_standin import (
     EmbeddingStandin,
     embedding_standin,
 )
-from tests.feed_standin import FeedStandin
+from tests.feed_standin import INTERVAL, FeedStandin
 from tests.model_standin import (
     GLM_BASE_URL,
     MODEL_BASE_URL,
@@ -247,10 +247,11 @@ def app(start_app: Callable[..., App]) -> App:
 
 
 @pytest.fixture
-def feeds(start_app: Callable[..., App]) -> Iterator[FeedStandin]:
+def feeds(start_app: Callable[..., App], request: pytest.FixtureRequest) -> Iterator[FeedStandin]:
     # The feeds that a service started with feeds.poller as its poller's maker finds and polls,
-    # and the clock it reads. A call the test still holds is cut off before the services stop.
-    standin = FeedStandin()
+    # the clock it reads, and the interval between its polls, which a test may give as the
+    # fixture's parameter. A call the test still holds is cut off before the services stop.
+    standin = FeedStandin(interval=getattr(request, "param", INTERVAL))
     yield standin
     standin.let_go()
 
