@@ -190,6 +190,10 @@ SILENT_RSSHUB = (
     " instance, and engines/rsshub starts one"
 )
 FAILED = "{kind}: {said}"
+# An instance that no connection reaches, or whose address names no web address, does not
+# answer; one that is reached but does not finish its answer fails the route.
+NOT_REACHED = (httpx.ConnectError, httpx.ConnectTimeout, httpx.UnsupportedProtocol)
+ROUTE_BROKEN_OFF = "RSSHub at {instance} did not finish answering the route {route} ({reason})"
 KEY_REFUSED = "RSSHub at {instance} refused the key that INFONIUM_RSSHUB_ACCESS_KEY gives it"
 KEY_MISSING = "RSSHub at {instance} asks for a key, and INFONIUM_RSSHUB_ACCESS_KEY gives none"
 RULES_OUTGROWN = "RSSHub's rules at {instance} hold more than infonium reads"
@@ -429,9 +433,14 @@ def asked_of_rsshub(
     asked = served_at(address, rsshub)
     try:
         answer = answer_within(asked, validators, allowance, limit_of, rsshub_query(key))
-    except httpx.TransportError as failure:
+    except NOT_REACHED as failure:
         reason = FAILED.format(kind=type(failure).__name__, said=error_text(failure))
         raise SilentRSSHub(SILENT_RSSHUB.format(instance=instance, reason=reason)) from failure
+    except httpx.TransportError as failure:
+        reason = FAILED.format(kind=type(failure).__name__, said=error_text(failure))
+        route = route_of(address)
+        said = ROUTE_BROKEN_OFF.format(instance=instance, route=route, reason=reason)
+        raise UnreadableFeed(said) from failure
     refused = answer.status == HTTPStatus.FORBIDDEN
     if refused and rsshub_message(answer.content).startswith(KEY_ERROR):
         raise RSSHubFault((KEY_REFUSED if key else KEY_MISSING).format(instance=instance))
