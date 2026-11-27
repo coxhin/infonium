@@ -7,14 +7,13 @@ from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
 
-import httpx
 import httpx2
 import pytest
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from infonium.library import LOCAL_OWNER, item_identity
-from infonium.subscriptions.feed import TITLE_CHARACTERS, Posting, UnreadableFeed
+from infonium.subscriptions.feed import TITLE_CHARACTERS, Feed, Posting, UnreadableFeed
 from infonium.subscriptions.subscription import ADMITTED_AT_FIRST, MOST_ADMITTED_A_POLL
 from tests.feed_standin import (
     FEEDS_SITE,
@@ -248,18 +247,36 @@ def test_an_address_neither_of_the_web_nor_of_rsshub_is_refused_before_anything_
     kept_nothing(subscribing_app)
 
 
-def test_an_rsshub_route_is_found_through_the_rsshub_instance(
+def test_an_rsshub_route_is_subscribed_polled_and_listed_like_any_feed(
     subscribing_app: App, feeds: FeedStandin
 ) -> None:
+    app = subscribing_app
     route = "rsshub://bilibili/user/video/2267573"
-    feed = served_feed(feeds, "rsshub-route", [missing_posting("route-0")])
-    feeds.lead(route, feed)
-    view = subscribed(subscribing_app, route, admit=0)
+    first = [missing_posting("route-0")]
+    feeds.serve(route, Feed(title="Route", site=None, postings=first))
+    view = subscribed(app, route, admit=0)
     assert [(call.address, call.rsshub) for call in feeds.calls_of(FeedFunction.DISCOVERED)] == [
         (route, RSSHUB_BASE_URL)
     ], "S1: an rsshub:// route was not looked for as it was given, at the RSSHub instance"
-    assert (view["address"], view["feed"]) == (route, feed), (
-        f"S1: a subscription to a route does not keep the route and the feed it led to: {view}"
+    assert (view["address"], view["feed"], view["postings"]) == (route, route, 1), (
+        f"S1: a subscription to a route does not keep the route as its feed's address: {view}"
+    )
+    feeds.serve(
+        route, Feed(title="Route", site=None, postings=[missing_posting("route-1"), *first])
+    )
+    at = feeds.clock.advance(STEP)
+    poll_by_hand(app, view["id"])
+    assert polled(app, view["id"], at)["poll"]["found"] == 1, (
+        "S3: a poll of a route did not find its new posting"
+    )
+    assert [call.address for call in feeds.calls_of(FeedFunction.FETCHED)] == [route], (
+        "S3: a route was not polled by its address"
+    )
+    assert [posting["number"] for posting in every_posting(app, view["id"])] == [2, 1], (
+        "S3: a route's postings are not listed as any feed's are"
+    )
+    assert subscribed(app, route, admit=0)["id"] == view["id"], (
+        "S1: subscribing again to a route is not answered as its subscription"
     )
 
 
@@ -297,15 +314,20 @@ def test_a_feed_subscribed_to_already_is_answered_as_that_subscription_unchanged
 
 
 @pytest.mark.parametrize(
-    ("failure", "error"),
+    ("failure", "said"),
     [
-        ("the address leads to no feed", UnreadableFeed("The page at blog.test names no feed")),
-        ("the connection fails", httpx.ConnectError("[Errno -2] Name or service not known")),
+        ("the address leads to no feed", "https://blog.test is a web page that names no feed"),
+        ("the feed cannot be read", "the feed at https://blog.test/feed.xml is not XML"),
+        (
+            "the address cannot be reached",
+            "https://blog.test/feed.xml did not answer: [Errno -2] Name or service not known",
+        ),
     ],
 )
 def test_a_feed_that_cannot_be_read_or_reached_is_refused_with_the_reason_and_nothing_kept(
-    subscribing_app: App, feeds: FeedStandin, failure: str, error: Exception
+    subscribing_app: App, feeds: FeedStandin, failure: str, said: str
 ) -> None:
+    error = UnreadableFeed(said)
     app = subscribing_app
     feed = served_feed(feeds, "unreachable", [page_posting(app, "unreachable-0")])
     feeds.fail_discovery(feed, error)

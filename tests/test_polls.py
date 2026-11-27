@@ -80,7 +80,8 @@ class FailureKind(StrEnum):
 
 
 def failure_of(kind: FailureKind, said: str) -> Exception:
-    # A feed that cannot be read, a connection that fails as httpx says it, or anything else.
+    # A feed that cannot be read, or anything else a feed function raises: an error of httpx,
+    # or another.
     match kind:
         case FailureKind.UNREADABLE:
             return UnreadableFeed(said)
