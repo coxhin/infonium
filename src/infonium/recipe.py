@@ -82,7 +82,10 @@ order it takes them up. Each statement begins with the topic's name in bold and 
 then says what the document says about that topic in one or two sentences.
 """,
     ),
-    # Its one section has no title: the style's name stands in the row of styles above it.
+    # Its one section has no title: the style's name stands in the row of styles above it. The
+    # rules say where the empty title goes, since gpt-6.1-terra, which writes it after the
+    # statements, at times wrote white space there without end (10 of 29 flashes of two short
+    # sources), and did not once told so (0 of 12).
     DigestStyle.FLASH: Recipe(
         name="快讯",
         description=(
@@ -91,14 +94,16 @@ then says what the document says about that topic in one or two sentences.
             "\N{FULLWIDTH COMMA}决定读不读。"
         ),
         section_rules="""\
-Write one section, as a paragraph, and leave its title empty. It holds one to three \
-statements, one sentence each, written as a news flash is: the most important thing first, \
-in short sentences without asides.
+Write one section, as a paragraph. Its title is empty: after the statements, write the title \
+as the empty string "", and only then end the section. It holds one to three statements, one \
+sentence each, written as a news flash is: the most important thing first, in short \
+sentences without asides, each of at most about 60 characters in Chinese or 30 words in \
+English.
 
 The first statement is the lead: the newest or most consequential thing the document \
 reports, with who did what, and when and where, as far as the document says. Of a document \
 that reports no event, such as a paper, an essay or a guide, it is the document's main \
-finding, claim or advice.
+finding, claim or advice, not the method or the steps that lead to it.
 
 Each further statement adds the detail that matters most after the lead, such as a key \
 number, a consequence or what comes next. Leave out background, history and anything the \
