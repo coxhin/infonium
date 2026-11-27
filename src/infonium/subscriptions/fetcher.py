@@ -93,11 +93,11 @@ def request_headers(validators: Validators) -> dict[str, str]:
 
 
 @contextmanager
-def answer_to(address: str, validators: Validators) -> Iterator[httpx.Response]:
+def asked(address: str, validators: Validators) -> Iterator[httpx.Response]:
     # One GET of an address, made as a source's fetch is made: by infonium's user agent,
     # following redirects, and given up once the server is silent for as long. A guard's check
-    # is refused as the site turning infonium away, any status but 200 and 304 as that status,
-    # and an answer compressed in a way infonium did not ask for as that compression.
+    # is refused as the site turning infonium away, and an answer compressed in a way infonium
+    # did not ask for as that compression; an answer of any status is given.
     with httpx.stream(
         GET,
         address,
@@ -107,13 +107,20 @@ def answer_to(address: str, validators: Validators) -> Iterator[httpx.Response]:
     ) as response:
         if guard.is_guarded(response.headers):
             raise UnreadableFeed(turned_away(address))
-        if response.status_code not in ANSWERED:
-            raise UnreadableFeed(error_status(str(response.url), response.status_code))
         codings = response.headers.get(CONTENT_ENCODING, NOT_COMPRESSED).split(CODINGS_APART)
         unasked = {coding.strip().casefold() for coding in codings} - {*INFLATED, NOT_COMPRESSED}
         if unasked:
             coding = ", ".join(sorted(unasked))
             raise UnreadableFeed(UNASKED_CODING.format(source=address, coding=coding))
+        yield response
+
+
+@contextmanager
+def answer_to(address: str, validators: Validators) -> Iterator[httpx.Response]:
+    # An address asked once, as asked does, any status but 200 and 304 refused as that status.
+    with asked(address, validators) as response:
+        if response.status_code not in ANSWERED:
+            raise UnreadableFeed(error_status(str(response.url), response.status_code))
         yield response
 
 

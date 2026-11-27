@@ -1,12 +1,14 @@
 import re
 import time
+from functools import lru_cache
+from http import HTTPStatus
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import httpx
 import trafilatura
 from pydantic import BaseModel, Field, ValidationError
 
-from infonium.document import OVERDUE_SOURCE
+from infonium.document import OVERDUE_SOURCE, STATUS_NAMES, WORD_GAP
 from infonium.intake import CONTENT_TYPE, PAGE_MEDIA_TYPES, UNDECLARED, declared_media_type
 from infonium.reasons import failure_reason
 from infonium.subscriptions.feed import (
@@ -25,14 +27,33 @@ from infonium.subscriptions.fetcher import (
     Validators,
     answer_of,
     answer_to,
+    asked,
     bounded_content,
     changed,
+)
+from infonium.subscriptions.radar import (
+    RADAR_RULES_PATH,
+    HeldRules,
+    RadarRoute,
+    held_rules,
+    routes_for,
 )
 
 # How an address begins that names a route of RSSHub, a bridge that makes feeds of sites
 # without one; the route follows.
 RSSHUB_SCHEME = "rsshub://"
 ROUTE_APART = "/"
+# Where an address leads to no feed by the other rules, the route that RSSHub's own rules give
+# for it is tried. The rules of an instance are fetched once a day and kept, as they change only
+# with its version; they may hold 20 MiB and take 30 s to fetch, besides the requests and the
+# minute of the discovery. An instance that does not answer costs each discovery one refused
+# connection, and leaves what it finds as it is.
+RULES_KEPT_SECONDS = 24 * 3600
+RULES_LIMIT_BYTES = 20 * 1024**2
+RULES_LIMIT_SECONDS = 30.0
+# What RSSHub's page of an error may hold, and where it says what went wrong.
+REFUSAL_LIMIT_BYTES = 1024**2
+RSSHUB_MESSAGE = "(//p[@class='message'])[1]/code//text()"
 
 # A page is fetched as a feed is, within less; one discovery within a minute and eight
 # requests, each a fetch with the redirects it follows. A fetch is not begun once either is
@@ -110,6 +131,8 @@ UNKEPT_ADDRESS = (
 SILENT_RSSHUB = (
     "RSSHub at {instance} did not answer ({reason}); INFONIUM_RSSHUB_BASE_URL names the instance"
 )
+ROUTE_REFUSED = "RSSHub at {instance} answered the route {route} with {said}"
+SAID = "{status}: {message}"
 NO_APPLE_FEED = "Apple Podcasts names no feed of the show at {address}; " + GIVE_A_FEED
 YOUTUBE_CONSENT = (
     "YouTube answered {address} with its page that asks for consent to cookies, which names no"
@@ -255,25 +278,64 @@ def apple_podcasts_feed(address: str, show: str, allowance: Allowance) -> Discov
     return feed_at(feeds[0], allowance)
 
 
-def rsshub_feed(route: str, rsshub: str, allowance: Allowance) -> Discovered:
+def said_by_rsshub(status: int, page: bytes) -> str:
+    # What RSSHub answered a route with: the status, and what its page of the error says went
+    # wrong, where it says it.
+    named = STATUS_NAMES.get(status, str(status))
+    tree = trafilatura.load_html(page) if page else None
+    said = WORD_GAP.join("".join(tree.xpath(RSSHUB_MESSAGE)).split()) if tree is not None else ""
+    return SAID.format(status=named, message=said) if said else named
+
+
+def routed_feed(route: str, rsshub: str, allowance: Allowance) -> Discovered:
+    # The feed at a route of the RSSHub instance at the address given, joined to it with one
+    # slash. Where RSSHub answers the route with an error, the reader is told what it said.
     instance = rsshub.rstrip(ROUTE_APART)
+    path = ROUTE_APART + route.lstrip(ROUTE_APART)
+    routed = instance + path
+    allowance.spend(routed)
+    began = time.monotonic()
     try:
-        return feed_at(instance + ROUTE_APART + route.lstrip(ROUTE_APART), allowance)
+        with asked(routed, Validators()) as response:
+            status = response.status_code
+            most_bytes = FEED_LIMIT_BYTES if status == HTTPStatus.OK else REFUSAL_LIMIT_BYTES
+            ends = min(allowance.ends, began + FEED_LIMIT_SECONDS)
+            answer = answer_of(response, bounded_content(response, routed, most_bytes, ends))
     except httpx.TransportError as failure:
         reason = failure_reason(failure)
         raise UnreadableFeed(SILENT_RSSHUB.format(instance=rsshub, reason=reason)) from failure
+    if status != HTTPStatus.OK:
+        said = said_by_rsshub(status, answer.content)
+        raise UnreadableFeed(ROUTE_REFUSED.format(instance=instance, route=path, said=said))
+    return discovered_of(answer, routed)
 
 
-def discovered_feed(address: str, rsshub: str) -> Discovered:
-    # The feed that an address a reader gave leads to: the feed itself, a page that names its
-    # feed, a show or a channel whose site keeps its feed elsewhere, or a route of the RSSHub
-    # instance at the address given. Shows on Apple Podcasts, and YouTube's channels and
-    # playlists named by their ids, are found by their addresses alone.
-    allowance = Allowance()
-    if address.startswith(RSSHUB_SCHEME):
-        return rsshub_feed(address.removeprefix(RSSHUB_SCHEME), rsshub, allowance)
-    if not web_addresses([address], address):
-        raise UnreadableFeed(NOT_AN_ADDRESS.format(address=address))
+@lru_cache(maxsize=1)
+def rules_of(instance: str, period: int) -> HeldRules:
+    # The radar rules of an instance, kept for the period they were fetched in, by its number:
+    # lru_cache keeps what a call returns and nothing of one that fails, so an instance that
+    # does not answer is asked again by the next discovery.
+    address = instance + RADAR_RULES_PATH
+    with answer_to(address, Validators()) as response:
+        ends = time.monotonic() + RULES_LIMIT_SECONDS
+        content = bounded_content(response, address, RULES_LIMIT_BYTES, ends)
+    return held_rules(content)
+
+
+def radar_routes(address: str, rsshub: str) -> list[RadarRoute]:
+    # The route RSSHub's rules give for an address; none where the instance does not answer, or
+    # answers with what is not its rules.
+    period = int(time.time() // RULES_KEPT_SECONDS)
+    try:
+        rules = rules_of(rsshub.rstrip(ROUTE_APART), period)
+    except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL, ValidationError):
+        return []
+    return routes_for(address, rules)
+
+
+def found_at(address: str, allowance: Allowance) -> Discovered:
+    # The feed an address leads to by its site's own means: a show on Apple Podcasts, a channel
+    # or a playlist of YouTube named by its id, the feed itself, or a page that leads to one.
     parts = urlsplit(address)
     host = (parts.hostname or "").casefold()
     shows = APPLE_SHOW.findall(parts.path) if host == APPLE_PODCASTS_HOST else []
@@ -283,3 +345,25 @@ def discovered_feed(address: str, rsshub: str) -> Discovered:
     if kept:
         return feed_at(kept[0], allowance)
     return discovered_at(address, allowance)
+
+
+def discovered_feed(address: str, rsshub: str) -> Discovered:
+    # The feed that an address a reader gave leads to: the feed itself, a page that names its
+    # feed, a show or a channel whose site keeps its feed elsewhere, or a route of the RSSHub
+    # instance at the address given. Shows on Apple Podcasts, and YouTube's channels and
+    # playlists named by their ids, are found by their addresses alone. Where none of these
+    # leads to a feed, as where the site turns infonium away, the route that RSSHub's rules
+    # give for the address is tried, and where they give none the reader is told why the rest
+    # found no feed.
+    allowance = Allowance()
+    if address.startswith(RSSHUB_SCHEME):
+        return routed_feed(address.removeprefix(RSSHUB_SCHEME), rsshub, allowance)
+    if not web_addresses([address], address):
+        raise UnreadableFeed(NOT_AN_ADDRESS.format(address=address))
+    try:
+        return found_at(address, allowance)
+    except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL):
+        routes = [found.route for found in radar_routes(address, rsshub)]
+        if not allowance.left(routes, 0):
+            raise
+    return routed_feed(routes[0], rsshub, allowance)
