@@ -1,9 +1,11 @@
+import logging
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from enum import StrEnum
 from http import HTTPStatus
 from threading import Event, Thread
+from types import MappingProxyType
 from typing import Annotated, Literal
 
 import httpx
@@ -67,6 +69,18 @@ GET = "GET"
 # own words name neither the address nor what failed.
 UNREACHED = "{address} could not be fetched: {kind}: {said}"
 TOO_MANY_REQUESTS = "{source} leads on through more redirects than infonium follows"
+# A query that a request carries and that no address the fetcher tells or keeps shows, as a key
+# that a server asks for: it is added to every request to the server first asked, and taken out
+# of the address of every request and answer, and of those httpx writes to its log, where it
+# writes each request's address whole.
+NOTHING_HIDDEN: Mapping[str, str] = MappingProxyType({})
+HIDDEN_NAMES: set[str] = set()
+HTTPX_LOG = "httpx"
+
+
+class Oversized(UnreadableFeed):
+    # An answer that holds more than its bound.
+    pass
 
 
 class Validators(BaseModel):
@@ -114,24 +128,27 @@ class Answer(BaseModel):
 
 class Allowance:
     # What one exchange of a fetcher may still do: how many requests it may still make, each
-    # redirect one, of which some may be kept back for later, and the time on the monotonic
-    # clock by which it ends.
-    def __init__(self, requests: int, seconds: float) -> None:
+    # redirect one, and the time on the monotonic clock by which it ends.
+    def __init__(self, requests: int, ends: float) -> None:
         self.requests = requests
-        self.kept = 0
-        self.ends = time.monotonic() + seconds
+        self.ends = ends
 
     def left(self, addresses: list[str]) -> list[str]:
         # The first of the addresses given that may still be asked.
-        return addresses[: max(self.requests - self.kept, 0)]
+        return addresses[: max(self.requests, 0)]
 
     def spend(self, address: str) -> None:
         # One request taken, to the address given.
         if time.monotonic() > self.ends:
             raise UnreadableFeed(OVERDUE_SOURCE.format(source=address))
-        if self.requests <= self.kept:
+        if self.requests <= 0:
             raise UnreadableFeed(TOO_MANY_REQUESTS.format(source=address))
         self.requests -= 1
+
+
+def ends_in(seconds: float) -> float:
+    # The time on the monotonic clock the given seconds from now.
+    return time.monotonic() + seconds
 
 
 def request_headers(validators: Validators) -> dict[str, str]:
@@ -147,6 +164,31 @@ def request_headers(validators: Validators) -> dict[str, str]:
 def unreached(address: str, failure: httpx.HTTPError | httpx.InvalidURL) -> str:
     # What a failure of the connection to an address, or of its address itself, is told as.
     return UNREACHED.format(address=address, kind=type(failure).__name__, said=error_text(failure))
+
+
+def shown(url: httpx.URL, hidden: Collection[str]) -> str:
+    # An address as the fetcher tells and keeps it: without the hidden query, or a fragment.
+    for name in hidden:
+        url = url.copy_remove_param(name)
+    return str(url.copy_with(fragment=None))
+
+
+class HiddenInLog(logging.Filter):
+    # httpx's log as it is written, with the addresses in it as the fetcher tells them.
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                shown(given, HIDDEN_NAMES) if isinstance(given, httpx.URL) else given
+                for given in record.args
+            )
+        return True
+
+
+logging.getLogger(HTTPX_LOG).addFilter(HiddenInLog())
+
+
+def same_server(url: httpx.URL, other: httpx.URL) -> bool:
+    return (url.scheme, url.host, url.port) == (other.scheme, other.host, other.port)
 
 
 def sent_back(value: str | None) -> str | None:
@@ -194,7 +236,7 @@ def bounded_content(
                 continue
             pending = inflater.unconsumed_tail
         if len(content) > most_bytes:
-            raise UnreadableFeed(OVERSIZE_SOURCE.format(source=source))
+            raise Oversized(OVERSIZE_SOURCE.format(source=source))
         if time.monotonic() > ends:
             raise UnreadableFeed(OVERDUE_SOURCE.format(source=source))
     return bytes(content)
@@ -205,6 +247,7 @@ def exchanged(
     validators: Validators,
     allowance: Allowance,
     limit_of: Callable[[int, str], Limit],
+    hidden: Mapping[str, str],
 ) -> Answer:
     # One GET of an address, made as a source's fetch is made, by infonium's user agent and
     # given up once the server is silent for as long. Redirects are followed one at a time,
@@ -213,14 +256,21 @@ def exchanged(
     # to, and the allowance's time.
     began = time.monotonic()
     headers = request_headers(validators)
+    HIDDEN_NAMES.update(hidden)
     with httpx.Client(timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False) as client:
-        request = client.build_request(GET, address, headers=headers)
+        # The hidden query is added to the address's own: httpx, given a query apart, would
+        # take it in place of the address's.
+        first = client.build_request(GET, address, headers=headers)
+        first.url = first.url.copy_merge_params(hidden)
+        request = first
         while True:
-            allowance.spend(str(request.url))
+            allowance.spend(shown(request.url, hidden))
             response = client.send(request, stream=True)
             try:
                 if response.next_request is not None:
                     request = response.next_request
+                    if same_server(request.url, first.url):
+                        request.url = request.url.copy_merge_params(hidden)
                     continue
                 if guard.is_guarded(response.headers):
                     raise UnreadableFeed(turned_away(address))
@@ -230,7 +280,7 @@ def exchanged(
                 coding = coding_of(response, address)
                 content = bounded_content(response, address, coding, limit.most_bytes, ends)
                 return Answer(
-                    address=str(response.url.copy_with(fragment=None)),
+                    address=shown(response.url, hidden),
                     status=response.status_code,
                     declared=declared,
                     content=content,
@@ -248,6 +298,7 @@ def answer_within(
     validators: Validators,
     allowance: Allowance,
     limit_of: Callable[[int, str], Limit],
+    hidden: Mapping[str, str] = NOTHING_HIDDEN,
 ) -> Answer:
     # An exchange held to the allowance's time as a whole, its status, headers and redirects
     # among it: httpx bounds only each silence of a server, which one sending a byte at a time
@@ -258,7 +309,7 @@ def answer_within(
 
     def exchange() -> None:
         try:
-            outcome.append(exchanged(address, validators, allowance, limit_of))
+            outcome.append(exchanged(address, validators, allowance, limit_of, hidden))
         except BaseException as failure:
             outcome.append(failure)
         finally:
@@ -294,7 +345,7 @@ def fetched_feed(address: str, validators: Validators) -> Fetched:
     # server sends it. This is the shape of a fetcher: what it is set to and where it stopped
     # go in, what its source lists now and where it stops come out. A failure to connect, and
     # a server silent for too long, are left as httpx raises them.
-    allowance = Allowance(requests=1 + MOST_REDIRECTS, seconds=FEED_LIMIT_SECONDS)
+    allowance = Allowance(requests=1 + MOST_REDIRECTS, ends=ends_in(FEED_LIMIT_SECONDS))
     answer = answer_within(address, validators, allowance, feed_limit)
     if answer.status == HTTPStatus.NOT_MODIFIED:
         return Unchanged()

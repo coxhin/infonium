@@ -64,11 +64,13 @@ class SourceRule(BaseModel):
 
 
 class RadarRoute(BaseModel):
-    # The route a rule gives for an address: the rule's title, the page that documents it, and
-    # the route with the address's parameters in it.
+    # The route a rule gives for an address: the rule's title, the page that documents it, the
+    # route with the address's parameters in it, and how many characters of the address the
+    # rule's source spells out, by which one rule matches an address better than another.
     title: str
     docs: str
     route: str
+    spelled: int
 
 
 # The rules held, by domain, then by subdomain.
@@ -204,15 +206,14 @@ def route_of(rule: SourceRule, parameters: dict[str, str]) -> str:
 
 
 def routes_for(address: str, rules: HeldRules) -> list[RadarRoute]:
-    # The routes the rules that an address matches give, the rule whose source spells out more of
-    # the address first and, of those that spell out as much, the first in RSSHub's order, which
-    # follows the names of its routes: of a GitHub repository's issues, the rule of issues comes
-    # before that of comments, whose source takes any part of the path. A path is matched as
-    # read, its escapes undone, and without a slash at its end.
+    # The routes the rules that an address matches give, each once, the rule whose source spells
+    # out more of the address first and, of those that spell out as much, in RSSHub's order,
+    # which follows the names of its routes. A path is matched as read, its escapes undone, and
+    # without a slash at its end.
     parts = urlsplit(address)
     path = unquote(parts.path).removesuffix(PATH_APART) or PATH_APART
     query = dict(parse_qsl(parts.query))
-    matched: list[tuple[int, RadarRoute]] = []
+    matched: list[RadarRoute] = []
     for rule in site_rules(parts.hostname or "", rules):
         found = rule.path.fullmatch(path)
         held = all(
@@ -221,9 +222,11 @@ def routes_for(address: str, rules: HeldRules) -> list[RadarRoute]:
         )
         if found is not None and held:
             parameters = {name: value for name, value in found.groupdict().items() if value}
-            route = RadarRoute(title=rule.title, docs=rule.docs, route=route_of(rule, parameters))
-            matched.append((rule.spelled, route))
+            route = route_of(rule, parameters)
+            matched.append(
+                RadarRoute(title=rule.title, docs=rule.docs, route=route, spelled=rule.spelled)
+            )
     kept: dict[str, RadarRoute] = {}
-    for _, route in sorted(matched, key=lambda found: -found[0]):
-        kept.setdefault(route.route, route)
+    for found_route in sorted(matched, key=lambda found_route: -found_route.spelled):
+        kept.setdefault(found_route.route, found_route)
     return list(kept.values())

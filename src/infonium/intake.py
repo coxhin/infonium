@@ -28,6 +28,7 @@ from infonium.document import (
     RECORDING_MEDIA_TYPES,
     UNDECLARED,
     UNKNOWN_MEDIA_TYPE,
+    USER_AGENT,
     Block,
     Extracted,
     KeptPicture,
@@ -38,9 +39,6 @@ from infonium.document import (
     error_status,
     turned_away,
     word_count,
-)
-from infonium.document import (
-    USER_AGENT as USER_AGENT,
 )
 from infonium.library import (
     FIRST_READING,

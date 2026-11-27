@@ -73,7 +73,8 @@ POSTING_OPENING = re.compile(r"<(?:[\w.-]+:)?(?:item|entry)[\s/>]", re.IGNORECAS
 # feedparser also builds every link, enclosure, category, content, author and thumbnail it
 # finds, close to a kilobyte each: one posting with 1.3 million links took a gigabyte. So a
 # feed is read no further than the element of these kinds after ten for each posting read, and
-# of one posting no more than 50 of each are looked at.
+# of one posting no more than 50 of each are looked at, nor of a JSON Feed's item more than 50
+# attachments.
 READ_LISTED = 10 * READ_POSTINGS
 LISTED_OPENING = re.compile(
     r"<(?:[\w.-]+:)?(?:link|enclosure|category|content|author|contributor|thumbnail)[\s/>]",
@@ -146,6 +147,11 @@ BOZO_EXCEPTION = "bozo_exception"
 ID = "id"
 HREF = "href"
 LINKS = "links"
+PERMALINK = "guidislink"
+# What feedparser's parser of XML ends with where a feed is not well-formed: an error of the
+# XML, or, where an element's name holds what expat parts a name's namespace from it with, the
+# ValueError of feedparser's taking the name apart. The loose parser then reads the feed.
+NOT_WELL_FORMED = (SAXException, ValueError)
 # feedparser takes each element's base anew, joining it to the base around it: given the feed's
 # address, that cost a second for 40,000 elements and 1 GiB more for 6.9 million unclosed ones.
 # It is given the address only where the feed names a base of its own, in an attribute xml:base
@@ -182,8 +188,6 @@ FOUND_BROKEN = "RSS or Atom that breaks off, or is broken, before its title and 
 # The relations of a link that feedparser reports: the page of a posting or of a feed, and a
 # file it carries. A link without a relation is an alternate one, which feedparser says.
 ALTERNATE = "alternate"
-# The versions feedparser gives a feed of Atom begin so.
-ATOM = "atom"
 ENCLOSURE = "enclosure"
 PLAIN_TEXT = "text/plain"
 MARKUP_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -335,15 +339,16 @@ class ParsedChannel(BaseModel):
 class ParsedFeed(BaseModel):
     # What feedparser reads of a feed of RSS or Atom. Its version is empty where it recognised
     # neither. Its postings are read one at a time, as far as they are kept. Where the feed is
-    # not well-formed, what its XML parser found wrong is given as a SAXException; feedparser
-    # also gives other exceptions here, of the encoding, which leave the feed well-formed.
+    # not well-formed, what its XML parser found wrong is given here as NOT_WELL_FORMED names
+    # it; feedparser also gives other exceptions here, of the encoding, which leave the feed
+    # well-formed.
     version: ParsedString = ""
     feed: ParsedChannel
     entries: SkipValidation[list[dict[str, object]]]
     bozo_exception: SkipValidation[object] = None
 
     def is_broken(self) -> bool:
-        return isinstance(self.bozo_exception, SAXException)
+        return isinstance(self.bozo_exception, NOT_WELL_FORMED)
 
 
 class JsonFeedAttachment(BaseModel):
@@ -363,7 +368,7 @@ class JsonFeedItem(BaseModel):
     content_html: str | None = None
     date_published: str | None = None
     date_modified: str | None = None
-    attachments: list[JsonFeedAttachment] | None = None
+    attachments: Annotated[list[JsonFeedAttachment], BeforeValidator(mappings_of)] = []
 
 
 class JsonFeed(BaseModel):
@@ -561,13 +566,15 @@ def feed_of(
     )
 
 
-def given_text(parsed: ParsedText, version: str) -> GivenText:
-    # A text of Atom is plain or markup as its type says; one of RSS carries markup by custom.
-    plain = version.startswith(ATOM) and parsed.type not in MARKUP_TYPES
-    return GivenText(value=parsed.value, kind=TextKind.PLAIN if plain else TextKind.MARKUP)
+def given_text(parsed: ParsedText) -> GivenText:
+    # A text is markup or plain as its type says: Atom's as the feed writes it, and RSS's, which
+    # does not say, as feedparser judges it, markup where it looks like HTML. "Why Vec<T> is
+    # fast" is so a title of its own words, and "<em>Seen</em> and heard" one without its markup.
+    markup = parsed.type in MARKUP_TYPES
+    return GivenText(value=parsed.value, kind=TextKind.MARKUP if markup else TextKind.PLAIN)
 
 
-def listing_of_entry(entry: ParsedEntry, version: str) -> Listing:
+def listing_of_entry(entry: ParsedEntry) -> Listing:
     # A posting's recordings are the enclosures of RSS and Atom, its pages the alternate links
     # of Atom and the link of RSS, then a guid that is a permalink, which feedparser gives as
     # the link where the posting has no other: that is taken only where it is a web address
@@ -583,10 +590,8 @@ def listing_of_entry(entry: ParsedEntry, version: str) -> Listing:
     return Listing(
         id=entry.id,
         addresses=[*recordings, *pages, linked],
-        title=given_text(entry.title_detail, version) if entry.title_detail is not None else None,
-        summaries=[
-            given_text(text, version) for text in [entry.summary_detail, *entry.content] if text
-        ],
+        title=given_text(entry.title_detail) if entry.title_detail is not None else None,
+        summaries=[given_text(text) for text in [entry.summary_detail, *entry.content] if text],
         times=[entry.published, entry.updated],
     )
 
@@ -612,6 +617,9 @@ def parser_keeping_ids(parser_class: Any) -> Any:
     # One of feedparser's parsers, but that it keeps an id as written, where it would resolve
     # one it takes for a permalink against the base, and resolves the address of an RSS
     # enclosure against the base in effect where it stands, as it does that of every link.
+    # feedparser sets what it takes an id for only where an id or a guid opens, and reads it
+    # where one closes, which a broken feed may do without opening one: until one opens, an id
+    # is no permalink.
     def pop(parser: Any, element: str, strip_whitespace: int = 1) -> Any:
         if element != ID:
             return parser_class.pop(parser, element, strip_whitespace)
@@ -627,7 +635,7 @@ def parser_keeping_ids(parser_class: Any) -> Any:
         if HREF in enclosure:
             enclosure[HREF] = parser.resolve_uri(enclosure[HREF])
 
-    overrides = {"pop": pop, "_start_enclosure": start_enclosure}
+    overrides = {"pop": pop, "_start_enclosure": start_enclosure, PERMALINK: False}
     return type(f"{parser_class.__name__}KeepingIds", (parser_class,), overrides)
 
 
@@ -656,14 +664,16 @@ def feedparser_result(data: bytes, base: str) -> Any:
     source.setByteStream(BytesIO(data))
     try:
         reader.parse(source)
-    except SAXException as failure:
+    except NOT_WELL_FORMED as failure:
         result[BOZO] = True
         result[BOZO_EXCEPTION] = parser.exc or failure
         parser = LOOSE_PARSER(base, None, DEFAULT_ENCODING, entities)
         parser.resolve_relative_uris = parser.sanitize_html = False
         parser.feed(data.decode(DEFAULT_ENCODING, errors="replace"))
+    # A posting still open where the feed ends is one the feed broke off inside, and is left
+    # out: what was read of it may differ from it whole, its key among it.
     result[FEED] = parser.feeddata
-    result[ENTRIES] = parser.entries
+    result[ENTRIES] = parser.entries[:-1] if parser.inentry else parser.entries
     result[VERSION] = result[VERSION] or parser.version
     return result
 
@@ -689,12 +699,11 @@ def rss_or_atom(parsed: ParsedFeed, address: str) -> Feed:
     # names, which gives a posting's updated time as its published one where it has none and
     # warns that it will stop.
     channel = parsed.feed
-    version = parsed.version
     entries = (ParsedEntry.model_validate(dict.copy(entry)) for entry in parsed.entries)
     return feed_of(
-        title=given_text(channel.title_detail, version) if channel.title_detail else None,
+        title=given_text(channel.title_detail) if channel.title_detail is not None else None,
         sites=[*[link.href for link in channel.links if link.rel == ALTERNATE], channel.link],
-        listings=(listing_of_entry(entry, version) for entry in entries),
+        listings=(listing_of_entry(entry) for entry in entries),
         address=address,
     )
 

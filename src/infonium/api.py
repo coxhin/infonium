@@ -200,8 +200,10 @@ def poller() -> Poller:
     return Poller(
         store=library_store(),
         intake=intake(),
-        discovered=discovered_apart,
-        fetched=partial(polled_apart, rsshub=settings.rsshub_base_url),
+        discovered=partial(discovered_apart, key=settings.rsshub_access_key),
+        fetched=partial(
+            polled_apart, rsshub=settings.rsshub_base_url, key=settings.rsshub_access_key
+        ),
         rsshub=settings.rsshub_base_url,
         clock=partial(datetime.now, UTC),
         interval=timedelta(minutes=settings.poll_minutes),
