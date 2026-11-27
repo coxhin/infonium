@@ -1,6 +1,6 @@
 import shutil
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
@@ -42,6 +42,8 @@ DIGEST_FORMAT = 4
 # Where the digests kept before they had styles wait, while the library opens, to be written
 # into the table that took their table's name.
 EARLIER_DIGEST_TABLE = "earlier_digest"
+# The form of a row that says when an item was first seen.
+SEEN_FORMAT = 1
 FIRST_REVISION = 1
 # A reading that the service's stopping cut off this many times is given up.
 READING_STARTS = 3
@@ -121,6 +123,18 @@ digest_table = sqlalchemy.Table(
     sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
     sqlalchemy.Column("body", sqlalchemy.String, nullable=False),
+)
+# When each item was first seen: when its reader first had its document on show. An item with
+# no row was never seen, as no item of a library kept before items were seen was.
+seen_table = sqlalchemy.Table(
+    "seen",
+    metadata,
+    sqlalchemy.Column(
+        "item_id", sqlalchemy.String, sqlalchemy.ForeignKey(item_table.c.id), primary_key=True
+    ),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("seen", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
 )
 # The digest table as a library kept it before digests had styles, under the name it is given
 # while it waits. It is no table of a library made now.
@@ -306,6 +320,12 @@ def item_with(item: Item, reading: Reading) -> Item:
     return Item(id=item.id, origin=item.origin, added=item.added, reading=reading)
 
 
+class SeenItem(BaseModel):
+    # An item, and when its reader first had its document on show; none, if never.
+    item: Item
+    seen: AwareDatetime | None
+
+
 class EarlierItem(BaseModel):
     # An item as forms 1 and 2 stored it: a web page, read when it was kept.
     id: str
@@ -350,6 +370,12 @@ def field_path(*steps: tuple[type[BaseModel], str]) -> str:
 attempt_kind = sqlalchemy.func.json_extract(
     item_table.c.body, field_path((Item, "reading"), (Read, "attempt"), (Underway, "kind"))
 )
+reading_kind = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "reading"), (Read, "kind"))
+)
+origin_kind = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "origin"), (Link, "kind"))
+)
 kept_document_id = sqlalchemy.func.json_extract(
     item_table.c.body, field_path((Item, "reading"), (Read, "document"))
 )
@@ -378,8 +404,18 @@ def timestamp_text(instant: datetime) -> str:
     return str(TIMESTAMP.dump_python(instant, mode="json"))
 
 
+def seen_time(kept: str | None) -> datetime | None:
+    # When an item was seen, as the library keeps it where the item was.
+    return None if kept is None else TIMESTAMP.validate_python(kept)
+
+
+def seen_item(body: str, seen: str | None) -> SeenItem:
+    # An item as it is kept, with the time it was seen as it is kept.
+    return SeenItem(item=Item.model_validate_json(body), seen=seen_time(seen))
+
+
 def replacing_insert(
-    table: sqlalchemy.Table, row: dict[sqlalchemy.Column[Any], str | int]
+    table: sqlalchemy.Table, row: Mapping[sqlalchemy.Column[Any], str | int | None]
 ) -> sqlite.Insert:
     insert = sqlite.insert(table).values(row)
     return insert.on_conflict_do_update(
@@ -644,6 +680,42 @@ class Library:
         ).scalars()
         return [Item.model_validate_json(body) for body in bodies]
 
+    def seen_items(self) -> list[SeenItem]:
+        # Every item with when it was seen, the one added last first.
+        rows = self.connection.execute(
+            sqlalchemy.select(item_table.c.body, seen_table.c.seen)
+            .outerjoin(seen_table, seen_table.c.item_id == item_table.c.id)
+            .where(item_table.c.owner == self.owner)
+            .order_by(item_table.c.added.desc())
+        ).all()
+        return [seen_item(body, seen) for body, seen in rows]
+
+    def seen_as(self, item: Item) -> SeenItem:
+        # An item as an operation on it left it, with when it was seen.
+        seen = self.connection.execute(
+            sqlalchemy.select(seen_table.c.seen).where(
+                seen_table.c.owner == self.owner, seen_table.c.item_id == item.id
+            )
+        ).scalar_one_or_none()
+        return SeenItem(item=item, seen=seen_time(seen))
+
+    def see(self, item_id: str, at: datetime) -> SeenItem:
+        # The item is seen at the time given, unless it was seen before, which stays the time.
+        item = self.item(item_id)
+        self.connection.execute(
+            sqlite.insert(seen_table)
+            .values(
+                {
+                    seen_table.c.item_id: item_id,
+                    seen_table.c.owner: self.owner,
+                    seen_table.c.seen: timestamp_text(at),
+                    seen_table.c.format: SEEN_FORMAT,
+                }
+            )
+            .on_conflict_do_nothing(index_elements=[seen_table.c.item_id])
+        )
+        return self.seen_as(item)
+
     def sought(self, item_id: str) -> list[Item]:
         # The item of this id when the library holds it, and nothing when it does not.
         bodies = self.connection.execute(
@@ -753,6 +825,14 @@ class LibraryStore:
     def library(self, owner: str) -> Iterator[Library]:
         with self.transaction(owner) as transaction:
             yield Library(transaction)
+
+    @contextmanager
+    def every_owner(self) -> Iterator[sqlalchemy.Connection]:
+        # One transaction on the library's database for the work the service does for all its
+        # owners, as the schedule of subscriptions does: each row read through it names its
+        # owner, and any work on the row is then done in a transaction held to that owner.
+        with self.engine.begin() as connection:
+            yield connection
 
     def owners(self) -> list[str]:
         # Everyone who has an item in the library.
