@@ -1,5 +1,5 @@
 import re
-import time
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from typing import Annotated
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
@@ -14,6 +14,7 @@ from infonium.document import (
     WORD_GAP,
     declared_media_type,
     error_status,
+    error_text,
 )
 from infonium.subscriptions.feed import (
     ADDRESS_CHARACTERS,
@@ -29,14 +30,20 @@ from infonium.subscriptions.fetcher import (
     FEED_LIMIT_BYTES,
     FEED_LIMIT_SECONDS,
     MOST_REDIRECTS,
+    NOTHING_HIDDEN,
     REFUSAL_LIMIT_BYTES,
     Allowance,
     Answer,
     Changed,
+    Fetched,
     Limit,
+    Oversized,
+    Unchanged,
     Validators,
     answer_within,
     changed,
+    ends_in,
+    feed_limit,
     unreached,
 )
 from infonium.subscriptions.radar import (
@@ -48,27 +55,50 @@ from infonium.subscriptions.radar import (
 )
 
 # How an address begins that names a route of RSSHub, a bridge that makes feeds of sites
-# without one; the route follows. It is told in any case, and kept written as here, the route
-# without slashes at its start or two in a row: a feed of RSSHub is kept as its route, and
-# asked at the instance that INFONIUM_RSSHUB_BASE_URL names when it is asked, so that the
-# instance may move.
+# without one; the route follows. It is told in any case, and kept written as here: a feed of
+# RSSHub is kept as its route, and asked at the instance that INFONIUM_RSSHUB_BASE_URL names
+# when it is asked, so that the instance may move.
 RSSHUB_SCHEME = "rsshub://"
 ROUTE_APART = "/"
 ROUTE_QUERY = "?"
+QUERY_APART = "&"
+ROUTE_FRAGMENT = "#"
 ROUTE_ADDRESS_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 RouteAddress = Annotated[
     str, StringConstraints(pattern=ROUTE_ADDRESS_PATTERN, max_length=ADDRESS_CHARACTERS)
 ]
+# A route is written one way, so that one route is one address and one subscription however a
+# reader wrote it, or a rule of RSSHub gave it: no fragment, no slash at its start or two in a
+# row, and each character as itself where it may stand so, an escape otherwise. White space and
+# control characters are escapes, and so is a character that would say what it does not: a
+# slash within a part of the path, &, =, + or # within a query, and the percent sign.
+ESCAPE_OR_CHARACTER = re.compile(r"((?:%[0-9A-Fa-f]{2})+)|(.)", re.DOTALL)
+ESCAPE = "%{:02X}"
+ESCAPED_IN_PATH = frozenset("/?#%")
+ESCAPED_IN_QUERY = frozenset("&=+#%")
 # Where an address leads to no feed by the other rules, the route that RSSHub's own rules give
 # for it is tried. The rules of the instance are fetched by each discovery that comes to them,
-# as one runs in a process of its own: 1 MiB, fetched and made ready in 0.2 s. They may hold
-# 20 MiB and take 30 s, of what is left of the discovery's minute, by requests besides the
-# discovery's. An instance that does not answer costs a discovery one refused connection, and
-# leaves what it finds as it is.
-RULES_LIMIT = Limit(most_bytes=20 * 1024**2, most_seconds=30.0)
-# Where RSSHub's page of an error says what went wrong.
+# as one runs in a process of its own, with one request and no redirect, besides the
+# discovery's: 1 MiB, fetched and made ready in 0.2 s. They may take 30 s of what is left of the
+# discovery's minute, and hold 8 MiB, which the fetcher makes ready within its memory: beside a
+# page of 5 MiB, 8.7 MiB of rules shaped as RSSHub's took 3.4 s and 232 MiB, and 8 MiB of short
+# rules of one site 5.9 s and 390 MiB. Rules that hold more are told as RSSHub's. An instance
+# that does not answer costs a discovery one refused connection, and leaves what it finds as it
+# is.
+RULES_ADDRESS = RSSHUB_SCHEME + RADAR_RULES_PATH.removeprefix(ROUTE_APART)
+RULES_LIMIT_BYTES = 8 * 1024**2
+RULES_LIMIT_SECONDS = 30.0
+# What a request to RSSHub carries of the key the instance asks for, where it is given one:
+# RSSHub reads it from the query, and holds its rules to it as well as its routes.
+KEY_PARAMETER = "key"
+# Where RSSHub's page of an error says what went wrong, and the kind of error it names for a
+# request without its key.
 RSSHUB_MESSAGE = "(//p[@class='message'])[1]/code//text()"
 FULL_STOP = "."
+KEY_ERROR = "RejectError"
+# Where several of RSSHub's rules match an address equally well, the reader is told their
+# routes, this many at most.
+MOST_ROUTES_TOLD = 8
 
 # A page is fetched as a feed is, within less; one discovery within a minute and eight
 # requests, each redirect among them. A request is not made once either is spent, and the
@@ -144,16 +174,40 @@ UNKEPT_ADDRESS = (
 # Of an address too long to keep, its start is told.
 SHOWN_OF_LONG_ADDRESS = 100
 LONG_ADDRESS = "{address} is longer than the {most} characters infonium keeps of an address"
-SILENT_RSSHUB = (
-    "RSSHub at {instance} did not answer ({reason}); INFONIUM_RSSHUB_BASE_URL names the instance"
-)
 ROUTE_REFUSED = "RSSHub at {instance} answered the route {route} with {said}"
 SAID = "{status}: {message}"
+MANY_ROUTES = (
+    "RSSHub has {count} routes for {address}, none of which matches it better than the"
+    " others: {routes}{rest}"
+)
+TOLD_ROUTE = "{address} ({title})"
+ROUTES_APART = ", "
+MORE_ROUTES = ", and {more} more"
+# What a reader is told of the instance itself, or of infonium's settings for it, which no
+# other address would mend.
+SILENT_RSSHUB = (
+    "RSSHub did not answer at {instance} ({reason}); INFONIUM_RSSHUB_BASE_URL names the"
+    " instance, and engines/rsshub starts one"
+)
+FAILED = "{kind}: {said}"
+KEY_REFUSED = "RSSHub at {instance} refused the key that INFONIUM_RSSHUB_ACCESS_KEY gives it"
+KEY_MISSING = "RSSHub at {instance} asks for a key, and INFONIUM_RSSHUB_ACCESS_KEY gives none"
+RULES_OUTGROWN = "RSSHub's rules at {instance} hold more than infonium reads"
 NO_APPLE_FEED = "Apple Podcasts names no feed of the show at {address}"
 YOUTUBE_CONSENT = (
     "YouTube answered {address} with its page that asks for consent to cookies, which names no"
     " feed; a channel is found by its address with its id, as https://www.youtube.com/channel/UC…"
 )
+
+
+class RSSHubFault(UnreadableFeed):
+    # What went wrong with the RSSHub instance, or with infonium's settings for it: told as it
+    # is, without the advice to give another address.
+    pass
+
+
+class SilentRSSHub(RSSHubFault):
+    pass
 
 
 class Discovered(BaseModel):
@@ -179,12 +233,39 @@ def is_route(address: str) -> bool:
     return address[: len(RSSHUB_SCHEME)].casefold() == RSSHUB_SCHEME
 
 
+def escaped(character: str) -> str:
+    return "".join(ESCAPE.format(byte) for byte in character.encode(errors="surrogateescape"))
+
+
+def written_one_way(part: str, escaped_here: frozenset[str]) -> str:
+    # A part of a route with each of its characters written one way. Escapes are read as UTF-8,
+    # and bytes that are not are kept as escapes.
+    def one_way(found: re.Match[str]) -> str:
+        escapes, character = found.groups()
+        if character is not None:
+            stands = character.isprintable() and not character.isspace() and character != "%"
+            return character if stands else escaped(character)
+        read = bytes.fromhex(escapes.replace("%", "")).decode(errors="surrogateescape")
+        return "".join(
+            written
+            if written.isprintable() and not written.isspace() and written not in escaped_here
+            else escaped(written)
+            for written in read
+        )
+
+    return ESCAPE_OR_CHARACTER.sub(one_way, part)
+
+
 def route_path(route: str) -> str:
     # A route written one way, as a browser would ask for it, with one slash before each part
-    # of its path however many it was written with.
-    path, mark, query = asked_as(route).partition(ROUTE_QUERY)
-    parts = [part for part in path.split(ROUTE_APART) if part]
-    return ROUTE_APART + ROUTE_APART.join(parts) + mark + query
+    # of its path however many it was written with, and without a fragment.
+    path, _, query = asked_as(route).partition(ROUTE_FRAGMENT)[0].partition(ROUTE_QUERY)
+    parts = [written_one_way(part, ESCAPED_IN_PATH) for part in path.split(ROUTE_APART) if part]
+    asked = [
+        written_one_way(piece, ESCAPED_IN_QUERY) for piece in query.split(QUERY_APART) if piece
+    ]
+    written = ROUTE_APART + ROUTE_APART.join(parts)
+    return written + ROUTE_QUERY + QUERY_APART.join(asked) if asked else written
 
 
 def route_of(address: str) -> str:
@@ -202,6 +283,11 @@ def served_at(address: str, rsshub: str) -> str:
     if is_route(address):
         return rsshub.rstrip(ROUTE_APART) + route_of(address)
     return address
+
+
+def rsshub_query(key: str | None) -> Mapping[str, str]:
+    # What every request to the instance carries of its key, which no address shows.
+    return {KEY_PARAMETER: key} if key else NOTHING_HIDDEN
 
 
 def page_limit(status: int, declared: str) -> Limit:
@@ -314,56 +400,129 @@ def apple_podcasts_feed(address: str, show: str, allowance: Allowance) -> Discov
     return feed_at(feeds[0], allowance)
 
 
-def said_by_rsshub(status: int, page: bytes) -> str:
-    # What RSSHub answered a route with: the status, and what its page of the error says went
-    # wrong, where it says it, as a clause of the sentence the reader is told.
-    named = STATUS_NAMES.get(status, str(status))
+def rsshub_message(page: bytes) -> str:
+    # What RSSHub's page of an error says went wrong, where it says it, as a clause.
     tree = trafilatura.load_html(page) if page else None
     message = "".join(tree.xpath(RSSHUB_MESSAGE)) if tree is not None else ""
-    said = WORD_GAP.join(message.split()).removesuffix(FULL_STOP)
+    return WORD_GAP.join(message.split()).removesuffix(FULL_STOP)
+
+
+def said_by_rsshub(status: int, page: bytes) -> str:
+    # What RSSHub answered a route with: the status, and what its page of the error says.
+    named = STATUS_NAMES.get(status, str(status))
+    said = rsshub_message(page)
     return SAID.format(status=named, message=said) if said else named
 
 
-def routed_feed(address: str, rsshub: str, allowance: Allowance) -> Discovered:
+def asked_of_rsshub(
+    address: str,
+    rsshub: str,
+    key: str | None,
+    validators: Validators,
+    allowance: Allowance,
+    limit_of: Callable[[int, str], Limit],
+) -> Answer:
+    # What the RSSHub instance at the address given answers a route's address with, asked with
+    # its key. An instance that does not answer, and one that refuses the key, are told as
+    # what they are; the address with the key is in no sentence.
+    instance = rsshub.rstrip(ROUTE_APART)
+    asked = served_at(address, rsshub)
+    try:
+        answer = answer_within(asked, validators, allowance, limit_of, rsshub_query(key))
+    except httpx.TransportError as failure:
+        reason = FAILED.format(kind=type(failure).__name__, said=error_text(failure))
+        raise SilentRSSHub(SILENT_RSSHUB.format(instance=instance, reason=reason)) from failure
+    refused = answer.status == HTTPStatus.FORBIDDEN
+    if refused and rsshub_message(answer.content).startswith(KEY_ERROR):
+        raise RSSHubFault((KEY_REFUSED if key else KEY_MISSING).format(instance=instance))
+    return answer
+
+
+def route_refused(address: str, rsshub: str, answer: Answer) -> UnreadableFeed:
+    said = said_by_rsshub(answer.status, answer.content)
+    instance = rsshub.rstrip(ROUTE_APART)
+    return UnreadableFeed(
+        ROUTE_REFUSED.format(instance=instance, route=route_of(address), said=said)
+    )
+
+
+def routed_feed(address: str, rsshub: str, key: str | None, allowance: Allowance) -> Discovered:
     # The feed at a route of the RSSHub instance at the address given, kept as the route. Where
     # RSSHub answers the route with an error, the reader is told what it said.
-    routed = served_at(address, rsshub)
-    instance = rsshub.rstrip(ROUTE_APART)
-    try:
-        answer = answer_within(routed, Validators(), allowance, page_limit)
-    except httpx.TransportError as failure:
-        reason = unreached(routed, failure)
-        raise UnreadableFeed(SILENT_RSSHUB.format(instance=instance, reason=reason)) from failure
+    answer = asked_of_rsshub(address, rsshub, key, Validators(), allowance, page_limit)
     if answer.status != HTTPStatus.OK:
-        said = said_by_rsshub(answer.status, answer.content)
-        route = route_of(address)
-        raise UnreadableFeed(ROUTE_REFUSED.format(instance=instance, route=route, said=said))
+        raise route_refused(address, rsshub, answer)
     return discovered_of(answer, address, address)
 
 
+def polled_route(address: str, validators: Validators, rsshub: str, key: str | None) -> Fetched:
+    # One poll of a route, as fetched_feed polls a feed, at the RSSHub instance given at the
+    # time of the poll, with its key; what RSSHub answers with an error is told as for a
+    # discovery.
+    allowance = Allowance(requests=1 + MOST_REDIRECTS, ends=ends_in(FEED_LIMIT_SECONDS))
+    answer = asked_of_rsshub(address, rsshub, key, validators, allowance, feed_limit)
+    if answer.status == HTTPStatus.NOT_MODIFIED:
+        return Unchanged()
+    if answer.status != HTTPStatus.OK:
+        raise route_refused(address, rsshub, answer)
+    return changed(answer)
+
+
 def rules_limit(status: int, declared: str) -> Limit:
-    return RULES_LIMIT if status == HTTPStatus.OK else page_limit(status, declared)
+    if status == HTTPStatus.OK:
+        return Limit(most_bytes=RULES_LIMIT_BYTES, most_seconds=RULES_LIMIT_SECONDS)
+    return page_limit(status, declared)
 
 
-def rules_of(instance: str, allowance: Allowance) -> HeldRules:
-    # The radar rules of an instance, fetched within their own bounds and what is left of the
-    # discovery's minute.
-    seconds = min(RULES_LIMIT.most_seconds, allowance.ends - time.monotonic())
-    fetching = Allowance(requests=1 + MOST_REDIRECTS, seconds=seconds)
-    answer = answer_within(instance + RADAR_RULES_PATH, Validators(), fetching, rules_limit)
+def rules_of(rsshub: str, key: str | None, ends: float) -> HeldRules:
+    # The radar rules of the instance, fetched with one request within their own bounds and
+    # what is left of the discovery's minute. Rules that hold more than the fetcher makes ready
+    # are told as RSSHub's.
+    allowance = Allowance(requests=1, ends=min(ends, ends_in(RULES_LIMIT_SECONDS)))
+    outgrown = RSSHubFault(RULES_OUTGROWN.format(instance=rsshub.rstrip(ROUTE_APART)))
+    try:
+        answer = asked_of_rsshub(RULES_ADDRESS, rsshub, key, Validators(), allowance, rules_limit)
+    except Oversized as failure:
+        raise outgrown from failure
     if answer.status != HTTPStatus.OK:
         raise UnreadableFeed(error_status(answer.address, answer.status))
-    return held_rules(answer.content)
-
-
-def radar_routes(address: str, rsshub: str, allowance: Allowance) -> list[RadarRoute]:
-    # The routes RSSHub's rules give for an address; none where the instance does not answer,
-    # or answers with what is not its rules.
     try:
-        rules = rules_of(rsshub.rstrip(ROUTE_APART), allowance)
+        return held_rules(answer.content)
+    except MemoryError as failure:
+        raise outgrown from failure
+
+
+def radar_routes(address: str, rsshub: str, key: str | None, ends: float) -> list[RadarRoute]:
+    # The routes RSSHub's rules give for an address; none where the instance does not answer,
+    # or answers with what is not its rules. A key it refuses, and rules that hold more than
+    # infonium reads, are told.
+    try:
+        rules = rules_of(rsshub, key, ends)
+    except SilentRSSHub:
+        return []
+    except RSSHubFault:
+        raise
     except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL, ValidationError):
         return []
     return routes_for(address, rules)
+
+
+def best_routes(address: str, found: list[RadarRoute]) -> list[str]:
+    # The route of the rule that matches an address better than every other; where several
+    # match it equally well, the reader is told their routes, to give the one they want.
+    best = [route for route in found if route.spelled == found[0].spelled] if found else []
+    if len(best) > 1:
+        told = [
+            TOLD_ROUTE.format(address=route_address(route.route), title=route.title)
+            for route in best[:MOST_ROUTES_TOLD]
+        ]
+        more = len(best) - len(told)
+        rest = MORE_ROUTES.format(more=more) if more else ""
+        routes = ROUTES_APART.join(told)
+        raise UnreadableFeed(
+            MANY_ROUTES.format(count=len(best), address=address, routes=routes, rest=rest)
+        )
+    return [route_address(route.route) for route in best]
 
 
 def found_at(address: str, allowance: Allowance) -> Discovered:
@@ -380,11 +539,12 @@ def found_at(address: str, allowance: Allowance) -> Discovered:
     return discovered_at(address, allowance)
 
 
-def found_by_rules(address: str, rsshub: str) -> Discovered:
+def found_by_rules(address: str, rsshub: str, key: str | None) -> Discovered:
     # The feed an address leads to by the rules above; where none of them leads to a feed, as
-    # where the site turns infonium away, the first route that RSSHub's rules give for the
-    # address, and where they give none, why the rest found no feed.
-    allowance = Allowance(requests=MOST_REQUESTS, seconds=DISCOVERY_LIMIT_SECONDS)
+    # where the site turns infonium away, the route of the rule of RSSHub that matches the
+    # address best, and where none matches it, why the rest found no feed. The site's own means
+    # and RSSHub's route have requests of their own, and the minute in common.
+    ends = ends_in(DISCOVERY_LIMIT_SECONDS)
     if len(address) > ADDRESS_CHARACTERS:
         shown = address[:SHOWN_OF_LONG_ADDRESS] + TITLE_CUT_SHORT
         raise UnreadableFeed(LONG_ADDRESS.format(address=shown, most=ADDRESS_CHARACTERS))
@@ -392,29 +552,30 @@ def found_by_rules(address: str, rsshub: str) -> Discovered:
         kept = route_address(address[len(RSSHUB_SCHEME) :])
         if not re.fullmatch(ROUTE_ADDRESS_PATTERN, kept):
             raise UnreadableFeed(NOT_AN_ADDRESS.format(address=address))
-        return routed_feed(kept, rsshub, allowance)
+        return routed_feed(kept, rsshub, key, Allowance(requests=MOST_REQUESTS, ends=ends))
     if not web_addresses([address], address):
         raise UnreadableFeed(NOT_AN_ADDRESS.format(address=address))
-    allowance.kept = KEPT_FOR_RSSHUB
     try:
-        return found_at(address, allowance)
+        site = Allowance(requests=MOST_REQUESTS - KEPT_FOR_RSSHUB, ends=ends)
+        return found_at(address, site)
     except (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL):
-        allowance.kept = 0
-        found = radar_routes(address, rsshub, allowance)
-        routes = [route_address(route.route) for route in found]
-        if not allowance.left(routes):
+        routes = best_routes(address, radar_routes(address, rsshub, key, ends))
+        if not routes:
             raise
-    return routed_feed(routes[0], rsshub, allowance)
+    return routed_feed(routes[0], rsshub, key, Allowance(requests=KEPT_FOR_RSSHUB, ends=ends))
 
 
-def discovered_feed(address: str, rsshub: str) -> Discovered:
+def discovered_feed(address: str, rsshub: str, key: str | None = None) -> Discovered:
     # The feed that an address a reader gave leads to: the feed itself, a page that names its
     # feed, a show or a channel whose site keeps its feed elsewhere, or a route of the RSSHub
-    # instance at the address given. Shows on Apple Podcasts, and YouTube's channels and
-    # playlists named by their ids, are found by their addresses alone. Whichever rule refuses
-    # the address, the reader is told what they may give instead. A failure to connect is left
-    # as httpx raises it.
+    # instance at the address given, asked with its key where it is given one. Shows on Apple
+    # Podcasts, and YouTube's channels and playlists named by their ids, are found by their
+    # addresses alone. Whichever rule refuses the address, the reader is told what they may give
+    # instead, but where the instance itself is at fault. A failure to connect is left as httpx
+    # raises it.
     try:
-        return found_by_rules(address, rsshub)
+        return found_by_rules(address, rsshub, key)
+    except RSSHubFault:
+        raise
     except UnreadableFeed as refusal:
         raise UnreadableFeed(with_advice(str(refusal))) from refusal

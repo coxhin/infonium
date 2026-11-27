@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -7,15 +8,23 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import Annotated, Literal
+from urllib.parse import quote, quote_plus
 
 import httpx
-from pydantic import Field, TypeAdapter
+from pydantic import Field, SecretStr, TypeAdapter, ValidationError
 
 from infonium import lineage
 from infonium.document import OVERDUE_SOURCE, Tagged, error_text
-from infonium.subscriptions.discovery import Discovered, discovered_feed, served_at, with_advice
+from infonium.subscriptions.discovery import (
+    Discovered,
+    discovered_feed,
+    is_route,
+    polled_route,
+    rsshub_query,
+    with_advice,
+)
 from infonium.subscriptions.feed import UnreadableFeed
-from infonium.subscriptions.fetcher import Fetched, Validators, fetched_feed, unreached
+from infonium.subscriptions.fetcher import Fetched, Validators, fetched_feed, shown, unreached
 
 # The fetcher of feeds that infonium has built in: a program of the kind a plugin's fetcher is,
 # run once for each operation, its command and its answer in JSON. It polls a feed, or finds
@@ -35,13 +44,18 @@ FETCHER_LIMIT_SECONDS = 75.0
 # Memory it holds from its start and gives up first when an operation ends without its result,
 # so that it has room left to write its answer.
 ANSWER_ROOM_BYTES = 4 * 1024**2
-# The folder it is given holds its command and takes its answer.
+# The folder it is given holds its command and takes its answer. The key of the RSSHub
+# instance is given in its environment alone, so that a folder left behind holds no key; and it
+# is taken out of whatever the program writes, should a sentence or a traceback carry it.
 COMMAND_FILE = "command.json"
 ANSWER_FILE = "answer.json"
+KEY_VARIABLE = "RSSHUB_ACCESS_KEY"
+KEY_SHOWN = "…"
 # What the service is told of an operation that ended without its result.
 OUTGROWN = "{source} holds more than infonium reads"
-# Endings that polls meet all the time, whose place in the code says nothing.
-EXPECTED_ENDINGS = (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL)
+# Endings that polls meet all the time, and a bound that a feed passed, whose place in the code
+# says nothing.
+EXPECTED_ENDINGS = (UnreadableFeed, httpx.HTTPError, httpx.InvalidURL, MemoryError)
 UNANSWERED = "the fetcher of {source} ended without an answer, with status {status}"
 
 
@@ -105,20 +119,29 @@ def nothing_left() -> None:
     return None
 
 
-def carried_out(operation: Operation) -> FetcherAnswer:
+def carried_out(operation: Operation, key: str | None) -> FetcherAnswer:
     match operation:
-        case Poll(address=address, validators=validators, rsshub=rsshub):
-            return Polled(fetched=fetched_feed(served_at(address, rsshub), validators))
+        case Poll(address=address, validators=validators, rsshub=rsshub) if is_route(address):
+            return Polled(fetched=polled_route(address, validators, rsshub, key))
+        case Poll(address=address, validators=validators):
+            return Polled(fetched=fetched_feed(address, validators))
         case Discovery(address=address, rsshub=rsshub):
-            return Found(discovered=discovered_feed(address, rsshub))
+            return Found(discovered=discovered_feed(address, rsshub, key))
 
 
-def failed_at(failure: httpx.HTTPError, address: str) -> str:
-    # The address whose request failed, where httpx tells it.
+def failed_at(failure: httpx.HTTPError, address: str, key: str | None) -> str:
+    # The address whose request failed, where httpx tells it, without the key.
     try:
-        return str(failure.request.url)
+        return shown(failure.request.url, rsshub_query(key))
     except RuntimeError:
         return address
+
+
+def without_key(written: str, key: str | None) -> str:
+    # What the program writes, with the key taken out however an address wrote it.
+    for form in [key, quote(key, safe=""), quote_plus(key)] if key else []:
+        written = written.replace(form, KEY_SHOWN)
+    return written
 
 
 def refusal(operation: Operation, said: str) -> str:
@@ -126,7 +149,7 @@ def refusal(operation: Operation, said: str) -> str:
     return with_advice(said) if isinstance(operation, Discovery) else said
 
 
-def told(operation: Operation, ending: Exception) -> str:
+def told(operation: Operation, ending: Exception, key: str | None) -> str:
     # What ended an operation, in the words a reader is told: what it refused as it stands, a
     # failure of the connection with the address and what failed, and memory run out as a
     # source that holds more than infonium reads.
@@ -134,7 +157,7 @@ def told(operation: Operation, ending: Exception) -> str:
         case UnreadableFeed():
             return str(ending)
         case httpx.HTTPError():
-            said = unreached(failed_at(ending, operation.address), ending)
+            said = unreached(failed_at(ending, operation.address, key), ending)
         case httpx.InvalidURL():
             said = unreached(operation.address, ending)
         case MemoryError():
@@ -148,59 +171,71 @@ def main() -> None:
     # What this module does when it is run as a program: it carries out the operation in the
     # folder it is given and writes its answer beside it. An exception does not cross from one
     # process to another, so whatever ends the operation is answered in the words it would give
-    # a reader. Where a fault arose that is neither a refusal nor a failure of the connection,
-    # which polls meet all the time, is written to standard error, the service's own.
+    # a reader. Where a fault arose that is neither a refusal, a failure of the connection nor
+    # a bound, which polls meet all the time, is written to standard error, the service's own.
     Thread(target=lineage.end_when_abandoned, args=(nothing_left,), daemon=True).start()
     lineage.hold_data_to(FETCHER_MEMORY_BYTES)
     room = bytearray(ANSWER_ROOM_BYTES)
     folder = Path(sys.argv[1])
     operation = OPERATION.validate_json((folder / COMMAND_FILE).read_bytes())
+    key = os.environ.get(KEY_VARIABLE) or None
     try:
-        answer = carried_out(operation)
+        answer = carried_out(operation, key)
     except EXPECTED_ENDINGS as ending:
-        answer = Refused(reason=told(operation, ending))
+        del room
+        answer = Refused(reason=without_key(told(operation, ending, key), key))
     except Exception as ending:
         del room
-        traceback.print_exc()
-        answer = Refused(reason=told(operation, ending))
+        sys.stderr.write(without_key(traceback.format_exc(), key))
+        answer = Refused(reason=without_key(told(operation, ending, key), key))
     (folder / ANSWER_FILE).write_bytes(FETCHER_ANSWER.dump_json(answer))
 
 
-def answered_apart[Answer](operation: Operation, answers: TypeAdapter[Answer]) -> Answer:
-    # The answer of the fetcher to an operation, started in a session of its own and ended with
-    # all of it at its limit. Whatever ends it without its answer is refused as the address it
-    # was given.
+def answered_apart[Answer](
+    operation: Operation, answers: TypeAdapter[Answer], key: SecretStr | None
+) -> Answer:
+    # The answer of the fetcher to an operation, started in a session of its own with the key
+    # of the RSSHub instance, and ended with all of it at its limit. Whatever ends it without
+    # an answer, or with one that is not what was asked for, is refused as the address it was
+    # given.
+    given = {KEY_VARIABLE: key.get_secret_value()} if key else {}
     with TemporaryDirectory() as directory:
         folder = Path(directory)
         (folder / COMMAND_FILE).write_bytes(OPERATION.dump_json(operation))
-        with lineage.started_in_own_session([*FETCHER, directory], FETCHER_TAKES, {}) as fetcher:
+        command = [*FETCHER, directory]
+        with lineage.started_in_own_session(command, FETCHER_TAKES, given) as fetcher:
             try:
                 status = fetcher.wait(timeout=FETCHER_LIMIT_SECONDS)
             except subprocess.TimeoutExpired as overdue:
                 said = OVERDUE_SOURCE.format(source=operation.address)
                 raise UnreadableFeed(refusal(operation, said)) from overdue
+        unanswered = UNANSWERED.format(source=operation.address, status=status)
         if status != 0:
-            said = UNANSWERED.format(source=operation.address, status=status)
-            raise UnreadableFeed(refusal(operation, said))
-        return answers.validate_json((folder / ANSWER_FILE).read_bytes())
+            raise UnreadableFeed(refusal(operation, unanswered))
+        try:
+            return answers.validate_json((folder / ANSWER_FILE).read_bytes())
+        except (OSError, ValidationError) as failure:
+            raise UnreadableFeed(refusal(operation, unanswered)) from failure
 
 
-def polled_apart(address: str, validators: Validators, rsshub: str) -> Fetched:
+def polled_apart(
+    address: str, validators: Validators, rsshub: str, key: SecretStr | None = None
+) -> Fetched:
     # One poll of a feed by the fetcher, from where it stopped: a route is asked of the RSSHub
-    # instance given at the time of the poll. Whatever ends it without the feed is raised as an
-    # UnreadableFeed, a failure of the connection among them.
+    # instance given at the time of the poll, with its key. Whatever ends it without the feed
+    # is raised as an UnreadableFeed, a failure of the connection among them.
     operation = Poll(address=address, validators=validators, rsshub=rsshub)
-    match answered_apart(operation, POLL_ANSWER):
+    match answered_apart(operation, POLL_ANSWER, key):
         case Polled(fetched=fetched):
             return fetched
         case Refused(reason=reason):
             raise UnreadableFeed(reason)
 
 
-def discovered_apart(address: str, rsshub: str) -> Discovered:
+def discovered_apart(address: str, rsshub: str, key: SecretStr | None = None) -> Discovered:
     # The feed an address a reader gave leads to, found by the fetcher. Whatever ends it
     # without a feed is raised as an UnreadableFeed that tells what to give instead.
-    match answered_apart(Discovery(address=address, rsshub=rsshub), DISCOVERY_ANSWER):
+    match answered_apart(Discovery(address=address, rsshub=rsshub), DISCOVERY_ANSWER, key):
         case Found(discovered=discovered):
             return discovered
         case Refused(reason=reason):

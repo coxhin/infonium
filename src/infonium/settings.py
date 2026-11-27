@@ -39,3 +39,6 @@ class Settings(BaseSettings):
     # The RSSHub instance that serves the routes a reader subscribes to as rsshub://; the
     # default is the one that engines/rsshub starts.
     rsshub_base_url: str = "http://127.0.0.1:1200"
+    # The key that instance asks every request for, as its ACCESS_KEY: needed where others use
+    # this machine, as engines/rsshub/README.md says; none by default.
+    rsshub_access_key: SecretStr | None = None
