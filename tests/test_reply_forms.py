@@ -21,13 +21,19 @@ from infonium.survey import DocumentSurvey
 # wrote white space there without end. So in every object of every form, in the schema's order
 # and in alphabetical order alike, no key comes after a key that holds a list unless it holds a
 # list itself: an object's content comes last. Two keys are excepted, each after the one list it
-# follows. A statement's text follows its citations in alphabetical order: it is the statement
-# itself, which no model takes for done before it is written. A section's title follows its
-# statements, where it stays for the reasons DraftSection gives. A reply that names a renamed
-# field as it was named before, as a model told the schema in text may from habit, is read as
-# one that names it as it is now.
+# follows:
+# - a statement's text, after its citations in alphabetical order: it is the statement itself,
+#   which no model takes for done before it is written;
+# - a section's title, after its statements in alphabetical order. Drafted first, named heading,
+#   it led gpt-6-luna to write every quote of 5 of 101 digests in Chinese, so that each lost all
+#   its citations, against none of 101 drafted title last. The white space without end that
+#   gpt-6.1-terra and gpt-6-luna at times wrote where the title fell due last is ended by the
+#   guard of language_model, which sends the request again.
+# A reply that names a renamed field as it was named before, as a model told the schema in text
+# may from habit, is read as one that names it as it is now.
 
-# Every form a model's reply is held to, by the reply.
+# Every form a model's reply is held to, by the reply. Only the forms listed here are judged: a
+# form added later must be added here, with the call that passes it to structured or replying.
 REPLY_FORMS: dict[str, type[BaseModel]] = {
     "a digest": DraftDigest,
     "an answer about an item": DraftAnswer,
