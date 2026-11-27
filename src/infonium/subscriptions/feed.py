@@ -146,6 +146,13 @@ BOZO_EXCEPTION = "bozo_exception"
 ID = "id"
 HREF = "href"
 LINKS = "links"
+# feedparser takes each element's base anew, joining it to the base around it: given the feed's
+# address, that cost a second for 40,000 elements and 1 GiB more for 6.9 million unclosed ones.
+# It is given the address only where the feed names a base of its own, in an attribute xml:base
+# or base, as it reads either; elsewhere read_feed resolves the addresses after it, against the
+# feed's address, which gives the same.
+BASE_ATTRIBUTE = re.compile(r"\bbase\s*=", re.IGNORECASE)
+NO_BASE = ""
 
 # What a web page opens with, after an XML declaration and comments, and what a feed opens
 # with. A page declared as one but opening as a feed is taken for a feed, as some servers
@@ -669,8 +676,9 @@ def xml_feed(text: str, address: str) -> ParsedFeed:
     readable = LONG_REFERENCE.sub(
         readable_reference, ENTITY_DECLARATION.sub(ENTITY_REMOVED, read_part(text))
     )
+    base = address if BASE_ATTRIBUTE.search(readable) else NO_BASE
     try:
-        parsed = feedparser_result(readable.encode(), address)
+        parsed = feedparser_result(readable.encode(), base)
     except (KeyError, IndexError, TypeError) as failure:
         raise UnreadableFeed(NOT_A_FEED.format(address=address, found=FOUND_TANGLED)) from failure
     return ParsedFeed.model_validate(parsed)
