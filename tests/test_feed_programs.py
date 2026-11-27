@@ -560,32 +560,12 @@ KEY_LOCATIONS: dict[str, Callable[[ScriptedHandler], str]] = {
 }
 
 
-KEY_AS_IT_IS_FOLLOWED = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "T4: a discovery or a poll apart of rsshub://night/trains with the key "
-        "q+uorvex/zindlap-ü9146, which the instance on 9146 redirects to "
-        "http://127.0.0.1:9147/sso?key=q+uorvex/zindlap-%C3%BC9146 (the key written as it is, "
-        "its letter outside ASCII escaped as an address must), is not to be followed and to be "
-        "told; the program follows it: the site on 9147 hears "
-        "/sso?key=q+uorvex/zindlap-%C3%BC9146. The same key escaped once or twice, under another "
-        "name or inside ?rd= is not followed"
-    ),
-)
-
-
 def keyed_step(step: str, server: ScriptedServer) -> Callable[[], object]:
     return lambda: KEY_STEPS[step](server.address(""), SecretStr(ESCAPED_KEY))
 
 
 @pytest.mark.parametrize("step", sorted(KEY_STEPS))
-@pytest.mark.parametrize(
-    "location",
-    [
-        pytest.param(where, marks=KEY_AS_IT_IS_FOLLOWED) if where == "written as it is" else where
-        for where in sorted(KEY_LOCATIONS)
-    ],
-)
+@pytest.mark.parametrize("location", sorted(KEY_LOCATIONS))
 def test_apart_a_route_redirected_elsewhere_by_an_address_that_holds_the_key_is_not_followed(
     server: ScriptedServer,
     site: ScriptedServer,

@@ -622,20 +622,6 @@ def key_rejected(request: httpx.Request) -> httpx.Response:
 
 
 OVERGROWN_RULES = json.dumps({"padding": " " * RULES_LIMIT_BYTES}).encode()
-REFUSED_KEY_AT_RULES = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "T3: a discovery of https://nighttrains.test/line/north, a page that names no feed, with "
-        "the key a-key-of-another-instance, where RSSHub refuses the key at /api/radar/rules (403, "
-        "'RejectError: Authentication failed. Access denied.'), is to be told why the page leads "
-        "to no feed, that the address of a feed may be given, then the refused key with "
-        "INFONIUM_RSSHUB_ACCESS_KEY, and no route; it is told as where RSSHub has no rule: "
-        "'... is a web page that names no feed, and none was found where its site would keep "
-        "one; give the address of a feed, or a route of RSSHub as rsshub://<route>, instead': "
-        "the refused key is not told and a route is advised. The same answer without a key is "
-        "told as a key missing, and a route that refuses the key as a key refused"
-    ),
-)
 # Each fault: how the instance answers its rules, the key given, and the words that tell it.
 RULES_FAULTS: dict[str, tuple[Answer, str | None, tuple[str, ...]]] = {
     "RSSHub not answering (ConnectError)": (
@@ -658,24 +644,35 @@ RULES_FAULTS: dict[str, tuple[Answer, str | None, tuple[str, ...]]] = {
 }
 
 
-@pytest.mark.parametrize(
-    "fault",
-    [
-        pytest.param(fault, marks=REFUSED_KEY_AT_RULES) if fault == "a key refused" else fault
-        for fault in sorted(RULES_FAULTS)
-    ],
-)
+def rules_asked_with(sites: FeedSites) -> list[str | None]:
+    # The key each request for the rules carried, if any.
+    return [
+        request.url.params.get("key")
+        for request in sites.requests
+        if str(request.url.copy_with(query=None)) == RULES
+    ]
+
+
+@pytest.mark.parametrize("fault", sorted(RULES_FAULTS))
 def test_a_fault_of_rsshub_at_its_rules_is_told_after_why_the_address_leads_to_no_feed(
     feed_sites: FeedSites, fault: str
 ) -> None:
+    # The instance answers every address it is asked, so that the rules are answered where a
+    # request with the key asks for them.
     answer, key, said = RULES_FAULTS[fault]
-    serve_a_page_with_no_feed(feed_sites, NIGHT_PAGE, b"{}")
+    instance = httpx.URL(RSSHUB).host
+    feed_sites.serve(NIGHT_PAGE, answered(page_naming(""), kind_of(HTML)))
+    feed_sites.serve_everywhere_at(instance, answered(b"{}", kind_of(RULES_KIND)))
     without_a_rule = refusal(NIGHT_PAGE, RSSHUB, "a page no rule of RSSHub matches", key)
     reason = without_a_rule.split(";")[0]
     feed_sites.forget()
     feed_sites.serve(NIGHT_PAGE, answered(page_naming(""), kind_of(HTML)))
-    feed_sites.serve(RULES, answer)
+    feed_sites.serve_everywhere_at(instance, answer)
     told = refusal(NIGHT_PAGE, RSSHUB, f"a page whose rules met {fault}", key)
+    assert rules_asked_with(feed_sites) == [key], (
+        f"a page whose rules met {fault} asked RSSHub {asked_of_rsshub(feed_sites)}, not its "
+        f"rules once with the key {key}"
+    )
     at_reason = told.find(reason)
     at_advice = told.find(FEED_ADVICE, at_reason + len(reason))
     at_fault = [told.find(word, at_advice) for word in said]
@@ -732,18 +729,6 @@ KEY_LOCATIONS: dict[str, Callable[[httpx.Request], str]] = {
     "escaped twice": lambda r: f"{ELSEWHERE}/sso?key={quote(quote(KEY, safe=''), safe='')}",
     "inside the address asked": lambda r: f"{ELSEWHERE}/sso?rd={quote(str(r.url), safe='')}",
 }
-KEY_AS_IT_IS_FOLLOWED = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "T4: a discovery or a poll of rsshub://night/trains with the key q+uorvex/zindlap-ü9146, "
-        "which the instance redirects to https://login.test:8443/sso?key=q+uorvex/zindlap-"
-        "%C3%BC9146 (the key written as it is, its letter outside ASCII escaped as an address "
-        "must), is not to be followed and to be told; the redirect is followed: the other "
-        "server is asked that address, key and all, and the discovery gives its feed, the poll "
-        "Changed. The same key escaped once or twice, under another name or inside ?rd= is "
-        "not followed, nor a key without + written as it is"
-    ),
-)
 KEYED_STEPS: dict[str, Callable[[], object]] = {
     "a discovery": lambda: discovered_feed(NIGHT_ROUTE_ADDRESS, RSSHUB, KEY),
     "a poll": lambda: polled_route(NIGHT_ROUTE_ADDRESS, Validators(), RSSHUB, KEY),
@@ -759,13 +744,7 @@ def asked_elsewhere(sites: FeedSites) -> list[httpx.Request]:
 
 
 @pytest.mark.parametrize("step", sorted(KEYED_STEPS))
-@pytest.mark.parametrize(
-    "location",
-    [
-        pytest.param(where, marks=KEY_AS_IT_IS_FOLLOWED) if where == "written as it is" else where
-        for where in sorted(KEY_LOCATIONS)
-    ],
-)
+@pytest.mark.parametrize("location", sorted(KEY_LOCATIONS))
 def test_a_route_redirected_to_another_server_by_an_address_that_holds_the_key_is_not_followed(
     feed_sites: FeedSites, location: str, step: str
 ) -> None:
