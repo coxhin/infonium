@@ -369,6 +369,9 @@ class WithoutAHost(StrEnum):
 @example(begins=WithoutAHost.FEED, word="feed", after="")
 @example(begins=WithoutAHost.FEED_SLASHES, word="feed", after="")
 @example(begins=WithoutAHost.SLASHES, word="feed", after="")
+@example(begins=WithoutAHost.HTTPS, word="feed", after=":8080/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", after="@/rss")
+@example(begins=WithoutAHost.HTTPS, word="feed", after="user@/rss")
 @EXAMPLES
 def test_a_web_address_that_names_no_host_is_refused_before_anything_is_looked_for(
     subscribing_app: App, feeds: FeedStandin, begins: WithoutAHost, word: str, after: str

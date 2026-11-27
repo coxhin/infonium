@@ -210,18 +210,22 @@ class Poller:
 
     def poll(self, begun: BegunPoll) -> None:
         # The feed is asked for from where the fetcher stopped, unless the subscription was
-        # removed before the poll had its turn. A poll that fails keeps its failure itself, in
-        # the poller's own thread, which holds nothing when it begins. A poll whose turn comes
-        # once the schedule has stopped stays under way, and begins again when infonium does.
+        # removed before the poll had its turn. A poll whose feed cannot be fetched keeps that
+        # failure itself, in the poller's own thread, which holds nothing when it begins. What
+        # the library raises while the poll settles is no failure of the feed: it escapes, and
+        # stops the schedule as any fault of its own does. A poll whose turn comes once the
+        # schedule has stopped stays under way, and begins again when infonium does.
         if self.stopped.is_set():
             return
         with self.store.transaction(begun.owner) as transaction:
             asked = polled(Subscriptions(transaction), begun)
         for subscription in asked:
             try:
-                self.settle(begun, self.fetched(subscription.feed, subscription.validators))
+                fetched = self.fetched(subscription.feed, subscription.validators)
             except Exception as failure:
                 self.keep_failure(begun, failure)
+            else:
+                self.settle(begun, fetched)
         if not asked:
             logger.info("subscription %s was removed before its poll began", begun.subscription_id)
 

@@ -58,8 +58,12 @@ FEED_PREFIX = re.compile(r"^(?i:feed):")
 NAMED_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
 ASSUMED_SCHEME = "https://"
 HOST_FOLLOWS = "//"
-# A web address names its host right after its scheme: https:///path names none.
-NAMED_HOST = re.compile(r"^(?i:https?)://[^/?#\s]")
+# Where a web address's scheme ends, what ends the part that names its user, its host and its
+# port, and what parts the host from a user before it and from a port after it.
+SCHEME_END = "://"
+AUTHORITY_END = re.compile(r"[/?#]")
+USER_END = "@"
+PORT_START = ":"
 RSSHUB_ROUTE_PATTERN = rf"^{re.escape(RSSHUB_SCHEME)}\S+$"
 NO_FEED_ADDRESS = (
     "{address} is neither a web address (http:// or https://) nor a route of RSSHub"
@@ -276,6 +280,14 @@ def instant_order(instant: datetime) -> int:
     return (instant - EPOCH) // MICROSECOND
 
 
+def named_host(web_address: str) -> str:
+    # The host a web address names, without the user it may name before it and the port after
+    # it; nothing where it names none, as https:///path, https://:8080/path and
+    # https://user@/path do.
+    authority = AUTHORITY_END.split(web_address.partition(SCHEME_END)[2], maxsplit=1)[0]
+    return authority.rpartition(USER_END)[2].partition(PORT_START)[0]
+
+
 def subscribed_address(address: str) -> str:
     # The address that is looked into for a feed, for the one a reader gave: the web address
     # that one written for a feed (feed:) stands for, and reached over HTTPS where it names no
@@ -287,7 +299,7 @@ def subscribed_address(address: str) -> str:
         if NAMED_SCHEME.match(unwrapped)
         else f"{ASSUMED_SCHEME}{unwrapped.removeprefix(HOST_FOLLOWS)}"
     )
-    is_web_address = bool(re.fullmatch(WEB_ADDRESS_PATTERN, named) and NAMED_HOST.match(named))
+    is_web_address = bool(re.fullmatch(WEB_ADDRESS_PATTERN, named)) and bool(named_host(named))
     if not is_web_address and not re.fullmatch(RSSHUB_ROUTE_PATTERN, named):
         raise UnreadableFeed(NO_FEED_ADDRESS.format(address=address))
     return named
