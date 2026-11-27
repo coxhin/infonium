@@ -14,6 +14,7 @@ from infonium import api, embedding, intake, search, speech, webpictures
 from infonium.language_model import WireApi
 from infonium.library import LibraryStore
 from infonium.settings import Settings
+from infonium.subscriptions.poller import Poller
 from tests import pdf_engine_standin
 from tests.embedding_standin import (
     EMBEDDING_BASE_URL,
@@ -22,6 +23,7 @@ from tests.embedding_standin import (
     EmbeddingStandin,
     embedding_standin,
 )
+from tests.feed_standin import FeedStandin
 from tests.model_standin import (
     GLM_BASE_URL,
     MODEL_BASE_URL,
@@ -32,6 +34,7 @@ from tests.model_standin import (
     model_standin,
 )
 from tests.service import LOWERED_FETCH_BYTES, LOWERED_FETCH_SECONDS, App, Site, digest_reply
+from tests.subscribing import reading_held
 
 # The examples of a property run as fast as the extractor and the parsers they call, whose
 # first calls load what they keep; a deadline per example would fail them at random.
@@ -159,8 +162,8 @@ def start_app(
     embedder: EmbeddingStandin,
 ) -> Iterator[Callable[..., App]]:
     # Starts the service on the test's library, its models speaking the wire API given, its
-    # embedding engine the stand-in by the name of the model given, and translating into the
-    # language given.
+    # embedding engine the stand-in by the name of the model given, translating into the
+    # language given, and with the poller that the maker given makes on its library and intake.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
     # The pictures of a page are asked of the stand-in site too, whatever host they name.
@@ -187,6 +190,7 @@ def start_app(
         wire_api: WireApi = WireApi.RESPONSES,
         embedding_model: str = EMBEDDING_MODEL,
         language: str = api.settings.language,
+        poller: Callable[[], Poller] = made_poller,
     ) -> App:
         store = LibraryStore(tmp_path / "data")
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
@@ -220,7 +224,7 @@ def start_app(
         monkeypatch.setattr(api.settings, "language", language)
         translating = made_translator()
         monkeypatch.setattr(api, "translator", lambda: translating)
-        polling = made_poller()
+        polling = poller()
         monkeypatch.setattr(api, "poller", lambda: polling)
         client = TestClient(api.app)
         client.__enter__()
@@ -240,3 +244,24 @@ def start_app(
 @pytest.fixture
 def app(start_app: Callable[..., App]) -> App:
     return start_app()
+
+
+@pytest.fixture
+def feeds(start_app: Callable[..., App]) -> Iterator[FeedStandin]:
+    # The feeds that a service started with feeds.poller as its poller's maker finds and polls,
+    # and the clock it reads. A call the test still holds is cut off before the services stop.
+    standin = FeedStandin()
+    yield standin
+    standin.let_go()
+
+
+@pytest.fixture
+def subscribing_app(start_app: Callable[..., App], feeds: FeedStandin) -> App:
+    return start_app(poller=feeds.poller)
+
+
+@pytest.fixture
+def held_reading(subscribing_app: App, feeds: FeedStandin) -> str:
+    # The address of a posting whose reading is held until the test ends, so that no other
+    # posting is admitted meanwhile.
+    return reading_held(subscribing_app, feeds)
