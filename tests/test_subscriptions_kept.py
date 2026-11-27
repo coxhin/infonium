@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from threading import Event, Lock, get_ident
 from typing import Any
+from uuid import uuid4
 
 import httpx2
 import pytest
@@ -26,7 +27,7 @@ from tests.subscribing import (
     AWAITED,
     FAILED,
     READ,
-    UNDERWAY,
+    UNADMITTED,
     admission_of,
     admissions_ended,
     answered,
@@ -38,6 +39,7 @@ from tests.subscribing import (
     poll_by_hand,
     polled,
     postings_page,
+    rested,
     served_feed,
     stopped_in_time,
     subscribed,
@@ -107,14 +109,16 @@ def copied_library(source_file: Path, copy: Path) -> None:
 
 
 def started_on(
-    start_app: Callable[..., App], feeds: FeedStandin, app: App, copy: Path, tmp_path: Path
+    start_app: Callable[..., App], feeds: FeedStandin, library: Path, tmp_path: Path
 ) -> App:
-    # The service stopped, and started again on the library as the copy holds it: what a service
-    # killed when the copy was made leaves to the next start.
-    app.stop()
-    app.store.engine.dispose()
-    copied_library(copy, library_file(tmp_path))
-    return start_app(poller=feeds.poller)
+    # The service started on a folder of its own, on the library as the file given holds it:
+    # what a service killed or stopped when it held that leaves to the next start. A service
+    # stopped in the test's process leaves its threads at work, where a process would end; none
+    # of them reaches this folder.
+    folder = tmp_path / f"started-{uuid4().hex}"
+    folder.mkdir()
+    copied_library(library, folder / LIBRARY_FILE)
+    return start_app(poller=feeds.poller, folder=folder.name)
 
 
 def everything_shown(app: App, owner: str) -> dict[str, Any]:
@@ -159,6 +163,7 @@ def test_subscriptions_postings_and_what_was_seen_are_kept_over_a_restart(
     polled(app, mine["id"], at)
     with as_owner(other):
         subscribed(app, served_feed(feeds, "kept-theirs", [missing_posting("theirs-0")]), 0)
+    rested(app, feeds)
     before = {owner: everything_shown(app, owner) for owner in (LOCAL_OWNER, other)}
     polls = len(feeds.calls_of(FeedFunction.FETCHED))
     app.stop()
@@ -176,37 +181,41 @@ def test_subscriptions_postings_and_what_was_seen_are_kept_over_a_restart(
 
 
 def test_the_service_stops_in_time_while_postings_wait_and_admits_them_after_it_starts(
-    start_app: Callable[..., App], feeds: FeedStandin
+    start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
     app = start_app(poller=feeds.poller)
     postings = [page_posting(app, f"waiting-{number}") for number in range(3)]
     app.site.held[postings[0].key] = Event()
     view = subscribed(app, served_feed(feeds, "waiting", postings), admit=3)
+    # The reading of the newest posting may begin before its admission is kept: the service is
+    # stopped once both are, and the others wait.
     waited_for(
-        lambda: app.site.hits[f"/page/{postings[0].key}"], lambda hits: hits >= 1, "the reading"
-    )
-    admissions = [admission_of(posting) for posting in every_posting(app, view["id"])]
-    assert admissions == [ADMITTED, AWAITED, AWAITED], (
-        f"S8: the newest posting was not admitted first and the others left waiting: {admissions}"
+        lambda: (
+            app.site.hits[f"/page/{postings[0].key}"],
+            [admission_of(posting) for posting in every_posting(app, view["id"])],
+        ),
+        lambda seen: seen[0] >= 1 and seen[1] == [ADMITTED, AWAITED, AWAITED],
+        "S8: the newest posting admitted and being read, the others waiting",
     )
     stopped_in_time(app, "while postings wait and one is being read")
-    again = start_app(poller=feeds.poller)
-    shown = admissions_ended(again, view["id"])
+    again = started_on(start_app, feeds, library_file(tmp_path), tmp_path)
+    rest = rested(again, feeds)
+    shown = rest["postings"][view["id"]]
     assert [posting["admission"]["item"]["reading"]["kind"] for posting in shown] == [READ] * 3, (
-        "S14, S15: postings admitted or awaited when the service stopped were not read after it "
-        f"started: {shown}"
+        "S14, S15, S20: postings admitted or awaited when the service stopped were not read "
+        f"after it started: {shown}"
     )
-    items = answered(again.client.get("/api/items"), "listing the items")
-    assert sorted(entry["id"] for entry in items) == sorted(
+    assert sorted(entry["id"] for entry in rest["items"]) == sorted(
         item_identity(LOCAL_OWNER, posting.address) for posting in postings
-    ), f"S15: the postings did not lead to one item each over a restart: {items}"
-    # A reading that the stopped service's intake still holds ends here, not in a later test.
+    ), f"S15, S20: the postings did not lead to one item each over a restart: {rest['items']}"
+    # The reading that the stopped service's intake still holds, on its own folder, ends here
+    # and not in a later test.
     again.site.let_go()
     watched(feeds)
 
 
 def test_the_service_stops_in_time_while_polls_fail_and_polls_them_after_it_starts(
-    start_app: Callable[..., App], feeds: FeedStandin
+    start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
     app = start_app(poller=feeds.poller)
     addresses = [
@@ -221,16 +230,15 @@ def test_the_service_stops_in_time_while_polls_fail_and_polls_them_after_it_star
         lambda: len(feeds.calls_of(FeedFunction.FETCHED)), lambda polls: polls >= 1, "a poll"
     )
     stopped_in_time(app, "while polls fail")
-    again = start_app(poller=feeds.poller)
-    for view in views:
-        ended = waited_for(
-            partial(viewed, again, view["id"]),
-            lambda shown: shown["poll"]["kind"] != UNDERWAY,
-            "S20: the end of a poll under way or due when the service stopped",
-        )
-        assert ended["poll"]["kind"] == FAILED, (
-            f"S20: a poll due when the service stopped while polls failed did not end failed "
-            f"after it started: {ended['poll']}"
+    again = started_on(start_app, feeds, library_file(tmp_path), tmp_path)
+    ended = {view["id"]: view["poll"] for view in rested(again, feeds)["subscriptions"]}
+    assert set(ended) == {view["id"] for view in views}, (
+        "S14: the subscriptions are not as they were when the service stopped"
+    )
+    for poll in ended.values():
+        assert poll["kind"] == FAILED, (
+            "S20: a poll due when the service stopped while polls failed did not end failed "
+            f"after it started: {poll}"
         )
     assert all(feeds.polls_of(address) >= 1 for address in addresses), (
         "S20: a poll due when the service stopped was not begun after it started"
@@ -238,7 +246,7 @@ def test_the_service_stops_in_time_while_polls_fail_and_polls_them_after_it_star
 
 
 def test_the_service_stops_in_time_while_a_poll_is_held_and_begins_it_again_after(
-    start_app: Callable[..., App], feeds: FeedStandin
+    start_app: Callable[..., App], feeds: FeedStandin, tmp_path: Path
 ) -> None:
     app = start_app(poller=feeds.poller)
     first = [missing_posting(f"stop-held-{number}") for number in range(2)]
@@ -254,12 +262,8 @@ def test_the_service_stops_in_time_while_a_poll_is_held_and_begins_it_again_afte
     poll_by_hand(app, view["id"])
     held_reached(hold, "the poll by hand")
     stopped_in_time(app, "while a poll is held under way")
-    again = start_app(poller=feeds.poller)
-    shown = waited_for(
-        lambda: every_posting(again, view["id"]),
-        lambda postings: len(postings) == 3,
-        "S20: the poll under way when the service stopped, begun again after it started",
-    )
+    again = started_on(start_app, feeds, library_file(tmp_path), tmp_path)
+    shown = rested(again, feeds)["postings"][view["id"]]
     assert [posting["number"] for posting in shown] == [3, 2, 1], (
         "S20: a poll begun again after a stop did not list what it found once"
     )
@@ -360,9 +364,8 @@ class KilledAt:
                 self.copies.append(copy)
 
     def started_on(self, number: int) -> App:
-        self.app = started_on(
-            self.start_app, self.feeds, self.app, self.copies[number], self.tmp_path
-        )
+        self.app.stop()
+        self.app = started_on(self.start_app, self.feeds, self.copies[number], self.tmp_path)
         return self.app
 
 
@@ -379,20 +382,19 @@ def test_a_service_killed_at_any_commit_starts_again_with_nothing_lost_or_double
     copies = len(killed_at.copies)
     assert copies >= 10, f"the service's work committed only {copies} changes to the library"
     app = killed_at.started_on(int(moment * copies))
-    views = listed(app)
+    waiting = {
+        (view["id"], posting["number"])
+        for view in listed(app)
+        for posting in every_posting(app, view["id"])
+        if admission_of(posting) != UNADMITTED
+    }
+    rest = rested(app, killed_at.feeds)
+    views = rest["subscriptions"]
     assert len(views) <= 1, f"S15: one feed was subscribed to twice: {views}"
     if not views:
-        assert answered(app.client.get("/api/items"), "listing the items") == [], (
-            "S15: a kill before a subscription was kept left items"
-        )
+        assert rest["items"] == [], "S15: a kill before a subscription was kept left items"
         return
-    subscription = views[0]["id"]
-    waiting = {
-        posting["number"]
-        for posting in every_posting(app, subscription)
-        if admission_of(posting) != "unadmitted"
-    }
-    shown = admissions_ended(app, subscription)
+    shown = rest["postings"][views[0]["id"]]
     numbers = [posting["number"] for posting in shown]
     assert numbers == list(range(len(shown), 0, -1)) and len(shown) in {3, 5}, (
         f"S15: after a kill, the postings are not listed once each, numbered from 1: {numbers}"
@@ -406,8 +408,9 @@ def test_a_service_killed_at_any_commit_starts_again_with_nothing_lost_or_double
         for posting in shown
         if admission_of(posting) == ADMITTED
     }
-    assert waiting <= set(admitted), (
-        f"S15: after a kill, postings that were awaited were forgotten: {waiting - set(admitted)}"
+    forgotten = {number for subscription, number in waiting if subscription == views[0]["id"]}
+    assert forgotten <= set(admitted), (
+        f"S15: after a kill, postings that were awaited were forgotten: {forgotten - set(admitted)}"
     )
     for number, item in admitted.items():
         address = next(posting["address"] for posting in shown if posting["number"] == number)
@@ -415,10 +418,10 @@ def test_a_service_killed_at_any_commit_starts_again_with_nothing_lost_or_double
             item_identity(LOCAL_OWNER, address),
             READ,
         ), (
-            f"S15: after a kill, a posting was not admitted as the one item of its address, read: "
+            "S15: after a kill, a posting was not admitted as the one item of its address, read: "
             f"{item}"
         )
-    items = answered(app.client.get("/api/items"), "listing the items")
+    items = rest["items"]
     assert len({entry["id"] for entry in items}) == len(items) == len(admitted), (
         f"S15: after a kill, the postings admitted do not lead to one item each: {items}"
     )
@@ -441,12 +444,9 @@ def test_a_poll_cut_off_by_a_kill_is_begun_again_when_the_service_starts(
     hold.release()
     waited_for(feeds.running_now, lambda running: running == 0, "the end of the poll")
     admissions_ended(app, view["id"])
-    again = started_on(start_app, feeds, app, copy, tmp_path)
-    shown = waited_for(
-        lambda: every_posting(again, view["id"]),
-        lambda postings: len(postings) == 5,
-        "the poll cut off by a kill, begun again",
-    )
+    app.stop()
+    again = started_on(start_app, feeds, copy, tmp_path)
+    shown = rested(again, feeds)["postings"][view["id"]]
     assert feeds.polls_of(feed) == 2, (
         "S5: a poll cut off by the service's stopping was not begun again when it started"
     )

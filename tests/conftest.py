@@ -33,6 +33,7 @@ from tests.feed_sites import (
     FeedSites,
 )
 from tests.feed_standin import INTERVAL, FeedStandin
+from tests.library_before_digest_styles import DATA_FOLDER
 from tests.model_standin import (
     GLM_BASE_URL,
     MODEL_BASE_URL,
@@ -172,7 +173,8 @@ def start_app(
 ) -> Iterator[Callable[..., App]]:
     # Starts the service on the test's library, its models speaking the wire API given, its
     # embedding engine the stand-in by the name of the model given, translating into the
-    # language given, and with the poller that the maker given makes on its library and intake.
+    # language given, with the poller that the maker given makes on its library and intake, and
+    # on the library in the test's folder of the name given.
     site = Site()
     monkeypatch.setattr(httpx, "stream", site.stream)
     # The pictures of a page are asked of the stand-in site too, whatever host they name.
@@ -200,8 +202,9 @@ def start_app(
         embedding_model: str = EMBEDDING_MODEL,
         language: str = api.settings.language,
         poller: Callable[[], Poller] = made_poller,
+        folder: str = DATA_FOLDER,
     ) -> App:
-        store = LibraryStore(tmp_path / "data")
+        store = LibraryStore(tmp_path / folder)
         reader = intake.Intake(store=store, readers=api.READERS, engines=engines)
         monkeypatch.setattr(api, "library_store", lambda: store)
         monkeypatch.setattr(api, "intake", lambda: reader)

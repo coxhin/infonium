@@ -299,5 +299,44 @@ def is_underway(app: App, address: str) -> bool:
     )
 
 
+def shown_now(app: App) -> dict[str, Any]:
+    # What the service shows the owner of their subscriptions, the postings of each, and the
+    # items of the library, read once.
+    views = listed(app)
+    return {
+        "subscriptions": views,
+        "postings": {view["id"]: every_posting(app, view["id"]) for view in views},
+        "items": answered(app.client.get("/api/items"), "listing the items"),
+    }
+
+
+def is_at_rest(shown: dict[str, Any]) -> bool:
+    # No poll is under way, no posting waits, and no item is being read.
+    return (
+        all(view["poll"]["kind"] != UNDERWAY for view in shown["subscriptions"])
+        and all(
+            posting["admission"]["kind"] != AWAITED
+            for postings in shown["postings"].values()
+            for posting in postings
+        )
+        and all(entry["reading"]["attempt"]["kind"] != UNDERWAY for entry in shown["items"])
+    )
+
+
+def rested(app: App, feeds: FeedStandin) -> dict[str, Any]:
+    # What the service shows the owner once it has come to rest, and shows the same again after
+    # the poller has watched a few times more.
+    def twice() -> tuple[dict[str, Any], dict[str, Any]]:
+        first = shown_now(app)
+        watched(feeds)
+        return first, shown_now(app)
+
+    return waited_for(
+        twice,
+        lambda read: is_at_rest(read[0]) and read[0] == read[1],
+        "the service's coming to rest: no poll under way, no posting waiting, no reading",
+    )[0]
+
+
 def admission_of(posting: dict[str, Any]) -> str:
     return str(posting["admission"]["kind"])
