@@ -97,8 +97,9 @@ RSSHUB_MESSAGE = "(//p[@class='message'])[1]/code//text()"
 FULL_STOP = "."
 KEY_ERROR = "RejectError"
 # Where several of RSSHub's rules match an address equally well, the reader is told their
-# routes, this many at most.
-MOST_ROUTES_TOLD = 8
+# routes, this many at most: a Bilibili space is matched by nine alike, and the one of a
+# user's videos is the ninth of them.
+MOST_ROUTES_TOLD = 12
 
 # A page is fetched as a feed is, within less; one discovery within a minute and eight
 # requests, each redirect among them. A request is not made once either is spent, and the
