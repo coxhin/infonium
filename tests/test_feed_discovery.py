@@ -1,19 +1,23 @@
 import json
 import re
+import string
 import time
-from collections.abc import Callable
-from urllib.parse import quote, quote_plus, urljoin, urlsplit
+from collections.abc import Callable, Mapping
+from contextlib import suppress
+from typing import Any
+from urllib.parse import quote, quote_plus, unquote, urljoin, urlsplit
 
 import httpx
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
+from yt_dlp.utils import DownloadError
 
 from infonium.document import OVERDUE_SOURCE, OVERSIZE_SOURCE
 from infonium.subscriptions.discovery import discovered_feed, polled_route, served_at
 from infonium.subscriptions.feed import ADDRESS_CHARACTERS, UnreadableFeed, read_feed
-from infonium.subscriptions.fetcher import Changed, Validators
+from infonium.subscriptions.fetcher import Changed, Validators, fetched_feed
 from tests.feed_server import REJECTED, RSSHUB_ERROR
 from tests.feed_sites import (
     CONTENT_TYPE,
@@ -33,6 +37,7 @@ from tests.feed_sites import (
     trickling,
 )
 from tests.feed_writing import FAULT_EXAMPLES, RSS_KIND, youtube_feed
+from tests.yt_dlp_standin import channel_answer
 
 # Judgments of discovered_feed (D1 to D7 and their amendments), finding feeds on stand-in sites
 # that each test scripts.
@@ -992,6 +997,7 @@ def test_a_youtube_channel_by_its_id_leads_to_youtubes_feed_without_its_page(
         f"the channel {address} was found at {discovered.address} with the fetches "
         f"{feed_sites.asked()}, not at YouTube's feed {at} alone"
     )
+    assert not feed_sites.yt_dlp.asked, f"the channel {address} had yt-dlp asked"
 
 
 playlist_ids = st.text(
@@ -1078,6 +1084,9 @@ def test_a_youtube_channel_by_its_handle_is_found_through_its_page(
         f"the channel {address}, whose page {carried}, was found at {discovered.address}, not at "
         f"its feed {CHANNEL_FEED}"
     )
+    assert not feed_sites.yt_dlp.asked, (
+        f"the channel {address}, whose page YouTube answered, had yt-dlp asked (Y2)"
+    )
 
 
 CONSENT = "https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%2F%40nighttrains"
@@ -1088,21 +1097,17 @@ def common_paths_asked(sites: FeedSites) -> list[str]:
     return [asked for asked in sites.asked() if urlsplit(asked).path in COMMON_FEED_PATHS]
 
 
-def test_a_youtube_page_that_asks_for_consent_tells_the_reader_to_give_the_channels_id(
-    feed_sites: FeedSites,
-) -> None:
-    address = "https://www.youtube.com/@nighttrains"
-    feed_sites.serve(address, moved(CONSENT, 302))
-    feed_sites.serve(CONSENT, answered(CONSENT_PAGE, kind_of(HTML)))
-    told = refusal(address, RSSHUB, f"the channel {address} that YouTube answered with consent")
-    assert address in told and "channel" in told and " id" in told, (
-        f"a channel whose page asks for consent was refused as {told!r}, which does not tell the "
-        "reader to give the channel's address with its id"
-    )
-    assert not common_paths_asked(feed_sites), (
-        f"finding the feed of a channel whose page asks for consent fetched {feed_sites.asked()}, "
-        "where YouTube's pages have no paths of feeds tried"
-    )
+def serve_consent(sites: FeedSites) -> None:
+    # YouTube answers every address on its hosts with its page that asks for consent to cookies.
+    for host in YOUTUBE_HOSTS:
+        sites.serve_everywhere_at(host, moved(CONSENT, 302))
+    sites.serve(CONSENT, answered(CONSENT_PAGE, kind_of(HTML)))
+
+
+def serve_channel_feed(sites: FeedSites, channel: str) -> str:
+    at = YOUTUBE_FEED.format(query=f"channel_id={channel}")
+    sites.serve(at, answered(youtube_feed(channel, VIDEOS), kind_of(ATOM_KIND)))
+    return at
 
 
 def test_a_youtube_page_that_names_no_feed_has_no_paths_of_feeds_tried(
@@ -1119,6 +1124,300 @@ def test_a_youtube_page_that_names_no_feed_has_no_paths_of_feeds_tried(
         f"finding the feed of a YouTube page that names none fetched {feed_sites.asked()}, where "
         "YouTube's pages have no paths of feeds tried"
     )
+    assert not feed_sites.yt_dlp.asked, (
+        f"the channel {address}, whose page YouTube answered naming no feed, had yt-dlp asked (Y2)"
+    )
+
+
+# Y1: a channel named by its handle or an older name, which YouTube answers with its page that
+# asks for consent, is found through yt-dlp, at YouTube's own feed of the id yt-dlp gives.
+NAME_CHARACTERS = string.ascii_letters + string.digits
+handles = st.text(
+    st.sampled_from([*NAME_CHARACTERS, "_", "-", ".", *"夜行列車チャンネルéü"]),
+    min_size=3,
+    max_size=30,
+).map(lambda handle: f"@{handle}")
+older_names = st.tuples(
+    st.sampled_from(("c", "user")),
+    st.text(st.sampled_from(NAME_CHARACTERS), min_size=1, max_size=20),
+).map("/".join)
+# What may follow a channel's name in its address.
+AFTER_NAMES = ("", "/", "/videos", "/featured", "?view=0", "/videos?view=0&sort=dd")
+
+
+@EXAMPLES
+@given(
+    channel=channel_ids,
+    host=st.sampled_from(YOUTUBE_HOSTS),
+    name=st.one_of(handles, older_names),
+    after=st.sampled_from(AFTER_NAMES),
+    escaped=st.booleans(),
+)
+def test_a_youtube_channel_by_its_handle_that_asks_for_consent_is_found_through_yt_dlp(
+    feed_sites: FeedSites, channel: str, host: str, name: str, after: str, escaped: bool
+) -> None:
+    feed_sites.forget()
+    serve_consent(feed_sites)
+    at = serve_channel_feed(feed_sites, channel)
+    feed_sites.yt_dlp.said = lambda asked: channel_answer(asked, channel)
+    address = f"https://{host}/{quote(name, safe='@/') if escaped else name}{after}"
+    discovered = discovered_feed(address, RSSHUB)
+    assert discovered.address == at and at in feed_sites.asked(), (
+        f"the channel {address}, which YouTube answered with consent and yt-dlp names {channel}, "
+        f"was found at {discovered.address} with the fetches {feed_sites.asked()}, not at "
+        f"YouTube's feed {at}"
+    )
+    assert len(feed_sites.yt_dlp.asked) == 1, (
+        f"finding the channel {address} asked yt-dlp {feed_sites.yt_dlp.asked}, not once (Y3)"
+    )
+    assert len(feed_sites.requests) <= MOST_REQUESTS, (
+        f"finding the channel {address} made the requests {feed_sites.asked()}"
+    )
+
+
+def test_a_channel_found_by_its_handle_and_by_its_id_is_found_at_one_address(
+    feed_sites: FeedSites,
+) -> None:
+    serve_consent(feed_sites)
+    at = serve_channel_feed(feed_sites, CHANNEL)
+    feed_sites.yt_dlp.said = lambda asked: channel_answer(asked, CHANNEL)
+    by_handle = discovered_feed("https://www.youtube.com/@nighttrains", RSSHUB).address
+    by_id = discovered_feed(f"https://www.youtube.com/channel/{CHANNEL}", RSSHUB).address
+    assert by_handle == by_id == at, (
+        f"the channel {CHANNEL} was found at {by_handle} by its handle and at {by_id} by its id, "
+        f"not at its feed {at} by both"
+    )
+
+
+# Y2: yt-dlp is asked only then: not at a poll, and not for another address of YouTube's that
+# asks for consent, which is refused as today, telling the reader to give the channel's id.
+POLLED = {
+    "a channel's feed": CHANNEL_FEED,
+    "a channel's address by its handle, which asks for consent": (
+        "https://www.youtube.com/@nighttrains"
+    ),
+}
+
+
+@pytest.mark.parametrize("polled", sorted(POLLED))
+def test_a_poll_never_asks_yt_dlp(feed_sites: FeedSites, polled: str) -> None:
+    serve_consent(feed_sites)
+    serve_channel_feed(feed_sites, CHANNEL)
+    feed_sites.yt_dlp.said = lambda asked: channel_answer(asked, CHANNEL)
+    with suppress(UnreadableFeed):
+        fetched_feed(POLLED[polled], Validators())
+    assert not feed_sites.yt_dlp.asked, f"a poll of {polled} asked yt-dlp"
+
+
+OTHER_YOUTUBE_ADDRESSES = {
+    "a video": "https://www.youtube.com/watch?v=Vid000000A1",
+    "a short": "https://m.youtube.com/shorts/Vid000000A1",
+    "the home page": "https://www.youtube.com/",
+    "a search": "https://youtube.com/results?search_query=nighttrains",
+    "a bare name": "https://www.youtube.com/nighttrains",
+    "a bare name that begins with c": "https://www.youtube.com/cnighttrains",
+    "a bare name that begins with user": "https://www.youtube.com/usernighttrains",
+}
+
+
+@pytest.mark.parametrize("other", sorted(OTHER_YOUTUBE_ADDRESSES))
+def test_another_youtube_address_that_asks_for_consent_is_refused_as_today_without_yt_dlp(
+    feed_sites: FeedSites, other: str
+) -> None:
+    address = OTHER_YOUTUBE_ADDRESSES[other]
+    serve_consent(feed_sites)
+    serve_channel_feed(feed_sites, CHANNEL)
+    feed_sites.yt_dlp.said = lambda asked: channel_answer(asked, CHANNEL)
+    told = refusal(address, RSSHUB, f"{other} at {address}, which YouTube answered with consent")
+    assert address in told and "channel" in told and " id" in told, (
+        f"{other} whose page asks for consent was refused as {told!r}, which does not tell the "
+        "reader to give the channel's address with its id"
+    )
+    assert not feed_sites.yt_dlp.asked, f"{other} at {address} had yt-dlp asked"
+    assert not common_paths_asked(feed_sites), (
+        f"finding the feed of {other} whose page asks for consent fetched {feed_sites.asked()}, "
+        "where YouTube's pages have no paths of feeds tried"
+    )
+
+
+# Y3: yt-dlp is asked once, for the channel, with no cookies, no cache and no download.
+
+
+@pytest.mark.parametrize("name", HANDLES)
+def test_yt_dlp_is_asked_once_for_the_channel_with_no_cookies_no_cache_and_no_download(
+    feed_sites: FeedSites, name: str
+) -> None:
+    address = f"https://www.youtube.com/{name}/videos"
+    serve_consent(feed_sites)
+    serve_channel_feed(feed_sites, CHANNEL)
+    feed_sites.yt_dlp.said = lambda asked: channel_answer(asked, CHANNEL)
+    discovered_feed(address, RSSHUB)
+    asked = feed_sites.yt_dlp.asked
+    assert len(asked) == 1, f"finding the channel {address} asked yt-dlp {asked}, not once"
+    at = urlsplit(asked[0].address)
+    assert at.hostname in YOUTUBE_HOSTS and unquote(at.path).startswith(f"/{name}"), (
+        f"finding the channel {address} asked yt-dlp for {asked[0].address}, not for the channel"
+    )
+    assert not asked[0].download, f"finding the channel {address} had yt-dlp download"
+    options = feed_sites.yt_dlp.options
+    assert options and not any(
+        given.get("cookiefile") or given.get("cookiesfrombrowser") for given in options
+    ), f"yt-dlp was asked with the options {options}, which name cookies"
+    # Without a cachedir of False, yt-dlp keeps its cache in a folder of its own choosing.
+    assert all(given.get("cachedir") is False for given in options), (
+        f"yt-dlp was asked with the options {options}, which leave it a cache folder"
+    )
+
+
+# Y4: where yt-dlp names no channel, the address is refused as naming none, with what yt-dlp
+# said, and RSSHub's rules and the advice follow as for any refusal.
+FEED_PATH = "/feeds/videos.xml"
+COLOUR = re.compile(r"\x1b\[[0-9;]*m")
+YT_DLP_FAILURES = {
+    "a channel that does not exist": (
+        "\x1b[0;31mERROR:\x1b[0m [youtube:tab] @nochannel: Unable to download webpage: HTTP "
+        "Error 404: Not Found (caused by <HTTPError 404: Not Found>)"
+    ),
+    "an answer on two lines": (
+        "ERROR: [youtube:tab] @nochannel: Unable to download API page: HTTP Error 429: Too Many "
+        "Requests\n(caused by <HTTPError 429: Too Many Requests>)"
+    ),
+    "nothing said": "",
+}
+
+
+def said_lines(message: str) -> list[str]:
+    # What yt-dlp said, line by line, without its colours and its prefix.
+    plain = COLOUR.sub("", message).removeprefix("ERROR:")
+    return [line.strip() for line in plain.splitlines() if line.strip()]
+
+
+def assert_told_no_channel(sites: FeedSites, told: str, address: str, said: list[str]) -> None:
+    what = f"the handle {address}, at which yt-dlp names no channel,"
+    asked = sites.yt_dlp.asked
+    assert len(asked) == 1, f"{what} asked yt-dlp {asked}, not once"
+    at_no_channel = told.find("no channel")
+    assert address in told and "YouTube" in told and at_no_channel >= 0, (
+        f"{what} was refused as {told!r}, not as YouTube naming no channel at it"
+    )
+    at_said = [told.find(line, at_no_channel) for line in said]
+    assert all(at > at_no_channel for at in at_said), (
+        f"{what} was refused as {told!r}, without what yt-dlp said ({said}) after it"
+    )
+    assert not any(sign in told for sign in ("\n", "\r", "\x1b", "ERROR")), (
+        f"{what} was refused as {told!r}: not on one line, or with yt-dlp's prefix or colours"
+    )
+    assert told.find(FEED_ADVICE, max([at_no_channel, *at_said])) > 0 and RSSHUB_FORM in told, (
+        f"{what} was refused as {told!r}, which the advice does not follow"
+    )
+    rules_after = [str(r.url) for r in sites.requests[asked[0].after_requests :]]
+    assert RULES in rules_after, (
+        f"{what} had RSSHub's rules asked in {sites.asked()}, not after yt-dlp"
+    )
+    assert not [heard for heard in sites.asked() if urlsplit(heard).path == FEED_PATH], (
+        f"{what} had a feed of YouTube fetched: {sites.asked()}"
+    )
+
+
+@pytest.mark.parametrize("failure", sorted(YT_DLP_FAILURES))
+def test_a_handle_at_which_yt_dlp_fails_is_refused_as_naming_no_channel_with_what_it_said(
+    feed_sites: FeedSites, failure: str
+) -> None:
+    address = "https://www.youtube.com/@nochannel"
+    serve_consent(feed_sites)
+    feed_sites.serve(RULES, answered(b"{}", kind_of(RULES_KIND)))
+    message = YT_DLP_FAILURES[failure]
+
+    def fails(asked: str) -> Mapping[str, Any] | None:
+        raise DownloadError(message)
+
+    feed_sites.yt_dlp.said = fails
+    told = refusal(address, RSSHUB, f"a handle at which yt-dlp failed with {failure}")
+    assert_told_no_channel(feed_sites, told, address, said_lines(message))
+
+
+# What yt-dlp may give in place of a channel's id: UC and 22 more of A-Z, a-z, 0-9, _ and -.
+NO_ID, NO_ANSWER = object(), object()
+NO_CHANNEL_IDS: dict[str, object] = {
+    "no channel_id": NO_ID,
+    "a channel_id of None": None,
+    "an empty channel_id": "",
+    "21 characters after UC": "UC" + "a" * 21,
+    "23 characters after UC": "UC" + "a" * 23,
+    "HC in place of UC": "HC" + CHANNEL[2:],
+    "uc in small letters": "uc" + CHANNEL[2:],
+    "a character outside an id's": CHANNEL[:-1] + ".",
+    "a slash inside": CHANNEL[:10] + "/" + CHANNEL[11:],
+    "a line break after it": CHANNEL + "\n",
+    "a number": 42,
+    "no answer at all": NO_ANSWER,
+}
+
+
+def answer_without_a_channel(given: object) -> Callable[[str], Mapping[str, Any] | None]:
+    def said(asked: str) -> Mapping[str, Any] | None:
+        if given is NO_ANSWER:
+            return None
+        answer = channel_answer(asked, CHANNEL) | {"id": "@nochannel"}
+        del answer["channel_id"]
+        return answer if given is NO_ID else answer | {"channel_id": given}
+
+    return said
+
+
+@pytest.mark.parametrize("given", sorted(NO_CHANNEL_IDS))
+def test_a_handle_at_which_yt_dlp_gives_no_id_of_a_channels_shape_is_refused(
+    feed_sites: FeedSites, given: str
+) -> None:
+    address = "https://www.youtube.com/@nochannel"
+    serve_consent(feed_sites)
+    serve_channel_feed(feed_sites, CHANNEL)
+    feed_sites.serve(RULES, answered(b"{}", kind_of(RULES_KIND)))
+    feed_sites.yt_dlp.said = answer_without_a_channel(NO_CHANNEL_IDS[given])
+    told = refusal(address, RSSHUB, f"a handle at which yt-dlp gives {given}")
+    assert_told_no_channel(feed_sites, told, address, [])
+
+
+YOUTUBE_RULES = json.dumps(
+    {
+        "youtube.com": {
+            "_name": "YouTube",
+            "www": [
+                {
+                    "title": "Channel",
+                    "docs": RADAR_DOCS,
+                    "source": ["/:handle"],
+                    "target": "/youtube/user/:handle",
+                }
+            ],
+        }
+    }
+).encode()
+
+
+def test_rsshubs_rules_are_tried_after_yt_dlp_names_no_channel(feed_sites: FeedSites) -> None:
+    address = "https://www.youtube.com/@nighttrains"
+    serve_consent(feed_sites)
+
+    def instance(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == RULES:
+            return answered(YOUTUBE_RULES, kind_of(RULES_KIND))(request)
+        return answered(rss_feed("A channel through RSSHub"), kind_of(RSS_KIND))(request)
+
+    def fails(asked: str) -> Mapping[str, Any] | None:
+        raise DownloadError("ERROR: [youtube:tab] @nighttrains: This channel does not exist.")
+
+    feed_sites.serve_everywhere_at(httpx.URL(RSSHUB).host, instance)
+    feed_sites.yt_dlp.said = fails
+    discovered = discovered_feed(address, RSSHUB)
+    assert discovered.address.startswith(f"{RSSHUB_FORM}youtube/user/"), (
+        f"the handle {address}, at which yt-dlp names no channel and a rule of RSSHub matches, "
+        f"was found at {discovered.address}, not at the rule's route"
+    )
+    asked = feed_sites.yt_dlp.asked
+    assert len(asked) == 1 and RULES in [
+        str(r.url) for r in feed_sites.requests[asked[0].after_requests :]
+    ], f"the handle {address} asked yt-dlp {asked} and fetched {feed_sites.asked()}"
 
 
 # D5: a site that names no feed.
@@ -1215,13 +1514,14 @@ def refusals(sites: FeedSites) -> dict[str, tuple[str, str]]:
     sites.serve(
         APPLE_LOOKUP.format(show="7"), answered(lookup_answer([]), kind_of("text/javascript"))
     )
-    sites.serve("https://www.youtube.com/@nighttrains", moved(CONSENT, 302))
-    sites.serve(CONSENT, answered(CONSENT_PAGE, kind_of(HTML)))
+    # yt-dlp, unscripted, fails at every handle.
+    serve_consent(sites)
     return {
         "a page that names no feed": ("https://blog.test/about", RSSHUB),
         "a picture": ("https://blog.test/logo.png", RSSHUB),
         "a show Apple names no feed of": ("https://podcasts.apple.com/us/podcast/x/id7", RSSHUB),
-        "a channel whose page asks for consent": ("https://www.youtube.com/@nighttrains", RSSHUB),
+        "a channel whose page asks for consent": ("https://www.youtube.com/nighttrains", RSSHUB),
+        "a handle yt-dlp names no channel at": ("https://www.youtube.com/@nochannel", RSSHUB),
         "an address of no web": ("ftp://files.test/feed.xml", RSSHUB),
     }
 
@@ -1231,6 +1531,7 @@ REFUSED_KINDS = (
     "a picture",
     "a show Apple names no feed of",
     "a channel whose page asks for consent",
+    "a handle yt-dlp names no channel at",
     "an address of no web",
 )
 

@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from tests.yt_dlp_standin import YtDlpStandin
+
 # The sites that feeds and pages are fetched from while a test polls or finds a feed, answered
 # in the test's own process as each test scripts them: what each address answers, and every
 # request heard, each redirect a request of its own. httpx's client and httpx.stream answer from
@@ -36,6 +38,8 @@ class FeedSites:
         self.answers: dict[str, Answer] = {}
         self.hosts: dict[str, Answer] = {}
         self.requests: list[httpx.Request] = []
+        # yt-dlp, which a discovery asks for a channel's id where YouTube asks for consent.
+        self.yt_dlp = YtDlpStandin(lambda: len(self.requests))
 
     def serve(self, address: str, answer: Answer) -> None:
         self.answers[str(httpx.URL(address))] = answer
@@ -49,6 +53,7 @@ class FeedSites:
         self.answers.clear()
         self.hosts.clear()
         self.requests.clear()
+        self.yt_dlp.forget()
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
