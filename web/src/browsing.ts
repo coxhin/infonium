@@ -152,8 +152,16 @@ export function useBrowsing(
     [listedSubscriptions, listedEntries],
   );
 
+  // The subscriptions handled as left, each with the list of subscriptions on show when it was.
+  // One is handled again when it is next noticed as left, once the reader selects it again or a
+  // reading lists it again, as one that was on its way when it left.
+  const handled = useRef(new Map<string, Subscription[]>());
+
   const select = useCallback(
     (chosen: Selection) => {
+      if (chosen.kind === "subscription") {
+        handled.current.delete(chosen.subscriptionId);
+      }
       keepSelection(chosen);
       setOpened(true);
       setSubscribing(false);
@@ -196,36 +204,39 @@ export function useBrowsing(
   }, [opened, entries.loaded, subscriptions.loaded, folders.loaded]);
 
   // Each subscription as the list of subscriptions last held it, for one that leaves: the folder
-  // it was in, and when it was added, which tells it from a subscription to the same feed made
-  // again later, under the same id.
+  // it was in. A list that holds a subscription handled as left, other than the list on show when
+  // it was handled, lists it again.
   const lastListed = useRef(new Map<string, Subscription>());
   useEffect(() => {
     for (const subscription of listedSubscriptions) {
       lastListed.current.set(subscription.id, subscription);
+      const handledWith = handled.current.get(subscription.id);
+      if (handledWith !== undefined && handledWith !== listedSubscriptions) {
+        handled.current.delete(subscription.id);
+      }
     }
   }, [listedSubscriptions]);
 
   // A subscription that left, removed here or in another window, whichever notices it first: the
   // panel, when it reads the subscription, or the list of subscriptions, read without it. It is
-  // handled once, however often it is noticed after: taken from the list on show where that
-  // still holds it, and the items read again, which stay, hand-added now, where it was.
-  // Selected, the selection goes where its items went: the folder it was in, while that folder
-  // stands, else 未分类. Another window may have dissolved that folder too, so the service is
-  // asked whether it stands, and the folders on show take its answer; the selection moves only
-  // while the subscription is selected still. The keyboard follows where it was on what left.
-  // The form that subscribes stays where it is open, with what it says.
+  // handled once, however often it is noticed after, until it is selected or listed again: taken
+  // from the list on show where that still holds it, and the items read again, which stay,
+  // hand-added now, where it was. Selected, the selection goes where its items went: the folder
+  // it was in, while that folder stands, else 未分类. Another window may have dissolved that
+  // folder too, so the service is asked whether it stands, and the folders on show take its
+  // answer; the selection moves only while the subscription is selected still. The keyboard
+  // follows where it was on what left. The form that subscribes stays where it is open, with
+  // what it says.
   const selectionNow = useRef(selection);
   selectionNow.current = selection;
-  // The subscriptions handled as left, each by its id and when it was added.
-  const handled = useRef(new Set<string>());
+  const listedNow = useRef(listedSubscriptions);
+  listedNow.current = listedSubscriptions;
   const left = useCallback(
     (subscriptionId: string) => {
-      const listedAs = lastListed.current.get(subscriptionId);
-      const instance = `${subscriptionId} ${listedAs?.added ?? ""}`;
-      if (handled.current.has(instance)) {
+      if (handled.current.has(subscriptionId)) {
         return;
       }
-      handled.current.add(instance);
+      handled.current.set(subscriptionId, listedNow.current);
       subscriptions.replace((before) =>
         before.some((subscription) => subscription.id === subscriptionId)
           ? before.filter((subscription) => subscription.id !== subscriptionId)
@@ -236,7 +247,7 @@ export function useBrowsing(
       if (!sameSelection(selectionNow.current, leftSelected)) {
         return;
       }
-      const folder = listedAs?.folder ?? null;
+      const folder = lastListed.current.get(subscriptionId)?.folder ?? null;
       const standing =
         folder === null
           ? Promise.resolve(false)
