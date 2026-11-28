@@ -41,7 +41,16 @@ import {
   type Selection,
   type Tally,
 } from "./sidebarselection";
-import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptionlist";
+import { useSubscriptions, withSubscription } from "./subscriptionlist";
+
+// How a subscription's panel opens: on which subscription; at the item it was opened at, whose
+// posting it looks for, if any; and whether as the answer to subscribing to a feed the list held
+// already.
+type PaneOpening = {
+  subscriptionId: string;
+  sought: string | undefined;
+  again: boolean;
+};
 
 // The state of browsing the library, which the sidebar and the list column share: the lists the
 // sidebar is drawn from, what it has selected and how, its counts, and what moves subscriptions
@@ -53,8 +62,8 @@ export type Browsing = {
   // Whether the selection the page opens with is decided. Until it is, nothing but a press of the
   // reader's selects, and what shows the selection waits for it.
   opened: boolean;
-  // The subscription the list column shows, with what it was opened for.
-  pane: SubscriptionPlace | undefined;
+  // How the panel of the subscription the list column shows opened.
+  pane: PaneOpening | undefined;
   select: (selection: Selection) => void;
   media: MediaChoice;
   chooseMedia: (media: MediaChoice) => void;
@@ -105,7 +114,7 @@ export function useBrowsing(
   const [order, chooseOrder] = useRememberedOrder();
   const [folded, fold] = useFoldedFolders();
   const [subscribing, setSubscribing] = useState(false);
-  const [pane, setPane] = useState<SubscriptionPlace>();
+  const [pane, setPane] = useState<PaneOpening>();
   const [landing, setLanding] = useState<Landing>();
   const land = useCallback((key: string) => setLanding(landingOn(key)), []);
   // Whether the selection the page opens with is decided: at once where no list could move it,
