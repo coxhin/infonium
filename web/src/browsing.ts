@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   dissolveFolder,
+  listFolders,
   makeFolder,
   renameFolder,
   type Folder,
@@ -18,7 +19,7 @@ import {
   type Held,
   type Placer,
 } from "./folders";
-import type { Landing } from "./keyboarding";
+import { landingOn, type Landing } from "./keyboarding";
 import type { Watched } from "./loading";
 import { byName } from "./nameorder";
 import {
@@ -30,17 +31,26 @@ import {
 import {
   ALL,
   followed,
-  isThere,
   keyOf,
   openingSelection,
   sameSelection,
   tallied,
   type MediaChoice,
+  type OpeningLists,
   type Order,
   type Selection,
   type Tally,
 } from "./sidebarselection";
-import { useSubscriptions, withSubscription, type SubscriptionPlace } from "./subscriptionlist";
+import { useSubscriptions, withSubscription } from "./subscriptionlist";
+
+// How a subscription's panel opens: on which subscription; at the item it was opened at, whose
+// posting it looks for, if any; and whether as the answer to subscribing to a feed the list held
+// already.
+type PaneOpening = {
+  subscriptionId: string;
+  sought: string | undefined;
+  again: boolean;
+};
 
 // The state of browsing the library, which the sidebar and the list column share: the lists the
 // sidebar is drawn from, what it has selected and how, its counts, and what moves subscriptions
@@ -49,10 +59,11 @@ export type Browsing = {
   subscriptions: Watched<Subscription[]>;
   folders: Watched<Folder[]>;
   selection: Selection;
-  // Whether the selection the page opens with is decided, which waits for the three lists.
+  // Whether the selection the page opens with is decided. Until it is, nothing but a press of the
+  // reader's selects, and what shows the selection waits for it.
   opened: boolean;
-  // The subscription the list column shows, with what it was opened for.
-  pane: SubscriptionPlace | undefined;
+  // How the panel of the subscription the list column shows opened.
+  pane: PaneOpening | undefined;
   select: (selection: Selection) => void;
   media: MediaChoice;
   chooseMedia: (media: MediaChoice) => void;
@@ -76,8 +87,9 @@ export type Browsing = {
   // A subscription answered by subscribing: placed in the folder selected where it is new, and
   // selected once it is. A placing the service refused is the reason the promise fails with.
   subscribed: (subscription: Subscription) => Promise<void>;
-  // A subscription removed here or elsewhere: its items are where it was.
-  gone: (subscriptionId: string) => void;
+  // A subscription that left, removed here or in another window: its items are where it was,
+  // and, selected, the selection goes there.
+  left: (subscriptionId: string) => void;
   // The row of the sidebar the keyboard is to land on, where it has nowhere else to be: a folder
   // or a subscription just made, or what is selected once the subscription open is removed.
   landing: Landing | undefined;
@@ -87,6 +99,8 @@ export type Browsing = {
 function listedOf<Value>(watched: Watched<Value[]>): Value[] {
   return watched.loaded.state === "ready" ? watched.loaded.value : [];
 }
+
+const NOTHING_READ: OpeningLists = { entries: undefined, folders: undefined, present: undefined };
 
 export function useBrowsing(
   entries: Watched<ItemEntry[]>,
@@ -100,9 +114,14 @@ export function useBrowsing(
   const [order, chooseOrder] = useRememberedOrder();
   const [folded, fold] = useFoldedFolders();
   const [subscribing, setSubscribing] = useState(false);
-  const [pane, setPane] = useState<SubscriptionPlace>();
+  const [pane, setPane] = useState<PaneOpening>();
   const [landing, setLanding] = useState<Landing>();
-  const land = useCallback((key: string) => setLanding({ key }), []);
+  const land = useCallback((key: string) => setLanding(landingOn(key)), []);
+  // Whether the selection the page opens with is decided: at once where no list could move it,
+  // as every item, or 新来源 with no item open; otherwise below, once the lists settle it.
+  const [opened, setOpened] = useState(
+    () => openingSelection(selection, openedAtStart, NOTHING_READ) !== undefined,
+  );
 
   const listedEntries = listedOf(entries);
   const listedSubscriptions = listedOf(subscriptions);
@@ -147,38 +166,118 @@ export function useBrowsing(
     [keepSelection],
   );
 
-  // The selection a page opens with is decided in this one place, once the items, the
-  // subscriptions and the folders are all read, whichever arrives first: until then nothing
-  // moves it, and the list column waits. A subscription selected so looks for the posting of the
-  // item open. A selection the reader makes meanwhile stands. An item opened later, by a link
-  // within the app, leaves the selection as it is.
-  const [opened, setOpened] = useState(false);
-  const allRead =
-    entries.loaded.state === "ready" &&
-    subscriptions.loaded.state === "ready" &&
-    folders.loaded.state === "ready";
+  // The selection a page opens with is decided in this one place, as soon as the lists read so
+  // far settle it, whichever arrives first and whichever cannot be read for a while, and as it is
+  // with all three read. Until then nothing but a press of the reader's selects, and the list
+  // column waits, or says which list it waits for and why. A subscription selected so looks for
+  // the posting of the item open. An item opened later, by a link within the app, leaves the
+  // selection as it is.
   useEffect(() => {
-    if (opened || !allRead) {
+    if (opened) {
+      return;
+    }
+    const lists: OpeningLists = {
+      entries: entries.loaded.state === "ready" ? entries.loaded.value : undefined,
+      folders: folders.loaded.state === "ready" ? folderIds : undefined,
+      present: subscriptions.loaded.state === "ready" ? present : undefined,
+    };
+    const chosen = openingSelection(selection, openedAtStart, lists);
+    if (chosen === undefined) {
       return;
     }
     setOpened(true);
-    const entry =
-      openedAtStart === undefined
-        ? undefined
-        : listedEntries.find((each) => each.id === openedAtStart);
-    const chosen = openingSelection(selection, entry, folderIds, present, seen);
     keepSelection(chosen);
-    if (chosen.kind === "subscription" && entry !== undefined) {
-      setPane({ subscriptionId: chosen.subscriptionId, sought: entry.id, again: false });
+    const sought = lists.entries?.some((entry) => entry.id === openedAtStart)
+      ? openedAtStart
+      : undefined;
+    if (chosen.kind === "subscription" && sought !== undefined) {
+      setPane({ subscriptionId: chosen.subscriptionId, sought, again: false });
     }
-  }, [opened, allRead]);
+  }, [opened, entries.loaded, subscriptions.loaded, folders.loaded]);
 
-  // Once the page has opened, a folder or a subscription selected that is there no more, as one
-  // removed in another window, gives way to every item. The form that subscribes stays where it
-  // is open, with what it says.
+  // The folder each subscription was in when the list of subscriptions was last read with it, for
+  // one that leaves.
+  const folderOf = useRef(new Map<string, string | null>());
   useEffect(() => {
-    const read = selection.kind === "folder" ? folders.loaded : subscriptions.loaded;
-    if (opened && read.state === "ready" && !isThere(selection, folderIds, present)) {
+    for (const subscription of listedSubscriptions) {
+      folderOf.current.set(subscription.id, subscription.folder);
+    }
+  }, [listedSubscriptions]);
+
+  // A subscription that left, removed here or in another window, whichever notices it first: the
+  // panel, when it reads the subscription, or the list of subscriptions, read without it. Its
+  // items stay, hand-added now, where it was. Selected, the selection goes where its items went:
+  // the folder it was in, while that folder stands, else 未分类. Another window may have
+  // dissolved that folder too, so the service is asked whether it stands, and the folders on
+  // show take its answer; the selection moves only while the subscription is selected still. The
+  // keyboard follows where it was on what left. The form that subscribes stays where it is open,
+  // with what it says.
+  const selectionNow = useRef(selection);
+  selectionNow.current = selection;
+  const leaving = useRef<string>(undefined);
+  const left = useCallback(
+    (subscriptionId: string) => {
+      subscriptions.replace((before) =>
+        before.filter((subscription) => subscription.id !== subscriptionId),
+      );
+      entries.readNow();
+      const leftSelected = { kind: "subscription", subscriptionId } as const;
+      if (!sameSelection(selection, leftSelected) || leaving.current === subscriptionId) {
+        return;
+      }
+      leaving.current = subscriptionId;
+      const folder = folderOf.current.get(subscriptionId) ?? null;
+      const standing =
+        folder === null
+          ? Promise.resolve(false)
+          : listFolders().then(
+              (listed) => {
+                folders.replace(() => listed);
+                return listed.some((each) => each.id === folder);
+              },
+              () => folderIds.has(folder),
+            );
+      void standing.then((stands) => {
+        leaving.current = undefined;
+        if (!sameSelection(selectionNow.current, leftSelected)) {
+          return;
+        }
+        const chosen: Selection =
+          stands && folder !== null ? { kind: "folder", folderId: folder } : { kind: "unfiled" };
+        keepSelection(chosen);
+        setPane(undefined);
+        land(keyOf(chosen));
+      });
+    },
+    [
+      selection,
+      folderIds,
+      subscriptions.replace,
+      folders.replace,
+      entries.readNow,
+      keepSelection,
+      land,
+    ],
+  );
+
+  // Once the page has opened, a subscription selected that the list of subscriptions no longer
+  // holds has left; a folder selected that is there no more, as one dissolved in another window,
+  // gives way to every item.
+  useEffect(() => {
+    if (!opened) {
+      return;
+    }
+    if (
+      selection.kind === "subscription" &&
+      subscriptions.loaded.state === "ready" &&
+      !present.has(selection.subscriptionId)
+    ) {
+      left(selection.subscriptionId);
+    } else if (
+      selection.kind === "folder" &&
+      folders.loaded.state === "ready" &&
+      !folderIds.has(selection.folderId)
+    ) {
       keepSelection(ALL);
     }
   }, [opened, selection, folders.loaded, subscriptions.loaded]);
@@ -282,25 +381,6 @@ export function useBrowsing(
     ],
   );
 
-  const gone = useCallback(
-    (subscriptionId: string) => {
-      const folder = listedSubscriptions.find((each) => each.id === subscriptionId)?.folder;
-      subscriptions.answer((before) =>
-        before.filter((subscription) => subscription.id !== subscriptionId),
-      );
-      entries.readNow();
-      if (sameSelection(selection, { kind: "subscription", subscriptionId })) {
-        const chosen: Selection =
-          folder === null || folder === undefined
-            ? { kind: "unfiled" }
-            : { kind: "folder", folderId: folder };
-        select(chosen);
-        land(keyOf(chosen));
-      }
-    },
-    [listedSubscriptions, subscriptions.answer, entries.readNow, selection, select, land],
-  );
-
   return {
     subscriptions,
     folders,
@@ -330,7 +410,7 @@ export function useBrowsing(
     rename,
     dissolve,
     subscribed,
-    gone,
+    left,
     landing,
     land,
   };

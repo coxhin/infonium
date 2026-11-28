@@ -39,6 +39,9 @@ const ATTEMPT_NOTES: Record<ItemEntry["reading"]["attempt"]["kind"], string> = {
   settled: "",
   failed: " · 读取失败",
 };
+// Of an item a subscription brought, while the subscriptions are not read: whether it still
+// follows its subscription, and so whether the service would take a move of it, is not known.
+const FOLLOWING_UNKNOWN = "订阅还没有读到，不知道它是否还跟着订阅；读到以后才能移动它。";
 // Kinds of file the upload dialog offers; what a file really is, the server tells from its bytes.
 const UPLOADABLE = "application/pdf,audio/*,video/*,text/html,.html,.htm";
 // How many rows are drawn at first, a window and more of them, and how many more each time the
@@ -135,6 +138,7 @@ export function ItemList({
   placer,
   onImported,
   onEmptied,
+  onRetry,
   onOpenFolder,
 }: {
   entries: Loaded<ItemEntry[]>;
@@ -149,8 +153,9 @@ export function ItemList({
   refusal: string | undefined;
   selected: string | undefined;
   seen: ReadonlySet<string>;
-  // The subscriptions there are, which items that they brought follow.
-  present: ReadonlySet<string>;
+  // The subscriptions there are, which items that they brought follow; nothing while they are
+  // not read.
+  present: ReadonlySet<string> | undefined;
   subscriptionTitles: ReadonlyMap<string, string>;
   // The name of the folder each subscription is in, of those in one.
   subscriptionFolders: ReadonlyMap<string, string>;
@@ -158,6 +163,8 @@ export function ItemList({
   onImported: (entry: ItemEntry) => void;
   // The last row has left the list with the keyboard in it.
   onEmptied: () => void;
+  // Reads the list of items again, after a first reading that the service refused.
+  onRetry: () => void;
   onOpenFolder: (folderId: string) => void;
 }) {
   const [url, setUrl] = useState("");
@@ -261,6 +268,17 @@ export function ItemList({
       : `跟着订阅“${title}”放在分类“${folder}”里；要移动它，请移动订阅。`;
   }
 
+  // Why an item does not move by itself, where it does not: it follows its subscription, or a
+  // subscription brought it and the subscriptions are not read to tell whether it follows it
+  // still.
+  function unmovableText(entry: ItemEntry): string | undefined {
+    if (present === undefined) {
+      return entry.origin.kind === "subscribed" ? FOLLOWING_UNKNOWN : undefined;
+    }
+    const following = followed(entry, present);
+    return following === undefined ? undefined : followingText(following);
+  }
+
   function openMenu(entry: ItemEntry, opening: Opening) {
     setMenu({ entry, opening });
   }
@@ -320,7 +338,12 @@ export function ItemList({
           )}
         </>
       )}
-      {entries.state === "failed" && <p className="status failed">{entries.reason}</p>}
+      {entries.state === "failed" && (
+        <p className="status failed">
+          {entries.reason}
+          <button onClick={onRetry}>重试</button>
+        </p>
+      )}
       {interrupted && <Interruption refusal={refusal} />}
       {loaded && listed.length === 0 && <p className="status">{emptyText}</p>}
       {shown.length > 0 && (
@@ -329,7 +352,7 @@ export function ItemList({
             const fresh = isNew(entry, seen);
             const source = sourceName(entry);
             const title = itemTitle(entry);
-            const following = followed(entry, present);
+            const unmovable = unmovableText(entry);
             const describedId = `${describedPrefix}${entry.id}`;
             return (
               <li key={entry.id} data-item={entry.id}>
@@ -337,17 +360,17 @@ export function ItemList({
                   href={itemLink(entry.id)}
                   className={fresh ? "new" : undefined}
                   aria-current={entry.id === selected}
-                  draggable={following === undefined}
-                  title={following === undefined ? undefined : followingText(following)}
-                  aria-describedby={following === undefined ? undefined : describedId}
+                  draggable={unmovable === undefined}
+                  title={unmovable}
+                  aria-describedby={unmovable === undefined ? undefined : describedId}
                   onDragStart={(event) =>
-                    following === undefined &&
+                    unmovable === undefined &&
                     startDrag(event, { kind: "item", id: entry.id, folder: entry.folder })
                   }
                   onDragEnd={endDrag}
-                  onKeyDown={(event) => following === undefined && onRowKey(event, entry)}
+                  onKeyDown={(event) => unmovable === undefined && onRowKey(event, entry)}
                   onContextMenu={(event) =>
-                    following === undefined && onRowContextMenu(event, entry)
+                    unmovable === undefined && onRowContextMenu(event, entry)
                   }
                 >
                   <MediaIcon
@@ -368,7 +391,7 @@ export function ItemList({
                     </small>
                   </span>
                 </a>
-                {following === undefined ? (
+                {unmovable === undefined ? (
                   <button
                     className="row-menu"
                     aria-label={`移动“${title}”…`}
@@ -381,7 +404,7 @@ export function ItemList({
                   </button>
                 ) : (
                   <span id={describedId} className="heard">
-                    {followingText(following)}
+                    {unmovable}
                   </span>
                 )}
               </li>

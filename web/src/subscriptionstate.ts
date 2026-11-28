@@ -157,7 +157,6 @@ export function useSubscriptionState(
   const watched = useWatched(load, subscriptionId, isUnsettled, {
     interval: (state) =>
       state.kind === "present" ? untilNextPoll([state.subscription], Date.now()) : LIST_INTERVAL_MS,
-    shown: true,
     unanswered: isUnanswered,
   });
   held.current =

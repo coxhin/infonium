@@ -56,15 +56,13 @@ export type Watched<Value> = {
   answer: (change: (value: Value) => Value) => void;
 };
 
-// How a value is read again while it is settled, for one that shows what changes without a
-// press of the reader's: after the interval the value read last gives, while the page is
-// visible, and at once when a page that was hidden past it is shown again; not at all while the
-// value is not shown, and at once when it is shown again. Its first load is also tried again
-// where it failed for want of an answer, as the caller tells such a failure; a load the service
-// refused, saying why, is tried again after a minute.
+// How a value is read again once a reading of it fails, and while it is settled. A reading that
+// went unanswered, as the caller tells such a failure, is tried again after 1.5 seconds, the
+// first among them; one the service refused, saying why, after a minute. A settled value, where
+// an interval is given, is read again after the interval the value read last gives, while the
+// page is visible, and at once when a page that was hidden past it is shown again.
 export type Refreshing<Value> = {
-  interval: (value: Value) => number;
-  shown: boolean;
+  interval?: (value: Value) => number;
   unanswered: (error: unknown) => boolean;
 };
 
@@ -75,10 +73,12 @@ type Watch<Value> = {
 };
 
 // Like useLoaded, and loads again at intervals for as long as the value is unsettled, and, with
-// refreshing, while it is settled. The value on show stays until the next one arrives. A load
-// that fails while a value is on show leaves the value there, marks the watch interrupted, and
-// is tried again, as the service may be on its way back. A first load that fails is a failure
-// and is not tried again, unless it went unanswered and the value is refreshed.
+// refreshing that gives an interval, while it is settled. The value on show stays until the
+// next one arrives. A load that fails while a value is on show leaves the value there, marks the
+// watch interrupted, and is tried again, as the service may be on its way back. Without
+// refreshing, a first load that fails is a failure, not tried again. With refreshing, one that
+// went unanswered marks the watch interrupted and is tried again after 1.5 seconds, and one the
+// service refused, saying why, is a failure on show until it is tried again after a minute.
 export function useWatched<Value>(
   load: () => Promise<Value>,
   key: string,
@@ -97,11 +97,7 @@ export function useWatched<Value>(
   const hurry = useRef<() => void>(undefined);
   const latestUnsettled = useRef(unsettled);
   latestUnsettled.current = unsettled;
-  const shown = refreshing?.shown ?? true;
   useEffect(() => {
-    if (!shown) {
-      return undefined;
-    }
     let current = true;
     let onShow = shownFor.current === key;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -144,14 +140,17 @@ export function useWatched<Value>(
             });
             if (unsettled(value)) {
               timer = setTimeout(watch, WATCH_INTERVAL_MS);
-            } else if (refreshing !== undefined) {
+            } else if (refreshing?.interval !== undefined) {
               waiting = true;
               timer = setTimeout(refreshWhenVisible, refreshing.interval(value));
             }
           }
         },
         (error: unknown) => {
-          if (current && (onShow || refreshing?.unanswered(error) === true)) {
+          if (!current) {
+            return;
+          }
+          if (onShow || refreshing?.unanswered(error) === true) {
             const refusal =
               refreshing === undefined || refreshing.unanswered(error)
                 ? undefined
@@ -161,12 +160,17 @@ export function useWatched<Value>(
               watch,
               refusal === undefined ? WATCH_INTERVAL_MS : REFUSED_INTERVAL_MS,
             );
-          } else if (current) {
-            setWatched({
-              loaded: { state: "failed", reason: reasonOf(error) },
-              interrupted: false,
-              refusal: undefined,
-            });
+            return;
+          }
+          setWatched({
+            loaded: { state: "failed", reason: reasonOf(error) },
+            interrupted: false,
+            refusal: undefined,
+          });
+          // A first reading of a refreshed value that the service refused, saying why, is asked
+          // again as a later reading is.
+          if (refreshing !== undefined) {
+            timer = setTimeout(watch, REFUSED_INTERVAL_MS);
           }
         },
       );
@@ -174,7 +178,7 @@ export function useWatched<Value>(
     if (!onShow) {
       setWatched({ loaded: { state: "loading" }, interrupted: false, refusal: undefined });
     }
-    if (refreshing !== undefined) {
+    if (refreshing?.interval !== undefined) {
       document.addEventListener("visibilitychange", onVisibility);
     }
     watch();
@@ -184,7 +188,7 @@ export function useWatched<Value>(
       hurry.current = undefined;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [key, round, shown]);
+  }, [key, round]);
   // A value put on show here may be unsettled though the value loaded last was not.
   useEffect(() => {
     if (watched.loaded.state === "ready" && latestUnsettled.current(watched.loaded.value)) {

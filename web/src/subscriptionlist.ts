@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useArrivals } from "./arrivals";
 import { isUnanswered, listSubscriptions, type ItemEntry, type Subscription } from "./client";
 import { isBeingRead } from "./entry";
 import { useWatched, type Loaded, type Watched } from "./loading";
 import { isPollDue, untilNextPoll } from "./nextpoll";
-
-// The subscription the list column shows: which one; the item it was opened at, whose posting
-// it looks for, if any; and whether it was opened as the answer to subscribing to a feed the
-// list held already.
-export type SubscriptionPlace = {
-  subscriptionId: string;
-  sought: string | undefined;
-  again: boolean;
-};
+import { usePolledPostings } from "./polledpostings";
 
 export function withSubscription(listed: Subscription[], read: Subscription): Subscription[] {
   return listed.map((held) => (held.id === read.id ? read : held));
+}
+
+// When the latest poll of each subscription settled, of those whose latest poll settled.
+function settledPolls(listed: Subscription[]): ReadonlyMap<string, string> {
+  return new Map(
+    listed.flatMap(({ id, poll }) => (poll.kind === "settled" ? [[id, poll.at] as const] : [])),
+  );
 }
 
 // The owner's subscriptions, read again closely while a poll is under way or its time has come,
@@ -49,7 +47,6 @@ export function useSubscriptions(
       ),
     {
       interval: (listed) => untilNextPoll(listed, Date.now()),
-      shown: true,
       unanswered: isUnanswered,
     },
   );
@@ -62,21 +59,35 @@ export function useSubscriptions(
     }
   }, [readingSubscribed, seen.size]);
 
-  // The latest poll of each subscription, by when it was; one that settles anew changes it.
-  const polls =
-    subscriptions.loaded.state === "ready"
-      ? subscriptions.loaded.value
-          .map(({ id, poll }) => (poll.kind === "underway" ? "" : `${id}@${poll.at}`))
-          .join(" ")
-      : undefined;
-  const polled = useRef(polls);
+  // The one record of each subscription's latest poll that settled, by when, as the list on show
+  // last told it; none before the list is first read. A poll that settled anew since is told to
+  // the list of items, and what it found, for a subscription that reads what it finds, is
+  // followed as it arrives.
+  const settled = useRef<ReadonlyMap<string, string>>(undefined);
+  const follow = usePolledPostings(onPolled);
   useEffect(() => {
-    if (polled.current !== undefined && polls !== undefined && polled.current !== polls) {
-      onPolled();
+    if (subscriptions.loaded.state !== "ready") {
+      return;
     }
-    polled.current = polls;
-  }, [polls]);
-  useArrivals(subscriptions.loaded, onPolled);
+    const listed = subscriptions.loaded.value;
+    const before = settled.current;
+    settled.current = settledPolls(listed);
+    if (before === undefined) {
+      return;
+    }
+    const anew = listed.flatMap(({ id, follows, poll }) =>
+      poll.kind === "settled" && before.get(id) !== poll.at ? [{ id, follows, poll }] : [],
+    );
+    if (anew.length === 0) {
+      return;
+    }
+    onPolled();
+    follow(
+      anew
+        .filter(({ follows, poll }) => poll.found > 0 && follows === "reads")
+        .map(({ id, poll }) => ({ subscriptionId: id, at: poll.at, found: poll.found })),
+    );
+  }, [subscriptions.loaded]);
 
   return subscriptions;
 }

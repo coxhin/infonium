@@ -72,7 +72,6 @@ export type Placer = {
 export function useFolders(): Watched<Folder[]> {
   return useWatched(listFolders, "folders", () => false, {
     interval: () => LIST_INTERVAL_MS,
-    shown: true,
     unanswered: isUnanswered,
   });
 }
