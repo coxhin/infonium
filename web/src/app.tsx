@@ -13,6 +13,8 @@ import {
   type Revision,
 } from "./client";
 import { ArrivedPages } from "./arrival";
+import { fetchFormulas, formulasReadyFor } from "./formula";
+import { fetchRenderer } from "./pages";
 import { ListColumn } from "./listcolumn";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
 import { LIST_INTERVAL_MS, reasonOf, useWatched, type Loaded, type Watched } from "./loading";
@@ -153,10 +155,20 @@ function DocumentPane({
     }
     let current = true;
     const holding = entry.reading.document;
-    const loading =
+    // A PDF's pages are drawn by pdf.js, and a paper often holds formulas, so both are fetched
+    // as its document is, not after it. A failure is told by the pages.
+    if (entry.media === "pdf") {
+      fetchRenderer().catch(() => undefined);
+      void fetchFormulas();
+    }
+    const loading = (
       wanted.kind === "holding"
         ? readDocument(entry.id)
-        : readRevisionDocument(entry.id, wanted.earlier.number);
+        : readRevisionDocument(entry.id, wanted.earlier.number)
+    ).then(async (itemDocument) => {
+      await formulasReadyFor(itemDocument);
+      return itemDocument;
+    });
     loading.then(
       (itemDocument) => current && setOpened({ shown: wanted, itemDocument, holding }),
       (error: unknown) =>

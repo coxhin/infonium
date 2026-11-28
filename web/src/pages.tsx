@@ -1,10 +1,8 @@
-import {
-  GlobalWorkerOptions,
-  RenderingCancelledException,
-  getDocument,
-  type PDFDocumentProxy,
-  type PDFPageProxy,
-  type RenderTask,
+import type {
+  PDFDocumentLoadingTask,
+  PDFDocumentProxy,
+  PDFPageProxy,
+  RenderTask,
 } from "pdfjs-dist";
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -44,7 +42,29 @@ import { PageTranslation } from "./pagetranslation";
 import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
 import { scrollerOf } from "./scrolling";
 
-GlobalWorkerOptions.workerSrc = workerSource;
+// pdf.js draws the pages. It is a third of the app's script and only a PDF needs it, so it is
+// fetched apart from the rest, once, when it is first wanted. A fetch that failed is not made
+// again: the browser keeps a module's failure until the page is loaded again, which the failure
+// tells the reader to do.
+let renderer: Promise<typeof import("pdfjs-dist")> | undefined;
+
+export function fetchRenderer(): Promise<typeof import("pdfjs-dist")> {
+  if (renderer === undefined) {
+    // The import stands alone, as in formula.tsx: what is chained on it would not see every
+    // failure of the build's preloading.
+    const module = import("pdfjs-dist");
+    renderer = module.then(
+      (pdfjs) => {
+        pdfjs.GlobalWorkerOptions.workerSrc = workerSource;
+        return pdfjs;
+      },
+      () => {
+        throw new Error("没能载入画页面的程序，请刷新页面再试");
+      },
+    );
+  }
+  return renderer;
+}
 
 // Character maps, fonts and image decoders that the renderer fetches when a file needs them.
 const RENDERER_FILES = "/node_modules/pdfjs-dist";
@@ -99,26 +119,32 @@ function whileCurrent<Value>(
   );
 }
 
-// Opens the file at the source, and closes it when the source changes or the view goes.
+// Opens the file at the source, once pdf.js is here, and closes it when the source changes or
+// the view goes.
 function useFile(source: string): Loaded<PDFDocumentProxy> {
   const [file, setFile] = useState<Loaded<PDFDocumentProxy>>({ state: "loading" });
   useEffect(() => {
     let current = true;
-    const opening = getDocument({
-      url: source,
-      cMapUrl: `${RENDERER_FILES}/cmaps/`,
-      standardFontDataUrl: `${RENDERER_FILES}/standard_fonts/`,
-      wasmUrl: `${RENDERER_FILES}/wasm/`,
-      iccUrl: `${RENDERER_FILES}/iccs/`,
-    });
+    let opening: PDFDocumentLoadingTask | undefined;
+    const fail = (error: unknown) =>
+      current && setFile({ state: "failed", reason: reasonOf(error) });
     setFile({ state: "loading" });
-    opening.promise.then(
-      (value) => current && setFile({ state: "ready", value }),
-      (error: unknown) => current && setFile({ state: "failed", reason: reasonOf(error) }),
-    );
+    fetchRenderer().then(({ getDocument }) => {
+      if (!current) {
+        return;
+      }
+      opening = getDocument({
+        url: source,
+        cMapUrl: `${RENDERER_FILES}/cmaps/`,
+        standardFontDataUrl: `${RENDERER_FILES}/standard_fonts/`,
+        wasmUrl: `${RENDERER_FILES}/wasm/`,
+        iccUrl: `${RENDERER_FILES}/iccs/`,
+      });
+      opening.promise.then((value) => current && setFile({ state: "ready", value }), fail);
+    }, fail);
     return () => {
       current = false;
-      void opening.destroy();
+      void opening?.destroy();
     };
   }, [source]);
   return file;
@@ -337,7 +363,8 @@ function Page({
           setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 }));
         },
         (error: unknown) => {
-          if (!(error instanceof RenderingCancelledException)) {
+          // pdf.js names the error a cancelled drawing fails with.
+          if (!(error instanceof Error && error.name === "RenderingCancelledException")) {
             setFailure(reasonOf(error));
           }
         },
