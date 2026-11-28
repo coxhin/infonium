@@ -241,7 +241,7 @@ export function ListColumn({
           onView={(subscription) =>
             subscriptions.replace((before) => withSubscription(before, subscription))
           }
-          onGone={browsing.gone}
+          onGone={browsing.left}
           onChanged={onChanged}
         />
       ) : (

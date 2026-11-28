@@ -78,23 +78,6 @@ export function isOfMedia(entry: ItemEntry, media: MediaChoice): boolean {
   return media === "any" || entry.media === media;
 }
 
-// Whether what the selection names is there: a folder or a subscription may have gone, as one
-// removed in another window.
-export function isThere(
-  selection: Selection,
-  folders: ReadonlySet<string>,
-  present: ReadonlySet<string>,
-): boolean {
-  switch (selection.kind) {
-    case "folder":
-      return folders.has(selection.folderId);
-    case "subscription":
-      return present.has(selection.subscriptionId);
-    default:
-      return true;
-  }
-}
-
 // The lists the selection a page opens with rests on, each nothing while it is not read: the
 // items, the folders there are, and the subscriptions there are.
 export type OpeningLists = {
