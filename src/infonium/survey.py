@@ -2,7 +2,7 @@ import logging
 from functools import partial
 from math import ceil
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 from infonium.asking import with_attempts
 from infonium.document import Document
@@ -52,9 +52,14 @@ logger = logging.getLogger(__name__)
 
 class DocumentSurvey(BaseModel):
     # What a sample of a document tells before it is translated: its language, whether that
-    # is the one it is to be translated into, and else its terms.
+    # is the one it is to be translated into, and else its terms. Through the relay, a reply's
+    # keys come in alphabetical order whatever the schema's, so the yes or no is named to sort
+    # before the terms, and nothing falls due after the list. A model told the schema in text
+    # may still name it as it was named before, written_in_asked_language, and is read the same.
     language: str
-    written_in_asked_language: bool
+    matches_asked_language: bool = Field(
+        validation_alias=AliasChoices("matches_asked_language", "written_in_asked_language")
+    )
     terms: list[Term]
 
 

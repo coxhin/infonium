@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
 from enum import StrEnum
+from functools import partial
 from typing import Any, Final, Literal
 
 from openai import (
@@ -60,6 +61,27 @@ NO_TOKEN_USAGE = "the endpoint reported no token usage"
 INCOMPLETE_REPLY = "the endpoint cut the reply short: {reason}"
 UNEXPECTED_REPLY = "the model's reply is not of the form asked for: {error}"
 UNREADABLE_EVENT = "the endpoint sent a part of the reply that is not JSON: {error}"
+# A reply held to JSON that writes this many white-space characters in a row outside its
+# strings has run away: between two of its tokens, before the first or after the last.
+# Through the relay, gpt-6.1-terra and gpt-6-luna at times wrote white space without end
+# where a field fell due after the list that held a section's statements, until the relay
+# ended the reply after about 15 minutes. A reply that has closed its value and then writes
+# white space without end would run on as long, so it is ended and sent again too. JSON set
+# out with indents writes a few dozen in a row at most.
+RUNAWAY_WHITE_SPACE = 300
+# The white space JSON allows outside its strings. Inside a string only the space stands
+# unescaped, and a run of spaces there is the string's text.
+JSON_WHITE_SPACE = frozenset(" \t\n\r")
+RAN_AWAY = (
+    "the model wrote white space without end: its reply was ended after {characters} "
+    "white-space characters in a row"
+)
+RUNAWAY_ENDED = (
+    "%s wrote %d white-space characters in a row outside the strings of its JSON, after %d "
+    "characters in %.1f s: it is ended, %s"
+)
+SENT_AGAIN = "and sent again"
+NO_ATTEMPT_LEFT = "with no attempt left"
 # The most calls of tools run in one round; the model is told so of the calls beyond.
 MOST_CALLS_PER_ROUND = 4
 ENDLESS_TOOL_USE = "the model gave no answer within the {rounds} requests a reply may take"
@@ -139,6 +161,44 @@ class UnmeteredCompletion(Exception):
     pass
 
 
+class RunawayReply(UnstructuredCompletion):
+    # A reply ended for writing white space without end, with how many characters it had
+    # written, and how many times the openai client had sent its request again before.
+    def __init__(self, written: int, retries_taken: int) -> None:
+        super().__init__(RAN_AWAY.format(characters=RUNAWAY_WHITE_SPACE))
+        self.written = written
+        self.retries_taken = retries_taken
+
+
+class WhiteSpaceRun:
+    # Reads a reply held to JSON as it streams, piece by piece wherever the pieces are cut,
+    # and tells when it has written RUNAWAY_WHITE_SPACE white-space characters in a row
+    # outside its strings. A quote opens or closes a string unless a backslash escapes it.
+    def __init__(self) -> None:
+        self.length = 0
+        self.in_string = False
+        self.escaped = False
+
+    def ran_away(self, piece: str) -> bool:
+        for character in piece:
+            if self.in_string:
+                if self.escaped:
+                    self.escaped = False
+                elif character == "\\":
+                    self.escaped = True
+                elif character == '"':
+                    self.in_string = False
+            elif character in JSON_WHITE_SPACE:
+                self.length += 1
+                if self.length >= RUNAWAY_WHITE_SPACE:
+                    return True
+                continue
+            else:
+                self.in_string = character == '"'
+            self.length = 0
+        return False
+
+
 # What a call of the model raises when the model or its endpoint fails it: a request that
 # failed, as the openai package raises it, and a reply that was refused, cut short, failed,
 # not of the form asked for, not readable, or not metered. Anything else that a call raises is
@@ -171,7 +231,8 @@ class StructuredCompletion[Output: BaseModel](BaseModel):
 class Written(BaseModel):
     # What the model has written so far in one request of a reply, counted from 0. Text of a
     # request in which the model goes on to call tools is not the reply; only that of the
-    # last request is, and for a structured reply it is unfinished JSON.
+    # last request is, and for a structured reply it is unfinished JSON. A request sent again
+    # after its reply ran away is written anew from its beginning.
     request: int
     text: str
 
@@ -363,6 +424,12 @@ def is_last_request(request: int, tools: Sequence[Tool[Any]]) -> bool:
     return bool(tools) and request == REPLY_ROUNDS - 1
 
 
+# One sending of a request of a reply by the given client, timed by the given clock.
+type Sending[Output: BaseModel] = Callable[
+    [OpenAI, RequestClock], Generator[Written, None, Answered[Output]]
+]
+
+
 class LanguageModel(ABC):
     def __init__(self, client: OpenAI, name: str) -> None:
         self.client = client
@@ -384,6 +451,31 @@ class LanguageModel(ABC):
         # UnstructuredCompletion or UnmeteredCompletion, or the openai package's error of a
         # request that failed.
         ...
+
+    def attempted[Output: BaseModel](
+        self, request: int, sending: Sending[Output]
+    ) -> Generator[Written, None, Answered[Output]]:
+        # One request of a reply. A reply that runs away is ended, its stream closed, and its
+        # request sent again for as long as the request has attempts left: those of the
+        # client, whose own sending again of a request that failed spends them too.
+        client = self.client
+        while True:
+            clock = RequestClock(self.name, request)
+            try:
+                return (yield from clock.timed(sending(client, clock)))
+            except RunawayReply as runaway:
+                left = client.max_retries - runaway.retries_taken
+                logger.warning(
+                    RUNAWAY_ENDED,
+                    clock.request,
+                    RUNAWAY_WHITE_SPACE,
+                    runaway.written,
+                    clock.since(),
+                    SENT_AGAIN if left > 0 else NO_ATTEMPT_LEFT,
+                )
+                if left <= 0:
+                    raise
+                client = client.with_options(max_retries=left - 1)
 
     def structured[Output: BaseModel](
         self, instructions: str, prompt: str, output: type[Output]
@@ -451,11 +543,9 @@ class ChatCompletionsLanguageModel(LanguageModel):
             last = is_last_request(request, tools)
             if last:
                 sent.append(chat_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
-            clock = RequestClock(self.name, request)
-            answered = yield from clock.timed(
-                self.round(
-                    request, sent, output, tools, NO_TOOLS if last else TOOLS_OFFERED, ending, clock
-                )
+            offered: Literal["auto", "none"] = NO_TOOLS if last else TOOLS_OFFERED
+            answered = yield from self.attempted(
+                request, partial(self.round, request, sent, output, tools, offered, ending)
             )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
@@ -493,6 +583,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
         tools: Sequence[Tool[Any]],
         offered: Literal["auto", "none"],
         ending: Ending,
+        client: OpenAI,
         clock: RequestClock,
     ) -> Generator[Written, None, Answered[Output]]:
         content = ""
@@ -500,15 +591,20 @@ class ChatCompletionsLanguageModel(LanguageModel):
         finish = ""
         pieces: dict[int, list[ChoiceDeltaToolCall]] = defaultdict(list)
         usage = None
+        form = self.reply_format(output, bool(tools) and offered == TOOLS_OFFERED and request == 0)
+        # A reply that the request does not hold to JSON may be prose, and is not read for
+        # white space without end.
+        held_to_json = not isinstance(form, Omit)
+        white_space = WhiteSpaceRun()
         # The reply is parsed here, not by the openai package, so that a reply cut short or
-        # not of the form asked for fails as the model's failure.
+        # not of the form asked for fails as the model's failure. The endpoint's answer is
+        # taken raw, as it tells how many times the client sent the request again after a
+        # failure.
         with ending.requesting():
-            stream = self.client.chat.completions.create(
+            answer = client.chat.completions.with_raw_response.create(
                 model=self.name,
                 messages=sent,
-                response_format=self.reply_format(
-                    output, bool(tools) and offered == TOOLS_OFFERED and request == 0
-                ),
+                response_format=form,
                 reasoning_effort=self.reasoning_effort,
                 tools=[
                     pydantic_function_tool(
@@ -521,6 +617,7 @@ class ChatCompletionsLanguageModel(LanguageModel):
                 stream=True,
                 stream_options={"include_usage": True},
             )
+        stream = answer.parse()
         clock.opened()
         # An endpoint that fails the reply in the middle of its stream says so in a data line
         # that holds an error object, which the openai package raises as its bare APIError:
@@ -539,6 +636,8 @@ class ChatCompletionsLanguageModel(LanguageModel):
                             pieces[piece.index].append(piece)
                         if choice.delta.content:
                             content += choice.delta.content
+                            if held_to_json and white_space.ran_away(choice.delta.content):
+                                raise RunawayReply(len(content), answer.retries_taken)
                             yield Written(request=request, text=content)
         except (APIStatusError, APIConnectionError):
             raise
@@ -610,18 +709,10 @@ class ResponsesLanguageModel(LanguageModel):
             last = is_last_request(request, tools)
             if last:
                 sent.append(responses_message(Message(side=Side.ASKER, text=LAST_REQUEST)))
-            clock = RequestClock(self.name, request)
-            answered = yield from clock.timed(
-                self.round(
-                    request,
-                    instructions,
-                    sent,
-                    output,
-                    tools,
-                    NO_TOOLS if last else TOOLS_OFFERED,
-                    ending,
-                    clock,
-                )
+            offered: Literal["auto", "none"] = NO_TOOLS if last else TOOLS_OFFERED
+            answered = yield from self.attempted(
+                request,
+                partial(self.round, request, instructions, sent, output, tools, offered, ending),
             )
             spent = tokens_after(spent, answered.input_tokens, answered.output_tokens)
             match answered.reply:
@@ -659,9 +750,13 @@ class ResponsesLanguageModel(LanguageModel):
         tools: Sequence[Tool[Any]],
         offered: Literal["auto", "none"],
         ending: Ending,
+        client: OpenAI,
         clock: RequestClock,
     ) -> Generator[Written, None, Answered[Output]]:
         texts: dict[str, str] = defaultdict(str)
+        # Each message of the reply is read for white space without end by itself: every one
+        # is held to the reply's schema.
+        white_space: dict[str, WhiteSpaceRun] = defaultdict(WhiteSpaceRun)
         done: list[str] = []
         calls: list[ToolCall] = []
         usage = None
@@ -669,9 +764,11 @@ class ResponsesLanguageModel(LanguageModel):
         # and send the input as a list, so it takes that form. Nothing reads the reply at the
         # endpoint again, so it is not stored there, and a call of a tool goes back to the
         # model with the conversation sent again in full. The reply is parsed here, after
-        # the events that say it was refused, failed or cut short.
+        # the events that say it was refused, failed or cut short. The endpoint's answer is
+        # taken raw, as it tells how many times the client sent the request again after a
+        # failure.
         with ending.requesting():
-            stream = self.client.responses.create(
+            answer = client.responses.with_raw_response.create(
                 model=self.name,
                 instructions=instructions,
                 input=sent,
@@ -694,6 +791,7 @@ class ResponsesLanguageModel(LanguageModel):
                 store=False,
                 stream=True,
             )
+        stream = answer.parse()
         clock.opened()
         # A data line that the openai package cannot read as JSON is the endpoint's failure.
         try:
@@ -705,6 +803,8 @@ class ResponsesLanguageModel(LanguageModel):
                     match event:
                         case ResponseTextDeltaEvent(item_id=item, delta=delta):
                             texts[item] += delta
+                            if white_space[item].ran_away(delta):
+                                raise RunawayReply(len(texts[item]), answer.retries_taken)
                             yield Written(request=request, text=texts[item])
                         case ResponseTextDoneEvent(text=text):
                             done.append(text)

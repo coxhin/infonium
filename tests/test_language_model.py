@@ -1,3 +1,5 @@
+import json
+import logging
 import threading
 from collections.abc import Callable
 from concurrent import futures
@@ -6,13 +8,19 @@ from http import HTTPStatus
 
 import openai
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
+from infonium import language_model
+from infonium.anchor import Citation
+from infonium.citing import DraftStatement
+from infonium.digest import DraftDigest, DraftSection, SectionForm
 from infonium.language_model import (
     REPLY_ROUNDS,
+    RUNAWAY_WHITE_SPACE,
     Called,
+    GlmEndpoint,
     LanguageModel,
     Message,
     Replied,
@@ -23,13 +31,18 @@ from infonium.language_model import (
     UnstructuredCompletion,
     WireApi,
     Written,
+    endable_openai_model,
+    glm_model,
     openai_model,
 )
-from infonium.model_connection import Ending
+from infonium.model_connection import Ending, Pace
 from tests.model_standin import (
+    GLM_BASE_URL,
+    GLM_KEY,
     INPUT_TOKENS,
     OUTPUT_TOKENS,
     STANDIN_MODEL,
+    Asked,
     Call,
     Finish,
     ModelStandin,
@@ -370,3 +383,313 @@ def test_a_request_the_endpoint_refuses_raises_the_openai_packages_error(
     with pytest.raises(openai.APIStatusError) as caught:
         replying(wire_api, [], [])
     assert caught.value.status_code == HTTPStatus.BAD_REQUEST, "the endpoint's answer was lost"
+
+
+# A reply that runs away: one held to JSON that writes RUNAWAY_WHITE_SPACE white-space characters
+# in a row outside its strings, between two of its tokens, before the first or after the last, is
+# ended, its stream closed, and its request sent again while the request has attempts left.
+
+# The white space JSON allows outside its strings.
+JSON_WHITE_SPACE = " \t\n\r"
+# So many requests to GLM's endpoint a minute that its pace holds no test back.
+UNHURRIED_GLM_REQUESTS = 600_000
+# Runs of white space to set before, between or after tokens: a few characters, as a reply set out
+# with spaces writes, runs about the bound, and runs past it.
+white_space_runs = st.one_of(
+    st.integers(0, 4),
+    st.integers(RUNAWAY_WHITE_SPACE - 2, RUNAWAY_WHITE_SPACE + 2),
+    st.integers(RUNAWAY_WHITE_SPACE, 3 * RUNAWAY_WHITE_SPACE),
+).flatmap(lambda length: st.text(alphabet=JSON_WHITE_SPACE, min_size=length, max_size=length))
+short_white_space_runs = st.integers(0, RUNAWAY_WHITE_SPACE - 1).flatmap(
+    lambda length: st.text(alphabet=JSON_WHITE_SPACE, min_size=length, max_size=length)
+)
+# Words whose strings hold runs of spaces of any length, beside the marks that open, close and
+# escape a string, so that their JSON writes a quote or a backslash right before the spaces.
+spaced_words = st.lists(
+    st.builds(
+        lambda before, spaces, after: before + " " * spaces + after,
+        st.text(alphabet='"\\a港', max_size=3),
+        st.integers(0, 3 * RUNAWAY_WHITE_SPACE),
+        st.text(alphabet='"\\a', max_size=3),
+    ),
+    min_size=1,
+    max_size=3,
+)
+cuts_anywhere = st.lists(st.integers(0, 10**4), max_size=12)
+drafted_digests = st.builds(
+    DraftDigest,
+    sections=st.lists(
+        st.builds(
+            DraftSection,
+            title=st.text(max_size=12),
+            form=st.sampled_from(SectionForm),
+            statements=st.lists(
+                st.builds(
+                    DraftStatement,
+                    text=st.text(max_size=30),
+                    citations=st.lists(
+                        st.builds(
+                            Citation, block_number=st.integers(0, 999), quote=st.text(max_size=20)
+                        ),
+                        max_size=3,
+                    ),
+                ),
+                max_size=4,
+            ),
+        ),
+        max_size=4,
+    ),
+)
+
+
+def joined(parts: list[list[str]]) -> list[str]:
+    return [
+        token for number, part in enumerate(parts) for token in ([","] if number else []) + part
+    ]
+
+
+def tokens_of(value: object) -> list[str]:
+    # The tokens of a value's JSON in the order they are written: each mark of an object or an
+    # array, and each key, string, number and other literal whole.
+    match value:
+        case dict():
+            members = [[json.dumps(key), ":", *tokens_of(item)] for key, item in value.items()]
+            return ["{", *joined(members), "}"]
+        case list():
+            return ["[", *joined([tokens_of(item) for item in value]), "]"]
+        case _:
+            return [json.dumps(value, ensure_ascii=False)]
+
+
+def spaced(value: object, gaps: dict[int, str]) -> tuple[str, int]:
+    # The value's JSON with white space set outside its strings: at each place given, taken
+    # modulo the places there are, before a token or after the last. And the longest run so set.
+    tokens = tokens_of(value)
+    at = {place % (len(tokens) + 1): white for place, white in gaps.items()}
+    text = "".join(at.get(place, "") + token for place, token in enumerate(tokens))
+    return text + at.get(len(tokens), ""), max(map(len, at.values()), default=0)
+
+
+def runaway_reply(head: str, white: str, gate: threading.Event | None = None) -> Reply:
+    # What a model that runs away writes: the head of its reply, then white space, which the
+    # stand-in sends in one piece and holds open after it if there is a gate.
+    return Reply(pieces=[head + white, ', "count": 3}'], gate=gate)
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+@given(
+    tally=tallies,
+    gaps=st.dictionaries(st.integers(0, 60), white_space_runs, max_size=4),
+    cuts=cuts_anywhere,
+)
+@example(tally=Tally(words=["fog"], count=1), gaps={3: " " * (RUNAWAY_WHITE_SPACE - 1)}, cuts=[])
+@example(tally=Tally(words=["fog"], count=1), gaps={3: " " * RUNAWAY_WHITE_SPACE}, cuts=[])
+@EXAMPLES
+def test_a_reply_is_sent_again_once_it_writes_300_white_space_characters_in_a_row_outside_strings(
+    model: ModelStandin, wire_api: WireApi, tally: Tally, gaps: dict[int, str], cuts: list[int]
+) -> None:
+    text, longest = spaced(tally.model_dump(mode="json"), gaps)
+    first = Reply(pieces=pieces_of(text, cuts))
+    model.reset(by_request([first, Reply(pieces=[tally.model_dump_json()])]))
+    events = replying(wire_api, [], [])
+    ran_away = longest >= RUNAWAY_WHITE_SPACE
+    assert len(model.asked()) == (2 if ran_away else 1), (
+        f"a reply that wrote at most {longest} white-space characters in a row outside its strings "
+        f"was {'not ' if ran_away else ''}ended and sent again"
+    )
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
+        "the reply of the request that was not ended is not the reply"
+    )
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+@pytest.mark.parametrize("run", [RUNAWAY_WHITE_SPACE - 1, RUNAWAY_WHITE_SPACE])
+@pytest.mark.parametrize("white", [" ", "\r \n\t"])
+def test_white_space_where_a_key_falls_due_after_a_list_runs_away_at_300_and_not_at_299(
+    model: ModelStandin, wire_api: WireApi, run: int, white: str
+) -> None:
+    # Where the replies that ran away began their white space: right after a list closed, where
+    # the next key fell due; of spaces alone, or of carriage returns, newlines, tabs and spaces.
+    tally = Tally(words=["harbour"], count=3)
+    head = '{"words": ["harbour"]'
+    model.reset(
+        by_request(
+            [
+                Reply(pieces=[head, (white * run)[:run], ', "count": 3}']),
+                Reply(pieces=[tally.model_dump_json()]),
+            ]
+        )
+    )
+    events = replying(wire_api, [], [])
+    assert len(model.asked()) == (2 if run >= RUNAWAY_WHITE_SPACE else 1), (
+        f"a reply that wrote {run} white-space characters in a row after a list was "
+        f"{'not ' if run >= RUNAWAY_WHITE_SPACE else ''}sent again"
+    )
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
+        f"a reply that wrote {run} white-space characters in a row after a list was not read"
+    )
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+@given(
+    words=spaced_words,
+    gaps=st.dictionaries(st.integers(0, 60), short_white_space_runs, max_size=6),
+    cuts=cuts_anywhere,
+)
+@EXAMPLES
+def test_spaces_inside_a_string_never_end_a_reply_however_many_and_wherever_the_stream_is_cut(
+    model: ModelStandin,
+    wire_api: WireApi,
+    words: list[str],
+    gaps: dict[int, str],
+    cuts: list[int],
+) -> None:
+    tally = Tally(words=words, count=len(words))
+    text, _ = spaced(tally.model_dump(mode="json"), gaps)
+    model.reset(lambda asked: Reply(pieces=pieces_of(text, cuts)))
+    events = replying(wire_api, [], [])
+    assert len(model.asked()) == 1, (
+        "a reply whose strings hold runs of spaces, and that writes fewer than "
+        f"{RUNAWAY_WHITE_SPACE} white-space characters in a row outside them, was sent again"
+    )
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
+        "a reply whose strings hold runs of spaces was not read as written"
+    )
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+@given(
+    draft=drafted_digests,
+    indent=st.one_of(st.integers(0, 8), st.just("\t")),
+    cuts=cuts_anywhere,
+)
+@EXAMPLES
+def test_a_reply_set_out_with_indents_is_read_whole(
+    model: ModelStandin, wire_api: WireApi, draft: DraftDigest, indent: int | str, cuts: list[int]
+) -> None:
+    text = json.dumps(draft.model_dump(mode="json"), indent=indent, ensure_ascii=False)
+    model.reset(lambda asked: Reply(pieces=pieces_of(text, cuts)))
+    reply = model_of(wire_api).replying(
+        INSTRUCTIONS, [Message(side=Side.ASKER, text=QUESTION)], DraftDigest, [], Ending()
+    )
+    events = list(reply)
+    assert len(model.asked()) == 1, f"a digest set out with an indent of {indent!r} was sent again"
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == draft, (
+        f"a digest set out with an indent of {indent!r} was not read as written"
+    )
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+def test_a_reply_that_runs_away_is_cut_off_and_logged_without_its_text(
+    model: ModelStandin, wire_api: WireApi, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The stand-in holds the reply that runs away open after its first piece, as a model that
+    # writes white space without end does: only the client's closing ends it.
+    caplog.set_level(logging.WARNING, logger=language_model.__name__)
+    tally = Tally(words=["harbour"], count=3)
+    head = '{"words": ["harbour"]'
+    white = "\r \n\t" * RUNAWAY_WHITE_SPACE
+    model.reset(
+        by_request(
+            [runaway_reply(head, white, threading.Event()), Reply(pieces=[tally.model_dump_json()])]
+        )
+    )
+    events = replying(wire_api, [], [])
+    first, _ = model.requests()
+    assert first.ended.wait(WRITING_SECONDS) and first.left, (
+        f"the stream of a reply that ran away was not closed within {WRITING_SECONDS} s"
+    )
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
+        "the request of a reply that ran away was not answered by the request sent again"
+    )
+    told = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == language_model.__name__ and record.levelno == logging.WARNING
+    ]
+    assert len(told) == 1, f"a reply that ran away once was not told once as a warning: {told}"
+    assert STANDIN_MODEL in told[0] and str(len(head + white)) in told[0], (
+        f"the warning of a runaway does not name its model and how far it came: {told[0]}"
+    )
+    assert "harbour" not in told[0], f"the warning of a runaway gives its text: {told[0]}"
+
+
+def failed_first(asked: Asked) -> Rejection:
+    return Rejection(status=HTTPStatus.INTERNAL_SERVER_ERROR, body='{"error": {"message": "busy"}}')
+
+
+# How the requests of a reply run away, with the model that asks: each with how many requests the
+# endpoint receives before the reply fails. A digest's model sends a request again once, and an
+# answer's never; a request that the client already sent again after a failure has no attempt left.
+ATTEMPTS = {
+    "a digest's request, every reply running away": (openai_model, [], 2),
+    "an answer's request": (endable_openai_model, [], 1),
+    "a request the client sent again after a failure": (openai_model, [failed_first], 2),
+}
+
+
+@pytest.mark.parametrize("wire_api", list(WireApi))
+@pytest.mark.parametrize("attempts", ATTEMPTS)
+def test_a_reply_that_runs_away_is_sent_again_only_while_its_request_has_attempts_left(
+    model: ModelStandin, wire_api: WireApi, attempts: str
+) -> None:
+    made, before, sent = ATTEMPTS[attempts]
+    head = '{"words": ["fog"]'
+    tally = Tally(words=["fog"], count=1)
+
+    def answer(asked: Asked) -> Reply | Rejection:
+        if asked.number < len(before):
+            return before[asked.number](asked)
+        return runaway_reply(head, " " * RUNAWAY_WHITE_SPACE)
+
+    model.reset(answer)
+    reply = made(name=STANDIN_MODEL, wire_api=wire_api).replying(
+        INSTRUCTIONS, [Message(side=Side.ASKER, text=QUESTION)], Tally, [], Ending()
+    )
+    with pytest.raises(UnstructuredCompletion) as caught:
+        for event in reply:
+            assert not isinstance(event, Replied) or event.completion.output != tally
+    assert "white space" in str(caught.value), (
+        f"{attempts} failed without saying that it wrote white space without end: {caught.value}"
+    )
+    assert len(model.asked()) == sent, (
+        f"{attempts} reached the endpoint {len(model.asked())} times, not {sent}"
+    )
+
+
+@pytest.mark.parametrize("searching", [True, False])
+def test_a_glm_request_left_free_of_json_is_not_read_for_white_space(
+    model: ModelStandin, searching: bool
+) -> None:
+    # The first request of a GLM reply that offers tools leaves the model to the form it is told,
+    # and it may answer in prose: such a request is not ended for its white space. Any other is
+    # held to JSON, and is.
+    endpoint = GlmEndpoint(
+        base_url=GLM_BASE_URL,
+        api_key=SecretStr(GLM_KEY),
+        reasoning_efforts={},
+        pace=Pace(requests_per_minute=UNHURRIED_GLM_REQUESTS),
+    )
+    tally = Tally(words=["fog"], count=3)
+    head = '{"words": ["fog"]'
+    model.reset(
+        by_request(
+            [
+                runaway_reply(head, " " * 2 * RUNAWAY_WHITE_SPACE),
+                Reply(pieces=[tally.model_dump_json()]),
+            ]
+        )
+    )
+    tools = [lookup_tool(lookup_result)] if searching else []
+    events = list(
+        glm_model(STANDIN_MODEL, endpoint).replying(
+            INSTRUCTIONS, [Message(side=Side.ASKER, text=QUESTION)], Tally, tools, Ending()
+        )
+    )
+    assert len(model.asked()) == (1 if searching else 2), (
+        f"a GLM request {'left free of' if searching else 'held to'} JSON was "
+        f"{'' if searching else 'not '}ended for its white space"
+    )
+    assert isinstance(events[-1], Replied) and events[-1].completion.output == tally, (
+        "a GLM reply was not read"
+    )

@@ -324,7 +324,7 @@ class Translator:
     ) -> None:
         # What a survey found, and the tokens it took. A document that needs no translation
         # keeps no terms.
-        needed = not survey.output.written_in_asked_language
+        needed = not survey.output.matches_asked_language
         with self.turn, self.opened(owner) as (_, shelf):
             records = shelf.records(document_id, self.language)
             for record in records if is_current(records, run) else []:
@@ -376,7 +376,7 @@ class Translator:
         match records[0].survey:
             case Unsurveyed() if pending:
                 survey = surveyed(model, self.language, document)
-                if survey.output.written_in_asked_language:
+                if survey.output.matches_asked_language:
                     self.keep_survey(owner, document_id, run, survey, Unneeded())
                     return
                 self.keep_survey(owner, document_id, run, survey, Running())

@@ -138,6 +138,13 @@ class EarlierDigest(BaseModel):
 
 
 class DraftSection(BaseModel):
+    # A section as a model drafts it. Through the relay a reply's keys come in alphabetical
+    # order whatever the schema's, so the title falls due after the statements, and it stays
+    # there. Where it falls due so, gpt-6.1-terra and gpt-6-luna at times wrote white space
+    # without end, which the guard of language_model now ends, sending the request again.
+    # Drafted first, named heading, the title cost more: gpt-6-luna wrote every quote of 5 of
+    # 101 digests in Chinese, so that each lost all its citations, against none of 101 drafted
+    # title last.
     title: str
     form: SectionForm
     statements: list[DraftStatement]
