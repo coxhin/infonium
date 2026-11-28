@@ -195,38 +195,48 @@ export function useBrowsing(
     }
   }, [opened, entries.loaded, subscriptions.loaded, folders.loaded]);
 
-  // The folder each subscription was in when the list of subscriptions was last read with it, for
-  // one that leaves.
-  const folderOf = useRef(new Map<string, string | null>());
+  // Each subscription as the list of subscriptions last held it, for one that leaves: the folder
+  // it was in, and when it was added, which tells it from a subscription to the same feed made
+  // again later, under the same id.
+  const lastListed = useRef(new Map<string, Subscription>());
   useEffect(() => {
     for (const subscription of listedSubscriptions) {
-      folderOf.current.set(subscription.id, subscription.folder);
+      lastListed.current.set(subscription.id, subscription);
     }
   }, [listedSubscriptions]);
 
   // A subscription that left, removed here or in another window, whichever notices it first: the
-  // panel, when it reads the subscription, or the list of subscriptions, read without it. Its
-  // items stay, hand-added now, where it was. Selected, the selection goes where its items went:
-  // the folder it was in, while that folder stands, else 未分类. Another window may have
-  // dissolved that folder too, so the service is asked whether it stands, and the folders on
-  // show take its answer; the selection moves only while the subscription is selected still. The
-  // keyboard follows where it was on what left. The form that subscribes stays where it is open,
-  // with what it says.
+  // panel, when it reads the subscription, or the list of subscriptions, read without it. It is
+  // handled once, however often it is noticed after: taken from the list on show where that
+  // still holds it, and the items read again, which stay, hand-added now, where it was.
+  // Selected, the selection goes where its items went: the folder it was in, while that folder
+  // stands, else 未分类. Another window may have dissolved that folder too, so the service is
+  // asked whether it stands, and the folders on show take its answer; the selection moves only
+  // while the subscription is selected still. The keyboard follows where it was on what left.
+  // The form that subscribes stays where it is open, with what it says.
   const selectionNow = useRef(selection);
   selectionNow.current = selection;
-  const leaving = useRef<string>(undefined);
+  // The subscriptions handled as left, each by its id and when it was added.
+  const handled = useRef(new Set<string>());
   const left = useCallback(
     (subscriptionId: string) => {
+      const listedAs = lastListed.current.get(subscriptionId);
+      const instance = `${subscriptionId} ${listedAs?.added ?? ""}`;
+      if (handled.current.has(instance)) {
+        return;
+      }
+      handled.current.add(instance);
       subscriptions.replace((before) =>
-        before.filter((subscription) => subscription.id !== subscriptionId),
+        before.some((subscription) => subscription.id === subscriptionId)
+          ? before.filter((subscription) => subscription.id !== subscriptionId)
+          : before,
       );
       entries.readNow();
       const leftSelected = { kind: "subscription", subscriptionId } as const;
-      if (!sameSelection(selection, leftSelected) || leaving.current === subscriptionId) {
+      if (!sameSelection(selectionNow.current, leftSelected)) {
         return;
       }
-      leaving.current = subscriptionId;
-      const folder = folderOf.current.get(subscriptionId) ?? null;
+      const folder = listedAs?.folder ?? null;
       const standing =
         folder === null
           ? Promise.resolve(false)
@@ -238,7 +248,6 @@ export function useBrowsing(
               () => folderIds.has(folder),
             );
       void standing.then((stands) => {
-        leaving.current = undefined;
         if (!sameSelection(selectionNow.current, leftSelected)) {
           return;
         }
@@ -249,15 +258,7 @@ export function useBrowsing(
         land(keyOf(chosen));
       });
     },
-    [
-      selection,
-      folderIds,
-      subscriptions.replace,
-      folders.replace,
-      entries.readNow,
-      keepSelection,
-      land,
-    ],
+    [folderIds, subscriptions.replace, folders.replace, entries.readNow, keepSelection, land],
   );
 
   // Once the page has opened, a subscription selected that the list of subscriptions no longer

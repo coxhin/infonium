@@ -236,9 +236,15 @@ export function SidebarTree({
     drawn.current = rows;
     const asked = pending.current;
     const nowhere = keyboardIsNowhere();
+    const held = holder.current;
     // A row asked for waits to be drawn while the keyboard has nowhere to be, or is in the menu
     // that asked for it; a press of the reader's, or the keyboard gone elsewhere, ends the wait.
-    if (asked !== undefined && !isOverruled(asked)) {
+    // Where the keyboard was on a row that went from the tree, it goes where that row stands now,
+    // or to the row in its place, whether or not a row is asked for as it goes, so that the
+    // subscription selected that leaves with the keyboard on its row hands it on alike however
+    // soon the selection moves.
+    const heldGone = nowhere && held !== undefined && !rows.some((row) => row.key === held);
+    if (asked !== undefined && !isOverruled(asked) && !heldGone) {
       const element = rowElement(asked.key);
       if (nowhere && element !== null) {
         pending.current = undefined;
@@ -250,7 +256,6 @@ export function SidebarTree({
       }
     }
     pending.current = undefined;
-    const held = holder.current;
     if (!nowhere || held === undefined) {
       return;
     }
