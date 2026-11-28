@@ -122,14 +122,13 @@ export type SubscriptionWatch = Watched<SubscriptionState> & {
 };
 
 // The open subscription's state, read again every 1.5 seconds while something on it is under
-// way and every minute otherwise, while it is on show. A reading again keeps the place the
-// reader went down to: it reads every posting from the newest down to the oldest held, and puts
-// them above the older ones read meanwhile. The first reading, of a subscription opened at an
-// item, reads on until that item's posting is among those read.
+// way and every minute otherwise; it is open only while it is on show. A reading again keeps the
+// place the reader went down to: it reads every posting from the newest down to the oldest held,
+// and puts them above the older ones read meanwhile. The first reading, of a subscription opened
+// at an item, reads on until that item's posting is among those read.
 export function useSubscriptionState(
   subscriptionId: string,
   sought: string | undefined,
-  shown: boolean,
 ): SubscriptionWatch {
   // The postings on show, as far as this page knows them; a page of older ones is held at once,
   // before it is drawn, for a reading that arrives meanwhile to keep it.
@@ -158,7 +157,6 @@ export function useSubscriptionState(
   const watched = useWatched(load, subscriptionId, isUnsettled, {
     interval: (state) =>
       state.kind === "present" ? untilNextPoll([state.subscription], Date.now()) : LIST_INTERVAL_MS,
-    shown,
     unanswered: isUnanswered,
   });
   held.current =

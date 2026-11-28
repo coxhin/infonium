@@ -579,6 +579,47 @@
         "title": "FirstUnderway",
         "type": "object"
       },
+      "FolderDraft": {
+        "properties": {
+          "name": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "FolderDraft",
+        "type": "object"
+      },
+      "FolderView": {
+        "properties": {
+          "added": {
+            "format": "date-time",
+            "title": "Added",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "added"
+        ],
+        "title": "FolderView",
+        "type": "object"
+      },
       "Follows": {
         "enum": [
           "reads",
@@ -821,9 +862,30 @@
       },
       "ItemEntry": {
         "properties": {
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Media"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "origin": {
             "discriminator": {
@@ -882,7 +944,9 @@
           "id",
           "origin",
           "reading",
-          "seen"
+          "seen",
+          "media",
+          "folder"
         ],
         "title": "ItemEntry",
         "type": "object"
@@ -1217,6 +1281,15 @@
         ],
         "title": "Lost",
         "type": "object"
+      },
+      "Media": {
+        "enum": [
+          "web",
+          "pdf",
+          "recording"
+        ],
+        "title": "Media",
+        "type": "string"
       },
       "ModelView": {
         "properties": {
@@ -1593,6 +1666,42 @@
           "anchors"
         ],
         "title": "Passage",
+        "type": "object"
+      },
+      "Placing": {
+        "properties": {
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "items": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "subscriptions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Subscriptions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folder"
+        ],
+        "title": "Placing",
         "type": "object"
       },
       "PollFailed": {
@@ -2230,6 +2339,17 @@
             "title": "Feed",
             "type": "string"
           },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
           "follows": {
             "$ref": "#/components/schemas/Follows"
           },
@@ -2293,7 +2413,8 @@
           "follows",
           "poll",
           "postings",
-          "unseen"
+          "unseen",
+          "folder"
         ],
         "title": "SubscriptionView",
         "type": "object"
@@ -2963,6 +3084,183 @@
           }
         },
         "summary": "Document Picture"
+      }
+    },
+    "/api/folders": {
+      "get": {
+        "operationId": "list_folders_api_folders_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FolderView"
+                  },
+                  "title": "Response List Folders Api Folders Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Folders"
+      },
+      "post": {
+        "operationId": "make_folder_api_folders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Make Folder"
+      }
+    },
+    "/api/folders/{folder_id}": {
+      "delete": {
+        "operationId": "dissolve_folder_api_folders__folder_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "folder_id",
+            "required": true,
+            "schema": {
+              "title": "Folder Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dissolve Folder"
+      },
+      "patch": {
+        "operationId": "rename_folder_api_folders__folder_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "folder_id",
+            "required": true,
+            "schema": {
+              "title": "Folder Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Folder"
       }
     },
     "/api/highlights": {
@@ -4808,6 +5106,57 @@
           }
         },
         "summary": "Rewrite Note"
+      }
+    },
+    "/api/placements": {
+      "put": {
+        "operationId": "place_api_placements_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Placing"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place"
       }
     },
     "/api/subscriptions": {

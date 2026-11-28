@@ -44,6 +44,8 @@ DIGEST_FORMAT = 4
 EARLIER_DIGEST_TABLE = "earlier_digest"
 # The form of a row that says when an item was first seen.
 SEEN_FORMAT = 1
+# The form of a row that notes a document's media type beside it.
+MEDIA_TYPE_FORMAT = 1
 FIRST_REVISION = 1
 # A reading that the service's stopping cut off this many times is given up.
 READING_STARTS = 3
@@ -52,6 +54,10 @@ NOT_UNDERWAY = "no reading of the item is under way"
 ALREADY_UNDERWAY = "a reading of the item is under way already"
 NO_FIRST_READING = "no first reading of the item is under way"
 CONNECT = "connect"
+# What begins a transaction whose reads all see the library as it stood at the first of them,
+# and one that holds the library's file for writing from its start.
+BEGIN_READING = "BEGIN"
+BEGIN_WRITING = "BEGIN IMMEDIATE"
 ENFORCE_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 # Several threads write to the library's file: the readings, and the work other modules do in
 # the background on tables of their own. With a write-ahead log one writes while the others
@@ -139,6 +145,23 @@ seen_table = sqlalchemy.Table(
     sqlalchemy.Column("seen", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
 )
+# The media type of each document, as its body names it, noted beside it when it is kept, so
+# that a list of items tells what each is read as without reading the documents' bodies,
+# which takes 0.3 seconds for 2,000 documents of 300 blocks. The documents of a library kept
+# before the notes are noted once, when it opens.
+media_type_table = sqlalchemy.Table(
+    "media_type",
+    metadata,
+    sqlalchemy.Column(
+        "document_id",
+        sqlalchemy.String,
+        sqlalchemy.ForeignKey(document_table.c.id),
+        primary_key=True,
+    ),
+    sqlalchemy.Column("owner", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("media_type", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("format", sqlalchemy.Integer, nullable=False),
+)
 # The digest table as a library kept it before digests had styles, under the name it is given
 # while it waits. It is no table of a library made now.
 earlier_digest_table = sqlalchemy.Table(
@@ -151,6 +174,10 @@ earlier_digest_table = sqlalchemy.Table(
 
 class NotInLibrary(LookupError):
     pass
+
+
+def missing_item(item_id: str) -> NotInLibrary:
+    return NotInLibrary(f"item {item_id} is not in the library")
 
 
 class OriginKind(StrEnum):
@@ -324,9 +351,12 @@ def item_with(item: Item, reading: Reading) -> Item:
 
 
 class SeenItem(BaseModel):
-    # An item, and when its reader first had its document on show; none, if never.
+    # An item, and when its reader first had its document on show; none, if never. The media
+    # type is that of the file kept of its source: beside the document it holds, or, while it
+    # holds none, as its reading keeps it as it arrived; none while no file of it is kept.
     item: Item
     seen: AwareDatetime | None
+    media_type: MediaType | None
 
 
 class EarlierItem(BaseModel):
@@ -379,6 +409,10 @@ reading_kind = sqlalchemy.func.json_extract(
 origin_kind = sqlalchemy.func.json_extract(
     item_table.c.body, field_path((Item, "origin"), (Link, "kind"))
 )
+# The subscription an item's origin names, of an item that a subscription brought.
+origin_subscription = sqlalchemy.func.json_extract(
+    item_table.c.body, field_path((Item, "origin"), (Subscribed, "subscription"))
+)
 kept_document_id = sqlalchemy.func.json_extract(
     item_table.c.body, field_path((Item, "reading"), (Read, "document"))
 )
@@ -412,9 +446,27 @@ def seen_time(kept: str | None) -> datetime | None:
     return None if kept is None else TIMESTAMP.validate_python(kept)
 
 
-def seen_item(body: str, seen: str | None) -> SeenItem:
-    # An item as it is kept, with the time it was seen as it is kept.
-    return SeenItem(item=Item.model_validate_json(body), seen=seen_time(seen))
+def kept_media_type(reading: Reading, noted: str | None) -> str | None:
+    # The media type of the file kept of an item's source, by its reading and the media type
+    # noted of the document it holds: that one, or, while it holds none, that of the file its
+    # reading keeps as it arrived; none while no file is kept.
+    match reading:
+        case Read(document=document_id):
+            if noted is None:
+                raise NotInLibrary(f"no media type is noted of document {document_id}")
+            return noted
+        case _:
+            arrival = arrival_of(reading)
+            return arrival[0].media_type if arrival else None
+
+
+def seen_item(body: str, seen: str | None, noted: str | None) -> SeenItem:
+    # An item as it is kept, with the time it was seen and the media type noted of the
+    # document it holds, each as it is kept.
+    item = Item.model_validate_json(body)
+    return SeenItem(
+        item=item, seen=seen_time(seen), media_type=kept_media_type(item.reading, noted)
+    )
 
 
 def replacing_insert(
@@ -497,6 +549,30 @@ def bring_up_to_date(connection: sqlalchemy.Connection) -> None:
     )
     number_unnumbered_documents(connection)
     give_digests_styles(connection)
+    note_media_types(connection)
+
+
+def note_media_types(connection: sqlalchemy.Connection) -> None:
+    # A document kept before media types were noted beside documents, or by a service that
+    # did not note them, has its media type noted from its body.
+    connection.execute(
+        sqlite.insert(media_type_table).from_select(
+            [
+                media_type_table.c.document_id,
+                media_type_table.c.owner,
+                media_type_table.c.media_type,
+                media_type_table.c.format,
+            ],
+            sqlalchemy.select(
+                document_table.c.id,
+                document_table.c.owner,
+                document_media_type,
+                sqlalchemy.literal(MEDIA_TYPE_FORMAT),
+            )
+            .outerjoin(media_type_table, media_type_table.c.document_id == document_table.c.id)
+            .where(media_type_table.c.document_id.is_(None)),
+        )
+    )
 
 
 def give_digests_styles(connection: sqlalchemy.Connection) -> None:
@@ -638,6 +714,18 @@ class Library:
             )
             .on_conflict_do_nothing(index_elements=[document_table.c.id])
         )
+        self.connection.execute(
+            sqlite.insert(media_type_table)
+            .values(
+                {
+                    media_type_table.c.document_id: document.id,
+                    media_type_table.c.owner: self.owner,
+                    media_type_table.c.media_type: document.media_type,
+                    media_type_table.c.format: MEDIA_TYPE_FORMAT,
+                }
+            )
+            .on_conflict_do_nothing(index_elements=[media_type_table.c.document_id])
+        )
         next_number = sqlalchemy.select(
             sqlalchemy.literal(document.id),
             sqlalchemy.literal(self.owner),
@@ -705,23 +793,38 @@ class Library:
         return [Item.model_validate_json(body) for body in bodies]
 
     def seen_items(self) -> list[SeenItem]:
-        # Every item with when it was seen, the one added last first.
+        # Every item with when it was seen and the media type of its source, the one added
+        # last first.
         rows = self.connection.execute(
-            sqlalchemy.select(item_table.c.body, seen_table.c.seen)
+            sqlalchemy.select(item_table.c.body, seen_table.c.seen, media_type_table.c.media_type)
             .outerjoin(seen_table, seen_table.c.item_id == item_table.c.id)
+            .outerjoin(
+                media_type_table,
+                (media_type_table.c.owner == self.owner)
+                & (media_type_table.c.document_id == kept_document_id),
+            )
             .where(item_table.c.owner == self.owner)
             .order_by(item_table.c.added.desc())
         ).all()
-        return [seen_item(body, seen) for body, seen in rows]
+        return [seen_item(body, seen, noted) for body, seen, noted in rows]
 
     def seen_as(self, item: Item) -> SeenItem:
-        # An item as an operation on it left it, with when it was seen.
+        # An item as an operation on it left it, with when it was seen and the media type of
+        # its source.
         seen = self.connection.execute(
             sqlalchemy.select(seen_table.c.seen).where(
                 seen_table.c.owner == self.owner, seen_table.c.item_id == item.id
             )
         ).scalar_one_or_none()
-        return SeenItem(item=item, seen=seen_time(seen))
+        held = [item.reading.document] if isinstance(item.reading, Read) else []
+        noted = self.connection.execute(
+            sqlalchemy.select(media_type_table.c.media_type).where(
+                media_type_table.c.owner == self.owner, media_type_table.c.document_id.in_(held)
+            )
+        ).scalar_one_or_none()
+        return SeenItem(
+            item=item, seen=seen_time(seen), media_type=kept_media_type(item.reading, noted)
+        )
 
     def see(self, item_id: str, at: datetime) -> SeenItem:
         # The item is seen at the time given, unless it was seen before, which stays the time.
@@ -752,7 +855,7 @@ class Library:
     def item(self, item_id: str) -> Item:
         found = self.sought(item_id)
         if not found:
-            raise NotInLibrary(f"item {item_id} is not in the library")
+            raise missing_item(item_id)
         return found[0]
 
     def holding(self, item_id: str) -> Holding:
@@ -842,7 +945,26 @@ class LibraryStore:
 
     @contextmanager
     def transaction(self, owner: str) -> Iterator[OwnerTransaction]:
+        # Python's sqlite3 begins the transaction at its first write: each read before that
+        # reads the library as it stands then, and another writer may change it in between.
         with self.engine.begin() as connection:
+            yield OwnerTransaction(connection=connection, owner=owner)
+
+    @contextmanager
+    def read_transaction(self, owner: str) -> Iterator[OwnerTransaction]:
+        # A transaction that only reads, whose reads all see the library as it stood at the
+        # first of them, for an answer read in several queries. It waits for no writer.
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(BEGIN_READING)
+            yield OwnerTransaction(connection=connection, owner=owner)
+
+    @contextmanager
+    def write_transaction(self, owner: str) -> Iterator[OwnerTransaction]:
+        # A transaction that holds the library's file for writing from its start, for an
+        # operation that reads, decides and writes: what it reads stays as it read it until it
+        # ends, for any other writer waits for it, as it waits for one at work.
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(BEGIN_WRITING)
             yield OwnerTransaction(connection=connection, owner=owner)
 
     @contextmanager

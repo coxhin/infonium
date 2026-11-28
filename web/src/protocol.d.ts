@@ -57,6 +57,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Folders */
+        get: operations["list_folders_api_folders_get"];
+        put?: never;
+        /** Make Folder */
+        post: operations["make_folder_api_folders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/folders/{folder_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Dissolve Folder */
+        delete: operations["dissolve_folder_api_folders__folder_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Folder */
+        patch: operations["rename_folder_api_folders__folder_id__patch"];
+        trace?: never;
+    };
     "/api/highlights": {
         parameters: {
             query?: never;
@@ -474,6 +510,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/placements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Place */
+        put: operations["place_api_placements_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/subscriptions": {
         parameters: {
             query?: never;
@@ -819,6 +872,23 @@ export interface components {
             /** Starts */
             starts: number;
         };
+        /** FolderDraft */
+        FolderDraft: {
+            /** Name */
+            name: string;
+        };
+        /** FolderView */
+        FolderView: {
+            /**
+             * Added
+             * Format: date-time
+             */
+            added: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * Follows
          * @enum {string}
@@ -914,8 +984,11 @@ export interface components {
         };
         /** ItemEntry */
         ItemEntry: {
+            /** Folder */
+            folder: string | null;
             /** Id */
             id: string;
+            media: components["schemas"]["Media"] | null;
             /** Origin */
             origin: components["schemas"]["Link"] | components["schemas"]["Upload"] | components["schemas"]["Subscribed"];
             /** Reading */
@@ -1057,6 +1130,11 @@ export interface components {
              */
             kind: "lost";
         };
+        /**
+         * Media
+         * @enum {string}
+         */
+        Media: "web" | "pdf" | "recording";
         /** ModelView */
         ModelView: {
             /** Name */
@@ -1228,6 +1306,21 @@ export interface components {
         Passage: {
             /** Anchors */
             anchors: components["schemas"]["Anchor"][];
+        };
+        /** Placing */
+        Placing: {
+            /** Folder */
+            folder: string | null;
+            /**
+             * Items
+             * @default []
+             */
+            items: string[];
+            /**
+             * Subscriptions
+             * @default []
+             */
+            subscriptions: string[];
         };
         /** PollFailed */
         PollFailed: {
@@ -1493,6 +1586,8 @@ export interface components {
             address: string;
             /** Feed */
             feed: string;
+            /** Folder */
+            folder: string | null;
             follows: components["schemas"]["Follows"];
             /** Id */
             id: string;
@@ -1847,6 +1942,159 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_folders_api_folders_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderView"][];
+                };
+            };
+        };
+    };
+    make_folder_api_folders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderView"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dissolve_folder_api_folders__folder_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_folder_api_folders__folder_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3247,6 +3495,55 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    place_api_placements_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Placing"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -3,6 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from functools import cache, partial
 from http import HTTPStatus
 from pathlib import PurePath
@@ -42,6 +43,7 @@ from infonium.digest import (
 from infonium.document import (
     HTML_MEDIA_TYPE,
     PDF_MEDIA_TYPE,
+    RECORDING_MEDIA_TYPES,
     Block,
     BlockNumber,
     MediaType,
@@ -49,6 +51,16 @@ from infonium.document import (
     error_text,
 )
 from infonium.embedding import EmbeddingEngine
+from infonium.folder import (
+    Folder,
+    FolderDraft,
+    FolderName,
+    FolderNameTaken,
+    Folders,
+    FollowsSubscription,
+    Placed,
+    Placing,
+)
 from infonium.framedpage import FramedPage, KeptPages
 from infonium.highlight import Comment, HighlightDraft, Highlights, ShownHighlight
 from infonium.intake import Engines, Intake, NothingToReadAgain
@@ -325,14 +337,44 @@ class LinkImport(BaseModel):
     url: HttpUrl
 
 
+class Media(StrEnum):
+    # What an item is read as: told by the media type of the document it holds, or, while it
+    # holds none, of the file its reading keeps as it arrived. HTML is a web article, a PDF is
+    # a PDF, and sound or film is a recording.
+    WEB = "web"
+    PDF = "pdf"
+    RECORDING = "recording"
+
+
+# The media of an item by the media type of a web page's or a PDF's file; a recording's is
+# told by its beginning.
+MEDIA_OF_TYPES = {HTML_MEDIA_TYPE: Media.WEB, PDF_MEDIA_TYPE: Media.PDF}
+
+
+def media_of(media_type: str | None) -> Media | None:
+    # What an item is read as, by the media type of the file kept of its source; none where
+    # no file is kept, or where the file is of another kind.
+    match media_type:
+        case str() if media_type.startswith(RECORDING_MEDIA_TYPES):
+            return Media.RECORDING
+        case str():
+            return MEDIA_OF_TYPES.get(media_type)
+        case _:
+            return None
+
+
 class ItemEntry(BaseModel):
     # An item as a list shows it. It was seen when its reader first had its document on show;
     # an item that a subscription brought, that is read and was not seen yet, is new to its
-    # reader.
+    # reader. Its media is none while no file of it has arrived, or where the file is of
+    # another kind. Its folder is its subscription's while it follows its subscription, and
+    # that of its own placement otherwise.
     id: str
     origin: Origin
     reading: Reading
     seen: AwareDatetime | None
+    media: Media | None
+    folder: str | None
 
 
 class DocumentView(BaseModel):
@@ -552,6 +594,14 @@ class SubscriptionView(BaseModel):
     poll: Poll
     postings: int
     unseen: int
+    folder: str | None
+
+
+class FolderView(BaseModel):
+    # A folder of the sidebar, which holds subscriptions and items.
+    id: str
+    name: FolderName
+    added: AwareDatetime
 
 
 class AdmittedItem(Tagged):
@@ -596,6 +646,8 @@ app.add_exception_handler(StaleDraft, explained(HTTPStatus.PRECONDITION_FAILED))
 app.add_exception_handler(UnreachableModel, explained(HTTPStatus.SERVICE_UNAVAILABLE))
 app.add_exception_handler(UnreadableFeed, explained(HTTPStatus.BAD_REQUEST))
 app.add_exception_handler(ScheduleStopped, explained(HTTPStatus.SERVICE_UNAVAILABLE))
+app.add_exception_handler(FolderNameTaken, explained(HTTPStatus.CONFLICT))
+app.add_exception_handler(FollowsSubscription, explained(HTTPStatus.CONFLICT))
 
 NOT_IN_LIBRARY: dict[int | str, dict[str, Any]] = {HTTPStatus.NOT_FOUND: {"model": Failure}}
 NAMELESS: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Failure}}
@@ -621,6 +673,10 @@ NO_FEED: dict[int | str, dict[str, Any]] = {HTTPStatus.BAD_REQUEST: {"model": Fa
 SCHEDULE_STOPPED: dict[int | str, dict[str, Any]] = {
     HTTPStatus.SERVICE_UNAVAILABLE: {"model": Failure}
 }
+# Another folder of the owner's has the name asked for.
+NAME_TAKEN: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
+# An item named follows its subscription, and so is placed only with it.
+FOLLOWING: dict[int | str, dict[str, Any]] = {HTTPStatus.CONFLICT: {"model": Failure}}
 # How many postings a list of them holds unless more or fewer are asked for, and at most.
 POSTINGS_LISTED = 50
 MOST_POSTINGS_LISTED = 200
@@ -701,18 +757,34 @@ async def answer_ending(request: Request) -> AsyncIterator[Ending]:
 AnswerEnding = Annotated[Ending, Depends(answer_ending)]
 
 
-def entry_of(seen: SeenItem) -> ItemEntry:
+def entry_of(seen: SeenItem, placed: Placed) -> ItemEntry:
     item = seen.item
-    return ItemEntry(id=item.id, origin=item.origin, reading=item.reading, seen=seen.seen)
+    return ItemEntry(
+        id=item.id,
+        origin=item.origin,
+        reading=item.reading,
+        seen=seen.seen,
+        media=media_of(seen.media_type),
+        folder=placed.item_folder(item),
+    )
 
 
 def answered_entry(owner: str, item: Item) -> ItemEntry:
-    # The entry of an item as an operation left it, with when it was seen.
-    with library_store().library(owner) as library:
-        return entry_of(library.seen_as(item))
+    # The entry of an item as an operation left it, with when it was seen and where it is.
+    with library_store().read_transaction(owner) as transaction:
+        seen = Library(transaction).seen_as(item)
+        placed = Folders(transaction).placed()
+    return entry_of(seen, placed)
 
 
-def subscription_view(counted: CountedSubscription) -> SubscriptionView:
+def placed_now(owner: str) -> Placed:
+    # Where the owner's subscriptions and items are, for what an operation of the poller left
+    # in a transaction of its own.
+    with library_store().read_transaction(owner) as transaction:
+        return Folders(transaction).placed()
+
+
+def subscription_view(counted: CountedSubscription, placed: Placed) -> SubscriptionView:
     subscription = counted.subscription
     return SubscriptionView(
         id=subscription.id,
@@ -725,13 +797,17 @@ def subscription_view(counted: CountedSubscription) -> SubscriptionView:
         poll=subscription.poll,
         postings=counted.postings,
         unseen=counted.unseen,
+        # A subscription removed since the placements were read has no placement either.
+        folder=placed.subscriptions.get(subscription.id),
     )
 
 
-def posting_view(shown: ShownPosting) -> PostingView:
+def posting_view(shown: ShownPosting, placed: Placed) -> PostingView:
     match shown.admission:
         case HeldItem(item=item):
-            admission: Unadmitted | Awaited | AdmittedItem = AdmittedItem(item=entry_of(item))
+            admission: Unadmitted | Awaited | AdmittedItem = AdmittedItem(
+                item=entry_of(item, placed)
+            )
         case Unadmitted() | Awaited() as waiting:
             admission = waiting
     posting = shown.posting
@@ -792,8 +868,10 @@ def written_digest(
 
 @app.get("/api/items")
 def list_items(owner: Owner) -> list[ItemEntry]:
-    with library_store().library(owner) as library:
-        return [entry_of(seen) for seen in library.seen_items()]
+    with library_store().read_transaction(owner) as transaction:
+        listed = Library(transaction).seen_items()
+        placed = Folders(transaction).placed()
+    return [entry_of(seen, placed) for seen in listed]
 
 
 @app.post("/api/items")
@@ -816,16 +894,21 @@ def import_upload(file: UploadFile, owner: Owner) -> ItemEntry:
 
 @app.get("/api/items/{item_id}", responses=NOT_IN_LIBRARY)
 def item_entry(item_id: str, owner: Owner) -> ItemEntry:
-    with library_store().library(owner) as library:
-        return entry_of(library.seen_as(library.item(item_id)))
+    with library_store().read_transaction(owner) as transaction:
+        library = Library(transaction)
+        seen = library.seen_as(library.item(item_id))
+        placed = Folders(transaction).placed()
+    return entry_of(seen, placed)
 
 
 @app.put("/api/items/{item_id}/seen", responses=NOT_IN_LIBRARY)
 def see_item(item_id: str, owner: Owner) -> ItemEntry:
     # The reader has the item's document on show. The first time is kept as when the item was
     # seen; a later one changes nothing.
-    with library_store().library(owner) as library:
-        return entry_of(library.see(item_id, datetime.now(UTC)))
+    with library_store().transaction(owner) as transaction:
+        seen = Library(transaction).see(item_id, datetime.now(UTC))
+        placed = Folders(transaction).placed()
+    return entry_of(seen, placed)
 
 
 @app.get("/api/items/{item_id}/document", responses=NOT_IN_LIBRARY)
@@ -1285,6 +1368,52 @@ def remove_note(note_id: str, owner: Owner) -> None:
         Notes(transaction).remove(note_id)
 
 
+def folder_view(folder: Folder) -> FolderView:
+    return FolderView(id=folder.id, name=folder.name, added=folder.added)
+
+
+@app.get("/api/folders")
+def list_folders(owner: Owner) -> list[FolderView]:
+    # The owner's folders, the one added first first.
+    with library_store().transaction(owner) as transaction:
+        listed = Folders(transaction).listed()
+    return [folder_view(folder) for folder in listed]
+
+
+@app.post("/api/folders", responses=NAME_TAKEN)
+def make_folder(draft: FolderDraft, owner: Owner) -> FolderView:
+    # Keeps a folder of the name, which no other folder of the owner's may have.
+    with library_store().write_transaction(owner) as transaction:
+        folder = Folders(transaction).make(draft, datetime.now(UTC))
+    return folder_view(folder)
+
+
+@app.patch("/api/folders/{folder_id}", responses=NOT_IN_LIBRARY | NAME_TAKEN)
+def rename_folder(folder_id: str, draft: FolderDraft, owner: Owner) -> FolderView:
+    # Gives the folder the name, which no other folder of the owner's may have. A folder
+    # renamed to its own name is answered unchanged.
+    with library_store().write_transaction(owner) as transaction:
+        folder = Folders(transaction).rename(folder_id, draft)
+    return folder_view(folder)
+
+
+@app.delete("/api/folders/{folder_id}", responses=NOT_IN_LIBRARY, status_code=HTTPStatus.NO_CONTENT)
+def dissolve_folder(folder_id: str, owner: Owner) -> None:
+    # Removes the folder and every placement in it. Its subscriptions and items stay, in no
+    # folder.
+    with library_store().write_transaction(owner) as transaction:
+        Folders(transaction).dissolve(folder_id)
+
+
+@app.put("/api/placements", responses=NOT_IN_LIBRARY | FOLLOWING, status_code=HTTPStatus.NO_CONTENT)
+def place(placing: Placing, owner: Owner) -> None:
+    # Places every subscription and item named in the folder, or in none. The whole request is
+    # refused, and nothing changes, where the folder, a subscription or an item is not the
+    # owner's, or where an item named follows its subscription.
+    with library_store().write_transaction(owner) as transaction:
+        Folders(transaction).place(placing)
+
+
 def schedule_running() -> None:
     # Once the schedule has stopped on a fault, every operation on subscriptions is refused
     # with it, so that the reader is told where they look.
@@ -1298,9 +1427,10 @@ subscriptions = APIRouter(dependencies=[Depends(schedule_running)], responses=SC
 @subscriptions.get("/api/subscriptions")
 def list_subscriptions(owner: Owner) -> list[SubscriptionView]:
     # The owner's subscriptions, the one added last first.
-    with library_store().transaction(owner) as transaction:
+    with library_store().read_transaction(owner) as transaction:
         counted = Subscriptions(transaction).every_counted()
-    return [subscription_view(subscription) for subscription in counted]
+        placed = Folders(transaction).placed()
+    return [subscription_view(subscription, placed) for subscription in counted]
 
 
 @subscriptions.post("/api/subscriptions", responses=NO_FEED)
@@ -1310,19 +1440,23 @@ def subscribe(draft: SubscriptionDraft, owner: Owner) -> SubscriptionView:
     # are admitted to the library. A feed the owner is subscribed to already is answered as
     # that subscription, unchanged. An address that leads to no feed that can be read is
     # refused with the reason, and nothing is kept.
-    return subscription_view(poller().subscribe(owner, draft))
+    return subscription_view(poller().subscribe(owner, draft), placed_now(owner))
 
 
 @subscriptions.get("/api/subscriptions/{subscription_id}", responses=NOT_IN_LIBRARY)
 def read_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
-    with library_store().transaction(owner) as transaction:
-        return subscription_view(Subscriptions(transaction).counted(subscription_id))
+    with library_store().read_transaction(owner) as transaction:
+        counted = Subscriptions(transaction).counted(subscription_id)
+        placed = Folders(transaction).placed()
+    return subscription_view(counted, placed)
 
 
 @subscriptions.put("/api/subscriptions/{subscription_id}/follows", responses=NOT_IN_LIBRARY)
 def choose_follows(subscription_id: str, choice: FollowsChoice, owner: Owner) -> SubscriptionView:
     # Sets how the subscription follows its feed from now on.
-    return subscription_view(poller().follow(owner, subscription_id, choice.follows))
+    return subscription_view(
+        poller().follow(owner, subscription_id, choice.follows), placed_now(owner)
+    )
 
 
 @subscriptions.post("/api/subscriptions/{subscription_id}/poll", responses=NOT_IN_LIBRARY)
@@ -1331,7 +1465,7 @@ def poll_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     # subscription be paused. Where a poll is under way already, that one goes on and no
     # other starts. The answer shows the poll under way; its end is read from the
     # subscription.
-    return subscription_view(poller().poll_now(owner, subscription_id))
+    return subscription_view(poller().poll_now(owner, subscription_id), placed_now(owner))
 
 
 @subscriptions.put("/api/subscriptions/{subscription_id}/seen", responses=NOT_IN_LIBRARY)
@@ -1340,7 +1474,9 @@ def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
     with library_store().transaction(owner) as transaction:
         subscriptions = Subscriptions(transaction)
         subscriptions.see(subscription_id, datetime.now(UTC))
-        return subscription_view(subscriptions.counted(subscription_id))
+        counted = subscriptions.counted(subscription_id)
+        placed = Folders(transaction).placed()
+    return subscription_view(counted, placed)
 
 
 @subscriptions.delete(
@@ -1350,7 +1486,7 @@ def see_subscription(subscription_id: str, owner: Owner) -> SubscriptionView:
 )
 def unsubscribe(subscription_id: str, owner: Owner) -> None:
     # Removes the subscription and the list of its postings. The items it brought stay in the
-    # library.
+    # library, in the folder the subscription was in, or in none.
     poller().unsubscribe(owner, subscription_id)
 
 
@@ -1367,9 +1503,10 @@ def subscription_postings(
     limit: Annotated[int, Query(ge=1, le=MOST_POSTINGS_LISTED)] = POSTINGS_LISTED,
 ) -> list[PostingView]:
     # The postings the subscription lists, the newest first, as many as the limit at most.
-    with library_store().transaction(owner) as transaction:
+    with library_store().read_transaction(owner) as transaction:
         page = Subscriptions(transaction).page(subscription_id, before, limit)
-    return [posting_view(shown) for shown in page]
+        placed = Folders(transaction).placed()
+    return [posting_view(shown, placed) for shown in page]
 
 
 @subscriptions.post(
@@ -1379,7 +1516,7 @@ def read_posting(subscription_id: str, number: PostingNumber, owner: Owner) -> P
     # Has the posting read at the reader's word: one that is not admitted, or that waits, is
     # admitted to the library now, and one whose item's reading failed is read again. One
     # whose item is being read, or is read, is answered as it stands.
-    return posting_view(poller().read_posting(owner, subscription_id, number))
+    return posting_view(poller().read_posting(owner, subscription_id, number), placed_now(owner))
 
 
 app.include_router(subscriptions)

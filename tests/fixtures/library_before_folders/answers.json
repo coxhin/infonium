@@ -1,0 +1,627 @@
+{
+  "owners": {
+    "local": {
+      "items": [
+        {
+          "id": "cf85e30bb7909726ee140ee627f446f0e904cd082868abf2eda5d2bcf458086f",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/made-up/kept-recording"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "The night crossing",
+            "document": "bff6770fe8f50a30ac084309fa8385f79d9203f4094953e96c126d0463771553",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "17b66c50bc23816ca319de2988f69814e92a7867e4df35b023485ccf62aeed13",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/no-such-page"
+          },
+          "reading": {
+            "kind": "unread",
+            "attempt": {
+              "kind": "failed",
+              "reason": "https://pages.test/no-such-page answered 404 Not Found"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "e6c924f0d69fb0345c54c468cecf689ce1e45f17131dd37e81d178882809768b",
+          "origin": {
+            "kind": "upload",
+            "name": "trap.pdf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "trap",
+            "document": "bb59998a4dfeccc304bc418be4a0a8ae349d11f15b6c2c82f9513987bed2e85e",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "964612df87b9b3fe488c885edeb2bba5f42e20505c7143b4718994c789c6cbdd",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/page/kept-link"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Quillmoor ledger kept",
+            "document": "f5deb0ba11a3e17ae5522d4debdc76fdce63513cd1f4a41897371806a67b8119",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": "2026-11-27T18:17:03.132734Z"
+        },
+        {
+          "id": "6726ea3843df4a10251b0c87daa7dfc6151d0c30e3fae703ed4138cbc9340b30",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-gone-0",
+            "called": "Posting kept-gone-0",
+            "subscription": "49e4f38ddfc98cac2445816b8cd9fa9c814a60598c0afcf0d620c73a3f0c4b0f"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-gone-0",
+            "document": "5e7e9cce792761b28e69f4bd731d27edf742fd73beda2675c1c8f12173d05ff1",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "7914e252ce4ae370bc7249d58b334cc4d62d6d4aaab45c4bcdda1cd72c9152a0",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-paused-0",
+            "called": "Posting kept-paused-0",
+            "subscription": "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d"
+          },
+          "reading": {
+            "kind": "unread",
+            "attempt": {
+              "kind": "failed",
+              "reason": "https://pages.test/page/kept-paused-0 answered 404 Not Found"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "52bc951a9629f2a1d7a308defe80a998d027785afe05e665094dbe3d4651a75b",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-1",
+            "called": "Posting kept-reads-1",
+            "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-1",
+            "document": "3f36291cf832709efe8afc6ff9341172d3313e32c14134b7fa5f634f82e280a4",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "55df1b2b31ee7942ec5a95ae94ee775f63e5d222b7e28a8a6d61ae06ae36359d",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-0",
+            "called": "Posting kept-reads-0",
+            "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-0",
+            "document": "c33cc7c11fe2aba401b79aaf208d561c31cae30be8110b9aaaba5be7f51fc22e",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": "2026-11-27T18:17:02.870046Z"
+        }
+      ],
+      "entries": {
+        "cf85e30bb7909726ee140ee627f446f0e904cd082868abf2eda5d2bcf458086f": {
+          "id": "cf85e30bb7909726ee140ee627f446f0e904cd082868abf2eda5d2bcf458086f",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/made-up/kept-recording"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "The night crossing",
+            "document": "bff6770fe8f50a30ac084309fa8385f79d9203f4094953e96c126d0463771553",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        "17b66c50bc23816ca319de2988f69814e92a7867e4df35b023485ccf62aeed13": {
+          "id": "17b66c50bc23816ca319de2988f69814e92a7867e4df35b023485ccf62aeed13",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/no-such-page"
+          },
+          "reading": {
+            "kind": "unread",
+            "attempt": {
+              "kind": "failed",
+              "reason": "https://pages.test/no-such-page answered 404 Not Found"
+            }
+          },
+          "seen": null
+        },
+        "e6c924f0d69fb0345c54c468cecf689ce1e45f17131dd37e81d178882809768b": {
+          "id": "e6c924f0d69fb0345c54c468cecf689ce1e45f17131dd37e81d178882809768b",
+          "origin": {
+            "kind": "upload",
+            "name": "trap.pdf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "trap",
+            "document": "bb59998a4dfeccc304bc418be4a0a8ae349d11f15b6c2c82f9513987bed2e85e",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        "964612df87b9b3fe488c885edeb2bba5f42e20505c7143b4718994c789c6cbdd": {
+          "id": "964612df87b9b3fe488c885edeb2bba5f42e20505c7143b4718994c789c6cbdd",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/page/kept-link"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Quillmoor ledger kept",
+            "document": "f5deb0ba11a3e17ae5522d4debdc76fdce63513cd1f4a41897371806a67b8119",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": "2026-11-27T18:17:03.132734Z"
+        },
+        "6726ea3843df4a10251b0c87daa7dfc6151d0c30e3fae703ed4138cbc9340b30": {
+          "id": "6726ea3843df4a10251b0c87daa7dfc6151d0c30e3fae703ed4138cbc9340b30",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-gone-0",
+            "called": "Posting kept-gone-0",
+            "subscription": "49e4f38ddfc98cac2445816b8cd9fa9c814a60598c0afcf0d620c73a3f0c4b0f"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-gone-0",
+            "document": "5e7e9cce792761b28e69f4bd731d27edf742fd73beda2675c1c8f12173d05ff1",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        "7914e252ce4ae370bc7249d58b334cc4d62d6d4aaab45c4bcdda1cd72c9152a0": {
+          "id": "7914e252ce4ae370bc7249d58b334cc4d62d6d4aaab45c4bcdda1cd72c9152a0",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-paused-0",
+            "called": "Posting kept-paused-0",
+            "subscription": "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d"
+          },
+          "reading": {
+            "kind": "unread",
+            "attempt": {
+              "kind": "failed",
+              "reason": "https://pages.test/page/kept-paused-0 answered 404 Not Found"
+            }
+          },
+          "seen": null
+        },
+        "52bc951a9629f2a1d7a308defe80a998d027785afe05e665094dbe3d4651a75b": {
+          "id": "52bc951a9629f2a1d7a308defe80a998d027785afe05e665094dbe3d4651a75b",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-1",
+            "called": "Posting kept-reads-1",
+            "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-1",
+            "document": "3f36291cf832709efe8afc6ff9341172d3313e32c14134b7fa5f634f82e280a4",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        "55df1b2b31ee7942ec5a95ae94ee775f63e5d222b7e28a8a6d61ae06ae36359d": {
+          "id": "55df1b2b31ee7942ec5a95ae94ee775f63e5d222b7e28a8a6d61ae06ae36359d",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-0",
+            "called": "Posting kept-reads-0",
+            "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-0",
+            "document": "c33cc7c11fe2aba401b79aaf208d561c31cae30be8110b9aaaba5be7f51fc22e",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": "2026-11-27T18:17:02.870046Z"
+        }
+      },
+      "media_types": {
+        "cf85e30bb7909726ee140ee627f446f0e904cd082868abf2eda5d2bcf458086f": "audio/mp4",
+        "e6c924f0d69fb0345c54c468cecf689ce1e45f17131dd37e81d178882809768b": "application/pdf",
+        "964612df87b9b3fe488c885edeb2bba5f42e20505c7143b4718994c789c6cbdd": "text/html",
+        "6726ea3843df4a10251b0c87daa7dfc6151d0c30e3fae703ed4138cbc9340b30": "text/html",
+        "52bc951a9629f2a1d7a308defe80a998d027785afe05e665094dbe3d4651a75b": "text/html",
+        "55df1b2b31ee7942ec5a95ae94ee775f63e5d222b7e28a8a6d61ae06ae36359d": "text/html"
+      },
+      "subscriptions": [
+        {
+          "id": "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d",
+          "address": "https://feeds.test/kept-paused.xml",
+          "feed": "https://feeds.test/kept-paused.xml",
+          "title": "Feed kept-paused",
+          "site": "https://feeds.test/kept-paused",
+          "added": "2026-11-27T08:00:02Z",
+          "follows": "paused",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:02Z",
+            "found": 2,
+            "due": "2026-11-27T09:00:02Z"
+          },
+          "postings": 2,
+          "unseen": 0
+        },
+        {
+          "id": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf",
+          "address": "https://feeds.test/kept-reads.xml",
+          "feed": "https://feeds.test/kept-reads.xml",
+          "title": "Feed kept-reads",
+          "site": "https://feeds.test/kept-reads",
+          "added": "2026-11-27T08:00:01Z",
+          "follows": "reads",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:01Z",
+            "found": 3,
+            "due": "2026-11-27T09:00:01Z"
+          },
+          "postings": 3,
+          "unseen": 1
+        }
+      ],
+      "views": {
+        "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d": {
+          "id": "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d",
+          "address": "https://feeds.test/kept-paused.xml",
+          "feed": "https://feeds.test/kept-paused.xml",
+          "title": "Feed kept-paused",
+          "site": "https://feeds.test/kept-paused",
+          "added": "2026-11-27T08:00:02Z",
+          "follows": "paused",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:02Z",
+            "found": 2,
+            "due": "2026-11-27T09:00:02Z"
+          },
+          "postings": 2,
+          "unseen": 0
+        },
+        "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf": {
+          "id": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf",
+          "address": "https://feeds.test/kept-reads.xml",
+          "feed": "https://feeds.test/kept-reads.xml",
+          "title": "Feed kept-reads",
+          "site": "https://feeds.test/kept-reads",
+          "added": "2026-11-27T08:00:01Z",
+          "follows": "reads",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:01Z",
+            "found": 3,
+            "due": "2026-11-27T09:00:01Z"
+          },
+          "postings": 3,
+          "unseen": 1
+        }
+      },
+      "postings": {
+        "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d": [
+          {
+            "number": 2,
+            "title": "Posting kept-paused-0",
+            "address": "https://pages.test/page/kept-paused-0",
+            "published": null,
+            "admission": {
+              "kind": "admitted",
+              "item": {
+                "id": "7914e252ce4ae370bc7249d58b334cc4d62d6d4aaab45c4bcdda1cd72c9152a0",
+                "origin": {
+                  "kind": "subscribed",
+                  "url": "https://pages.test/page/kept-paused-0",
+                  "called": "Posting kept-paused-0",
+                  "subscription": "d86ec334dac7436c0aa54b795c97a979419a5c42114a411b3da9d532404ea77d"
+                },
+                "reading": {
+                  "kind": "unread",
+                  "attempt": {
+                    "kind": "failed",
+                    "reason": "https://pages.test/page/kept-paused-0 answered 404 Not Found"
+                  }
+                },
+                "seen": null
+              }
+            }
+          },
+          {
+            "number": 1,
+            "title": "Posting kept-paused-1",
+            "address": "https://pages.test/page/kept-paused-1",
+            "published": null,
+            "admission": {
+              "kind": "unadmitted"
+            }
+          }
+        ],
+        "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf": [
+          {
+            "number": 3,
+            "title": "Posting kept-reads-0",
+            "address": "https://pages.test/page/kept-reads-0",
+            "published": null,
+            "admission": {
+              "kind": "admitted",
+              "item": {
+                "id": "55df1b2b31ee7942ec5a95ae94ee775f63e5d222b7e28a8a6d61ae06ae36359d",
+                "origin": {
+                  "kind": "subscribed",
+                  "url": "https://pages.test/page/kept-reads-0",
+                  "called": "Posting kept-reads-0",
+                  "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+                },
+                "reading": {
+                  "kind": "read",
+                  "title": "Posting kept-reads-0",
+                  "document": "c33cc7c11fe2aba401b79aaf208d561c31cae30be8110b9aaaba5be7f51fc22e",
+                  "attempt": {
+                    "kind": "settled"
+                  }
+                },
+                "seen": "2026-11-27T18:17:02.870046Z"
+              }
+            }
+          },
+          {
+            "number": 2,
+            "title": "Posting kept-reads-1",
+            "address": "https://pages.test/page/kept-reads-1",
+            "published": null,
+            "admission": {
+              "kind": "admitted",
+              "item": {
+                "id": "52bc951a9629f2a1d7a308defe80a998d027785afe05e665094dbe3d4651a75b",
+                "origin": {
+                  "kind": "subscribed",
+                  "url": "https://pages.test/page/kept-reads-1",
+                  "called": "Posting kept-reads-1",
+                  "subscription": "2c028f804ad43a608311d98dd6592a736b3fe23578fe644f635af1b76eaf8dcf"
+                },
+                "reading": {
+                  "kind": "read",
+                  "title": "Posting kept-reads-1",
+                  "document": "3f36291cf832709efe8afc6ff9341172d3313e32c14134b7fa5f634f82e280a4",
+                  "attempt": {
+                    "kind": "settled"
+                  }
+                },
+                "seen": null
+              }
+            }
+          },
+          {
+            "number": 1,
+            "title": "Posting kept-reads-2",
+            "address": "https://pages.test/page/kept-reads-2",
+            "published": null,
+            "admission": {
+              "kind": "unadmitted"
+            }
+          }
+        ]
+      }
+    },
+    "reader-before-folders": {
+      "items": [
+        {
+          "id": "66006a9b03c37aa77b8e9c0577a4bae4d53c95fa3c9414f212120dfc94e954d6",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/page/kept-their-link"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Quillmoor harbour kept",
+            "document": "a1a7e5ed1f98391706f2f26626b453897439cbdd814f213ba443700512e0919c",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        {
+          "id": "82089f3a5fa7714f127547a815c58bb351d0edab5fdb551144232edff2412181",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-0",
+            "called": "Posting kept-reads-0",
+            "subscription": "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-0",
+            "document": "419196ebc3f064015d4b510f588fb61891e7c2693ab0e0383ef7266bb42de1e5",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        }
+      ],
+      "entries": {
+        "66006a9b03c37aa77b8e9c0577a4bae4d53c95fa3c9414f212120dfc94e954d6": {
+          "id": "66006a9b03c37aa77b8e9c0577a4bae4d53c95fa3c9414f212120dfc94e954d6",
+          "origin": {
+            "kind": "link",
+            "url": "https://pages.test/page/kept-their-link"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Quillmoor harbour kept",
+            "document": "a1a7e5ed1f98391706f2f26626b453897439cbdd814f213ba443700512e0919c",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        },
+        "82089f3a5fa7714f127547a815c58bb351d0edab5fdb551144232edff2412181": {
+          "id": "82089f3a5fa7714f127547a815c58bb351d0edab5fdb551144232edff2412181",
+          "origin": {
+            "kind": "subscribed",
+            "url": "https://pages.test/page/kept-reads-0",
+            "called": "Posting kept-reads-0",
+            "subscription": "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624"
+          },
+          "reading": {
+            "kind": "read",
+            "title": "Posting kept-reads-0",
+            "document": "419196ebc3f064015d4b510f588fb61891e7c2693ab0e0383ef7266bb42de1e5",
+            "attempt": {
+              "kind": "settled"
+            }
+          },
+          "seen": null
+        }
+      },
+      "media_types": {
+        "66006a9b03c37aa77b8e9c0577a4bae4d53c95fa3c9414f212120dfc94e954d6": "text/html",
+        "82089f3a5fa7714f127547a815c58bb351d0edab5fdb551144232edff2412181": "text/html"
+      },
+      "subscriptions": [
+        {
+          "id": "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624",
+          "address": "https://feeds.test/kept-reads.xml",
+          "feed": "https://feeds.test/kept-reads.xml",
+          "title": "Feed kept-reads",
+          "site": "https://feeds.test/kept-reads",
+          "added": "2026-11-27T08:00:03Z",
+          "follows": "reads",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:03Z",
+            "found": 3,
+            "due": "2026-11-27T09:00:03Z"
+          },
+          "postings": 3,
+          "unseen": 1
+        }
+      ],
+      "views": {
+        "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624": {
+          "id": "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624",
+          "address": "https://feeds.test/kept-reads.xml",
+          "feed": "https://feeds.test/kept-reads.xml",
+          "title": "Feed kept-reads",
+          "site": "https://feeds.test/kept-reads",
+          "added": "2026-11-27T08:00:03Z",
+          "follows": "reads",
+          "poll": {
+            "kind": "settled",
+            "at": "2026-11-27T08:00:03Z",
+            "found": 3,
+            "due": "2026-11-27T09:00:03Z"
+          },
+          "postings": 3,
+          "unseen": 1
+        }
+      },
+      "postings": {
+        "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624": [
+          {
+            "number": 3,
+            "title": "Posting kept-reads-0",
+            "address": "https://pages.test/page/kept-reads-0",
+            "published": null,
+            "admission": {
+              "kind": "admitted",
+              "item": {
+                "id": "82089f3a5fa7714f127547a815c58bb351d0edab5fdb551144232edff2412181",
+                "origin": {
+                  "kind": "subscribed",
+                  "url": "https://pages.test/page/kept-reads-0",
+                  "called": "Posting kept-reads-0",
+                  "subscription": "60373ea64e58c50ee7ec7979c2ec816d85c3a2b3a88ed5f87d552b2c2f158624"
+                },
+                "reading": {
+                  "kind": "read",
+                  "title": "Posting kept-reads-0",
+                  "document": "419196ebc3f064015d4b510f588fb61891e7c2693ab0e0383ef7266bb42de1e5",
+                  "attempt": {
+                    "kind": "settled"
+                  }
+                },
+                "seen": null
+              }
+            }
+          },
+          {
+            "number": 2,
+            "title": "Posting kept-reads-1",
+            "address": "https://pages.test/page/kept-reads-1",
+            "published": null,
+            "admission": {
+              "kind": "unadmitted"
+            }
+          },
+          {
+            "number": 1,
+            "title": "Posting kept-reads-2",
+            "address": "https://pages.test/page/kept-reads-2",
+            "published": null,
+            "admission": {
+              "kind": "unadmitted"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

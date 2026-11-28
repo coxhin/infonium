@@ -7,6 +7,7 @@ from threading import Event, Lock
 import sqlalchemy
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
+from infonium.folder import Folders
 from infonium.intake import Intake
 from infonium.library import (
     Failed,
@@ -368,8 +369,12 @@ class Poller:
             return subscriptions.counted(subscription_id)
 
     def unsubscribe(self, owner: str, subscription_id: str) -> None:
-        with self.turn, self.store.transaction(owner) as transaction:
-            Subscriptions(transaction).remove(subscription_id)
+        # The items the subscription brought stay where it was, in its folder or in none.
+        with self.turn, self.store.write_transaction(owner) as transaction:
+            subscriptions = Subscriptions(transaction)
+            subscriptions.subscription(subscription_id)
+            Folders(transaction).release(subscription_id)
+            subscriptions.remove(subscription_id)
 
     def read_posting(self, owner: str, subscription_id: str, number: int) -> ShownPosting:
         # A posting is read at the reader's word: one that is not admitted, or waits, is
