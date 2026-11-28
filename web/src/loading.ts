@@ -56,14 +56,14 @@ export type Watched<Value> = {
   answer: (change: (value: Value) => Value) => void;
 };
 
-// How a value is read again while it is settled, for one that shows what changes without a
-// press of the reader's: after the interval the value read last gives, while the page is
-// visible, and at once when a page that was hidden past it is shown again; not at all while the
-// value is not shown, and at once when it is shown again. Its first load is also tried again
-// where it failed for want of an answer, as the caller tells such a failure; a load the service
-// refused, saying why, is tried again after a minute.
+// How a value is read again once a reading of it fails, and while it is settled. A reading that
+// went unanswered, as the caller tells such a failure, is tried again after 1.5 seconds, the
+// first among them; one the service refused, saying why, after a minute. A settled value, where
+// an interval is given, is read again after the interval the value read last gives, while the
+// page is visible, and at once when a page that was hidden past it is shown again; not at all
+// while the value is not shown, and at once when it is shown again.
 export type Refreshing<Value> = {
-  interval: (value: Value) => number;
+  interval?: (value: Value) => number;
   shown: boolean;
   unanswered: (error: unknown) => boolean;
 };
@@ -75,11 +75,12 @@ type Watch<Value> = {
 };
 
 // Like useLoaded, and loads again at intervals for as long as the value is unsettled, and, with
-// refreshing, while it is settled. The value on show stays until the next one arrives. A load
-// that fails while a value is on show leaves the value there, marks the watch interrupted, and
-// is tried again, as the service may be on its way back. A first load that fails is a failure;
-// with refreshing it is tried again, after 1.5 seconds where it went unanswered, and after a
-// minute where the service refused it saying why.
+// refreshing that gives an interval, while it is settled. The value on show stays until the
+// next one arrives. A load that fails while a value is on show leaves the value there, marks the
+// watch interrupted, and is tried again, as the service may be on its way back. Without
+// refreshing, a first load that fails is a failure, not tried again. With refreshing, one that
+// went unanswered marks the watch interrupted and is tried again after 1.5 seconds, and one the
+// service refused, saying why, is a failure on show until it is tried again after a minute.
 export function useWatched<Value>(
   load: () => Promise<Value>,
   key: string,
@@ -145,7 +146,7 @@ export function useWatched<Value>(
             });
             if (unsettled(value)) {
               timer = setTimeout(watch, WATCH_INTERVAL_MS);
-            } else if (refreshing !== undefined) {
+            } else if (refreshing?.interval !== undefined) {
               waiting = true;
               timer = setTimeout(refreshWhenVisible, refreshing.interval(value));
             }
@@ -183,7 +184,7 @@ export function useWatched<Value>(
     if (!onShow) {
       setWatched({ loaded: { state: "loading" }, interrupted: false, refusal: undefined });
     }
-    if (refreshing !== undefined) {
+    if (refreshing?.interval !== undefined) {
       document.addEventListener("visibilitychange", onVisibility);
     }
     watch();

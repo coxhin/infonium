@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listPostings, Refused, type Posting, type Subscription } from "./client";
+import { isUnanswered, listPostings, Refused, type Posting, type Subscription } from "./client";
 import { isBeingRead } from "./entry";
 import { useWatched, type Loaded } from "./loading";
 import { POSTINGS_AT_A_TIME } from "./subscriptionstate";
@@ -91,10 +91,13 @@ export function useArrivals(subscriptions: Loaded<Subscription[]>, onArrived: ()
     }
   }, [subscriptions]);
 
+  // A reading that goes unanswered is asked again after 1.5 seconds, and one the service refuses,
+  // saying why, after a minute; what has all arrived is not read again.
   const watched = useWatched(
     () => arrivedPostings(arrivals),
     `arrivals ${arrivals.map(arrivalKey).join(" ")}`,
     isArriving,
+    { shown: true, unanswered: isUnanswered },
   );
   const arrived = watched.loaded.state === "ready" ? watched.loaded.value : undefined;
   const told = useRef("");
