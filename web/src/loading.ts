@@ -48,7 +48,8 @@ export type Watched<Value> = {
   // failed, it is tried again.
   readNow: () => void;
   // Puts on show a value made from the one on show, as a list with an entry read apart; the
-  // watch goes on, closely from then on where that value is unsettled.
+  // watch goes on, closely from then on where that value is unsettled. A change that gives back
+  // the value on show leaves it as it is, and draws nothing anew.
   replace: (change: (value: Value) => Value) => void;
   // Puts on show what the service answered a press with, made into the value on show at the
   // moment it arrives, and reads the value again at once: a load under way was asked before
@@ -206,11 +207,15 @@ export function useWatched<Value>(
   const readNow = useCallback(() => setRound((before) => before + 1), []);
   const replace = useCallback(
     (change: (value: Value) => Value) =>
-      setWatched((before) =>
-        before.loaded.state === "ready"
-          ? { ...before, loaded: { state: "ready", value: change(before.loaded.value) } }
-          : before,
-      ),
+      setWatched((before) => {
+        if (before.loaded.state !== "ready") {
+          return before;
+        }
+        const value = change(before.loaded.value);
+        return value === before.loaded.value
+          ? before
+          : { ...before, loaded: { state: "ready", value } };
+      }),
     [],
   );
   const answer = useCallback(
