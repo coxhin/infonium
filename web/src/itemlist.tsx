@@ -135,6 +135,7 @@ export function ItemList({
   placer,
   onImported,
   onEmptied,
+  onRetry,
   onOpenFolder,
 }: {
   entries: Loaded<ItemEntry[]>;
@@ -158,6 +159,8 @@ export function ItemList({
   onImported: (entry: ItemEntry) => void;
   // The last row has left the list with the keyboard in it.
   onEmptied: () => void;
+  // Reads the list of items again, after a first reading that the service refused.
+  onRetry: () => void;
   onOpenFolder: (folderId: string) => void;
 }) {
   const [url, setUrl] = useState("");
@@ -320,7 +323,12 @@ export function ItemList({
           )}
         </>
       )}
-      {entries.state === "failed" && <p className="status failed">{entries.reason}</p>}
+      {entries.state === "failed" && (
+        <p className="status failed">
+          {entries.reason}
+          <button onClick={onRetry}>重试</button>
+        </p>
+      )}
       {interrupted && <Interruption refusal={refusal} />}
       {loaded && listed.length === 0 && <p className="status">{emptyText}</p>}
       {shown.length > 0 && (

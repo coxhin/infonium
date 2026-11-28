@@ -95,32 +95,108 @@ export function isThere(
   }
 }
 
-// The selection a page opens with, once the items, the subscriptions and the folders are read:
-// the one remembered, where it is there still and holds the item open in the reader, if one is;
-// otherwise the item's subscription where it follows one, else its folder, else every item. A
-// folder or a subscription that is there no more holds nothing. The item open is seen as soon as
-// the reader has it on show, so that 新来源 holds it no more whichever comes first.
-export function openingSelection(
-  remembered: Selection,
-  opened: ItemEntry | undefined,
-  folders: ReadonlySet<string>,
-  present: ReadonlySet<string>,
-  seen: ReadonlySet<string>,
-): Selection {
-  const there = isThere(remembered, folders, present);
-  if (opened === undefined) {
-    return there ? remembered : ALL;
+// The lists the selection a page opens with rests on, each nothing while it is not read: the
+// items, the folders there are, and the subscriptions there are.
+export type OpeningLists = {
+  entries: ItemEntry[] | undefined;
+  folders: ReadonlySet<string> | undefined;
+  present: ReadonlySet<string> | undefined;
+};
+
+// What a list not read yet leaves untold.
+type Untold = undefined;
+
+// Whether the selection's folder or subscription is there, where its list is read.
+function isThereKnown(selection: Selection, lists: OpeningLists): boolean | Untold {
+  switch (selection.kind) {
+    case "folder":
+      return lists.folders?.has(selection.folderId);
+    case "subscription":
+      return lists.present?.has(selection.subscriptionId);
+    default:
+      return true;
   }
-  if (there && holds(remembered, opened, present, new Set(seen).add(opened.id))) {
-    return remembered;
+}
+
+// The subscription the item follows, or none (null), where the subscriptions it may follow are
+// read: an item no subscription brought follows none, whatever they are.
+function followedKnown(entry: ItemEntry, lists: OpeningLists): string | null | Untold {
+  if (entry.origin.kind !== "subscribed") {
+    return null;
   }
-  const subscription = followed(opened, present);
-  if (subscription !== undefined) {
+  return lists.present === undefined ? undefined : (followed(entry, lists.present) ?? null);
+}
+
+// Whether the selection holds the item open, where the lists that tell it are read. The item
+// open is seen as soon as the reader has it on show, so that 新来源 holds it no more whichever
+// comes first.
+function holdsOpened(selection: Selection, entry: ItemEntry, lists: OpeningLists): boolean | Untold {
+  switch (selection.kind) {
+    case "all":
+      return true;
+    case "new":
+      return false;
+    case "folder":
+      return entry.folder === selection.folderId;
+    case "unfiled": {
+      if (entry.folder !== null) {
+        return false;
+      }
+      const subscription = followedKnown(entry, lists);
+      return subscription === undefined ? undefined : subscription === null;
+    }
+    case "subscription": {
+      const subscription = followedKnown(entry, lists);
+      return subscription === undefined ? undefined : subscription === selection.subscriptionId;
+    }
+  }
+}
+
+// Where the item open stands, where the lists that tell it are read: its subscription where it
+// follows one, else its folder where that is there, else every item.
+function standingOf(entry: ItemEntry, lists: OpeningLists): Selection | Untold {
+  const subscription = followedKnown(entry, lists);
+  if (subscription === undefined) {
+    return undefined;
+  }
+  if (subscription !== null) {
     return { kind: "subscription", subscriptionId: subscription };
   }
-  return opened.folder !== null && folders.has(opened.folder)
-    ? { kind: "folder", folderId: opened.folder }
-    : ALL;
+  if (entry.folder === null) {
+    return ALL;
+  }
+  const folderId = entry.folder;
+  const folderThere = lists.folders?.has(folderId);
+  if (folderThere === undefined) {
+    return undefined;
+  }
+  return folderThere ? { kind: "folder", folderId } : ALL;
+}
+
+// The selection a page opens with: the one remembered, where it is there still and holds the
+// item open in the reader, if one is; otherwise where that item stands. A folder or a
+// subscription that is there no more holds nothing. Nothing while a list not read yet could
+// change it; where the lists read settle it, as they settle every item from the start, it is
+// what it is once all three are read.
+export function openingSelection(
+  remembered: Selection,
+  openedId: string | undefined,
+  lists: OpeningLists,
+): Selection | Untold {
+  const there = isThereKnown(remembered, lists);
+  const entry =
+    openedId === undefined ? undefined : lists.entries?.find((each) => each.id === openedId);
+  if (openedId !== undefined && lists.entries === undefined) {
+    return remembered.kind === "all" ? ALL : undefined;
+  }
+  if (entry === undefined) {
+    return there === undefined ? undefined : there ? remembered : ALL;
+  }
+  const held = holdsOpened(remembered, entry, lists);
+  if (there === false || held === false) {
+    return standingOf(entry, lists);
+  }
+  return there === true && held === true ? remembered : undefined;
 }
 
 // Whether the selection holds the item, whatever its media.

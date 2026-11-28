@@ -43,8 +43,9 @@ function emptyText(selection: Selection, media: MediaChoice): string {
 
 // The lists besides the items that the list of a selection rests on: the subscriptions, which
 // tell the items that follow one, for 未分类, a folder and a subscription; and the folders, for a
-// folder. 全部 and 新来源 need the items alone.
-type ListName = "subscriptions" | "folders";
+// folder. 全部 and 新来源 need the items alone, which say themselves why they cannot be listed.
+// Until the selection the page opens with is decided, the list waits on all three.
+type ListName = "items" | "subscriptions" | "folders";
 const RESTS_ON: Record<Selection["kind"], ListName[]> = {
   all: [],
   new: [],
@@ -52,7 +53,12 @@ const RESTS_ON: Record<Selection["kind"], ListName[]> = {
   folder: ["subscriptions", "folders"],
   subscription: ["subscriptions"],
 };
-const LIST_NAMES: Record<ListName, string> = { subscriptions: "订阅", folders: "分类" };
+const OPENING_RESTS_ON: ListName[] = ["items", "subscriptions", "folders"];
+const LIST_NAMES: Record<ListName, string> = {
+  items: "文章列表",
+  subscriptions: "订阅",
+  folders: "分类",
+};
 type Read = { loaded: Loaded<unknown>; readNow: () => void };
 
 function failure(read: Read): string {
@@ -144,21 +150,18 @@ export function ListColumn({
     selection.kind === "folder"
       ? { folderId: selection.folderId, name: folderMap.get(selection.folderId)?.name ?? "" }
       : undefined;
-  const lists: Record<ListName, Read> = { subscriptions, folders };
-  const restsOn = RESTS_ON[selection.kind];
+  const lists: Record<ListName, Read> = {
+    items: { loaded: entries, readNow: onChanged },
+    subscriptions,
+    folders,
+  };
+  const restsOn = browsing.opened ? RESTS_ON[selection.kind] : OPENING_RESTS_ON;
   const unread = restsOn.filter((list) => lists[list].loaded.state === "failed");
-  // The selection the page opens with rests on both lists, and is decided once they are read;
-  // while one of them cannot be read, it waits, and the lists that can be shown meanwhile do not.
-  const deciding =
-    !browsing.opened &&
-    !(["subscriptions", "folders"] as const).some((list) => lists[list].loaded.state === "failed");
-  // A list is being opened while the lists it rests on are read, and while the selection the
-  // page opens with, which may move it, is decided. Every item is listed at once: no list moves
-  // it.
+  // A list is being opened until the selection the page opens with is decided, and while the
+  // lists it rests on are read.
   const waiting =
-    selection.kind !== "all" &&
     unread.length === 0 &&
-    (deciding || restsOn.some((list) => lists[list].loaded.state === "loading"));
+    (!browsing.opened || restsOn.some((list) => lists[list].loaded.state === "loading"));
 
   function onSubscribed(subscription: Subscription) {
     setUnplaced(undefined);
@@ -258,6 +261,7 @@ export function ListColumn({
               placer={placer}
               onImported={onImported}
               onEmptied={() => heading.current?.focus()}
+              onRetry={onChanged}
               onOpenFolder={(folderId) => browsing.select({ kind: "folder", folderId })}
             />
           )}

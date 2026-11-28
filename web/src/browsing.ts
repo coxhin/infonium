@@ -36,6 +36,7 @@ import {
   sameSelection,
   tallied,
   type MediaChoice,
+  type OpeningLists,
   type Order,
   type Selection,
   type Tally,
@@ -49,7 +50,8 @@ export type Browsing = {
   subscriptions: Watched<Subscription[]>;
   folders: Watched<Folder[]>;
   selection: Selection;
-  // Whether the selection the page opens with is decided, which waits for the three lists.
+  // Whether the selection the page opens with is decided. Until it is, nothing but a press of the
+  // reader's selects, and what shows the selection waits for it.
   opened: boolean;
   // The subscription the list column shows, with what it was opened for.
   pane: SubscriptionPlace | undefined;
@@ -88,6 +90,8 @@ function listedOf<Value>(watched: Watched<Value[]>): Value[] {
   return watched.loaded.state === "ready" ? watched.loaded.value : [];
 }
 
+const NOTHING_READ: OpeningLists = { entries: undefined, folders: undefined, present: undefined };
+
 export function useBrowsing(
   entries: Watched<ItemEntry[]>,
   seen: ReadonlySet<string>,
@@ -103,6 +107,11 @@ export function useBrowsing(
   const [pane, setPane] = useState<SubscriptionPlace>();
   const [landing, setLanding] = useState<Landing>();
   const land = useCallback((key: string) => setLanding({ key }), []);
+  // Whether the selection the page opens with is decided: at once where no list could move it,
+  // as every item, or 新来源 with no item open; otherwise below, once the lists settle it.
+  const [opened, setOpened] = useState(
+    () => openingSelection(selection, openedAtStart, NOTHING_READ) !== undefined,
+  );
 
   const listedEntries = listedOf(entries);
   const listedSubscriptions = listedOf(subscriptions);
@@ -147,31 +156,34 @@ export function useBrowsing(
     [keepSelection],
   );
 
-  // The selection a page opens with is decided in this one place, once the items, the
-  // subscriptions and the folders are all read, whichever arrives first: until then nothing
-  // moves it, and the list column waits. A subscription selected so looks for the posting of the
-  // item open. A selection the reader makes meanwhile stands. An item opened later, by a link
-  // within the app, leaves the selection as it is.
-  const [opened, setOpened] = useState(false);
-  const allRead =
-    entries.loaded.state === "ready" &&
-    subscriptions.loaded.state === "ready" &&
-    folders.loaded.state === "ready";
+  // The selection a page opens with is decided in this one place, as soon as the lists read so
+  // far settle it, whichever arrives first and whichever cannot be read for a while, and as it is
+  // with all three read. Until then nothing but a press of the reader's selects, and the list
+  // column waits, or says which list it waits for and why. A subscription selected so looks for
+  // the posting of the item open. An item opened later, by a link within the app, leaves the
+  // selection as it is.
   useEffect(() => {
-    if (opened || !allRead) {
+    if (opened) {
+      return;
+    }
+    const lists: OpeningLists = {
+      entries: entries.loaded.state === "ready" ? entries.loaded.value : undefined,
+      folders: folders.loaded.state === "ready" ? folderIds : undefined,
+      present: subscriptions.loaded.state === "ready" ? present : undefined,
+    };
+    const chosen = openingSelection(selection, openedAtStart, lists);
+    if (chosen === undefined) {
       return;
     }
     setOpened(true);
-    const entry =
-      openedAtStart === undefined
-        ? undefined
-        : listedEntries.find((each) => each.id === openedAtStart);
-    const chosen = openingSelection(selection, entry, folderIds, present, seen);
     keepSelection(chosen);
-    if (chosen.kind === "subscription" && entry !== undefined) {
-      setPane({ subscriptionId: chosen.subscriptionId, sought: entry.id, again: false });
+    const sought = lists.entries?.some((entry) => entry.id === openedAtStart)
+      ? openedAtStart
+      : undefined;
+    if (chosen.kind === "subscription" && sought !== undefined) {
+      setPane({ subscriptionId: chosen.subscriptionId, sought, again: false });
     }
-  }, [opened, allRead]);
+  }, [opened, entries.loaded, subscriptions.loaded, folders.loaded]);
 
   // Once the page has opened, a folder or a subscription selected that is there no more, as one
   // removed in another window, gives way to every item. The form that subscribes stays where it

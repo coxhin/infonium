@@ -77,8 +77,9 @@ type Watch<Value> = {
 // Like useLoaded, and loads again at intervals for as long as the value is unsettled, and, with
 // refreshing, while it is settled. The value on show stays until the next one arrives. A load
 // that fails while a value is on show leaves the value there, marks the watch interrupted, and
-// is tried again, as the service may be on its way back. A first load that fails is a failure
-// and is not tried again, unless it went unanswered and the value is refreshed.
+// is tried again, as the service may be on its way back. A first load that fails is a failure;
+// with refreshing it is tried again, after 1.5 seconds where it went unanswered, and after a
+// minute where the service refused it saying why.
 export function useWatched<Value>(
   load: () => Promise<Value>,
   key: string,
@@ -151,7 +152,10 @@ export function useWatched<Value>(
           }
         },
         (error: unknown) => {
-          if (current && (onShow || refreshing?.unanswered(error) === true)) {
+          if (!current) {
+            return;
+          }
+          if (onShow || refreshing?.unanswered(error) === true) {
             const refusal =
               refreshing === undefined || refreshing.unanswered(error)
                 ? undefined
@@ -161,12 +165,17 @@ export function useWatched<Value>(
               watch,
               refusal === undefined ? WATCH_INTERVAL_MS : REFUSED_INTERVAL_MS,
             );
-          } else if (current) {
-            setWatched({
-              loaded: { state: "failed", reason: reasonOf(error) },
-              interrupted: false,
-              refusal: undefined,
-            });
+            return;
+          }
+          setWatched({
+            loaded: { state: "failed", reason: reasonOf(error) },
+            interrupted: false,
+            refusal: undefined,
+          });
+          // A first reading of a refreshed value that the service refused, saying why, is asked
+          // again as a later reading is.
+          if (refreshing !== undefined) {
+            timer = setTimeout(watch, REFUSED_INTERVAL_MS);
           }
         },
       );
