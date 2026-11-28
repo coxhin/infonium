@@ -1,6 +1,5 @@
-import katex, { type KatexOptions } from "katex";
-import "katex/dist/katex.min.css";
-import { useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import type { ItemDocument } from "./client";
 import "./formula.css";
 
 // Formulas are set by KaTeX, as HTML in its own fonts, from the LaTeX a document holds. A
@@ -116,52 +115,87 @@ function openTextFrom(groups: { text: boolean; closed: boolean }[]): number {
   return from;
 }
 
-// The largest size, in ems, that a formula may give to anything it sizes itself: a rule, a
-// space, a raise, the gap between rows. A paper's formula sizes its spaces in a few ems.
-const LARGEST_SIZE = 10;
+// How KaTeX sets a formula: its HTML, or nothing where KaTeX refuses it.
+type Setting = (latex: string, display: boolean) => string | undefined;
 
-const OPTIONS = {
-  // HTML alone: a hidden copy in MathML beside it would be copied with every selection across
-  // the formula. The element says the formula's LaTeX to a screen reader instead.
-  output: "html",
-  throwOnError: true,
-  // LaTeX that KaTeX sets though LaTeX itself would not, such as a letter it has no metrics
-  // for, is set without a word to the console.
-  strict: "ignore",
-  // Behind the refusal above: a command that needs trust is drawn as text and does nothing.
-  trust: false,
-  maxSize: LARGEST_SIZE,
-} as const satisfies KatexOptions;
+// KaTeX, with its stylesheet, is a fifth of the app's script, and most of what the app shows
+// holds no formula. It is fetched apart from the rest, once, the first time it is wanted.
+let fetchedSetting: Setting | undefined;
+let fetching: Promise<void> | undefined;
+const waiting = new Set<() => void>();
 
-function drawn(latex: string, display: boolean): string | undefined {
-  try {
-    return katex.renderToString(latex, { ...OPTIONS, displayMode: display });
-  } catch {
-    return undefined;
+// Fetches KaTeX unless it is here or on its way. What this returns settles once KaTeX is here
+// or could not be fetched. A fetch that failed is not made again: the browser keeps a module's
+// failure until the page is loaded again, and the formulas are shown as their LaTeX till then.
+export function fetchFormulaSetting(): Promise<void> {
+  if (fetching === undefined) {
+    // The import stands alone: the build wraps an import, with what is chained on it, in its
+    // fetch of the stylesheet the module needs, and a failure of that fetch would pass by
+    // handlers chained here.
+    const module = import("./formuladrawing");
+    fetching = module.then(
+      ({ drawn }) => {
+        fetchedSetting = drawn;
+        for (const told of waiting) {
+          told();
+        }
+      },
+      () => undefined,
+    );
   }
+  return fetching;
+}
+
+function onFetched(told: () => void): () => void {
+  waiting.add(told);
+  return () => waiting.delete(told);
+}
+
+function settingNow(): Setting | undefined {
+  return fetchedSetting;
+}
+
+// Settles once a document can be shown with its formulas set: at once for one that holds no
+// formula, else once KaTeX is here or could not be fetched. Shown before that, each formula would
+// change from its LaTeX to its drawing, and what the reader looks at would move.
+export function formulasReadyFor(itemDocument: ItemDocument): Promise<void> {
+  const holdsFormula = itemDocument.blocks.some(
+    (block) => "marks" in block && block.marks.some((mark) => mark.kind === "formula"),
+  );
+  return holdsFormula ? fetchFormulaSetting() : Promise.resolve();
 }
 
 // The HTML of a formula as KaTeX sets it, or nothing where it cannot be set. A formula is a
 // document's text, and no text may take down the reader that shows it, so a fault in setting
 // it, of any kind, leaves it shown as its LaTeX. A formula KaTeX refuses as written is tried
 // once more with its scripts taken out of its text; one it sets as written is never altered.
-export function drawingOf(latex: string, display: boolean): string | undefined {
+export function drawingOf(setting: Setting, latex: string, display: boolean): string | undefined {
   if (piecesOf(latex).some((piece) => REFUSED_COMMANDS.has(piece))) {
     return undefined;
   }
-  const asWritten = drawn(latex, display);
+  const asWritten = setting(latex, display);
   if (asWritten !== undefined) {
     return asWritten;
   }
   const repaired = withScriptsOutOfText(latex);
-  return repaired === undefined || repaired === latex ? undefined : drawn(repaired, display);
+  return repaired === undefined || repaired === latex ? undefined : setting(repaired, display);
 }
 
 // A formula, drawn at once with the rest of its block as one element that says its LaTeX of
 // itself, to the walk that resolves anchors and to a screen reader. One that cannot be set is
-// its LaTeX, and says it too.
+// its LaTeX, and says it too. So is one shown before KaTeX is here, which the reader of a
+// document waits for; a formula shown elsewhere fetches KaTeX itself and is set once it is here.
 export function Formula({ latex, display }: { latex: string; display: boolean }) {
-  const drawing = useMemo(() => drawingOf(latex, display), [latex, display]);
+  const setting = useSyncExternalStore(onFetched, settingNow);
+  const drawing = useMemo(
+    () => (setting === undefined ? undefined : drawingOf(setting, latex, display)),
+    [setting, latex, display],
+  );
+  useEffect(() => {
+    if (setting === undefined) {
+      void fetchFormulaSetting();
+    }
+  }, [setting]);
   const said = { [FORMULA_ATTRIBUTE]: latex };
   if (drawing === undefined) {
     return (
