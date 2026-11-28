@@ -20,8 +20,10 @@ import { reasonOf, type Loaded } from "./loading";
 import { MediaIcon, NO_MEDIA_NAME } from "./mediaicon";
 import { isMenuKey, openingAt, openingOfContextMenu, type Opening } from "./menu";
 import { NewDot, NewHeard } from "./newmarks";
+import { fetchRenderer } from "./pages";
 import { PlaceMenu } from "./placemenu";
 import { MEDIA_NAMES, followed } from "./sidebarselection";
+import { PDF_MEDIA_TYPE } from "./views";
 import "./heard.css";
 
 // What came of the last import: nothing to tell, one under way, one refused, one not placed in
@@ -247,6 +249,11 @@ export function ItemList({
     // The same file can be chosen again only once the field has let go of it.
     event.target.value = "";
     if (file !== undefined) {
+      // A PDF is shown while it is read, by pdf.js, which is fetched as the file is sent rather
+      // than after it. A failure is told by the pages.
+      if (file.type === PDF_MEDIA_TYPE) {
+        fetchRenderer().catch(() => undefined);
+      }
       void imported(importUpload(file));
     }
   }

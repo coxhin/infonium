@@ -13,7 +13,7 @@ import {
   type Revision,
 } from "./client";
 import { ArrivedPages } from "./arrival";
-import { fetchFormulas, formulasReadyFor } from "./formula";
+import { fetchFormulaSetting, formulasReadyFor } from "./formula";
 import { fetchRenderer } from "./pages";
 import { ListColumn } from "./listcolumn";
 import { itemLink, linkedItem, linkOf, useLink } from "./links";
@@ -159,7 +159,7 @@ function DocumentPane({
     // as its document is, not after it. A failure is told by the pages.
     if (entry.media === "pdf") {
       fetchRenderer().catch(() => undefined);
-      void fetchFormulas();
+      void fetchFormulaSetting();
     }
     const loading = (
       wanted.kind === "holding"

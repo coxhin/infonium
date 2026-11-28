@@ -2,7 +2,7 @@ import katex, { type KatexOptions } from "katex";
 import "katex/dist/katex.min.css";
 
 // KaTeX and the stylesheet it sets formulas in. This module is fetched apart from the rest of
-// the app, by formula.tsx, the first time a formula is to be shown.
+// the app, by formula.tsx, when a PDF is first opened or a formula is first to be shown.
 
 // The largest size, in ems, that a formula may give to anything it sizes itself: a rule, a
 // space, a raise, the gap between rows. A paper's formula sizes its spaces in a few ems.

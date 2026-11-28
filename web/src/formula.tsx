@@ -120,14 +120,14 @@ type Setting = (latex: string, display: boolean) => string | undefined;
 
 // KaTeX, with its stylesheet, is a fifth of the app's script, and most of what the app shows
 // holds no formula. It is fetched apart from the rest, once, the first time it is wanted.
-let setting: Setting | undefined;
+let fetchedSetting: Setting | undefined;
 let fetching: Promise<void> | undefined;
 const waiting = new Set<() => void>();
 
 // Fetches KaTeX unless it is here or on its way. What this returns settles once KaTeX is here
 // or could not be fetched. A fetch that failed is not made again: the browser keeps a module's
 // failure until the page is loaded again, and the formulas are shown as their LaTeX till then.
-export function fetchFormulas(): Promise<void> {
+export function fetchFormulaSetting(): Promise<void> {
   if (fetching === undefined) {
     // The import stands alone: the build wraps an import, with what is chained on it, in its
     // fetch of the stylesheet the module needs, and a failure of that fetch would pass by
@@ -135,7 +135,7 @@ export function fetchFormulas(): Promise<void> {
     const module = import("./formuladrawing");
     fetching = module.then(
       ({ drawn }) => {
-        setting = drawn;
+        fetchedSetting = drawn;
         for (const told of waiting) {
           told();
         }
@@ -152,7 +152,7 @@ function onFetched(told: () => void): () => void {
 }
 
 function settingNow(): Setting | undefined {
-  return setting;
+  return fetchedSetting;
 }
 
 // Settles once a document can be shown with its formulas set: at once for one that holds no
@@ -162,23 +162,23 @@ export function formulasReadyFor(itemDocument: ItemDocument): Promise<void> {
   const holdsFormula = itemDocument.blocks.some(
     (block) => "marks" in block && block.marks.some((mark) => mark.kind === "formula"),
   );
-  return holdsFormula ? fetchFormulas() : Promise.resolve();
+  return holdsFormula ? fetchFormulaSetting() : Promise.resolve();
 }
 
 // The HTML of a formula as KaTeX sets it, or nothing where it cannot be set. A formula is a
 // document's text, and no text may take down the reader that shows it, so a fault in setting
 // it, of any kind, leaves it shown as its LaTeX. A formula KaTeX refuses as written is tried
 // once more with its scripts taken out of its text; one it sets as written is never altered.
-export function drawingOf(set: Setting, latex: string, display: boolean): string | undefined {
+export function drawingOf(setting: Setting, latex: string, display: boolean): string | undefined {
   if (piecesOf(latex).some((piece) => REFUSED_COMMANDS.has(piece))) {
     return undefined;
   }
-  const asWritten = set(latex, display);
+  const asWritten = setting(latex, display);
   if (asWritten !== undefined) {
     return asWritten;
   }
   const repaired = withScriptsOutOfText(latex);
-  return repaired === undefined || repaired === latex ? undefined : set(repaired, display);
+  return repaired === undefined || repaired === latex ? undefined : setting(repaired, display);
 }
 
 // A formula, drawn at once with the rest of its block as one element that says its LaTeX of
@@ -186,16 +186,16 @@ export function drawingOf(set: Setting, latex: string, display: boolean): string
 // its LaTeX, and says it too. So is one shown before KaTeX is here, which the reader of a
 // document waits for; a formula shown elsewhere fetches KaTeX itself and is set once it is here.
 export function Formula({ latex, display }: { latex: string; display: boolean }) {
-  const set = useSyncExternalStore(onFetched, settingNow);
+  const setting = useSyncExternalStore(onFetched, settingNow);
   const drawing = useMemo(
-    () => (set === undefined ? undefined : drawingOf(set, latex, display)),
-    [set, latex, display],
+    () => (setting === undefined ? undefined : drawingOf(setting, latex, display)),
+    [setting, latex, display],
   );
   useEffect(() => {
-    if (set === undefined) {
-      void fetchFormulas();
+    if (setting === undefined) {
+      void fetchFormulaSetting();
     }
-  }, [set]);
+  }, [setting]);
   const said = { [FORMULA_ATTRIBUTE]: latex };
   if (drawing === undefined) {
     return (

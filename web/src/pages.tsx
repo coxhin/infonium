@@ -42,29 +42,34 @@ import { PageTranslation } from "./pagetranslation";
 import { turnTo, usePagesZoom, type PagePosition } from "./pageturning";
 import { scrollerOf } from "./scrolling";
 
-// pdf.js draws the pages. It is a third of the app's script and only a PDF needs it, so it is
-// fetched apart from the rest, once, when it is first wanted. A fetch that failed is not made
-// again: the browser keeps a module's failure until the page is loaded again, which the failure
-// tells the reader to do.
+// pdf.js draws the pages. It is as large as a third of all the app's script and only a PDF
+// needs it, so it is fetched apart from the rest, once, when it is first wanted. A fetch that
+// failed is not made again: the browser keeps a module's failure until the page is loaded again,
+// which the failure tells the reader to do. What this returns fails then, so every caller handles
+// its failure.
 let renderer: Promise<typeof import("pdfjs-dist")> | undefined;
 
 export function fetchRenderer(): Promise<typeof import("pdfjs-dist")> {
   if (renderer === undefined) {
-    // The import stands alone, as in formula.tsx: what is chained on it would not see every
-    // failure of the build's preloading.
+    // The import stands alone, as KaTeX's does in formula.tsx, where it must: pdf.js needs no
+    // stylesheet, but one it came to need would be fetched by a wrapper around the import and
+    // what is chained on it, and a failure there would pass by the handlers below.
     const module = import("pdfjs-dist");
     renderer = module.then(
       (pdfjs) => {
         pdfjs.GlobalWorkerOptions.workerSrc = workerSource;
         return pdfjs;
       },
-      () => {
-        throw new Error("没能载入画页面的程序，请刷新页面再试");
+      (error: unknown) => {
+        throw new Error(`没能载入画页面的程序，请刷新页面再试（${reasonOf(error)}）`);
       },
     );
   }
   return renderer;
 }
+
+// The name pdf.js gives the error that a cancelled drawing fails with.
+const DRAWING_CANCELLED = "RenderingCancelledException";
 
 // Character maps, fonts and image decoders that the renderer fetches when a file needs them.
 const RENDERER_FILES = "/node_modules/pdfjs-dist";
@@ -363,8 +368,7 @@ function Page({
           setDrawn((before) => ({ canvas: target, count: (before?.count ?? 0) + 1 }));
         },
         (error: unknown) => {
-          // pdf.js names the error a cancelled drawing fails with.
-          if (!(error instanceof Error && error.name === "RenderingCancelledException")) {
+          if (!(error instanceof Error && error.name === DRAWING_CANCELLED)) {
             setFailure(reasonOf(error));
           }
         },
