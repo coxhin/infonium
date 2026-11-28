@@ -260,7 +260,7 @@ export function ListColumn({
               refusal={refusal}
               selected={selected}
               seen={seen}
-              present={present}
+              present={subscriptions.loaded.state === "ready" ? present : undefined}
               subscriptionTitles={subscriptionTitles}
               subscriptionFolders={subscriptionFolders}
               placer={placer}
