@@ -3,7 +3,7 @@ import type { Browsing } from "./browsing";
 import { requestReason, type ItemEntry, type Subscription } from "./client";
 import { Interruption } from "./interruption";
 import { ItemList, type ImportInto } from "./itemlist";
-import { keyboardIsNowhere, useOnLanding } from "./keyboarding";
+import { isOverruled, keyboardIsNowhere, useOnLanding } from "./keyboarding";
 import type { Loaded } from "./loading";
 import type { SidebarLayout } from "./sidebarlayout";
 import {
@@ -137,8 +137,13 @@ export function ListColumn({
   const opener = useRef<HTMLButtonElement>(null);
   // In one column the sidebar is drawn only when opened: a row of it the keyboard is sent to, as
   // that of a subscription just made, lands the keyboard on the press that opens it.
-  useOnLanding(browsing.landing, () => {
-    if (layout.width === "narrow" && !layout.overlaid && keyboardIsNowhere()) {
+  useOnLanding(browsing.landing, (asked) => {
+    if (
+      !isOverruled(asked) &&
+      layout.width === "narrow" &&
+      !layout.overlaid &&
+      keyboardIsNowhere()
+    ) {
       opener.current?.focus();
     }
   });

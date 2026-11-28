@@ -18,7 +18,7 @@ import {
   type Held,
   type Placer,
 } from "./folders";
-import type { Landing } from "./keyboarding";
+import { landingOn, type Landing } from "./keyboarding";
 import type { Watched } from "./loading";
 import { byName } from "./nameorder";
 import {
@@ -106,7 +106,7 @@ export function useBrowsing(
   const [subscribing, setSubscribing] = useState(false);
   const [pane, setPane] = useState<SubscriptionPlace>();
   const [landing, setLanding] = useState<Landing>();
-  const land = useCallback((key: string) => setLanding({ key }), []);
+  const land = useCallback((key: string) => setLanding(landingOn(key)), []);
   // Whether the selection the page opens with is decided: at once where no list could move it,
   // as every item, or 新来源 with no item open; otherwise below, once the lists settle it.
   const [opened, setOpened] = useState(

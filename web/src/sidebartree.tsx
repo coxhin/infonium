@@ -9,7 +9,14 @@ import {
 import type { Folder, Subscription } from "./client";
 import { FolderMenu } from "./foldermenu";
 import type { Held, Placer } from "./folders";
-import { keyboardIsNowhere, useKeyboardHolder, useOnLanding, type Landing } from "./keyboarding";
+import {
+  isOverruled,
+  keyboardIsNowhere,
+  landingOn,
+  useKeyboardHolder,
+  useOnLanding,
+  type Landing,
+} from "./keyboarding";
 import { isMenuKey, openingAt, type Opening } from "./menu";
 import { PlaceMenu } from "./placemenu";
 import {
@@ -220,28 +227,29 @@ export function SidebarTree({
     element.closest<HTMLElement>('[role="treeitem"]')?.dataset.key,
   );
   const drawn = useRef(rows);
-  const pending = useRef<string>(undefined);
+  const pending = useRef<Landing>(undefined);
   useOnLanding(landing, (asked) => {
-    pending.current = asked.key;
+    pending.current = asked;
   });
   useLayoutEffect(() => {
     const before = drawn.current;
     drawn.current = rows;
     const asked = pending.current;
     const nowhere = keyboardIsNowhere();
-    if (asked !== undefined) {
-      // A row asked for waits to be drawn while the keyboard has nowhere to be, or is in the
-      // menu that asked for it; the reader taking the keyboard elsewhere ends the wait.
-      const element = rowElement(asked);
+    // A row asked for waits to be drawn while the keyboard has nowhere to be, or is in the menu
+    // that asked for it; a press of the reader's, or the keyboard gone elsewhere, ends the wait.
+    if (asked !== undefined && !isOverruled(asked)) {
+      const element = rowElement(asked.key);
       if (nowhere && element !== null) {
         pending.current = undefined;
         element.focus();
-      } else {
-        const waiting = nowhere || document.activeElement?.closest(".popup") !== null;
-        pending.current = waiting ? asked : undefined;
+        return;
       }
-      return;
+      if (nowhere || document.activeElement?.closest(".popup") !== null) {
+        return;
+      }
     }
+    pending.current = undefined;
     const held = holder.current;
     if (!nowhere || held === undefined) {
       return;
@@ -402,7 +410,7 @@ export function SidebarTree({
     if (folderId !== null && folded.has(folderId)) {
       fold(folderId, false);
     }
-    pending.current = subscriptionKey(subscriptionId);
+    pending.current = landingOn(subscriptionKey(subscriptionId));
   }
 
   return (

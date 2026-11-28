@@ -4,10 +4,30 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 // goes: a row moved, dissolved, seen or removed is taken from the page with the keyboard in it,
 // and the browser leaves the keyboard nowhere.
 
-// Whether the keyboard has nowhere to be: the element that held it went from the page, or a press
-// on nothing took it.
+// The element the keyboard was on last, and how many presses of the pointer the page has had. A
+// press makes the element none until the keyboard lands on one: a press on the reader's text
+// leaves the keyboard on the page itself, where its keys scroll what was pressed, and that is
+// the reader's doing, not a row that went.
+let lastHeld: Element | null = null;
+let presses = 0;
+document.addEventListener("focusin", (event) => {
+  if (event.target instanceof Element) {
+    lastHeld = event.target;
+  }
+});
+document.addEventListener(
+  "pointerdown",
+  () => {
+    lastHeld = null;
+    presses += 1;
+  },
+  true,
+);
+
+// Whether the keyboard has nowhere to be: the element that held it went from the page with it.
 export function keyboardIsNowhere(): boolean {
-  return document.activeElement === null || document.activeElement === document.body;
+  const onPage = document.activeElement === null || document.activeElement === document.body;
+  return onPage && lastHeld !== null && !lastHeld.isConnected;
 }
 
 // Whether the element stands in a popup over the page, as a menu or a question.
@@ -51,9 +71,19 @@ export function useKeyboardHolder<Part>(
   return holder;
 }
 
-// A row the keyboard is asked to land on from outside a list, as the row of a subscription just
-// made: a new value each time it is asked.
-export type Landing = { key: string };
+// A row the keyboard is asked to land on, as the row of a subscription just made: a new value
+// each time it is asked, which knows how many presses the page had had then.
+export type Landing = { key: string; askedAfter: number };
+
+export function landingOn(key: string): Landing {
+  return { key, askedAfter: presses };
+}
+
+// Whether a press of the reader's came after the landing was asked for: the keyboard is the
+// reader's from then on, and the landing is dropped.
+export function isOverruled(landing: Landing): boolean {
+  return presses > landing.askedAfter;
+}
 
 // Hands on each landing asked for anew, once what it was asked with is drawn; one there already
 // when the caller is first drawn was asked of another, and is not handed on.

@@ -4,7 +4,7 @@ import type { Folder, Subscription } from "./client";
 import { draggedOver } from "./dragging";
 import { FolderNameField, type NameDone } from "./foldername";
 import { Interruption } from "./interruption";
-import { keyboardIsNowhere, useOnLanding, type Landing } from "./keyboarding";
+import { isOverruled, keyboardIsNowhere, useOnLanding, type Landing } from "./keyboarding";
 import type { Watched } from "./loading";
 import { MediaIcon } from "./mediaicon";
 import { useSidebarDrop } from "./sidebardrop";
@@ -272,8 +272,8 @@ function Rail({
 }) {
   const openedByDrag = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
-  useOnLanding(landing, () => {
-    if (!layout.overlaid && keyboardIsNowhere()) {
+  useOnLanding(landing, (asked) => {
+    if (!isOverruled(asked) && !layout.overlaid && keyboardIsNowhere()) {
       opener.current?.focus();
     }
   });
