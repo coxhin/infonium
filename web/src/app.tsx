@@ -439,7 +439,6 @@ export function App() {
   // nothing in it is under way, for what subscriptions brought meanwhile.
   const entries = useWatched(listItems, "items", (listed) => listed.some(isBeingRead), {
     interval: () => LIST_INTERVAL_MS,
-    shown: true,
     unanswered: isUnanswered,
   });
   const { seating, seated, unshown, pointer } = useSeating();

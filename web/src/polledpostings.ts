@@ -73,7 +73,7 @@ export function usePolledPostings(onArrived: () => void): (polls: SettledPoll[])
     () => newestPostings(followed),
     `polled postings ${followed.map(pollKey).join(" ")}`,
     isUnsettled,
-    { shown: true, unanswered: isUnanswered },
+    { unanswered: isUnanswered },
   );
   const read = watched.loaded.state === "ready" ? watched.loaded.value : undefined;
   const told = useRef("");

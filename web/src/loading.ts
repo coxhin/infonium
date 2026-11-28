@@ -60,11 +60,9 @@ export type Watched<Value> = {
 // went unanswered, as the caller tells such a failure, is tried again after 1.5 seconds, the
 // first among them; one the service refused, saying why, after a minute. A settled value, where
 // an interval is given, is read again after the interval the value read last gives, while the
-// page is visible, and at once when a page that was hidden past it is shown again; not at all
-// while the value is not shown, and at once when it is shown again.
+// page is visible, and at once when a page that was hidden past it is shown again.
 export type Refreshing<Value> = {
   interval?: (value: Value) => number;
-  shown: boolean;
   unanswered: (error: unknown) => boolean;
 };
 
@@ -99,11 +97,7 @@ export function useWatched<Value>(
   const hurry = useRef<() => void>(undefined);
   const latestUnsettled = useRef(unsettled);
   latestUnsettled.current = unsettled;
-  const shown = refreshing?.shown ?? true;
   useEffect(() => {
-    if (!shown) {
-      return undefined;
-    }
     let current = true;
     let onShow = shownFor.current === key;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -194,7 +188,7 @@ export function useWatched<Value>(
       hurry.current = undefined;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [key, round, shown]);
+  }, [key, round]);
   // A value put on show here may be unsettled though the value loaded last was not.
   useEffect(() => {
     if (watched.loaded.state === "ready" && latestUnsettled.current(watched.loaded.value)) {

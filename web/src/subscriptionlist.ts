@@ -47,7 +47,6 @@ export function useSubscriptions(
       ),
     {
       interval: (listed) => untilNextPoll(listed, Date.now()),
-      shown: true,
       unanswered: isUnanswered,
     },
   );
